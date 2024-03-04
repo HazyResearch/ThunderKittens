@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <type_traits>
+#include <memory>
 
 namespace kittens {
 
@@ -59,7 +60,13 @@ struct shared_allocator {
 
     int *ptr;
 
-    __device__ shared_allocator(int * _ptr): ptr(_ptr) {}
+    // I need to do this to avoid misaligned addresses
+    // in TMA
+    // __device__ shared_allocator(int * _ptr): ptr(_ptr) {}
+    __device__ shared_allocator(int * _ptr): ptr(_ptr) {
+        uint64_t p = reinterpret_cast<uint64_t>(ptr);
+        ptr = std::assume_aligned<128>((int*)(p + (128-(p%128))));
+    }
 
     template<typename A> 
     __device__ inline A& allocate() {
