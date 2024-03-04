@@ -1,0 +1,243 @@
+__global__ void test_row_normalize_row_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_fl<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    load(reg_tile, smem_tile);
+    
+    rt_fl<HEIGHT, WIDTH>::col_vec rowsums;
+    row_sum(rowsums, reg_tile);
+    div_row(reg_tile, reg_tile, rowsums);
+
+    store(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_row_normalize_row() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_row_normalize_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_row_normalize_row_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < ROWS; i++) {
+        float row_sum = 0;
+        for(int j = 0; j < COLS; j++) {
+            o_ref[i*COLS+j]  = i_ref[i*COLS+j];
+            row_sum         += i_ref[i*COLS+j];
+        }
+        for(int j = 0; j < COLS; j++) o_ref[i*COLS+j] /= row_sum;
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "row_normalize_row_tile");
+    return passed;
+}
+
+__global__ void test_row_normalize_col_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_bf<HEIGHT, WIDTH> reg_tile_bf;
+    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile_fl;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    load(reg_tile_bf, smem_tile);
+
+    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_bf_col = swap_layout_inplace(reg_tile_bf);
+
+    copy(reg_tile_fl, reg_tile_bf_col);
+    
+    rt_fl<HEIGHT, WIDTH, rt_col_layout>::col_vec rowsums;
+    zero(rowsums);
+    row_sum(rowsums, reg_tile_fl);
+    div_row(reg_tile_fl, reg_tile_fl, rowsums);
+
+    copy(reg_tile_bf_col, reg_tile_fl);
+
+    swap_layout_inplace(reg_tile_bf_col); // send it back to row for write-out
+
+    store(smem_tile, reg_tile_bf);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_row_normalize_col() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_row_normalize_col_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_row_normalize_col_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < ROWS; i++) {
+        float row_sum = 0;
+        for(int j = 0; j < COLS; j++) {
+            o_ref[i*COLS+j]  = i_ref[i*COLS+j];
+            row_sum         += i_ref[i*COLS+j];
+        }
+        for(int j = 0; j < COLS; j++) o_ref[i*COLS+j] /= row_sum;
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "row_normalize_col_tile");
+    return passed;
+}
+
+__global__ void test_col_normalize_row_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_fl<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    load(reg_tile, smem_tile);
+
+    rt_fl<HEIGHT, WIDTH>::row_vec colsums;
+    zero(colsums);
+    col_sum(colsums, reg_tile);
+    div_col(reg_tile, reg_tile, colsums);
+
+    store(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_col_normalize_row() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_col_normalize_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_col_normalize_row_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < COLS; i++) {
+        float col_sum = 0;
+        for(int j = 0; j < ROWS; j++) {
+            o_ref[i+j*COLS]  = i_ref[i+j*COLS];
+            col_sum         += i_ref[i+j*COLS];
+        }
+        for(int j = 0; j < ROWS; j++) o_ref[i+j*COLS] /= col_sum;
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "col_normalize_row_tile");
+    return passed;
+}
+
+__global__ void test_col_normalize_col_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+    
+    rt_bf<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    load(reg_tile, smem_tile);
+
+    // let's use a column layout for now
+    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_col = swap_layout_inplace(reg_tile);
+
+    // we actually need to do this in fp32 for the test to pass
+    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile_col_fl;
+    copy(reg_tile_col_fl, reg_tile_col);
+    
+    // actually do the column normalization
+    rt_fl<HEIGHT, WIDTH, rt_col_layout>::row_vec colsums;
+    zero(colsums);
+    col_sum(colsums, reg_tile_col_fl); // sum over the column
+    div_col(reg_tile_col_fl, reg_tile_col_fl, colsums); // divide by the sum
+
+    // convert back to bf16
+    copy(reg_tile_col, reg_tile_col_fl);
+
+    // swap back, re-validating the original reg_tile
+    swap_layout_inplace(reg_tile_col);
+
+    store(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_col_normalize_col() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_col_normalize_col_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_col_normalize_col_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < COLS; i++) {
+        float col_sum = 0;
+        for(int j = 0; j < ROWS; j++) {
+            o_ref[i+j*COLS]  = i_ref[i+j*COLS];
+            col_sum      += i_ref[i+j*COLS];
+        }
+        for(int j = 0; j < ROWS; j++) o_ref[i+j*COLS] /= col_sum;
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "col_normalize_col_tile");
+    return passed;
+}
+
+int reduction_tests() {
+    std::cout << " ----- Starting reduction tests! -----" << std::endl;
+    int failures = 0;
+    failures += !test_row_normalize_row();
+    failures += !test_row_normalize_col();
+    failures += !test_col_normalize_row();
+    failures += !test_col_normalize_col();
+    return failures;
+}

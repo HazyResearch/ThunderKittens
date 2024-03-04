@@ -1,0 +1,116 @@
+__global__ void test_ones_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_bf<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+
+    // these two lines appear to be needed for reasons I don't understand
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    // end confusion
+    
+    one(reg_tile);
+    store(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_ones() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_ones_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_ones_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < SIZE; i++) o_ref[i] = 1;
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "ones_tile");
+    return passed;
+}
+
+__global__ void test_copy_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_bf<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = al.allocate<st_bf<HEIGHT, WIDTH>>();
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    load(reg_tile, smem_tile);
+    store(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_copy() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_copy_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_copy_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_tile");
+    return passed;
+}
+
+// __global__ void test_one_ker_vec(const bf16 *input, bf16 *output) {
+//     using H = __nv_bfloat16;
+//     const H* _input = reinterpret_cast<const H*>(input);
+//     rt_row_bf<1, WIDTH>::row_vec reg_vec;
+//     __syncthreads();
+//     // load(reg_vec, _input); // TODO: Implement 
+//     one(reg_vec);
+//     // store(output, reg_vec);
+// }
+// bool test_copy_rt_vec() {
+//     // initailize
+//     bf16 *d_i, *d_o;
+//     std::vector<float> i_ref(COLS);
+//     std::vector<float> o_ref(COLS);
+//     initialize(&d_i, &d_o, i_ref, o_ref);
+//     // run kernel
+//     cudaFuncSetAttribute(test_one_ker_vec, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+//     test_one_ker_vec<<<1, 32, 100000>>>(d_i, d_o);
+//     // fill in correct results on cpu
+//     for(int i = 0; i < WIDTH*256; i++) o_ref[i] = i_ref[i];
+//     // check and cleanup
+//     bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_vec");
+//     return passed;
+// }
+
+int mem_tests() {
+    std::cout << " ----- Starting memory tests! -----" << std::endl;
+    int failures = 0;
+    failures += !test_ones();
+    failures += !test_copy();
+    // failures += !test_copy_rt_vec();
+    return failures;
+}

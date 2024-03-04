@@ -1,0 +1,120 @@
+#define DSMEM_TEST_WORKERS       4
+#define DSMEM_TEST_CLUSTER_SIZE 16
+
+__global__ void __cluster_dims__(DSMEM_TEST_CLUSTER_SIZE, 1, 1) 
+test_nextneighbor_ker(const bf16 *input, bf16 *output) {
+    auto warpid        = threadIdx.x / WARP_SIZE;
+    auto lane          = threadIdx.x % WARP_SIZE; 
+
+    const int workers  = DSMEM_TEST_WORKERS;
+
+    extern __shared__ int __shm[];
+    shared_allocator al((int*)&__shm[0]);
+    int* p = &__shm[0];
+
+    using layout = st_xor_row_layout;
+    st_bf_1x4<layout> (&input_tile)[workers]  = al.allocate<st_bf_1x4<layout>, workers>();
+    st_bf_1x4<layout> (&output_tile)[workers] = al.allocate<st_bf_1x4<layout>, workers>();
+
+    namespace cg = cooperative_groups;
+    cg::cluster_group cluster = cg::this_cluster();
+    unsigned int cluster_size = cluster.num_blocks();
+    unsigned int cluster_idx = blockIdx.x % cluster_size;
+
+    const bf16* block_start = input + (cluster_idx * (input_tile[0].num_elements * workers));
+
+    // PRINT Statement to see what's being loaded into each threadblock
+    // if (threadIdx.x == 0 && cluster_idx == 1) {
+    //     // print out input from global memory
+    //     for (int i = 0; i < input_tile[0].num_elements * workers; i++) {
+    //         printf("input[%d]: %f\n", i, __bfloat162float(input[i + (cluster_idx * input_tile[0].num_elements * workers)]));
+    //     }
+    // }
+    // __syncthreads();
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> input_barrier;
+    if (threadIdx.x == 0) {init(&input_barrier, block.size());}
+    block.sync();
+
+    load_async(input_tile[warpid], block_start + (warpid * input_tile[0].num_elements), input_tile[0].cols, input_barrier);
+    input_barrier.arrive_and_wait();
+
+    __shared__ uint64_t smem_barrier[1];
+    constexpr int size_bytes = sizeof(bf16) * input_tile[0].num_elements * workers; 
+    dsmem::init_barrier(smem_barrier[0], 1); 
+    dsmem::set_barrier_bytes(smem_barrier[0], size_bytes);
+
+    block.sync();
+    cluster.sync();
+
+    int neighbor_idx = (cluster_idx + 1) % cluster_size;
+    dsmem::tile_distribute_smem(output_tile[warpid], input_tile[warpid], cluster_size, neighbor_idx, size_bytes, smem_barrier[0]);
+
+    constexpr int kPhaseBit = 0;
+    dsmem::distribution_wait(smem_barrier[0], kPhaseBit);
+
+    cluster.sync();
+
+    // PRINT Statement to see what tile distribute smem did
+    // if (threadIdx.x == 0 && cluster_idx == 15) {
+    //     // print out output_tile
+    //     for (int i = 0; i < output_tile[0].num_elements * workers; i++) {
+    //         printf("output_tile[%d]: %f\n", i, __bfloat162float(output_tile[0].data[i]));
+    //     }
+    // }
+    // __syncthreads();
+
+    // write out the results from output_tile to global memory
+    bf16* output_block_start = output + (cluster_idx * output_tile[0].num_elements * workers);
+    store_async(output_block_start + (warpid * output_tile[0].num_elements), output_tile[warpid], output_tile[0].cols, input_barrier);
+    input_barrier.arrive_and_wait();
+}
+bool test_nextneighbor() {
+    // cluster_size = 16
+    // input for each threadblock = 8 x 4 (8 workes, 1x4 tile) shared tile filled with cluster_idx
+    // output for each threadblock = 8 x 4 (8 workes, 1x4 tile) filled with (cluster_idx - 1) % cluster_size
+
+    int cluster_size    = DSMEM_TEST_CLUSTER_SIZE; 
+    int workers         = DSMEM_TEST_WORKERS; 
+    int threads         = DSMEM_TEST_WORKERS * WARP_SIZE; 
+    int tile_elements   = (16 * 1) * (16 * 4) * workers; 
+    int total_elements  = tile_elements * cluster_size; 
+
+    bf16 *d_i, *d_o; 
+    std::vector<float> i_ref(total_elements);
+    std::vector<float> o_ref(total_elements);
+    // input for cluster_idx n = n
+    for (int i = 0; i < total_elements; i++) {
+        i_ref[i] = i/tile_elements;
+    }
+    initialize<false>(&d_i, &d_o, i_ref, o_ref);
+
+    unsigned long mem_size = (tile_elements * 2 * workers * sizeof(bf16)); 
+    mem_size += 1024; // for the barrier and safety
+    cudaFuncSetAttribute(test_nextneighbor_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(test_nextneighbor_ker, cudaFuncAttributeNonPortableClusterSizeAllowed, cluster_size);
+    CudaCheckError();
+
+    // run kernel
+    test_nextneighbor_ker<<<cluster_size, threads, mem_size>>>(d_i, d_o);
+    CudaCheckError();
+
+    for (int i = 0; i < tile_elements; i++) {
+        o_ref[i] = cluster_size - 1;
+    }
+    for (int i = tile_elements; i < total_elements; i++) {
+        o_ref[i] = static_cast<int>(i_ref[i] - 1) % cluster_size;
+    }
+
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "dsmem_nextneighbor");
+
+    return passed;
+}
+
+int dsmem_tests() {
+    std::cout << " ----- Starting dsmem tests! -----" << std::endl;
+    int failures = 0;
+    failures += !test_nextneighbor();
+    return failures;
+}

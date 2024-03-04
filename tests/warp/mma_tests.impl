@@ -1,0 +1,132 @@
+#define MMA_TEST_DOT_N 2
+#define MMA_TEST_DOT_K 4
+#define MMA_TEST_DOT_M 2
+__global__ void test_dot_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_K> a_reg;
+    rt_bf<MMA_TEST_DOT_M, MMA_TEST_DOT_K> b_reg;
+    rt_fl<MMA_TEST_DOT_N, MMA_TEST_DOT_M> result;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_K> &a_smem    = al.allocate<st_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_K>>();
+    st_bf<MMA_TEST_DOT_M, MMA_TEST_DOT_K> &b_smem    = al.allocate<st_bf<MMA_TEST_DOT_M, MMA_TEST_DOT_K>>();
+    st_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_M> &res_smem  = al.allocate<st_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_M>>();
+
+    block.sync();
+    load_async(a_smem, input,                 16*MMA_TEST_DOT_K, barrier);
+    load_async(b_smem, input+256*MMA_TEST_DOT_N*MMA_TEST_DOT_K, 16*MMA_TEST_DOT_K, barrier);
+    barrier.arrive_and_wait();
+    
+    load(a_reg, a_smem);
+    load(b_reg, b_smem);
+    
+    zero(result);
+    dot(result, a_reg, b_reg, result);
+
+    store(res_smem, result);
+
+    store_async(output, res_smem, 16*MMA_TEST_DOT_M, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_dot() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(256*MMA_TEST_DOT_K*(MMA_TEST_DOT_N+MMA_TEST_DOT_M));
+    std::vector<float> o_ref(256*MMA_TEST_DOT_N*MMA_TEST_DOT_M);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_dot_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_dot_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < MMA_TEST_DOT_N*16; i++) {
+        for(int j = 0; j < MMA_TEST_DOT_M*16; j++) {
+            float sum = 0;
+            for(int k = 0; k < MMA_TEST_DOT_K*16; k++) {
+                sum += i_ref[i*MMA_TEST_DOT_K*16+k]*i_ref[256*MMA_TEST_DOT_K*MMA_TEST_DOT_N + j*MMA_TEST_DOT_K*16+k];
+            }
+            o_ref[i*MMA_TEST_DOT_M*16+j] = sum;
+        }
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "dot_tile", MMA_TEST_DOT_M*16);
+    return passed;
+}
+
+
+#define MMA_TEST_MMA_N 2
+#define MMA_TEST_MMA_K 4
+#define MMA_TEST_MMA_M 2
+__global__ void test_mma_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    rt_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_K> a_reg;
+    rt_bf<MMA_TEST_MMA_K, MMA_TEST_MMA_M> b_reg;
+    rt_fl<MMA_TEST_MMA_N, MMA_TEST_MMA_M> result;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_K> &a_smem    = al.allocate<st_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_K>>();
+    st_bf<MMA_TEST_MMA_K, MMA_TEST_MMA_M> &b_smem    = al.allocate<st_bf<MMA_TEST_MMA_K, MMA_TEST_MMA_M>>();
+    st_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_M> &res_smem  = al.allocate<st_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_M>>();
+
+    block.sync();
+    load_async(a_smem, input,                 16*MMA_TEST_MMA_K, barrier);
+    load_async(b_smem, input+256*MMA_TEST_MMA_N*MMA_TEST_MMA_K, 16*MMA_TEST_MMA_M, barrier);
+    barrier.arrive_and_wait();
+    
+    load(a_reg, a_smem);
+    load(b_reg, b_smem);
+
+    rt_bf<MMA_TEST_MMA_K, MMA_TEST_MMA_M, rt_col_layout> &b_reg_col = swap_layout_inplace(b_reg);
+    
+    zero(result);
+    mma(result, a_reg, b_reg_col, result);
+
+    store(res_smem, result);
+
+    store_async(output, res_smem, 16*MMA_TEST_MMA_M, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_mma() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(256*MMA_TEST_MMA_K*(MMA_TEST_MMA_N+MMA_TEST_MMA_M));
+    std::vector<float> o_ref(256*MMA_TEST_MMA_N*MMA_TEST_MMA_M);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_mma_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 80000);
+    test_mma_ker<<<1, 32, 80000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < MMA_TEST_MMA_N*16; i++) {
+        for(int j = 0; j < MMA_TEST_MMA_M*16; j++) {
+            float sum = 0;
+            for(int k = 0; k < MMA_TEST_MMA_K*16; k++) {
+                sum += i_ref[i*16*MMA_TEST_MMA_K + k]*i_ref[(256*MMA_TEST_MMA_N*MMA_TEST_MMA_K) + k*16*MMA_TEST_MMA_M + j];
+            }
+            o_ref[i*16*MMA_TEST_MMA_M + j] = sum;
+        }
+    }
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "mma_tile", 16*MMA_TEST_MMA_M);
+    return passed;
+}
+
+int mma_tests() {
+    std::cout << " ----- Starting MMA tests! -----" << std::endl;
+    int failures = 0;
+    failures += !test_dot();
+    failures += !test_mma();
+    return failures;
+}

@@ -1,0 +1,110 @@
+/* Shared vector tests */
+
+__global__ void test_ones_st_vec_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    typedef st_bf<_HEIGHT, _WIDTH> tile_1x4;
+    
+    tile_1x4::row_vec &smem_vec = al.allocate<tile_1x4::row_vec>();
+    load(smem_vec, input);
+    one(smem_vec);
+    store(output, smem_vec);
+    __syncthreads();
+}
+
+bool test_ones_st_vec() {
+    // initailize
+    bf16 *d_i, *d_o;
+    const int _WIDTH = 4;
+    const int _COLS = _WIDTH*16;
+    const int _SIZE = _COLS;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    std::cout << "Launching kernel!" << std::endl;
+    cudaFuncSetAttribute(test_ones_st_vec_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    std::cout << "Launched kernel!" << std::endl;
+    test_ones_st_vec_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "ones_st_vec");
+    return passed;
+}
+
+__global__ void test_copy_st_vec_ker(const bf16 *input, bf16 *output) {
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    using tile_1x4 = st_bf<_HEIGHT, _WIDTH>;
+    
+    tile_1x4::row_vec &smem_vec = al.allocate<tile_1x4::row_vec>();
+    load(smem_vec, input);
+    store(output, smem_vec);
+    __syncthreads();
+}
+
+bool test_copy_st_vec() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 4;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_copy_st_vec_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_copy_st_vec_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_st_vec");
+    return passed;
+}
+__global__ void test_copy_st_vec_offset_ker(const bf16 *input, bf16 *output) {
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+
+    const int _HEIGHT = 1;
+    const int _WIDTH = 3;
+    using tile_1x4 = st_bf<_HEIGHT, _WIDTH>;
+    
+    tile_1x4::row_vec &smem_vec = al.allocate<tile_1x4::row_vec>();
+    load(smem_vec, input);
+    store(output, smem_vec);
+    __syncthreads();
+}
+
+bool test_copy_st_vec_offset() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 3;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_copy_st_vec_offset_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_copy_st_vec_offset_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_offset_st_vec");
+    return passed;
+}
+
+int st_vec_tests() {
+    std::cout << " ----- Starting shared vector tests! -----" << std::endl;
+    int failures = 0;
+    failures += !test_ones_st_vec();
+    failures += !test_copy_st_vec();
+    failures += !test_copy_st_vec_offset();
+    return failures;
+}
