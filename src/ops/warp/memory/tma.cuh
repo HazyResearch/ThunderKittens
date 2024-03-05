@@ -1,86 +1,93 @@
 #pragma once
 
 #include "../../../common/common.cuh"
-#include "../../../types/shared/shared.cuh"
+#include "../../../types/types.cuh"
 
 #include <cuda.h>
 
 namespace kittens {
 namespace tma {
 
-template<st_layout layout>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                              int global_tile_height, int global_tile_width, 
-                                              int shared_tile_height, int shared_tile_width) {}; 
+namespace detail {
 
-template<>
-__host__ inline void create_tensor_map<st_naive_row_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                              int global_tile_height, int global_tile_width, 
-                                              int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 2; 
-    void    *global_addr = reinterpret_cast<void*>(src);
+template<typename T> concept st_basic_row_layout_type = (
+    st_type<T> && 
+    (
+        std::is_same_v<typename T::layout, st_naive_row_layout> || 
+        std::is_same_v<typename T::layout, st_xor_row_layout>
+    )
+);
 
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
+template<typename T> concept st_wgmma_row_layout_type = (
+    st_type<T> && 
+    (
+        std::is_same_v<typename T::layout, st_wgmma_row_0b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_row_32b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_row_64b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_row_128b_layout>
+    )
+);
 
-    uint64_t gmem_shape[tma_dim] = {global_tile_width, global_tile_height};
-    uint64_t gmem_stride[tma_dim] = {1, shared_tile_width * sizeof(bf16)}; 
+template<typename T> concept st_wgmma_col_layout_type = (
+    st_type<T> && 
+    (
+        std::is_same_v<typename T::layout, st_wgmma_col_0b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_col_32b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_col_64b_layout> || 
+        std::is_same_v<typename T::layout, st_wgmma_col_128b_layout>
+    )
+);
 
-    uint32_t smem_shape[tma_dim] = {shared_tile_width, shared_tile_height};
-    uint32_t smem_stride[tma_dim] = {1, 1}; 
+}; 
+
+template<detail::st_basic_row_layout_type ST, int num_blocks>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
+    
+    constexpr uint32_t  tma_dim     = 2; 
+    void                *global_addr = reinterpret_cast<void*>(src);
+
+    constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
+    constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_xor_row_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_NONE;
+
+    constexpr uint64_t global_tile_height = num_blocks * ST::rows;
+    constexpr uint64_t global_tile_width  = ST::cols; 
+    constexpr uint64_t shared_tile_height = ST::rows; 
+    constexpr uint64_t shared_tile_width  = ST::cols; 
+
+    constexpr uint64_t gmem_shape[tma_dim] = {global_tile_width, global_tile_height};
+    constexpr uint64_t gmem_stride[tma_dim] = {1, shared_tile_width * sizeof(bf16)}; 
+
+    constexpr uint32_t smem_shape[tma_dim] = {shared_tile_width, shared_tile_height};
+    constexpr uint32_t smem_stride[tma_dim] = {1, 1};
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
 
     // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
         assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
     }
 
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
+    static_assert(gmem_shape[1] != 0, "all elements of gmem_shape must be non-zero");
+    static_assert(gmem_stride[1] % 16 == 0, "all elements of gmem_stride must be a multiple of 16B");
 
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
+    static_assert(smem_shape[0] != 0, "smem_shape[0] elements must be non-zero");
+    static_assert(smem_shape[0] <= 256, "smem_shape[0] elements must be less than= 256");
+    static_assert(smem_shape[1] != 0, "smem_shape[1] elements must be non-zero");
+    static_assert(smem_shape[1] <= 256, "smem_shape[1] elements must be less than= 256");
 
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
+    static_assert(smem_shape[0] * sizeof(bf16) % 16 == 0, "if interleave is none, then smem_shape[0] * sizeof(bf16) must be a multiple of 16B");
 
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
+    static_assert(smem_stride[0] != 0, "smem_stride[0] must be non-zero");
+    static_assert(smem_stride[0] <= 8, "smem_stride[0] must be less than= 8");
+    static_assert(smem_stride[1] != 0, "smem_stride[1] must be non-zero");
+    static_assert(smem_stride[1] <= 8, "smem_stride[1] must be less than= 8");
 
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
         int swizzle_size = 32; 
         switch (tma_swizzle) {
             case CU_TENSOR_MAP_SWIZZLE_32B:
@@ -98,13 +105,8 @@ __host__ inline void create_tensor_map<st_naive_row_layout>(CUtensorMap *tma_map
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
 
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
+    const uint64_t *gmem_stride_ptr = (&gmem_stride[0] + 1); 
     const uint32_t *smem_shape_ptr = &smem_shape[0];
     const uint32_t *smem_stride_ptr = &smem_stride[0];
 
@@ -121,142 +123,47 @@ __host__ inline void create_tensor_map<st_naive_row_layout>(CUtensorMap *tma_map
         tma_swizzle,
         tma_l2Promotion,
         tma_oobFill);
+
+
+    const char *error_string;
+    CUresult res = cuGetErrorString(result, &error_string);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Error: " << error_string << std::endl;
+    }
+}; 
+
+template<detail::st_wgmma_row_layout_type ST, int num_blocks>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
-    assert(result == CUDA_SUCCESS);
-}
-template<>
-__host__ inline void create_tensor_map<st_xor_row_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                              int global_tile_height, int global_tile_width, 
-                                              int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 2; 
-    void    *global_addr = reinterpret_cast<void*>(src);
+    constexpr uint32_t  tma_dim     = 5; 
+    void                *global_addr = reinterpret_cast<void*>(src);
 
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_64B; 
+    constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
+    constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_row_0b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_NONE : 
+                                                        (std::is_same_v<typename ST::layout, st_wgmma_row_32b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_32B : 
+                                                        (std::is_same_v<typename ST::layout, st_wgmma_row_64b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_64B : 
+                                                        CU_TENSOR_MAP_SWIZZLE_128B;
 
-    uint64_t gmem_shape[tma_dim] = {global_tile_width, global_tile_height};
-    uint64_t gmem_stride[tma_dim] = {1, shared_tile_width * sizeof(bf16)}; 
+    constexpr uint64_t global_tile_height = num_blocks * ST::rows;
+    constexpr uint64_t global_tile_width  = ST::cols; 
+    constexpr uint64_t shared_tile_height = ST::rows; 
+    constexpr uint64_t shared_tile_width  = ST::cols; 
 
-    uint32_t smem_shape[tma_dim] = {shared_tile_width, shared_tile_height};
-    uint32_t smem_stride[tma_dim] = {1, 1}; 
-
-    // ensure that the global address is always 16-byte aligned 
-    assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
-
-    // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
-    }
-
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
-
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
-
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
-
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
-
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 32; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
-        assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
-    }
-
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
-    const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
-    const uint32_t *smem_shape_ptr = &smem_shape[0];
-    const uint32_t *smem_stride_ptr = &smem_stride[0];
-
-    CUresult result = cuTensorMapEncodeTiled(
-        tma_map,
-        tma_format,
-        tma_dim,
-        global_addr,
-        gmem_shape_ptr,
-        gmem_stride_ptr, 
-        smem_shape_ptr,
-        smem_stride_ptr,
-        tma_interleave,
-        tma_swizzle,
-        tma_l2Promotion,
-        tma_oobFill);
-    
-    assert(result == CUDA_SUCCESS);
-}
-
-template<>
-__host__ inline void create_tensor_map<st_wgmma_row_0b_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                                          int global_tile_height, int global_tile_width, 
-                                                          int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 5; 
-    void    *global_addr = reinterpret_cast<void*>(src);
-
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE; 
-
-    uint64_t gmem_shape[tma_dim] = {
+    constexpr uint64_t gmem_shape[tma_dim] = {
         8, 
         8,
         2, 
         (global_tile_height/8),
         (global_tile_width/16)
     };
-    uint64_t gmem_stride[tma_dim] = {
+    
+    constexpr uint64_t gmem_stride[tma_dim] = {
         sizeof(bf16), 
         global_tile_width * sizeof(bf16),
         8 * sizeof(bf16), 
@@ -264,59 +171,51 @@ __host__ inline void create_tensor_map<st_wgmma_row_0b_layout>(CUtensorMap *tma_
         8 * 2 * sizeof(bf16)
     };
 
-
-    uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
-    uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
+    constexpr uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
+    constexpr uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
 
     // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
         assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
     }
 
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
+    static_assert(gmem_shape[1] != 0, "gmem_shape[1] elements must be non-zero");
+    static_assert(gmem_stride[1] % 16 == 0, "gmem_stride[1] elements must be a multiple of 16B");
+    static_assert(gmem_shape[2] != 0, "gmem_shape[2] elements must be non-zero");
+    static_assert(gmem_stride[2] % 16 == 0, "gmem_stride[2] elements must be a multiple of 16B");
+    static_assert(gmem_shape[3] != 0, "gmem_shape[3] elements must be non-zero");
+    static_assert(gmem_stride[3] % 16 == 0, "gmem_stride[3] elements must be a multiple of 16B");
+    static_assert(gmem_shape[4] != 0, "gmem_shape[4] elements must be non-zero");
+    static_assert(gmem_stride[4] % 16 == 0, "gmem_stride[4] elements must be a multiple of 16B");
 
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
+    static_assert(smem_shape[0] != 0, "smem_shape[0] elements must be non-zero");
+    static_assert(smem_shape[0] <= 256, "smem_shape[0] elements must be less than= 256");
+    static_assert(smem_shape[1] != 0, "smem_shape[1] elements must be non-zero");
+    static_assert(smem_shape[1] <= 256, "smem_shape[1] elements must be less than= 256");
+    static_assert(smem_shape[2] != 0, "smem_shape[2] elements must be non-zero");
+    static_assert(smem_shape[2] <= 256, "smem_shape[2] elements must be less than= 256");
+    static_assert(smem_shape[3] != 0, "smem_shape[3] elements must be non-zero");
+    static_assert(smem_shape[3] <= 256, "smem_shape[3] elements must be less than= 256");
+    static_assert(smem_shape[4] != 0, "smem_shape[4] elements must be non-zero");
+    static_assert(smem_shape[4] <= 256, "smem_shape[4] elements must be less than= 256");
 
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
+    static_assert(smem_shape[0] * sizeof(bf16) % 16 == 0, "if interleave is none, then smem_shape[0] * sizeof(bf16) must be a multiple of 16B");
 
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
+    static_assert(smem_stride[0] != 0, "smem_stride[0] must be non-zero");
+    static_assert(smem_stride[0] <= 8, "smem_stride[0] must be less than= 8");
+    static_assert(smem_stride[1] != 0, "smem_stride[1] must be non-zero");
+    static_assert(smem_stride[1] <= 8, "smem_stride[1] must be less than= 8");
+    static_assert(smem_stride[2] != 0, "smem_stride[2] must be non-zero");
+    static_assert(smem_stride[2] <= 8, "smem_stride[2] must be less than= 8");
+    static_assert(smem_stride[3] != 0, "smem_stride[3] must be non-zero");
+    static_assert(smem_stride[3] <= 8, "smem_stride[3] must be less than= 8");
+    static_assert(smem_stride[4] != 0, "smem_stride[4] must be non-zero");
+    static_assert(smem_stride[4] <= 8, "smem_stride[4] must be less than= 8");
 
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
         int swizzle_size = 32; 
         switch (tma_swizzle) {
             case CU_TENSOR_MAP_SWIZZLE_32B:
@@ -334,13 +233,8 @@ __host__ inline void create_tensor_map<st_wgmma_row_0b_layout>(CUtensorMap *tma_
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
 
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
+    const uint64_t *gmem_stride_ptr = (&gmem_stride[0] + 1); 
     const uint32_t *smem_shape_ptr = &smem_shape[0];
     const uint32_t *smem_stride_ptr = &smem_stride[0];
 
@@ -357,469 +251,104 @@ __host__ inline void create_tensor_map<st_wgmma_row_0b_layout>(CUtensorMap *tma_
         tma_swizzle,
         tma_l2Promotion,
         tma_oobFill);
+
+    const char *error_string;
+    CUresult res = cuGetErrorString(result, &error_string);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Error: " << error_string << std::endl;
+    }
+}; 
+
+template<detail::st_wgmma_col_layout_type ST, int num_blocks>
+__host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
+
+    constexpr int tma_dim  = 5;
+    void      *global_addr = reinterpret_cast<void*>(src);
+
+    constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
+    constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_col_0b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_NONE : 
+                                                        (std::is_same_v<typename ST::layout, st_wgmma_col_32b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_32B : 
+                                                        (std::is_same_v<typename ST::layout, st_wgmma_col_64b_layout>) ? 
+                                                        CU_TENSOR_MAP_SWIZZLE_64B : 
+                                                        CU_TENSOR_MAP_SWIZZLE_128B;
     
-    assert(result == CUDA_SUCCESS);
-}
-template<>
-__host__ inline void create_tensor_map<st_wgmma_row_32b_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                                          int global_tile_height, int global_tile_width, 
-                                                          int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 5; 
-    void    *global_addr = reinterpret_cast<void*>(src);
+    constexpr uint64_t global_tile_height = num_blocks * ST::rows;
+    constexpr uint64_t global_tile_width  = ST::cols;
+    constexpr uint64_t shared_tile_height = ST::rows;
+    constexpr uint64_t shared_tile_width  = ST::cols;
 
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_32B; 
-
-    uint64_t gmem_shape[tma_dim] = {
+    constexpr uint64_t gmem_shape[tma_dim] = {
         8, 
         8,
-        2, 
-        (global_tile_height/8),
-        (global_tile_width/16)
-    };
-    uint64_t gmem_stride[tma_dim] = {
-        sizeof(bf16), 
-        global_tile_width * sizeof(bf16),
-        8 * sizeof(bf16), 
-        8 * global_tile_width * sizeof(bf16),
-        8 * 2 * sizeof(bf16)
-    };
-
-
-    uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
-    uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
-
-    // ensure that the global address is always 16-byte aligned 
-    assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
-
-    // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
-    }
-
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
-
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
-
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
-
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
-
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 32; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
-        assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
-    }
-
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
-    const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
-    const uint32_t *smem_shape_ptr = &smem_shape[0];
-    const uint32_t *smem_stride_ptr = &smem_stride[0];
-
-    CUresult result = cuTensorMapEncodeTiled(
-        tma_map,
-        tma_format,
-        tma_dim,
-        global_addr,
-        gmem_shape_ptr,
-        gmem_stride_ptr, 
-        smem_shape_ptr,
-        smem_stride_ptr,
-        tma_interleave,
-        tma_swizzle,
-        tma_l2Promotion,
-        tma_oobFill);
-    
-    assert(result == CUDA_SUCCESS);
-}
-template<>
-__host__ inline void create_tensor_map<st_wgmma_row_64b_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                                          int global_tile_height, int global_tile_width, 
-                                                          int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 5; 
-    void    *global_addr = reinterpret_cast<void*>(src);
-
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_64B; 
-
-    uint64_t gmem_shape[tma_dim] = {
-        8, 
-        8,
-        2, 
-        (global_tile_height/8),
-        (global_tile_width/16)
-    };
-    uint64_t gmem_stride[tma_dim] = {
-        sizeof(bf16), 
-        global_tile_width * sizeof(bf16),
-        8 * sizeof(bf16), 
-        8 * global_tile_width * sizeof(bf16),
-        8 * 2 * sizeof(bf16)
-    };
-
-
-    uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
-    uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
-
-    // ensure that the global address is always 16-byte aligned 
-    assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
-
-    // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
-    }
-
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
-
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
-
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
-
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
-
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 32; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
-        assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
-    }
-
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
-    const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
-    const uint32_t *smem_shape_ptr = &smem_shape[0];
-    const uint32_t *smem_stride_ptr = &smem_stride[0];
-
-    CUresult result = cuTensorMapEncodeTiled(
-        tma_map,
-        tma_format,
-        tma_dim,
-        global_addr,
-        gmem_shape_ptr,
-        gmem_stride_ptr, 
-        smem_shape_ptr,
-        smem_stride_ptr,
-        tma_interleave,
-        tma_swizzle,
-        tma_l2Promotion,
-        tma_oobFill);
-    
-    assert(result == CUDA_SUCCESS);
-}
-template<>
-__host__ inline void create_tensor_map<st_wgmma_row_128b_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                                          int global_tile_height, int global_tile_width, 
-                                                          int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 5; 
-    void    *global_addr = reinterpret_cast<void*>(src);
-
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_128B; 
-
-    uint64_t gmem_shape[tma_dim] = {
-        8, 
-        8,
-        2, 
-        (global_tile_height/8),
-        (global_tile_width/16)
-    };
-    uint64_t gmem_stride[tma_dim] = {
-        sizeof(bf16), 
-        global_tile_width * sizeof(bf16),
-        8 * sizeof(bf16), 
-        8 * global_tile_width * sizeof(bf16),
-        8 * 2 * sizeof(bf16)
-    };
-
-
-    uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
-    uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
-
-    // ensure that the global address is always 16-byte aligned 
-    assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
-
-    // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
-    }
-
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
-
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
-
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
-
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
-
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 32; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
-        assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
-    }
-
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
-    const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
-    const uint32_t *smem_shape_ptr = &smem_shape[0];
-    const uint32_t *smem_stride_ptr = &smem_stride[0];
-
-    CUresult result = cuTensorMapEncodeTiled(
-        tma_map,
-        tma_format,
-        tma_dim,
-        global_addr,
-        gmem_shape_ptr,
-        gmem_stride_ptr, 
-        smem_shape_ptr,
-        smem_stride_ptr,
-        tma_interleave,
-        tma_swizzle,
-        tma_l2Promotion,
-        tma_oobFill);
-    
-    assert(result == CUDA_SUCCESS);
-}
-
-template<>
-__host__ inline void create_tensor_map<st_wgmma_col_0b_layout>(CUtensorMap *tma_map, bf16 *src, int blocks, 
-                                                          int global_tile_height, int global_tile_width, 
-                                                          int shared_tile_height, int shared_tile_width) {
-    uint32_t tma_dim     = 5; 
-    void    *global_addr = reinterpret_cast<void*>(src);
-
-    CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
-    CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
-    CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
-    CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE; 
-
-    uint64_t gmem_shape[tma_dim] = {
-        8, 
-        8,
-        (global_tile_width/8), 
         2,
+        (global_tile_width/8), 
         (global_tile_height/16)
     };
-    uint64_t gmem_stride[tma_dim] = {
+
+    constexpr uint64_t gmem_stride[tma_dim] = {
         sizeof(bf16), 
-        8 * sizeof(bf16),
         global_tile_width * sizeof(bf16), 
-        8 * 2 * sizeof(bf16),
         8 * global_tile_width * sizeof(bf16),
+        8 * sizeof(bf16),
+        8 * 2 * sizeof(bf16),
     };
 
-
-    uint32_t smem_shape[tma_dim]  = {
+    constexpr uint32_t smem_shape[tma_dim]  = {
         8, 
         8,
-        (shared_tile_width/8), 
         2,
+        (shared_tile_width/8), 
         (shared_tile_height/16)
     };
-    uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
+    constexpr uint32_t smem_stride[tma_dim] = {1, 1, 1, 1, 1};
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
 
     // if interleave is 32b, global address must be 32-byte aligned
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
         assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
     }
 
-    // if interleave is none, then dim >= 3
-    if (tma_interleave != CU_TENSOR_MAP_INTERLEAVE_NONE) {
-        assert(tma_dim >= 3);
-    }
+    static_assert(gmem_shape[1] != 0, "gmem_shape[1] elements must be non-zero");
+    static_assert(gmem_stride[1] % 16 == 0, "gmem_stride[1] elements must be a multiple of 16B");
+    static_assert(gmem_shape[2] != 0, "gmem_shape[2] elements must be non-zero");
+    static_assert(gmem_stride[2] % 16 == 0, "gmem_stride[2] elements must be a multiple of 16B");
+    static_assert(gmem_shape[3] != 0, "gmem_shape[3] elements must be non-zero");
+    static_assert(gmem_stride[3] % 16 == 0, "gmem_stride[3] elements must be a multiple of 16B");
+    static_assert(gmem_shape[4] != 0, "gmem_shape[4] elements must be non-zero");
+    static_assert(gmem_stride[4] % 16 == 0, "gmem_stride[4] elements must be a multiple of 16B");
 
-    // all elements of gmem_shape must be non-zero
-    for (int i = 0; i < tma_dim; i++) {
-        assert(gmem_shape[i] != 0);
-    }
+    static_assert(smem_shape[0] != 0, "smem_shape[0] elements must be non-zero");
+    static_assert(smem_shape[0] <= 256, "smem_shape[0] elements must be less than= 256");
+    static_assert(smem_shape[1] != 0, "smem_shape[1] elements must be non-zero");
+    static_assert(smem_shape[1] <= 256, "smem_shape[1] elements must be less than= 256");
+    static_assert(smem_shape[2] != 0, "smem_shape[2] elements must be non-zero");
+    static_assert(smem_shape[2] <= 256, "smem_shape[2] elements must be less than= 256");
+    static_assert(smem_shape[3] != 0, "smem_shape[3] elements must be non-zero");
+    static_assert(smem_shape[3] <= 256, "smem_shape[3] elements must be less than= 256");
+    static_assert(smem_shape[4] != 0, "smem_shape[4] elements must be non-zero");
+    static_assert(smem_shape[4] <= 256, "smem_shape[4] elements must be less than= 256");
 
-    for (int i = 0; i < tma_dim; i++) {
-        // ignore first value when interleave is none
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            continue; 
-        }
+    static_assert(smem_shape[0] * sizeof(bf16) % 16 == 0, "if interleave is none, then smem_shape[0] * sizeof(bf16) must be a multiple of 16B");
 
-        // all elements of gmem_stride must be a multiple of 16
-        assert(gmem_stride[i] % 16 == 0);
+    static_assert(smem_stride[0] != 0, "smem_stride[0] must be non-zero");
+    static_assert(smem_stride[0] <= 8, "smem_stride[0] must be less than= 8");
+    static_assert(smem_stride[1] != 0, "smem_stride[1] must be non-zero");
+    static_assert(smem_stride[1] <= 8, "smem_stride[1] must be less than= 8");
+    static_assert(smem_stride[2] != 0, "smem_stride[2] must be non-zero");
+    static_assert(smem_stride[2] <= 8, "smem_stride[2] must be less than= 8");
+    static_assert(smem_stride[3] != 0, "smem_stride[3] must be non-zero");
+    static_assert(smem_stride[3] <= 8, "smem_stride[3] must be less than= 8");
+    static_assert(smem_stride[4] != 0, "smem_stride[4] must be non-zero");
+    static_assert(smem_stride[4] <= 8, "smem_stride[4] must be less than= 8");
 
-        // multile of 32 for 32B interleave
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-            assert(gmem_stride[i] % 32 == 0);
-        }
-    }
-
-    // all smem_shape elements must be non-zero and less than= 256
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_shape[i] != 0);
-        assert(smem_shape[i] <= 256);
-        if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && i == 0) {
-            assert(smem_shape[0] * sizeof(bf16) % 16 == 0);
-        }
-    }
-
-    // all smem_stride elements must be non-zero and less than= 8
-    for (int i = 0; i < tma_dim; i++) {
-        assert(smem_stride[i] != 0);
-        assert(smem_stride[i] <= 8);
-    }
-
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
         int swizzle_size = 32; 
         switch (tma_swizzle) {
             case CU_TENSOR_MAP_SWIZZLE_32B:
@@ -837,13 +366,8 @@ __host__ inline void create_tensor_map<st_wgmma_col_0b_layout>(CUtensorMap *tma_
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
 
-    // if interleave is 32B, then swizzle must be 32B
-    if (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_32B) {
-        assert(tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B);
-    }
-
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
-    const uint64_t *gmem_stride_ptr = (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE) ? (&gmem_stride[0] + 1) : (&gmem_stride[0]);
+    const uint64_t *gmem_stride_ptr = (&gmem_stride[0] + 1); 
     const uint32_t *smem_shape_ptr = &smem_shape[0];
     const uint32_t *smem_stride_ptr = &smem_stride[0];
 
@@ -860,13 +384,16 @@ __host__ inline void create_tensor_map<st_wgmma_col_0b_layout>(CUtensorMap *tma_
         tma_swizzle,
         tma_l2Promotion,
         tma_oobFill);
-    
-    assert(result == CUDA_SUCCESS);
+
+    const char *error_string;
+    CUresult res = cuGetErrorString(result, &error_string);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Error: " << error_string << std::endl;
+    }
 }
 
-
 template<int height, int width>
-__device__ static inline void store_async(const st<bf16, height, width, st_naive_row_layout> &src, void *dst_tma_map, int tile_idx) {
+__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, st_naive_row_layout> &src, int tile_idx) {
     if (threadIdx.x % 32 == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -907,7 +434,7 @@ __device__ static inline void load_async(st<bf16, height, width, st_naive_row_la
 
 // Implementation for st_xor_row_layout
 template<int height, int width>
-__device__ static inline void store_async(const st<bf16, height, width, st_xor_row_layout> &src, void *dst_tma_map, int tile_idx) {
+__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, st_xor_row_layout> &src, int tile_idx) {
     if (threadIdx.x % 32 == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -947,7 +474,7 @@ __device__ static inline void load_async(st<bf16, height, width, st_xor_row_layo
 }
 
 template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
-__device__ static inline void store_async(const st<bf16, height, width, wgmma_row_layout> &src, void *dst_tma_map, int tile_idx) {
+__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_row_layout> &src, int tile_idx) {
     if (threadIdx.x % 32 == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -993,7 +520,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
 }
 
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
-__device__ static inline void store_async(const st<bf16, height, width, wgmma_col_layout> &src, void *dst_tma_map, int tile_idx) {
+__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_col_layout> &src, int tile_idx) {
     if (threadIdx.x % 32 == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));

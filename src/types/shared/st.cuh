@@ -48,7 +48,9 @@ struct st {
 
     // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
     __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
-    template<typename = std::enable_if_t<st_wgmma_layout<layout>>>
+
+    // this line breaks things when creating a tensor map
+    // template<typename = std::enable_if_t<st_wgmma_layout<layout>>>
     __device__ inline uint64_t descriptor(int chunk_idx=0) const {
         uint64_t desc = 0x0000000000000000;
         uint64_t start_addr;
