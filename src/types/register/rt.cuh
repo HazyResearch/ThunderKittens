@@ -128,4 +128,18 @@ template<rt_layout layout=rt_row_layout> using rt_bf_4x1 = rt_bf<4, 1, layout>; 
 template<rt_layout layout=rt_row_layout> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
 template<rt_layout layout=rt_row_layout> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
 
+
+// column wrappers
+template<int _height, int _width, rt_layout layout=rt_col_layout> using rt_col_fl = rt<float2, _height, _width, layout>;
+template<int _height, int _width, rt_layout layout=rt_col_layout> using rt_col_bf = rt<bf16_2, _height, _width, layout>;
+
+using rt_col_fl_1x1 = rt_col_fl<1, 1>;
+using rt_col_fl_1x2 = rt_col_fl<1, 2>;
+using rt_col_fl_1x4 = rt_col_fl<1, 4>;
+
+using rt_col_bf_1x1 = rt_col_bf<1, 1>;
+using rt_col_bf_1x2 = rt_col_bf<1, 2>;
+using rt_col_bf_1x4 = rt_col_bf<1, 4>;
+
+
 }
