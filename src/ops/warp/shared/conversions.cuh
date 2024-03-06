@@ -7,6 +7,18 @@ namespace kittens {
 
 /* ----------  COPIES  ---------- */
 
+/**
+ * @brief Copies data from one shared memory tile to another, potentially with different data types and layouts.
+ *
+ * @tparam T The data type of the destination tile.
+ * @tparam U The data type of the source tile.
+ * @tparam _height The height of the tile.
+ * @tparam _width The width of the tile.
+ * @tparam L1 The layout of the destination tile.
+ * @tparam L2 The layout of the source tile.
+ * @param[out] dst The destination tile.
+ * @param[in] src The source tile.
+ */
 template<typename T, typename U, int _height, int _width, st_layout L1, st_layout L2>
 __device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, _height, _width, L2> &src) {
     using T2 = base_types::packing<T>::packed_type;

@@ -5,6 +5,23 @@
 
 namespace kittens {
 
+/**
+ * @brief Perform the HMMA.16816 operation.
+ *
+ * This function performs the half-precision matrix multiply-accumulate operation
+ * using the `mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32` instruction.
+ *
+ * @param[out] d0 The first half of the output float2 accumulator.
+ * @param[out] d1 The second half of the output float2 accumulator.
+ * @param[in] a0 The first half of the first input bf16_2 matrix.
+ * @param[in] a1 The second half of the first input bf16_2 matrix.
+ * @param[in] a2 The first half of the second input bf16_2 matrix.
+ * @param[in] a3 The second half of the second input bf16_2 matrix.
+ * @param[in] b0 The first half of the bf16_2 matrix B.
+ * @param[in] b1 The second half of the bf16_2 matrix B.
+ * @param[in] c0 The first half of the float2 accumulator matrix C.
+ * @param[in] c1 The second half of the float2 accumulator matrix C.
+ */
 __device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
                                         const bf16_2 &a0, const bf16_2 &a1, const bf16_2 &a2, const bf16_2 &a3,
                                         const bf16_2 &b0, const bf16_2 &b1,
@@ -34,6 +51,17 @@ __device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
     );
 }
 
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, rt_row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, rt_row_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, rt_col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, rt_row_layout> accumulator matrix.
+ */
 __device__ static inline void mma_base(rt_base<float2, rt_row_layout> &d,
                                  const rt_base<bf16_2, rt_row_layout> &a,
                                  const rt_base<bf16_2, rt_col_layout> &b, // in col-major mode
@@ -51,6 +79,18 @@ __device__ static inline void mma_base(rt_base<float2, rt_row_layout> &d,
         c.data[2], c.data[3]
     );
 }
+
+/**
+ * @brief Base dot product operation for row layout.
+ *
+ * This function performs the base dot product operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, rt_row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, rt_row_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, rt_row_layout> matrix in row-major mode.
+ * @param[in] c The input rt_base<float2, rt_row_layout> accumulator matrix.
+ */
 __device__ static inline void dot_base(rt_base<float2, rt_row_layout> &d,
                                  const rt_base<bf16_2, rt_row_layout> &a,
                                  const rt_base<bf16_2, rt_row_layout> &b, // in row-major mode
@@ -69,6 +109,20 @@ __device__ static inline void dot_base(rt_base<float2, rt_row_layout> &d,
     );
 }
 
+/**
+ * @brief Matrix multiply-accumulate operation for row layout.
+ *
+ * This function performs the matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, rt_row_layout> accumulator.
+ * @param[in] a The first input rt_bf<N, K, rt_row_layout> matrix.
+ * @param[in] b The second input rt_bf<K, M, rt_col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_fl<N, M, rt_row_layout> accumulator matrix.
+ */
 template<int N, int K, int M>
 __device__ static inline void mma(rt_fl<N, M, rt_row_layout> &d,
                             const rt_bf<N, K, rt_row_layout> &a,
@@ -97,6 +151,20 @@ __device__ static inline void mma(rt_fl<N, M, rt_row_layout> &d,
     }
 }
 
+/**
+ * @brief Dot product operation for row layout.
+ *
+ * This function performs the dot product operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, rt_row_layout> accumulator.
+ * @param[in] a The first input rt_bf<N, K, rt_row_layout> matrix.
+ * @param[in] b The second input rt_bf<M, K, rt_row_layout> matrix in row-major mode.
+ * @param[in] c The input rt_fl<N, M, rt_row_layout> accumulator matrix.
+ */
 template<int N, int K, int M>
 __device__ static inline void dot(rt_fl<N, M, rt_row_layout> &d,
                             const rt_bf<N, K, rt_row_layout> &a,

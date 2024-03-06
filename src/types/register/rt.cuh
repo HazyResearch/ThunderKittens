@@ -1,131 +1,158 @@
 #pragma once
 
-#include <concepts>
 #include <type_traits>
 
 #include "../../common/common.cuh"
+#include "../../common/base_types.cuh"
 
 #include "rt_layouts.cuh"
 #include "rt_base.cuh"
 
 namespace kittens {
 
-/* ----------  MAIN TILE STRUCT  ---------- */
-    
-// these are helper structs for type inference in vector maps
-struct rt_id {};
-struct rt_col_vec_id {};
-struct rt_row_vec_id {};
+struct rt_id {}; // Unique identifier for the rt structure.
+struct rt_col_vec_id {}; // Unique identifier for the col_vec structure.
+struct rt_row_vec_id {}; // Unique identifier for the row_vec structure.
 
-// base register tile is 16x16
-// row major flag will help compiler catch orientation errors during mma and whatnot
-template<packed_type T2, int _height, int _width, rt_layout _layout=rt_row_layout>
+/**
+ * @brief Main tile structure for matrix tiles handling.
+ *
+ * @tparam T2 The packed data type used for the matrix elements.
+ * @tparam _height The height of the tile in terms of the number of subtiles.
+ * @tparam _width The width of the tile in terms of the number of subtiles.
+ * @tparam _layout The layout of the matrix tile, either row-major or column-major.
+ *
+ * This structure is designed to handle matrix tiles in a flexible manner, allowing
+ * for operations on tiles that are composed of smaller subtiles. It supports both
+ * row-major and column-major layouts and includes helper structs for type inference
+ * in vector maps.
+ */
+template<typename T2, int _height, int _width, typename _layout=kittens::rt_row_layout,
+         typename std::enable_if<kittens::is_packed_type<T2>::value, T2>::type* = nullptr,
+         typename std::enable_if<kittens::is_rt_layout<_layout>::value, _layout>::type* = nullptr>
 struct rt {
-    using identifier = rt_id;
-    using layout = _layout;
-    using dtype = T2;
+    using identifier = rt_id; ///< Type identifier for the rt structure.
+    using layout = _layout; ///< Layout of the matrix tile.
+    using dtype = T2; ///< Data type of the matrix elements.
 
-    static constexpr int height              = _height;
-    static constexpr int width               = _width;
-    static constexpr int rows                = height  * rt_base<dtype, layout>::tile_size;
-    static constexpr int cols                = width * rt_base<dtype, layout>::tile_size;
-    static constexpr int tile_size           = rt_base<dtype, layout>::tile_size;
-    static constexpr int num_elements        = rt_base<dtype, layout>::num_elements        * width * height;
-    static constexpr int elements_per_thread = rt_base<dtype, layout>::elements_per_thread * width * height;
-    static constexpr int packed_per_thread   = rt_base<dtype, layout>::packed_per_thread   * width * height;
-    static constexpr int packed_per_tile     = rt_base<dtype, layout>::packed_per_thread; // bring that up
+    static constexpr int height              = _height; ///< Height in subtiles.
+    static constexpr int width               = _width; ///< Width in subtiles.
+    static constexpr int rows                = height  * rt_base<dtype, layout>::tile_size; ///< Total number of rows.
+    static constexpr int cols                = width * rt_base<dtype, layout>::tile_size; ///< Total number of columns.
+    static constexpr int tile_size           = rt_base<dtype, layout>::tile_size; ///< Size of the base tile.
+    static constexpr int num_elements        = rt_base<dtype, layout>::num_elements        * width * height; ///< Total number of elements.
+    static constexpr int elements_per_thread = rt_base<dtype, layout>::elements_per_thread * width * height; ///< Elements handled per thread.
+    static constexpr int packed_per_thread   = rt_base<dtype, layout>::packed_per_thread   * width * height; ///< Packed elements per thread.
+    static constexpr int packed_per_tile     = rt_base<dtype, layout>::packed_per_thread; ///< Packed elements per tile.
 
-    rt_base<dtype, layout> tiles[height][width]; // should be row-major since we broadly expect row-major inputs
+    rt_base<dtype, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
 
-    // (assuming row_layout; if col_major then these are swapped)
-    // relies on T2 being a packed type due to the particular layout demanded by mma.
-    // essentially, each thread handles part of two separate rows in each 16x16 tile_base
-    // correspondingly, we use a packed type where the .x is the top row and .y the bottom.
+    // Correcting the dependent type names with the typename keyword
+    using col_type = typename std::conditional<layout::row, typename rt_base<dtype, layout>::col_type, typename rt_base<dtype, layout>::row_type>::type;
+    using row_type = typename std::conditional<layout::row, typename rt_base<dtype, layout>::row_type, typename rt_base<dtype, layout>::col_type>::type;
+
+    /**
+     * @brief Helper struct for column vector type inference.
+     *
+     * This struct represents a column vector within the matrix tile, allowing for
+     * operations specific to columns. It is used for type inference in vector maps.
+     */
     struct col_vec {
-        using identifier = rt_col_vec_id;
-        using layout = layout;
-        using dtype = dtype;
+        using identifier = rt_col_vec_id; ///< Type identifier for the col_vec structure.
+        using layout = _layout; ///< Layout of the matrix tile.
+        using dtype = T2; ///< Data type of the matrix elements.
 
-        rt_base<dtype, layout>::col_type data[height];
+        typename rt_base<dtype, layout>::col_type data[height]; ///< Storage for the column vector.
 
-        static constexpr int outer_dim = height;
-        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]);
+        static constexpr int outer_dim = height; ///< Number of elements in the outer dimension.
+        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]); ///< Number of elements in the inner dimension.
 
-        __device__ inline       rt_base<dtype, layout>::col_type& operator[](size_t idx)       { return data[idx]; }
-        __device__ inline const rt_base<dtype, layout>::col_type& operator[](size_t idx) const { return data[idx]; }
+        __device__ inline       typename rt_base<dtype, layout>::col_type& operator[](size_t idx)       { return data[idx]; }
+        __device__ inline const typename rt_base<dtype, layout>::col_type& operator[](size_t idx) const { return data[idx]; }
     };
-    // in the case of a column reduction, each thread contains data from 4 columns, so in
-    // eager mode it will store a bit of all of them.
+
+    /**
+     * @brief Helper struct for row vector type inference.
+     *
+     * This struct represents a row vector within the matrix tile, allowing for
+     * operations specific to rows. It is used for type inference in vector maps.
+     */
     struct row_vec {
-        using identifier = rt_row_vec_id;
-        using layout = layout;
-        using dtype = dtype;
+        using identifier = rt_row_vec_id; ///< Type identifier for the row_vec structure.
+        using layout = _layout; ///< Layout of the matrix tile.
+        using dtype = T2; ///< Data type of the matrix elements.
 
-        rt_base<dtype, layout>::row_type data[width];
+        typename rt_base<dtype, layout>::row_type data[width]; ///< Storage for the row vector.
 
-        static constexpr int outer_dim = width;
-        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]);
+        static constexpr int outer_dim = width; ///< Number of elements in the outer dimension.
+        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]); ///< Number of elements in the inner dimension.
 
-        __device__ inline       rt_base<dtype, layout>::row_type& operator[](size_t idx)       { return data[idx]; }
-        __device__ inline const rt_base<dtype, layout>::row_type& operator[](size_t idx) const { return data[idx]; }
+        __device__ inline       typename rt_base<dtype, layout>::row_type& operator[](size_t idx)       { return data[idx]; }
+        __device__ inline const typename rt_base<dtype, layout>::row_type& operator[](size_t idx) const { return data[idx]; }
     };
 };
 
-/* ----------  CONCEPTS  ---------- */
-
-template<typename T> concept rt_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_id>; // Checks if T::dentifier is abstract_rt
-// specialized types for specialized functions
+// Type trait to check if a type is an rt structure.
 template<typename T>
-concept rt_type_rowlayout = rt_type<T> && std::is_same_v<typename T::layout, rt_row_layout>;
+struct is_rt_type {
+    static constexpr bool value = std::is_same<typename T::identifier, rt_id>::value;
+};
+
+// Type trait to check if an rt structure has a row-major layout.
 template<typename T>
-concept rt_type_collayout = rt_type<T> && std::is_same_v<typename T::layout, rt_col_layout>;
+struct is_rt_type_rowlayout {
+    static constexpr bool value = is_rt_type<T>::value && std::is_same<typename T::layout, rt_row_layout>::value;
+};
 
+// Type trait to check if an rt structure has a column-major layout.
 template<typename T>
-concept rt_col_vec_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_col_vec_id>; // Checks if T::identifier is abstract_vector
+struct is_rt_type_collayout {
+    static constexpr bool value = is_rt_type<T>::value && std::is_same<typename T::layout, rt_col_layout>::value;
+};
+
+// Type trait to check if a type is a column vector within an rt structure.
 template<typename T>
-concept rt_row_vec_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_row_vec_id>; // Checks if T::identifier is abstract_vector
+struct is_rt_col_vec_type {
+    static constexpr bool value = std::is_same<typename T::identifier, rt_col_vec_id>::value;
+};
+
+// Type trait to check if a type is a row vector within an rt structure.
 template<typename T>
-concept rt_vec_type = rt_row_vec_type<T> || rt_col_vec_type<T>;
+struct is_rt_row_vec_type {
+    static constexpr bool value = std::is_same<typename T::identifier, rt_row_vec_id>::value;
+};
 
+// Type trait to check if a type is a vector within an rt structure.
+template<typename T>
+struct is_rt_vec_type {
+    static constexpr bool value = is_rt_row_vec_type<T>::value || is_rt_col_vec_type<T>::value;
+};
 
+// Wrappers for prettiness (layout and type wrappers, layout, type, and size wrappers) remain unchanged.
 
-/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+template<int _height, int _width, typename layout=kittens::rt_row_layout> using rt_fl = rt<float2, _height, _width, layout>;
+template<int _height, int _width, typename layout=kittens::rt_row_layout> using rt_bf = rt<bf16_2, _height, _width, layout>;
 
-// layout and type wrappers
+template<typename layout=kittens::rt_row_layout> using rt_fl_1x1 = rt_fl<1, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_1x2 = rt_fl<1, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_1x4 = rt_fl<1, 4, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_1x8 = rt_fl<1, 8, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_2x1 = rt_fl<2, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_2x2 = rt_fl<2, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_2x4 = rt_fl<2, 4, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_4x1 = rt_fl<4, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_4x2 = rt_fl<4, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_fl_8x1 = rt_fl<8, 1, layout>;
 
-template<int _height, int _width, rt_layout layout=rt_row_layout> using rt_fl = rt<float2, _height, _width, layout>;
-template<int _height, int _width, rt_layout layout=rt_row_layout> using rt_bf = rt<bf16_2, _height, _width, layout>;
-
-// layout, type, and size wrappers
-// sizes are chosen with the assumption that you aren't going to want to fit more than
-// 8 subtiles on a thread. (if you need more, you can of course add your own using's.)
-
-template<rt_layout layout=rt_row_layout> using rt_fl_1x1 = rt_fl<1, 1, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x2 = rt_fl<1, 2, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x4 = rt_fl<1, 4, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x8 = rt_fl<1, 8, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x1 = rt_fl<2, 1, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x2 = rt_fl<2, 2, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x4 = rt_fl<2, 4, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_4x1 = rt_fl<4, 1, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_4x2 = rt_fl<4, 2, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_8x1 = rt_fl<8, 1, layout>; // 64 registers used
-
-template<rt_layout layout=rt_row_layout> using rt_bf_1x1 = rt_bf<1, 1, layout>; //  4 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x2 = rt_bf<1, 2, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x4 = rt_bf<1, 4, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x8 = rt_bf<1, 8, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x1 = rt_bf<2, 1, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x2 = rt_bf<2, 2, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x4 = rt_bf<2, 4, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_4x1 = rt_bf<4, 1, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
+template<typename layout=kittens::rt_row_layout> using rt_bf_1x1 = rt_bf<1, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_1x2 = rt_bf<1, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_1x4 = rt_bf<1, 4, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_1x8 = rt_bf<1, 8, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_2x1 = rt_bf<2, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_2x2 = rt_bf<2, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_2x4 = rt_bf<2, 4, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_4x1 = rt_bf<4, 1, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_4x2 = rt_bf<4, 2, layout>;
+template<typename layout=kittens::rt_row_layout> using rt_bf_8x1 = rt_bf<8, 1, layout>;
 
 }

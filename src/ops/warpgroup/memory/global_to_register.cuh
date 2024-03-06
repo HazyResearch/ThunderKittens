@@ -6,6 +6,19 @@
 namespace kittens {
 namespace warpgroup {
 
+/**
+ * @brief Load data from global memory to register tiles with a row layout.
+ *
+ * This function loads data from a global memory location into a register tile,
+ * taking into account the row layout of the register tile and the row stride of the global memory.
+ * It is templated to handle different data types and layouts for efficient memory access patterns in CUDA kernels.
+ *
+ * @tparam RT Register tile type with row layout.
+ * @tparam U Data type of the source in global memory.
+ * @param dst Destination register tile where data will be loaded.
+ * @param src Source pointer in global memory.
+ * @param row_stride Stride between rows in global memory.
+ */
 template<rt_type_rowlayout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
     using T2 = RT::dtype;

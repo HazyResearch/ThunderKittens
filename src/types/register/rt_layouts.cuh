@@ -1,19 +1,39 @@
 #pragma once
 
-#include <concepts>
+#include <type_traits>
 
 namespace kittens {
 
-struct rt_row_layout { static constexpr bool row=true;  }; // for most matrices
-struct rt_col_layout { static constexpr bool row=false; }; // for the B-matrix of MMA ops.
+/**
+ * @brief Represents a row-major layout for matrices.
+ */
+struct rt_row_layout { static constexpr bool row=true; };
 
+/**
+ * @brief Represents a column-major layout for matrices, typically used for the B-matrix in MMA operations.
+ */
+struct rt_col_layout { static constexpr bool row=false; };
+
+/**
+ * @brief Structure that checks if a type represents a matrix layout.
+ * 
+ * @tparam T The type to check against the rt_row_layout and rt_col_layout.
+ */
 template<typename T>
-concept rt_layout = (
-    std::is_same_v<T, rt_row_layout>  ||
-    std::is_same_v<T, rt_col_layout>
-);
+struct is_rt_layout {
+    static constexpr bool value = std::is_same<T, rt_row_layout>::value || std::is_same<T, rt_col_layout>::value;
+};
 
-template<rt_layout L> struct transpose_layout                { using type = rt_col_layout; };
+/**
+ * @brief Determines the transpose of a given layout type.
+ * 
+ * @tparam L The layout type to transpose.
+ */
+template<typename L> struct transpose_layout                { using type = rt_col_layout; };
+
+/**
+ * @brief Specialization of transpose_layout for rt_col_layout.
+ */
 template<>            struct transpose_layout<rt_col_layout> { using type = rt_row_layout; };
 
 }

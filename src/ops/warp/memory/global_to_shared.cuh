@@ -9,6 +9,16 @@ namespace kittens {
 
 // ----------- ROW LAYOUTS ----------
 
+/**
+ * @brief Loads bf16 data from global memory into a shared memory tile with a row layout.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory row layout.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param row_stride The stride between rows in the source array.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
     // each thread needs to do 1 call per width*height
@@ -26,13 +36,24 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
         *(float4*)(&dst[{row, col}]) = *(float4*)(&src[row*row_stride + col]);
     }
 }
+
+/**
+ * @brief Stores bf16 data from a shared memory tile with a row layout into global memory.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory row layout.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param row_stride The stride between rows in the destination array.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {
 
@@ -47,7 +68,7 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 
@@ -55,7 +76,14 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
     }
 }
 
-
+/**
+ * @brief Loads data from global memory into a shared memory vector.
+ *
+ * @tparam ST The shared memory vector type.
+ * @tparam U The data type of the source global memory array.
+ * @param[out] dst The destination shared memory vector.
+ * @param[in] src The source global memory array.
+ */
 template<st_vec_type ST, typename U>
 __device__ inline static void load(ST &dst, const U *src) {
 
@@ -69,6 +97,14 @@ __device__ inline static void load(ST &dst, const U *src) {
     }
 }
 
+/**
+ * @brief Stores data from a shared memory vector into global memory.
+ *
+ * @tparam ST The shared memory vector type.
+ * @tparam U The data type of the destination global memory array.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory vector.
+ */
 template<st_vec_type ST, typename U>
 __device__ inline static void store(U *dst, const ST &src) {
 
@@ -76,13 +112,23 @@ __device__ inline static void store(U *dst, const ST &src) {
     int total_calls = (src.length+31)/32; // allowing it to round up
 
     #pragma unroll
-    for(int i = 0; i < total_calls; i++) { 
-        int idx = i * 32 + laneid;     
+    for(int i = 0; i < total_calls; i++) {
+        int idx = i * 32 + laneid;
         if (idx < src.length) { dst[idx] = src[idx]; }
     }
 }
 
-
+/**
+ * @brief Asynchronously loads bf16 data from global memory into a shared memory tile with a row layout using CUDA barriers.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory row layout.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param row_stride The stride between rows in the source array.
+ * @param barrier The CUDA barrier used for synchronization.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load_async(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
@@ -100,7 +146,7 @@ __device__ static inline void load_async(st<bf16, height, width, layout> &dst, c
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
@@ -112,6 +158,18 @@ __device__ static inline void load_async(st<bf16, height, width, layout> &dst, c
         );
     }
 }
+
+/**
+ * @brief Asynchronously stores bf16 data from a shared memory tile with a row layout into global memory using CUDA barriers.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory row layout.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param row_stride The stride between rows in the destination array.
+ * @param barrier The CUDA barrier used for synchronization.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store_async(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
@@ -129,7 +187,7 @@ __device__ static inline void store_async(bf16 *dst, const st<bf16, height, widt
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 
@@ -145,9 +203,19 @@ __device__ static inline void store_async(bf16 *dst, const st<bf16, height, widt
 
 // ----------- COL LAYOUTS ----------
 
+/**
+ * @brief Loads bf16 data from global memory into a shared memory tile with a column layout.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory column layout.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param row_stride The stride between rows in the source array.
+ */
 template<int height, int width, st_col_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
-    
+
     int laneid = threadIdx.x % 32;
 
     // in column mode we unfortunately can only transfer one element at at time.
@@ -159,13 +227,24 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
         dst[{row, col}] = src[row*row_stride + col];
     }
 }
+
+/**
+ * @brief Stores bf16 data from a shared memory tile with a column layout into global memory.
+ *
+ * @tparam height The number of rows in the tile.
+ * @tparam width The number of columns in the tile.
+ * @tparam layout The shared memory column layout.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param row_stride The stride between rows in the destination array.
+ */
 template<int height, int width, st_col_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {
 
@@ -180,7 +259,7 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 32 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 

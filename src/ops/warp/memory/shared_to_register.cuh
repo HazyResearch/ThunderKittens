@@ -13,6 +13,18 @@ namespace kittens {
 
 // ----------  ROW LAYOUTS ----------
 
+/**
+ * @brief Load data from shared memory to register tiles with row layout.
+ *
+ * @tparam T2            The data type of the elements in the register tiles.
+ * @tparam U             The data type of the elements in shared memory.
+ * @tparam height        The height of the register tiles.
+ * @tparam width         The width of the register tiles.
+ * @tparam reg_layout    The layout of the register tiles.
+ * @tparam shared_layout The layout of the shared memory.
+ * @param dst            The destination register tiles.
+ * @param src            The source shared memory.
+ */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
     using T  = base_types::packing<T2>::unpacked_type;
@@ -48,7 +60,18 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
     }
 }
 
-
+/**
+ * @brief Store data from register tiles to shared memory with row layout.
+ *
+ * @tparam U             The data type of the elements in shared memory.
+ * @tparam T2            The data type of the elements in the register tiles.
+ * @tparam height        The height of the register tiles.
+ * @tparam width         The width of the register tiles.
+ * @tparam reg_layout    The layout of the register tiles.
+ * @tparam shared_layout The layout of the shared memory.
+ * @param dst            The destination shared memory.
+ * @param src            The source register tiles.
+ */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {
     using T  = base_types::packing<T2>::unpacked_type;
@@ -86,6 +109,18 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
 
 // ----------  COL LAYOUTS ---------- (slow for the time being)
 
+/**
+ * @brief Load data from shared memory to register tiles with column layout.
+ *
+ * @tparam T2            The data type of the elements in the register tiles.
+ * @tparam U             The data type of the elements in shared memory.
+ * @tparam height        The height of the register tiles.
+ * @tparam width         The width of the register tiles.
+ * @tparam reg_layout    The layout of the register tiles.
+ * @tparam shared_layout The layout of the shared memory.
+ * @param dst            The destination register tiles.
+ * @param src            The source shared memory.
+ */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
 __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
     using T  = base_types::packing<T2>::unpacked_type;
@@ -124,6 +159,18 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
     }
 }
 
+/**
+ * @brief Store data from register tiles to shared memory with column layout.
+ *
+ * @tparam U             The data type of the elements in shared memory.
+ * @tparam T2            The data type of the elements in the register tiles.
+ * @tparam height        The height of the register tiles.
+ * @tparam width         The width of the register tiles.
+ * @tparam reg_layout    The layout of the register tiles.
+ * @tparam shared_layout The layout of the shared memory.
+ * @param dst            The destination shared memory.
+ * @param src            The source register tiles.
+ */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {
     using T  = base_types::packing<T2>::unpacked_type;

@@ -10,6 +10,16 @@ namespace warpgroup {
 
 // ----------- ROW LAYOUTS ----------
 
+/**
+ * @brief Load data from global memory into a structured tensor with row layout.
+ *
+ * @tparam height The height of the structured tensor.
+ * @tparam width The width of the structured tensor.
+ * @tparam layout The layout type of the structured tensor.
+ * @param dst The destination structured tensor.
+ * @param src The source memory in global memory.
+ * @param row_stride The stride between rows in the source memory.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
     // each thread needs to do 1 call per width*height
@@ -27,7 +37,7 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
@@ -35,6 +45,17 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
             *(float4*)(&dst[{row, col}]) = *(float4*)(&src[row*row_stride + col]);
     }
 }
+
+/**
+ * @brief Store data from a structured tensor with row layout into global memory.
+ *
+ * @tparam height The height of the structured tensor.
+ * @tparam width The width of the structured tensor.
+ * @tparam layout The layout type of the structured tensor.
+ * @param dst The destination memory in global memory.
+ * @param src The source structured tensor.
+ * @param row_stride The stride between rows in the destination memory.
+ */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {
 
@@ -49,7 +70,7 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 
@@ -76,7 +97,7 @@ __device__ static inline void load_async(st<bf16, height, width, layout> &dst, c
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
@@ -106,7 +127,7 @@ __device__ static inline void store_async(bf16 *dst, const st<bf16, height, widt
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 
@@ -124,7 +145,7 @@ __device__ static inline void store_async(bf16 *dst, const st<bf16, height, widt
 
 template<int height, int width, st_col_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
-    
+
     int laneid = threadIdx.x % 128;
 
     // in column mode we unfortunately can only transfer one element at at time.
@@ -136,7 +157,7 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
@@ -157,7 +178,7 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
     for(int i = 0; i < total_calls; i++) {
 
         int idx = i * 128 + laneid;
-        
+
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 

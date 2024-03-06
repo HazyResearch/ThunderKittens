@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "../../../common/common.cuh"
@@ -7,9 +6,14 @@
 
 namespace kittens {
 
-
-template<typename op, st_vec_type T>
-__device__ 
+/**
+ * @brief Applies a unary operation to a shared memory vector.
+ *
+ * @tparam op Unary operation to apply.
+ * @tparam T Shared memory vector type.
+ * @param dst Destination vector where the result is stored.
+ */
+template<typename op, typename T, std::enable_if_t<is_st_vec_type<T>::value, bool> = true>
 __device__ static inline void st_unary_map(T &dst) {
     __syncwarp();
     #pragma unroll
@@ -21,14 +25,40 @@ __device__ static inline void st_unary_map(T &dst) {
     }
 }
 
-template<st_vec_type T>
+/**
+ * @brief Sets all elements of a shared memory vector to zero.
+ *
+ * @tparam T Shared memory vector type.
+ * @param dst Destination vector to be set to zero.
+ */
+template<typename T, std::enable_if_t<is_st_vec_type<T>::value, bool> = true>
 __device__ static inline void zero(T &dst)      { st_unary_map<base_ops::zero, T>(dst);      }
-template<st_vec_type T>
-__device__ static inline void one(T &dst)       { st_unary_map<base_ops::one, T>(dst);       }
-template<st_vec_type T>
-__device__ static inline void pos_infty(T &dst) { st_unary_map<base_ops::pos_infty, T>(dst); }
-template<st_vec_type T>
-__device__ static inline void neg_infty(T &dst) { st_unary_map<base_ops::neg_infty, T>(dst); }
 
+/**
+ * @brief Sets all elements of a shared memory vector to one.
+ *
+ * @tparam T Shared memory vector type.
+ * @param dst Destination vector to be set to one.
+ */
+template<typename T, std::enable_if_t<is_st_vec_type<T>::value, bool> = true>
+__device__ static inline void one(T &dst)       { st_unary_map<base_ops::one, T>(dst);       }
+
+/**
+ * @brief Sets all elements of a shared memory vector to positive infinity.
+ *
+ * @tparam T Shared memory vector type.
+ * @param dst Destination vector to be set to positive infinity.
+ */
+template<typename T, std::enable_if_t<is_st_vec_type<T>::value, bool> = true>
+__device__ static inline void pos_infty(T &dst) { st_unary_map<base_ops::pos_infty, T>(dst); }
+
+/**
+ * @brief Sets all elements of a shared memory vector to negative infinity.
+ *
+ * @tparam T Shared memory vector type.
+ * @param dst Destination vector to be set to negative infinity.
+ */
+template<typename T, std::enable_if_t<is_st_vec_type<T>::value, bool> = true>
+__device__ static inline void neg_infty(T &dst) { st_unary_map<base_ops::neg_infty, T>(dst); }
 
 }

@@ -12,6 +12,18 @@ namespace warpgroup {
 // They currently work fine with xor layout but it should be
 // possible to reduce their bank conflicts with other layouts too.
 
+/**
+ * @brief Load data from shared memory to register tiles with optional type conversion.
+ *
+ * @tparam T2 The data type of the elements in the register tile.
+ * @tparam U The data type of the elements in the shared memory tile.
+ * @tparam height The height of the tile.
+ * @tparam width The width of the tile.
+ * @tparam reg_layout The layout of the register tile (row or column major).
+ * @tparam shared_layout The layout of the shared memory tile (row major).
+ * @param dst The destination register tile.
+ * @param src The source shared memory tile.
+ */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
     static_assert(height%4 == 0, "Warpgroup load / store requires tile height to be a multiple of 4.");
@@ -50,7 +62,18 @@ __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, con
     }
 }
 
-
+/**
+ * @brief Store data from register tiles to shared memory with optional type conversion.
+ *
+ * @tparam U The data type of the elements in the shared memory tile.
+ * @tparam T2 The data type of the elements in the register tile.
+ * @tparam height The height of the tile.
+ * @tparam width The width of the tile.
+ * @tparam reg_layout The layout of the register tile (row or column major).
+ * @tparam shared_layout The layout of the shared memory tile (row major).
+ * @param dst The destination shared memory tile.
+ * @param src The source register tile.
+ */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height/4, width, reg_layout> &src) {
     static_assert(height%4 == 0, "Warpgroup load / store requires tile height to be a multiple of 4.");

@@ -61,10 +61,22 @@ namespace tma {
 // __device__ static inline void execute_2d_load(st<bf16, height, width, st_naive_row_layout> &dst, CUtensorMap &tma_map, uint64_t &barrier,
 //                                                 int32_t const& crd0, int32_t const& crd1)
 // {
-    
+
 // }
 
-// Implementation for st_naive_row_layout
+/**
+ * @brief Asynchronously loads data from global memory into a shared memory tile with a naive row layout.
+ *
+ * This function sets up a tensor map for the data transfer and performs the asynchronous copy operation
+ * using CUDA's cp.async instruction. It is specialized for bf16 data type and naive row layout in shared memory.
+ *
+ * @tparam height The number of rows in the shared memory tile.
+ * @tparam width The number of columns in the shared memory tile.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory pointer.
+ * @param row_stride The stride between rows in the source memory.
+ * @param barrier The barrier used for synchronization of the asynchronous copy.
+ */
 template<int height, int width>
 __device__ static inline void load_async(st<bf16, height, width, st_naive_row_layout> &dst, const bf16 *src, const int row_stride, uint64_t &barrier) {
     using tmaTensorMap = CUtensorMap;
@@ -73,25 +85,25 @@ __device__ static inline void load_async(st<bf16, height, width, st_naive_row_la
     void*                   global_address  = (void*)src;
     CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; // hardcoded in the same way as global_to_shared.cuh
     constexpr int           tma_dim         = 2;
-    
-    uint32_t global_dim[2]; 
-    global_dim[0] = dst.rows; 
-    global_dim[1] = dst.cols; 
+
+    uint32_t global_dim[2];
+    global_dim[0] = dst.rows;
+    global_dim[1] = dst.cols;
     const uint64_t* g_dims = reinterpret_cast<const uint64_t*>(&global_dim);
 
     uint32_t global_strides[2];
-    global_strides[0] = 1; 
-    global_strides[1] = dst.cols * sizeof(bf16); 
+    global_strides[0] = 1;
+    global_strides[1] = dst.cols * sizeof(bf16);
     const uint64_t* g_strides = reinterpret_cast<const uint64_t*>(&global_strides);
 
-    uint32_t smem_dim[2]; 
-    smem_dim[0] = dst.rows; 
-    smem_dim[1] = dst.cols; 
+    uint32_t smem_dim[2];
+    smem_dim[0] = dst.rows;
+    smem_dim[1] = dst.cols;
 
-    uint32_t smem_strides[2]; 
+    uint32_t smem_strides[2];
     smem_strides[0] = 1;
-    smem_strides[1] = 1; 
-    
+    smem_strides[1] = 1;
+
     CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
     CUtensorMapL2promotion  tma_l2Promo     = CU_TENSOR_MAP_L2_PROMOTION_L2_128B; // try 64B and 256B - is this something we give the user control over?
@@ -102,10 +114,10 @@ __device__ static inline void load_async(st<bf16, height, width, st_naive_row_la
         tma_format,
         tma_dim,
         global_address,
-        g_dims, 
-        g_strides, 
-        smem_dim, 
-        smem_strides, 
+        g_dims,
+        g_strides,
+        smem_dim,
+        smem_strides,
         tma_interleave,
         tma_swizzle,
         tma_l2Promo,
@@ -116,8 +128,8 @@ __device__ static inline void load_async(st<bf16, height, width, st_naive_row_la
     uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
     uint64_t tma_ptr  = reinterpret_cast<uint64_t>(&tma_map);
 
-    int32_t crd0 = 0;  
-    int32_t crd1 = 0; 
+    int32_t crd0 = 0;
+    int32_t crd1 = 0;
 
     asm volatile (
         "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"
@@ -210,7 +222,7 @@ __device__ void static inline load_async(st<bf16, height, width, st_wgmma_col_12
 //     for(int i = 0; i < total_calls; i++) {
 
 //         int idx = i * 32 + laneid;
-        
+
 //         int row = idx / memcpy_per_row;
 //         int col = (idx*elem_per_memcpy) % src.cols;
 
@@ -223,21 +235,40 @@ __device__ void static inline load_async(st<bf16, height, width, st_wgmma_col_12
 //     }
 // }
 
+/**
+ * @brief Sets the expected number of bytes for a synchronization barrier.
+ *
+ * This function uses inline PTX assembly to set the expected transaction size for a barrier.
+ * It is used in conjunction with `init_barrier` to manage synchronization in asynchronous operations.
+ *
+ * @param[out] barrier The barrier variable to set the expected bytes for.
+ * @param[in] bytes The number of bytes expected for the barrier.
+ */
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
     void const* const ptr = &barrier;
-    uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+    uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
 
     asm volatile ("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
         :: "r"(bar_ptr), "r"(bytes));
 }
 
+/**
+ * @brief Initializes a synchronization barrier with a transaction count and sets the expected number of bytes.
+ *
+ * This function sets up a barrier that is used to synchronize threads within a block during asynchronous operations.
+ * It initializes the barrier with a transaction count and then calls `set_barrier_bytes` to set the expected transaction size.
+ *
+ * @param[out] barrier The barrier variable to initialize.
+ * @param[in] tc The transaction count for the barrier.
+ * @param[in] bytes The number of bytes expected for the barrier.
+ */
 __device__ static inline void init_barrier(uint64_t& barrier, int tc, uint32_t bytes) {
     void const* const ptr = &barrier;
-    uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+    uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
 
     asm volatile ("mbarrier.init.shared::cta.b64 [%0], %1;\n"
         :: "r"(bar_ptr), "r"(tc));
-    
+
     set_barrier_bytes(barrier, bytes);
 }
 

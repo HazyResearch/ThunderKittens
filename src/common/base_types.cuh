@@ -38,10 +38,16 @@ using half_2 = __half2;
 using bf16_2 = __nv_bfloat162;
 
 /**
- * @brief Concept to check if a type is a packed vector type.
+ * @brief Template structure to check if a type is a packed vector type.
  */
 template<typename T>
-concept packed_type = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+struct is_packed_type : std::false_type {};
+
+template<>
+struct is_packed_type<float2> : std::true_type {};
+
+template<>
+struct is_packed_type<bf16_2> : std::true_type {};
 
 namespace base_types {
 
@@ -71,10 +77,10 @@ template<> struct constants<float2> {
  * @brief Specialization of constants for bf16 type.
  */
 template<> struct constants<bf16> {
-    static __device__ inline constexpr bf16 zero()      { return std::bit_cast<__nv_bfloat16>(uint16_t(0x0000)); } // unfortunately __float2bf16_rn is not constexpr
-    static __device__ inline constexpr bf16 one()       { return std::bit_cast<__nv_bfloat16>(uint16_t(0x3F80)); }
-    static __device__ inline constexpr bf16 pos_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0x7F80)); }
-    static __device__ inline constexpr bf16 neg_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0xFF80)); }
+    static __device__ inline constexpr bf16 zero()      { return __nv_bfloat16{static_cast<float>(0x0000)}; }
+    static __device__ inline constexpr bf16 one()       { return __nv_bfloat16{static_cast<float>(0x3F80)}; }
+    static __device__ inline constexpr bf16 pos_infty() { return __nv_bfloat16{static_cast<float>(0x7F80)}; }
+    static __device__ inline constexpr bf16 neg_infty() { return __nv_bfloat16{static_cast<float>(0xFF80)}; }
 };
 
 /**
@@ -253,7 +259,10 @@ template<> struct convertor<bf16, float> {
  */
 template<> struct convertor<float2, bf16_2> {
     static __device__ inline float2 convert(const bf16_2 & u) {
-        return 	__bfloat1622float2(u);
+        float2 result;
+        result.x = __bfloat162float(u.x);
+        result.y = __bfloat162float(u.y);
+        return result;
     }
 };
 
@@ -262,7 +271,10 @@ template<> struct convertor<float2, bf16_2> {
  */
 template<> struct convertor<bf16_2, float2> {
     static __device__ inline bf16_2 convert(const float2 & u) {
-        return 	__float22bfloat162_rn(u);
+        bf16_2 result;
+        result.x = __float2bfloat16_rn(u.x);
+        result.y = __float2bfloat16_rn(u.y);
+        return result;
     }
 };
 
