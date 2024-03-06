@@ -60,7 +60,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     __shared__ alignas(alignof(float4)) H v[d_model];
     __shared__ alignas(alignof(float4)) H num[d_model];
     __shared__ alignas(alignof(float4)) H num_help[workers][d_model];
-    // __shared__ alignas(alignof(float4)) H den[1];
+    __shared__ alignas(alignof(float4)) H den[1];
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
@@ -199,8 +199,10 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     // Divide num by den
     __syncwarp();
     H denom_val = den[0];
-    for(auto j = threadIdx.x; j < d_model; j+=nThreads) {
-        num[j] /= denom_val;
+    if (warpid == 0) {
+        for (auto i = lane; i < d_model; i+=kittens::WARP_SIZE) {
+            num[i] /= denom_val;
+        }
     }
 
     __syncthreads();
