@@ -39,17 +39,25 @@ template<> struct constants<float2> {
     static __device__ inline constexpr float2 pos_infty() { return float2{constants<float>::pos_infty(), constants<float>::pos_infty()}; }
     static __device__ inline constexpr float2 neg_infty() { return float2{constants<float>::neg_infty(), constants<float>::neg_infty()}; }
 };
+// template<> struct constants<bf16> {
+//     static __device__ inline constexpr bf16 zero()      { return std::bit_cast<__nv_bfloat16>(uint16_t(0x0000)); } // unfortunately __float2bf16_rn is not constexpr
+//     static __device__ inline constexpr bf16 one()       { return std::bit_cast<__nv_bfloat16>(uint16_t(0x3F80)); }
+//     static __device__ inline constexpr bf16 pos_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0x7F80)); }
+//     static __device__ inline constexpr bf16 neg_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0xFF80)); }
+// };
+
+// SA if the above doesn't compile, try this:
 template<> struct constants<bf16> {
-    static __device__ inline constexpr bf16 zero()      { return std::bit_cast<__nv_bfloat16>(uint16_t(0x0000)); } // unfortunately __float2bf16_rn is not constexpr
-    static __device__ inline constexpr bf16 one()       { return std::bit_cast<__nv_bfloat16>(uint16_t(0x3F80)); }
-    static __device__ inline constexpr bf16 pos_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0x7F80)); }
-    static __device__ inline constexpr bf16 neg_infty() { return std::bit_cast<__nv_bfloat16>(uint16_t(0xFF80)); }
+    static __device__ inline  bf16 zero()      { return __float2bfloat16(0.0f); } // unfortunately __float2bf16_rn is not constexpr
+    static __device__ inline  bf16 one()       { return __float2bfloat16(constants<float>::one());  }
+    static __device__ inline  bf16 pos_infty() { return __float2bfloat16(constants<float>::pos_infty()); }
+    static __device__ inline  bf16 neg_infty() { return __float2bfloat16(constants<float>::neg_infty());  }
 };
 template<> struct constants<bf16_2> {
-    static __device__ inline constexpr bf16_2 zero()      { return bf16_2{constants<bf16>::zero(),      constants<bf16>::zero()};      }
-    static __device__ inline constexpr bf16_2 one()       { return bf16_2{constants<bf16>::one(),       constants<bf16>::one()};       }
-    static __device__ inline constexpr bf16_2 pos_infty() { return bf16_2{constants<bf16>::pos_infty(), constants<bf16>::pos_infty()}; }
-    static __device__ inline constexpr bf16_2 neg_infty() { return bf16_2{constants<bf16>::neg_infty(), constants<bf16>::neg_infty()}; }
+    static __device__ inline bf16_2 zero()      { return bf16_2{constants<bf16>::zero(),      constants<bf16>::zero()};      }
+    static __device__ inline bf16_2 one()       { return bf16_2{constants<bf16>::one(),       constants<bf16>::one()};       }
+    static __device__ inline bf16_2 pos_infty() { return bf16_2{constants<bf16>::pos_infty(), constants<bf16>::pos_infty()}; }
+    static __device__ inline bf16_2 neg_infty() { return bf16_2{constants<bf16>::neg_infty(), constants<bf16>::neg_infty()}; }
 };
 
 // how many are packed?
@@ -59,32 +67,32 @@ template<typename T> struct packing {
 template<> struct packing<bf16> {
     static __device__ inline constexpr int num() { return 1; }
     using packed_type = bf16_2;
-    static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; }
+    static __device__ inline bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; }
 };
 template<> struct packing<half> {
     static __device__ inline constexpr int num() { return 1; }
     using packed_type = half_2;
-    static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; }
+    static __device__ inline half_2 pack(const half &i) { return half_2{i, i}; }
 };
 template<> struct packing<float> {
     static __device__ inline constexpr int num() { return 1; }
     using packed_type = float2;
-    static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; }
+    static __device__ inline float2 pack(const float &i) { return float2{i, i}; }
 };
 template<> struct packing<bf16_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = bf16;
-    static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; } // this replication makes code cleaner later.
+    static __device__ inline bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<half_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = half;
-    static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; } // this replication makes code cleaner later.
+    static __device__ inline half_2 pack(const half &i) { return half_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<float2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = float;
-    static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
+    static __device__ inline float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<int2> {
     static __device__ inline constexpr int num() { return 2; }
