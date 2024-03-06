@@ -5,8 +5,15 @@
 
 namespace kittens {
 
-/* ----------  LAYOUT SWAPS  ---------- */
-
+/**
+ * @brief Swaps the layout of 8 bf16_2 elements.
+ *
+ * This function uses inline assembly to perform a matrix transpose on a block of 8 bf16_2 elements.
+ * It is a low-level operation used by higher-level layout swap functions.
+ *
+ * @param dst Reference to the destination bf16_2 element where the result will be stored.
+ * @param src Reference to the source bf16_2 element to be transposed.
+ */
 __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
     asm volatile (
         "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
@@ -14,16 +21,42 @@ __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
     :   "r"(*(uint32_t*)(&src))
     );
 }
+
+/**
+ * @brief Swaps the layout of a register tile base.
+ *
+ * This function swaps the layout of a register tile base by performing a series of layout swaps
+ * on its constituent bf16_2 elements. It is used to change the data layout within a register tile.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam layout The current layout of the register tile.
+ * @param dst Reference to the destination register tile base where the result will be stored.
+ * @param src Reference to the source register tile base to be swapped.
+ */
 template<typename T2, rt_layout layout>
 __device__ inline void swap_layout(rt_base<T2, typename transpose_layout<layout>::type> &dst, const rt_base<T2, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
-    // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
+    // everywhere else in the code, but that feels... very likely to cause bugs and not worth it.
     T2 data1_cache = src.data[1]; // important for swap!
     swap_layout_8(dst.data[1], src.data[2]);
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
 }
+
+/**
+ * @brief Swaps the layout of a register tile.
+ *
+ * This function swaps the layout of a register tile by iterating over its height and width
+ * and performing layout swaps on each of its base elements.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height of the register tile.
+ * @tparam _width The width of the register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param dst Reference to the destination register tile where the result will be stored.
+ * @param src Reference to the source register tile to be swapped.
+ */
 template<typename T2, int _height, int _width, rt_layout layout>
 __device__ static inline void swap_layout(rt<T2, _height, _width, typename transpose_layout<layout>::type> &dst, const rt<T2, _height, _width, layout> &src) {
     #pragma unroll
@@ -35,12 +68,37 @@ __device__ static inline void swap_layout(rt<T2, _height, _width, typename trans
     }
 }
 
+/**
+ * @brief Swaps the layout of a register tile base in place.
+ *
+ * This function swaps the layout of a register tile base in place by casting it to the
+ * transposed layout type and then performing the layout swap.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam layout The current layout of the register tile.
+ * @param src Reference to the register tile base to be swapped in place.
+ * @return A reference to the swapped register tile base.
+ */
 template<typename T2, rt_layout layout>
 __device__ inline rt_base<T2, typename transpose_layout<layout>::type>& swap_layout_inplace(const rt_base<T2, layout> &src) {
     rt_base<T2, typename transpose_layout<layout>::type> &dst = *(rt_base<T2, typename transpose_layout<layout>::type>*)(&src);
     swap_layout(dst, src);
     return dst;
 }
+
+/**
+ * @brief Swaps the layout of a register tile in place.
+ *
+ * This function swaps the layout of a register tile in place by iterating over its height and width
+ * and performing in-place layout swaps on each of its base elements.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height of the register tile.
+ * @tparam _width The width of the register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile Reference to the register tile to be swapped in place.
+ * @return A reference to the swapped register tile.
+ */
 template<typename T2, int _height, int _width, rt_layout layout>
 __device__ static inline rt<T2, _height, _width, typename transpose_layout<layout>::type>& swap_layout_inplace(rt<T2, _height, _width, layout> &tile) {
     #pragma unroll
