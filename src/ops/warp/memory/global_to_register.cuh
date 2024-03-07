@@ -118,5 +118,27 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
     }
 }
 
+// Storing a vector
+template<typename RT, typename U>
+__device__ inline static void store(U *dst, const RT &src) {
+    using T2 = RT::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+    int laneid = threadIdx.x % 32;
+
+    // int laneid = threadIdx.x % 32;
+    auto row = 2*(laneid % 4);
+    auto row_thread_id = laneid / 4;
+
+    if(row_thread_id < 4) {
+        #pragma unroll 
+        for(auto w = 0; w < src.outer_dim; w++) { 
+            dst[w*TILE_DIM + row + 0] = src[w][row_thread_id].x;
+            dst[w*TILE_DIM + row + 1] = src[w][row_thread_id].y;
+            dst[w*TILE_DIM + row + 8] = src[w][row_thread_id].x;
+            dst[w*TILE_DIM + row + 9] = src[w][row_thread_id].y;
+        }
+    }
+}
+
 
 }
