@@ -68,15 +68,40 @@ void shm_broadcast(float &f, float *shm, const int workers = 4) {
 
 // GEMV
 __device__
-void gemv(rt_col_bf_4x1::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<>::col_vec &a) { // SA: directions of these seem off
-    rt_fl_4x1<>::col_vec t;
+void gemv(rt_fl_1x4<>::col_vec  &o, rt_col_bf_1x4::row_vec &x, rt_col_fl_1x4::row_vec &a) { // SA: directions of these seem off
+    rt_col_fl_1x4::row_vec t;
     copy(t,a);
     // The accumulator is row x column
     // a row multiply means that each row is multiplied by a column matrix.
     // So if the accumulator is 2 x 3 then 
-    // mul_row_accum_rvec(t, x); // multiply vv in place with aa: a * v.unsqueeze(1)
-    // mul_row(t, x); // multiply vv in place with aa: a * v.unsqueeze(1)
-    // row_sum(o, t); // aa.sum(0) sum across all the rows 
+    // mul_row(t, x, t); // multiply vv in place with aa: a * v.unsqueeze(1)
+    // row_sum(o, t, o); // aa.sum(0) sum across all the rows 
+}
+
+
+static
+void __device__
+vec_to_rvec(rt_bf_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
+    auto row = kittens::laneid() / 4;
+    __syncwarp();    
+    for(auto h = 0; h < dst.outer_dim; h++) {
+        dst[h][0].x = src[h*kittens::TILE_DIM + row];    
+        dst[h][1].x = src[h*kittens::TILE_DIM + row + 8]; // SA: IS THIS CORRECT???
+    }
+}
+
+static void __device__
+rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
+    using U = __nv_bfloat16;
+    using T = float;
+    auto row = kittens::laneid() / 4;
+    __syncwarp();
+    if(kittens::laneid() % 4 == 0) { // only the leaders write
+        for(auto h = 0; h < src.outer_dim; h++) {
+            dst[h*TILE_DIM + row]     = base_types::convertor<U, T>::convert(src[h][0].x);     // SA: IS THIS CORRECT???
+            dst[h*TILE_DIM + row + 8] = base_types::convertor<U, T>::convert(src[h][1].x);
+        }
+    }    
 }
 
 
@@ -96,15 +121,12 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     const H* _v = device_cast(__v) + head_offset;
           H* _o = device_cast(__o) + blockIdx.x*d; // just a single vector
 
-    // this is the CUDA shared memory
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
     st_bf_4x4<st_xor_row_layout> k = al.allocate<st_bf_4x4<st_xor_row_layout>>();
     st_bf_4x4<st_xor_row_layout> v = al.allocate<st_bf_4x4<st_xor_row_layout>>();
     __shared__ st_bf_1x4<st_xor_row_layout>::row_vec w;
-
-    // __shared__ float _max[workers], _sum[workers]; TODO replace
-    // st_bf_1x1<st_xor_row_layout> (&_max)[workers] = al.allocate<st_bf_1x1<st_xor_row_layout>, workers>();
+    __shared__ float _max[workers], _sum[workers]; 
 
     const auto start_idx = just_q ? 0 : (j-window_size)*d;
     thread_block_load(k, _k + start_idx, threads);
@@ -113,7 +135,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     rt_col_bf_1x4::row_vec qv; // full local copy 
     rt_fl_1x4<>::col_vec ws; 
-    rt_col_bf_1x4::row_vec k_slice; // SA: Should this be float type?
+    rt_col_fl_1x4::row_vec k_slice; // SA: Should this be float type?
     
     rt_bf_4x1<>::col_vec wv; // full local copy 
     rt_col_bf_4x1::row_vec os; // shards
@@ -121,10 +143,10 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     // These are column slices of the matrix.: | K_1 | K_2 | K_3 |
     __syncthreads();
-    // TODO: load(qv, _q + vec_idx, d); // every warp gets a full copy of q 
+    load(qv, _q + vec_idx); // every warp gets a full copy of q 
 
     // We want a column-wise stripe of the vector. 
-    // REPLACED rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0)); 
+    // REPLACED rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));  # FLAG!
     // load(k_slice, k.data + warpid*kittens::TILE_DIM, d);
     
     // ********
@@ -133,30 +155,30 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     // ks = [k[:,j*d//4:(j+1)*d//4] for j in range(4)] # shard k
     // ws = [torch.einsum("d, de->e", qs[j],ks[j]) for j in range(4)]
     zero(ws);
-    // gemv(ws, qv, k_slice);
+    gemv(ws, qv, k_slice);
 
     // local_max = [ws[j].max() for j in range(4)] # compute local, then global max
     // the_max = torch.tensor(local_max).max()
     float local_max= -INFINITY;
-    // max(ws, local_max, ws);
-    // shm_broadcast<ops::mul>(local_max, _max);
+    max(ws, ws, local_max);
+    shm_broadcast<base_ops::mul>(local_max, _max);
     
     // ews = [torch.exp(ws[j] - the_max) for j in range(4)]
-    // sub(ws, local_max);
+    sub(ws, ws, local_max);
     exp(ws, ws);
 
     // es  = [ews[j].sum() for j in range(4)]
     float local_sum = 0.f;
-    // add(ws, local_sum);
-    // shm_broadcast<ops::sum>(local_sum, _sum);
+    add(ws, ws, local_sum);
+    shm_broadcast<base_ops::sum>(local_sum, _sum);
     
     // w  /= the_sum
-    // div(ws, local_sum);
+    div(ws, ws, local_sum);
 
     // broadcast w back to shared memory
-    // rvec_to_svec(&w.data[warpid*kittens::TILE_DIM], ws);
+    rvec_to_vec(&w.data[warpid*kittens::TILE_DIM], ws);
     __syncthreads(); // let the writes complete
-    // svec_to_rvec(wv, w.data); // read the *whole* v here.
+    vec_to_rvec(wv, w.data); // read the *whole* v here.
     
     // we want a column stripe of V
     // TODO rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
@@ -164,8 +186,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     // gemv(os, wv, v_slice);
     
     // now we have a fragment of v and we write, this write is to *global* memory.
-    // store(_o + warpid*kittens::TILE_DIM, os, d);
-    //  argument types are: (__nv_bfloat16 *, kittens::rt<std::false_type, kittens::bf16_2, 4, 1>::row_vec, const int)      
+    store(_o + warpid*kittens::TILE_DIM, os);
 }
 
 void 
