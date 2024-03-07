@@ -11,7 +11,7 @@
 #include "warp/reduction_tests.impl"
 #include "warp/mma_tests.impl"
 #include "warp/tma_tests.impl"
-#include "warp/wgmma_tma_tests.impl"
+#include "warp/wgmmatma_tests.impl"
 
 #include "warpgroup/wgmma_tests.impl"
 
@@ -32,8 +32,8 @@ int main() {
     // failures += mma_tests();
     // failures += tma_tests();
     failures += wgmma_tma_tests();
-    // std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
-    // failures += wgmma_tests();
+    std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
+    failures += wgmma_tests();
     // std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     // failures += dsmem_tests();
 

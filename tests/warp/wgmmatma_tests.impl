@@ -101,6 +101,7 @@ int wgmma_tma_tests() {
     std::cout << " ----- Starting Warpgroup MMA tests! -----" << std::endl;
     int failures = 0;
 
+    // test all combinations of wgmma sizes
     failures += !test_wgmma_tma_mma_trans<true , 1, 1>();
     failures += !test_wgmma_tma_mma_trans<true , 1, 2>();
     failures += !test_wgmma_tma_mma_trans<true , 1, 3>();
@@ -117,6 +118,8 @@ int wgmma_tma_tests() {
     // failures += !test_wgmma_tma_mma_trans<true , 4, 2>(); // numerical instability
     failures += !test_wgmma_tma_mma_trans<true , 4, 3>();
     failures += !test_wgmma_tma_mma_trans<true , 4, 4>();
+
+    // in reg = false, we have to use shared memory for A
     failures += !test_wgmma_tma_mma_trans<false, 1, 1>();
     failures += !test_wgmma_tma_mma_trans<false, 1, 2>();
     failures += !test_wgmma_tma_mma_trans<false, 1, 3>();
