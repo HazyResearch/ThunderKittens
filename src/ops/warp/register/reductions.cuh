@@ -19,7 +19,7 @@ namespace kittens {
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when reset is false.
  */
-template<typename op, typename V, typename T, bool reset, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type_rowlayout<T>::value, bool> = true>
+template<typename op, rt_col_vec_type V, rt_type_rowlayout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -74,8 +74,7 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when reset is false.
  */
-// col-major layout
-template<typename op, typename V, typename T, bool reset, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type_collayout<T>::value, bool> = true>
+template<typename op, rt_col_vec_type V, rt_type_collayout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -136,9 +135,7 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when reset is false.
  */
-// Col reduction.
-// row-major layout
-template<typename op, typename V, typename T, bool reset, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type_rowlayout<T>::value, bool> = true>
+template<typename op, rt_row_vec_type V, rt_type_rowlayout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -198,8 +195,7 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when reset is false.
  */
-// col-major layout
-template<typename op, typename V, typename T, bool reset, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type_collayout<T>::value, bool> = true>
+template<typename op, rt_row_vec_type V, rt_type_collayout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -244,10 +240,58 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 /**
- * @brief Wrapper functions for row-wise reduction operations.
+ * @brief Store the maximum of each row of the src register tile in the row_accum column vector.
  *
- * These functions provide a cleaner interface for performing common reduction operations like max, min, sum, and prod
- * on the rows of a matrix. They abstract away the template parameters and reset flag, simplifying the function call.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_col_vec_type V, rt_type T>
+__device__ static inline void row_max(V &row_accum, const T &src)  {
+    row_reduce<base_ops::max, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the minimum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_col_vec_type V, rt_type T>
+__device__ static inline void row_min(V &row_accum, const T &src)  {
+    row_reduce<base_ops::min, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the sum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_col_vec_type V, rt_type T>
+__device__ static inline void row_sum(V &row_accum, const T &src)  {
+    row_reduce<base_ops::sum, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the product of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_col_vec_type V, rt_type T>
+__device__ static inline void row_prod(V &row_accum, const T &src) {
+    row_reduce<base_ops::mul, V, T, true>(row_accum, src, row_accum);
+}
+
+// three-operand row reductions. (Accumulate ONTO.)
+
+/**
+ * @brief Store the maximum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
  *
  * @tparam V The vector type for the row accumulator.
  * @tparam T The matrix type.
@@ -255,86 +299,152 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
  */
-
-// two-operand row reductions. (Accumulate and REPLACE.)
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void row_max(V &row_accum, const T &src)  {
-    row_reduce<base_ops::max, V, T, true>(row_accum, src, row_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void row_min(V &row_accum, const T &src)  {
-    row_reduce<base_ops::min, V, T, true>(row_accum, src, row_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void row_sum(V &row_accum, const T &src)  {
-    row_reduce<base_ops::sum, V, T, true>(row_accum, src, row_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void row_prod(V &row_accum, const T &src) {
-    row_reduce<base_ops::mul, V, T, true>(row_accum, src, row_accum);
-}
-// three-operand row reductions. (Accumulate ONTO.)
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+template<rt_col_vec_type V, rt_type T>
 __device__ static inline void row_max(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::max, V, T, false>(row_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the minimum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_col_vec_type V, rt_type T>
 __device__ static inline void row_min(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::min, V, T, false>(row_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the sum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_col_vec_type V, rt_type T>
 __device__ static inline void row_sum(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::sum, V, T, false>(row_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_col_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the product of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_col_vec_type V, rt_type T>
 __device__ static inline void row_prod(V &row_accum, const T &src, const V &src_accum) {
     row_reduce<base_ops::mul, V, T, false>(row_accum, src, src_accum);
 }
 
+// COLUMN REDUCTIONS
+
 /**
- * @brief Wrapper functions for column-wise reduction operations.
+ * @brief Store the maximum of each column of the src register tile in the col_accum row vector.
  *
- * These functions provide a cleaner interface for performing common reduction operations like max, min, sum, and prod
- * on the columns of a matrix. They abstract away the template parameters and reset flag, simplifying the function call.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_row_vec_type V, rt_type T>
+__device__ static inline void col_max(V &col_accum, const T &src)  {
+    col_reduce<base_ops::max, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the minimum of each column of the src register tile in the col_accum row vector.
  *
- * @tparam V The vector type for the column accumulator.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_row_vec_type V, rt_type T>
+__device__ static inline void col_min(V &col_accum, const T &src)  {
+    col_reduce<base_ops::min, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the sum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_row_vec_type V, rt_type T>
+__device__ static inline void col_sum(V &col_accum, const T &src)  {
+    col_reduce<base_ops::sum, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the product of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<rt_row_vec_type V, rt_type T>
+__device__ static inline void col_prod(V &col_accum, const T &src) {
+    col_reduce<base_ops::mul, V, T, true>(col_accum, src, col_accum);
+}
+
+// three-operand col reductions. (Accumulate ONTO.)
+
+/**
+ * @brief Store the maximum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
  * @tparam T The matrix type.
  * @param[out] col_accum The accumulator where the result of the reduction is stored.
  * @param[in] src The source matrix on which to perform the reduction.
  * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
  */
-
-// two-operand col reductions. (Accumulate and REPLACE.)
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void col_max(V &col_accum, const T &src)  {
-    col_reduce<base_ops::max, V, T, true>(col_accum, src, col_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void col_min(V &col_accum, const T &src)  {
-    col_reduce<base_ops::min, V, T, true>(col_accum, src, col_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void col_sum(V &col_accum, const T &src)  {
-    col_reduce<base_ops::sum, V, T, true>(col_accum, src, col_accum);
-}
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
-__device__ static inline void col_prod(V &col_accum, const T &src) {
-    col_reduce<base_ops::mul, V, T, true>(col_accum, src, col_accum);
-}
-// three-operand col reductions. (Accumulate ONTO.)
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+template<rt_row_vec_type V, rt_type T>
 __device__ static inline void col_max(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::max, V, T, false>(col_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the minimum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_row_vec_type V, rt_type T>
 __device__ static inline void col_min(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::min, V, T, false>(col_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the sum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_row_vec_type V, rt_type T>
 __device__ static inline void col_sum(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::sum, V, T, false>(col_accum, src, src_accum);
 }
-template<typename V, typename T, std::enable_if_t<is_rt_row_vec_type<V>::value, bool> = true, std::enable_if_t<is_rt_type<T>::value, bool> = true>
+/**
+ * @brief Store the product of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<rt_row_vec_type V, rt_type T>
 __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_accum) {
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
 }

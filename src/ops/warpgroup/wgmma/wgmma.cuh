@@ -211,9 +211,7 @@ __device__ inline void fence(rt_fl<height, width, rt_row_layout> &dst) {
 }
 
 /**
- * @brief Commit the current warp group to a synchronization point.
- *
- * This function ensures that all threads in the warp group reach a synchronization point before any thread can proceed.
+ * @brief Commit the current set of warp group matrix multiply accumulate calls.
  */
 __device__ inline void commit_group() {
     asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
@@ -224,7 +222,7 @@ __device__ inline void commit_group() {
  *
  * This function stalls the current thread until all threads in the warp group have reached the specified synchronization point.
  *
- * @tparam N The synchronization point to wait for.
+ * @tparam N The number of remaining active WGMMA committed groups allowed. This will stall until the number of active groups is less than or equal to N.
  */
 template<int N=0>
 __device__ inline void mma_async_wait() {

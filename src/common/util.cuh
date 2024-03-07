@@ -52,23 +52,17 @@ __device__ __forceinline__ int laneid() {return threadIdx.x & 0x1f; }
 /* ----------  BOOL TYPE UTILS  ---------- */
 
 /**
- * @brief Structure to check if a type is a boolean type.
+ * @brief Concept to check if a type is a boolean type.
  * @tparam T The type to check.
  */
 template<typename T>
-struct is_bool_type : std::false_type {};
-
-template<>
-struct is_bool_type<std::true_type> : std::true_type {};
-
-template<>
-struct is_bool_type<std::false_type> : std::true_type {};
+concept bool_type = std::is_same_v<T, std::true_type> || std::is_same_v<T, std::false_type>;
 
 /**
  * @brief Utility structure to get the opposite boolean type.
  * @tparam B The boolean type to negate.
  */
-template<typename B> struct not_type      { using type = std::true_type;  };
+ template<bool_type B> struct not_type     { using type = std::true_type;  };
 
 /**
  * @brief Specialization of not_type for std::true_type.
@@ -92,7 +86,6 @@ static constexpr uint32_t MASK_ALL = 0xFFFFFFFF;
  */
 template<typename T>
 __device__ static inline T packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
-    static_assert(std::is_arithmetic<T>::value, "Shuffle operations are only supported for arithmetic types.");
     return __shfl_down_sync(mask, f, delta);
 }
 
@@ -106,14 +99,13 @@ __device__ static inline T packed_shfl_down_sync(uint32_t mask, const T &f, int 
  */
 template<typename T>
 __device__ static inline T packed_shfl_sync(uint32_t mask, const T &f, int src) {
-    static_assert(std::is_arithmetic<T>::value, "Shuffle operations are only supported for arithmetic types.");
     return __shfl_sync(mask, f, src);
 }
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
 /**
- * @brief Dummy structure for alignment purposes.
+ * @brief Dummy structure for alignment purposes. Needed for WGMMA and TMA calls.
  */
 struct alignas(128) alignment_dummy { int dummy; };
 
@@ -122,11 +114,11 @@ struct alignas(128) alignment_dummy { int dummy; };
  */
 struct shared_allocator {
 
-    int *ptr; ///< Pointer to the current position in shared memory.
+    int *ptr; // < Pointer to the current position in shared memory.
 
     /**
      * @brief Construct a new shared allocator.
-     * @param _ptr Pointer to the start of the shared memory.
+     * @param _ptr Pointer to the start of the extern shared memory.
      */
     __device__ shared_allocator(int * _ptr): ptr(_ptr) {}
 
