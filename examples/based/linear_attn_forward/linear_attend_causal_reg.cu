@@ -208,6 +208,26 @@ make_causal(_rtd_qk_accum &accum) {
 }
 
 
+// Note chris left a comment: this is a wasteful way to do this.
+__device__
+static void mul_row_slice(_rtd_qk &f, const int index) {
+    auto lane       = kittens::laneid();
+    auto row        = lane / 4;
+    auto col        = lane % 4; // * 2
+    
+    __syncwarp();
+    for(auto col_offset = 0; col_offset < 2; col_offset++) {
+        // __nv_bfloat162 v = (index < 8) ? f.data[col_offset][0] : f.data[col_offset][1];
+        __nv_bfloat162 vs[4];
+        // #pragma unroll
+        // for(auto j=0; j < 4; j++) {vs[j] = __shfl_sync(0xFFFFFFFF, v, index*4 + j);}
+        auto my_v = vs[col];
+        __syncwarp();
+        // #pragma unroll
+    //     for(auto i=0; i < 2; i++) {f.data[col_offset][i] = op::op(f.data[col_offset][i],my_v);}
+    }
+}
+
 template <typename H, typename T, bool _debug_build>
 __global__
 void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k, 
@@ -392,23 +412,25 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
             // reduce_tile_tiles(y[blk], ty);   # SA: WARNING -- TAKING SO LONG TO COMPILE
             __syncthreads();
 
-
             // Update state for next round only needed if there is more work.
             load(kj0, k[tic][blk]);
             transpose_inplace(kj0); 
             copy(kj1, kj0); 
-            // TODO: rt.mul_row_slice(kj0[0][0], 2*warpid);
-            // TODO: rt.mul_row_slice(kj1[0][0], 2*warpid+1);
+            // mul_row_slice(kj0[0][0], 2*warpid); 
+            // mul_row_slice(kj1[0][0], 2*warpid+1);
 
             // Compute the A2[j] update and put it back in the register
             load(vfrag, v[tic][blk]);
             mma(A2j0_accum, kj0, vfrag, A2j0_accum);
 
-            transpose_inplace(A2j0);
-            // copy(A2j0, A2j0_accum); // argument types are: (_rtd_v_col, _rtd_v_accum)               
+            _rtd_v copy_bf_A2j0;
+            copy(copy_bf_A2j0, A2j0_accum);
+            swap_layout(A2j0, copy_bf_A2j0);            
 
-            mma(A2j1_accum, kj1, vfrag, A2j1_accum);   
-            // copy(A2j1, A2j1_accum); // Not yet in DSL
+            mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
+            _rtd_v copy_bf_A2j1;
+            copy(copy_bf_A2j1, A2j1_accum);
+            swap_layout(A2j1, copy_bf_A2j1); 
         }
         __syncthreads();
         store(_y + (cur_block * workers + warpid)*v_tile_elements, y[warpid], dv);

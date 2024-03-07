@@ -159,7 +159,8 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     load(qv, _q + vec_idx); // every warp gets a full copy of q  
 
     // We want a column-wise stripe of the vector. 
-    // TODO: rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));
+    auto subtile = k.template subtile<1,4>(warpid, 0);
+    load(k_slice, subtile);
     
     // The algorithm.
     // qs = [q for j in range(4)] # broadcast q to each warp
@@ -192,7 +193,8 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     vec_to_rvec(wv, w.data); // read the *whole* v here.
     
     // we want a column stripe of V
-    // TODO: rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
+    auto subtile_v = v.template subtile<4,1>(0, warpid);
+    load(v_slice, subtile_v);
     zero(os);
     gemv_two(os, wv, v_slice); // row, col, tile
     
