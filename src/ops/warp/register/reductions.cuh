@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Reduction operations mapping tiles to vectors.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"

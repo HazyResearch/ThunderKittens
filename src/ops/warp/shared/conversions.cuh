@@ -1,3 +1,9 @@
+/**
+ * @file
+ * @brief Conversions between different shared memory tile types.
+ */
+
+
 #pragma once
 
 #include "../../../common/common.cuh"

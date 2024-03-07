@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Operations on vectors located in shared memory
+ */
+
 
 #pragma once
 

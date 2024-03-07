@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief The basic 16x16 register tile on which larger register tiles are built.
+ */
+ 
 #pragma once
 
 #include <type_traits>

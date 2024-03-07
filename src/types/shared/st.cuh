@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief The main ThunderKittens shared tile struct. This file also includes the row and column vector structs and various concept utilities.
+ */
+
 #pragma once
 
 #include "../../common/common.cuh"

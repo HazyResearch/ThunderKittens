@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Conversions between data layouts and types for register tiles.
+ */
+ 
 #pragma once
 
 #include "../../../common/common.cuh"

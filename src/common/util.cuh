@@ -1,9 +1,19 @@
+/**
+ * @file
+ * @brief General utilities for ThunderKittens.
+ */
+
 #pragma once
 
 #include <stdint.h>
 #include <type_traits>
 #include <concepts>
 
+/**
+ * @namespace kittens
+ *
+ * @brief The main namespace of ThunderKittens.
+ */
 namespace kittens {
 
 /**

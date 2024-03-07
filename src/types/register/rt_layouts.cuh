@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Layouts and manipulations for register tiles.
+ */
+ 
 #pragma once
 
 #include <type_traits>

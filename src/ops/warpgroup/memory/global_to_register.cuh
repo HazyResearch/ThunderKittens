@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Warpgroup functions for transferring data directly between global memory and registers and back.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"

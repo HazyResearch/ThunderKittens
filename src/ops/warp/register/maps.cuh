@@ -1,3 +1,9 @@
+/**
+ * @file
+ * @brief Map operations between tiles, and which apply vectors to tiles.
+ */
+
+
 #pragma once
 
 #include "../../../common/common.cuh"

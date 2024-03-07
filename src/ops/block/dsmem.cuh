@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Resources for distributing shared memory tiles to different thread blocks in a cluster, using distributed shared memory (DSMEM).
+ */
+
 #pragma once
 
 #include "../../common/common.cuh"

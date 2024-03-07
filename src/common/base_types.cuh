@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Declarations, manipuatlions, and wrappers for basic types.
+ */
+
 #pragma once
 
 #include <cuda_bf16.h>
@@ -15,6 +20,11 @@ seems necessary when we have types we really care about that are less than word 
 
 */
 
+/**
+ * @namespace base_ops
+ *
+ * @brief A namespace for basic data types.
+ */
 namespace kittens {
 
 /**

@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief The main ThunderKittens register tile struct, where most computation happens. This file also includes the row and column vector structs and various concept utilities.
+ */
+ 
 #pragma once
 
 #include <concepts>

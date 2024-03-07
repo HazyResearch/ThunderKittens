@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Basic operations on generic types.
+ */
+
 #pragma once
 
 #include <cuda_bf16.h>
@@ -6,6 +11,11 @@
 
 namespace kittens {
 
+/**
+ * @namespace base_ops
+ *
+ * @brief A namespace for operations on basic data types.
+ */
 namespace base_ops {
 
 /* ----------  CONST OPS  ---------- */

@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Functions for transferring data between global and shared memory using the Tensor Memory Accelerator.
+ */
+
 #pragma once
 
 #include "../common/common.cuh"

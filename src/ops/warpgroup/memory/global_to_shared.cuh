@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Warpgroup functions for transferring data directly between global and shared memory and back.
+ */
+
 #pragma once
 
 #include <cuda/pipeline>

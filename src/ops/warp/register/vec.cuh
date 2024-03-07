@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Operations on vectors stored in registers.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"

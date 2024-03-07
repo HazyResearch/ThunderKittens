@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Matrix multiply-accumulate operations for tiles stored in registers.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"

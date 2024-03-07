@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief A collection of layouts and indexing patterns for shared memory tiles.
+ */
+
 #pragma once
 
 namespace kittens {

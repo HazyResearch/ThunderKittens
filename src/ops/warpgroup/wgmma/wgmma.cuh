@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Warpgroup matrix-multiply accumulate operations. These ops are necessary to achieve full utilization on H100 GPUs.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"

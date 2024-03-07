@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Functions for transferring data directly between global and shared memory and back.
+ */
+
 #pragma once
 
 #include <cuda/pipeline>
