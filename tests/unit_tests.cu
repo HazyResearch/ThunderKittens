@@ -9,6 +9,7 @@
 #include "warp/st_layout_tests.impl"
 #include "warp/map_tests.impl"
 #include "warp/reduction_tests.impl"
+#include "warp/broadcast_tests.impl"
 #include "warp/mma_tests.impl"
 
 #include "warpgroup/wgmma_tests.impl"
@@ -27,6 +28,7 @@ int main() {
     failures += st_layout_tests();
     failures += map_tests();
     failures += reduction_tests();
+    failures += broadcast_tests();
     failures += mma_tests();
     std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
     failures += wgmma_tests();
