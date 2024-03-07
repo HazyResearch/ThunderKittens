@@ -24,9 +24,9 @@ struct wgmma_base<3> {
             "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
             "{%24, %25, %26, %27}, " \
             "%28, " \
-            "p, 1, 1, 0;\n" \
+            "p, 1, 1, 1;\n" \
             "}\n"
-            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a
+            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
         :   "+f"(dst.tiles[0][0].data[0].x), "+f"(dst.tiles[0][0].data[0].y),
             "+f"(dst.tiles[0][0].data[1].x), "+f"(dst.tiles[0][0].data[1].y),
@@ -61,7 +61,7 @@ struct wgmma_base<3> {
             "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
             "%24, " \
             "%25, " \
-            "p, 1, 1, 0, 0;\n" \
+            "p, 1, 1, 0, 1;\n" \
             "}\n"
             // a_mat descriptor, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a, imm-trans-b
 
