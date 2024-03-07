@@ -29,9 +29,9 @@ int main() {
     // failures += map_tests();
     // failures += reduction_tests();
     // failures += mma_tests();
-    failures += tma_tests();
-    // std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
-    // failures += wgmma_tests();
+    // failures += tma_tests();
+    std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
+    failures += wgmma_tests();
     // std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     // failures += dsmem_tests();
 
