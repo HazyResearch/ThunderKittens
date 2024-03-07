@@ -70,6 +70,7 @@ __device__ inline int st_idx<st_wgmma_row_0b_layout>(int r, int c, int height, i
             + (c%8)
     );
 }
+
 template<>
 __device__ inline int st_idx<st_wgmma_row_32b_layout>(int r, int c, int height, int width) {
     return (
