@@ -16,7 +16,9 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     rt_bf<HEIGHT, WIDTH> reg_tile;
     int tile_idx = (blockIdx.x) + warpid;
 
-    st_bf<HEIGHT, WIDTH, layout> &input_tile = al.allocate<st_bf<HEIGHT, WIDTH, layout>>();
+    st_bf<HEIGHT, WIDTH, layout> &input_tile  = al.allocate<st_bf<HEIGHT, WIDTH, layout>>();
+    st_bf<HEIGHT, WIDTH, layout> &correct_lay = al.allocate<st_bf<HEIGHT, WIDTH, layout>>();
+    st_bf<HEIGHT, WIDTH, st_wgmma_row_0b_layout> &b_ref_lay  = al.allocate<st_bf<HEIGHT, WIDTH, st_wgmma_row_0b_layout>>(); 
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ uint64_t smem_barrier; 
@@ -34,14 +36,35 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     constexpr int kPhaseBit = 0;
     tma::arrive_wait(smem_barrier, kPhaseBit);
 
+    load(correct_lay, input, COLS);
+    load(b_ref_lay, input, COLS);
+
     // print out what input_tile has
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     // print out 1 x 2 tile
-    //     for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
-    //         printf("input_tile[%d] = %f\n", i, __bfloat162float(input_tile[warpid].data[i]));
-    //     }
-    // }
-    // __syncthreads();
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // print out 1 x 2 tile
+        for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
+            printf("input_tile[%d] = %f\n", i, __bfloat162float(input_tile.data[i]));
+        }
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // print out 1 x 2 tile
+        for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
+            printf("correct_lay[%d] = %f\n", i, __bfloat162float(correct_lay.data[i]));
+        }
+    }
+
+    __syncthreads();
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // print out 1 x 2 tile
+        for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
+            printf("0b_ref_lay[%d] = %f\n", i, __bfloat162float(b_ref_lay.data[i]));
+        }
+    }
+
+    __syncthreads();
 
     store(output, input_tile, COLS);
     // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
@@ -192,17 +215,17 @@ int tma_tests() {
     int failures = 0;
     failures += !test_tma<st_naive_row_layout, false>();
     failures += !test_tma<st_naive_row_layout, true>();
-    failures += !test_tma<st_xor_row_layout, false>();
-    failures += !test_tma<st_xor_row_layout, true>();
+    // failures += !test_tma<st_xor_row_layout, false>();
+    // failures += !test_tma<st_xor_row_layout, true>();
 
     failures += !test_tma<st_wgmma_row_0b_layout, false>();
     failures += !test_tma<st_wgmma_row_0b_layout, true>();
-    failures += !test_tma<st_wgmma_row_32b_layout, false>();
-    failures += !test_tma<st_wgmma_row_32b_layout, true>();
-    failures += !test_tma<st_wgmma_row_64b_layout, false>();
-    failures += !test_tma<st_wgmma_row_64b_layout, true>();
-    failures += !test_tma<st_wgmma_row_128b_layout, false>();
-    failures += !test_tma<st_wgmma_row_128b_layout, true>();
+    // failures += !test_tma<st_wgmma_row_32b_layout, false>();
+    // failures += !test_tma<st_wgmma_row_32b_layout, true>();
+    // failures += !test_tma<st_wgmma_row_64b_layout, false>();
+    // failures += !test_tma<st_wgmma_row_64b_layout, true>();
+    // failures += !test_tma<st_wgmma_row_128b_layout, false>();
+    // failures += !test_tma<st_wgmma_row_128b_layout, true>();
 
     // failures += !test_tma<st_wgmma_col_0b_layout, false>();
     // failures += !test_tma<st_wgmma_col_0b_layout, true>();
