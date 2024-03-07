@@ -140,6 +140,7 @@ using rt_col_fl_1x4 = rt_col_fl<1, 4>;
 using rt_col_bf_1x1 = rt_col_bf<1, 1>;
 using rt_col_bf_1x2 = rt_col_bf<1, 2>;
 using rt_col_bf_1x4 = rt_col_bf<1, 4>;
+using rt_col_bf_4x1 = rt_col_bf<4, 1>;
 
 
 }
