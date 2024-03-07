@@ -164,7 +164,7 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
 
 
 // register vector to shared vector
-template<shared_vec_type ST, typename RT>
+template<st_vec_type ST, typename RT>
 __device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
@@ -183,7 +183,7 @@ __device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
 
 
 // shared vector to register vector
-template<typename RT, shared_vec_type ST>
+template<typename RT, st_vec_type ST>
 __device__ inline static void svec_to_rvec(RT &dst, const ST &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
