@@ -26,7 +26,7 @@ struct wgmma_base<3> {
             "%28, " \
             "p, 1, 1, 0;\n" \
             "}\n"
-            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a
+            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
         :   "+f"(dst.tiles[0][0].data[0].x), "+f"(dst.tiles[0][0].data[0].y),
             "+f"(dst.tiles[0][0].data[1].x), "+f"(dst.tiles[0][0].data[1].y),

@@ -206,5 +206,6 @@ int wgmma_tests() {
     failures += !test_wgmma_mma<false, 4, 2>();
     failures += !test_wgmma_mma<false, 4, 3>();
     failures += !test_wgmma_mma<false, 4, 4>();
+    
     return failures;
 }
