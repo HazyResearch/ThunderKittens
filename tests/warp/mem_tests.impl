@@ -130,6 +130,7 @@ __global__ void test_vec_to_rvec_row_ker(const bf16 *input, bf16 *output) {
 
     load(smem_vec, input);
     svec_to_rvec(reg_vec, smem_vec);
+    // print all the values
     store(output, reg_vec);
 }
 bool test_vec_to_rvec_row() {
@@ -153,9 +154,9 @@ bool test_vec_to_rvec_row() {
 int mem_tests() {
     std::cout << " ----- Starting memory tests! -----" << std::endl;
     int failures = 0;
-    // failures += !test_ones();
-    // failures += !test_copy();
-    // failures += !test_rvec_row_to_vec();
+    failures += !test_ones();
+    failures += !test_copy();
+    failures += !test_rvec_row_to_vec();
     failures += !test_vec_to_rvec_row();
     return failures;
 }
