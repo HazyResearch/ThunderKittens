@@ -20,7 +20,7 @@ void thread_block_load(st_bf_4x4<st_xor_row_layout> &_dst, const typename st_bf_
     using H     = st_bf_4x4<st_xor_row_layout>;
     using T     = typename H::dtype;
 
-    const int _row_stride  = H::cols; // SA TODO: Confirm this is correct
+    const int _row_stride  = H::cols; 
     auto bytes_per_row     = H::cols * sizeof(T); // non-padded
     auto f4_stride         = (_row_stride*sizeof(T))/sizeof(float4);
     auto reads_per_row     = bytes_per_row / sizeof(float4);
@@ -74,8 +74,8 @@ void gemv(rt_fl_1x4<>::col_vec  &o, rt_col_bf_1x4::row_vec &x, rt_col_fl_1x4::ro
     // The accumulator is row x column
     // a row multiply means that each row is multiplied by a column matrix.
     // So if the accumulator is 2 x 3 then 
-    // mul_row(t, x, t); // multiply vv in place with aa: a * v.unsqueeze(1)
-    // row_sum(o, t, o); // aa.sum(0) sum across all the rows 
+    // TODO: mul_row(t, x, t); // multiply vv in place with aa: a * v.unsqueeze(1)
+    // TODO: row_sum(o, t, o); // aa.sum(0) sum across all the rows 
 }
 
 
@@ -146,10 +146,9 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     load(qv, _q + vec_idx); // every warp gets a full copy of q 
 
     // We want a column-wise stripe of the vector. 
-    // REPLACED rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));  # FLAG!
-    // load(k_slice, k.data + warpid*kittens::TILE_DIM, d);
+    // TODO: rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));  
+    // load(k_slice, &k.data + warpid*kittens::TILE_DIM);
     
-    // ********
     // The algorithm.
     // qs = [q for j in range(4)] # broadcast q to each warp
     // ks = [k[:,j*d//4:(j+1)*d//4] for j in range(4)] # shard k
@@ -183,7 +182,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     // we want a column stripe of V
     // TODO rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
     zero(os);
-    // gemv(os, wv, v_slice);
+    //  gemv(os, wv, v_slice);
     
     // now we have a fragment of v and we write, this write is to *global* memory.
     store(_o + warpid*kittens::TILE_DIM, os);
