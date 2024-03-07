@@ -136,6 +136,7 @@ template<int _height, int _width, rt_layout layout=rt_col_layout> using rt_col_b
 using rt_col_fl_1x1 = rt_col_fl<1, 1>;
 using rt_col_fl_1x2 = rt_col_fl<1, 2>;
 using rt_col_fl_1x4 = rt_col_fl<1, 4>;
+using rt_col_fl_4x1 = rt_col_fl<4, 1>;
 
 using rt_col_bf_1x1 = rt_col_bf<1, 1>;
 using rt_col_bf_1x2 = rt_col_bf<1, 2>;

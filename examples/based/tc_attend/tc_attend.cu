@@ -65,28 +65,37 @@ void shm_broadcast(float &f, float *shm, const int workers = 4) {
     f = shm[warpid];
 }
 
+// GEMV
+__device__
+void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { // SA: directions of these seem off
+    rt_fl_1x4<> t;
+    copy(t, a);
+    // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
+    mul_col(t, a, x); // multiply vv in place with aa: a * v.unsqueeze(1) // row, row, col
+    row_sum(o, t, o); // aa.sum(0) sum across all the rows 
+}
 
 // GEMV
 __device__
-void gemv(rt_fl_1x4<>::col_vec  &o, rt_col_bf_1x4::row_vec &x, rt_col_fl_1x4::row_vec &a) { // SA: directions of these seem off
-    rt_col_fl_1x4::row_vec t;
-    copy(t,a);
-    // The accumulator is row x column
-    // a row multiply means that each row is multiplied by a column matrix.
-    // So if the accumulator is 2 x 3 then 
-    // TODO: mul_row(t, x, t); // multiply vv in place with aa: a * v.unsqueeze(1)
-    // TODO: row_sum(o, t, o); // aa.sum(0) sum across all the rows 
+void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { // SA: directions of these seem off
+    rt_fl_4x1<> t;
+    copy(t, a);
+    // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
+    mul_row(t, a, x); // multiply vv in place with aa: a * v.unsqueeze(1) // row, row, col
+    col_sum(o, t, o); // aa.sum(0) sum across all the rows 
 }
 
 
 static
 void __device__
-vec_to_rvec(rt_bf_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
+vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
+    using T = __nv_bfloat16;
+    using U = float;
     auto row = kittens::laneid() / 4;
     __syncwarp();    
     for(auto h = 0; h < dst.outer_dim; h++) {
-        dst[h][0].x = src[h*kittens::TILE_DIM + row];    
-        dst[h][1].x = src[h*kittens::TILE_DIM + row + 8]; // SA: IS THIS CORRECT???
+        dst[h][0].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row]);    
+        dst[h][1].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row + 8]); // SA: IS THIS CORRECT???
     }
 }
 
@@ -133,21 +142,24 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     thread_block_load(v, _v + start_idx, threads);
     auto vec_idx = just_q ? 0 : j * d;
 
-    rt_col_bf_1x4::row_vec qv; // full local copy 
+    // rtiles
+    rt_fl_1x4<> k_slice; 
+    rt_fl_4x1<> v_slice; // Each of the 4 workers stores a column
+
+    // rvecs
+    rt_fl_1x4<>::row_vec qv; // full local copy 
     rt_fl_1x4<>::col_vec ws; 
-    rt_col_fl_1x4::row_vec k_slice; // SA: Should this be float type?
+
+    rt_fl_4x1<>::col_vec wv; // full local copy 
+    rt_fl_4x1<>::row_vec os; // shards
     
-    rt_bf_4x1<>::col_vec wv; // full local copy 
-    rt_col_bf_4x1::row_vec os; // shards
-    rt_col_bf_4x1::row_vec v_slice; // Each of the 4 workers stores a column
 
     // These are column slices of the matrix.: | K_1 | K_2 | K_3 |
     __syncthreads();
-    load(qv, _q + vec_idx); // every warp gets a full copy of q 
+    load(qv, _q + vec_idx); // every warp gets a full copy of q  
 
     // We want a column-wise stripe of the vector. 
-    // TODO: rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));  
-    // load(k_slice, &k.data + warpid*kittens::TILE_DIM);
+    // TODO: rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0));
     
     // The algorithm.
     // qs = [q for j in range(4)] # broadcast q to each warp
@@ -180,9 +192,9 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     vec_to_rvec(wv, w.data); // read the *whole* v here.
     
     // we want a column stripe of V
-    // TODO rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
+    // TODO: rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
     zero(os);
-    //  gemv(os, wv, v_slice);
+    gemv_two(os, wv, v_slice); // row, col, tile
     
     // now we have a fragment of v and we write, this write is to *global* memory.
     store(_o + warpid*kittens::TILE_DIM, os);
