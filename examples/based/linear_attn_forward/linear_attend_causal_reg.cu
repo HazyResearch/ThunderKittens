@@ -379,8 +379,8 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
             copy(qj1, qj0); // faster than reloading?
 
             // We store Q_j <- Q[:,j]*Q
-    //         // TODO: rt.mul_col_slice(qj0[0][0], 2*warpid);
-    //         // TODO: rt.mul_col_slice(qj1[0][0], 2*warpid+1);
+            // TODO: rt.mul_col_slice(qj0[0][0], 2*warpid);
+            // TODO: rt.mul_col_slice(qj1[0][0], 2*warpid+1);
 
             // Compute qj, a2j portion
             zero(qA2_accum);
@@ -397,15 +397,18 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
             load(kj0, k[tic][blk]);
             transpose_inplace(kj0); 
             copy(kj1, kj0); 
-    //         // TODO: rt.mul_row_slice(kj0[0][0], 2*warpid);
-    //         // TODO: rt.mul_row_slice(kj1[0][0], 2*warpid+1);
+            // TODO: rt.mul_row_slice(kj0[0][0], 2*warpid);
+            // TODO: rt.mul_row_slice(kj1[0][0], 2*warpid+1);
 
             // Compute the A2[j] update and put it back in the register
             load(vfrag, v[tic][blk]);
             mma(A2j0_accum, kj0, vfrag, A2j0_accum);
-            // copy(A2j0, A2j0_accum); // Not yet in                                                                                                    
+
+            transpose_inplace(A2j0);
+            // copy(A2j0, A2j0_accum); // argument types are: (_rtd_v_col, _rtd_v_accum)               
+
             mma(A2j1_accum, kj1, vfrag, A2j1_accum);   
-    //         // copy(A2j1, A2j1_accum); // Not yet in DSL
+            // copy(A2j1, A2j1_accum); // Not yet in DSL
         }
         __syncthreads();
         store(_y + (cur_block * workers + warpid)*v_tile_elements, y[warpid], dv);

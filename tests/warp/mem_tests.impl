@@ -81,28 +81,147 @@ bool test_copy() {
     return passed;
 }
 
-// __global__ void test_one_ker_vec(const bf16 *input, bf16 *output) {
-//     using H = __nv_bfloat16;
-//     const H* _input = reinterpret_cast<const H*>(input);
-//     rt_row_bf<1, WIDTH>::row_vec reg_vec;
-//     __syncthreads();
-//     // load(reg_vec, _input); // TODO: Implement 
+__global__ void test_copy_ker(const bf16 *input, bf16 *output) {
+
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);    
+
+    rt_row_bf<HEIGHT, WIDTH> reg_tile;
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+    if (threadIdx.x == 0) {init(&barrier, block.size());}
+    block.sync();
+    
+    st_bf<HEIGHT, WIDTH> &smem_tile = shm_advance<st_bf<HEIGHT, WIDTH>>(p);
+
+    block.sync();
+    load_async(smem_tile, input, COLS, barrier);
+    barrier.arrive_and_wait();
+    
+    rt_from_st(reg_tile, smem_tile);
+    st_from_rt(smem_tile, reg_tile);
+
+    store_async(output, smem_tile, COLS, barrier);
+    barrier.arrive_and_wait();
+}
+bool test_copy() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(SIZE);
+    std::vector<float> o_ref(SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_copy_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_copy_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_tile");
+    return passed;
+}
+
+// __global__ void test_rvec_row_to_vec_ker(const bf16 *input, bf16 *output) {
+//     const int _HEIGHT = 1;
+//     const int _WIDTH = 4;
+//     using tile_1x4 = st_bf<_HEIGHT, _WIDTH>;
+//     using rt_vec_1x4 = rt_row_bf<1, _WIDTH>::row_vec;
+    
+//     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+//     int* p = (int*)&__shm[0];
+//     tile_1x4::row_vec &smem_vec = shm_advance<tile_1x4::row_vec>(p);
+//     rt_vec_1x4 reg_vec;
+
+//     // printf("reg_vec.outer_dim: %d\n", reg_vec.outer_dim);
+//     // printf("reg_vec[0][0] = %f\n", types::convertor<float2, bf16_2>::convert(reg_vec[0][0]).x);
+//     zero(smem_vec);
 //     one(reg_vec);
-//     // store(output, reg_vec);
+//     rvec_to_svec(smem_vec, reg_vec);
+//     store(output, smem_vec);
 // }
-// bool test_copy_rt_vec() {
+// bool test_rvec_row_to_vec() {
 //     // initailize
 //     bf16 *d_i, *d_o;
-//     std::vector<float> i_ref(COLS);
-//     std::vector<float> o_ref(COLS);
+//     constexpr int _WIDTH = 4;
+//     const int _SIZE = _WIDTH*16;
+//     std::vector<float> i_ref(_SIZE);
+//     std::vector<float> o_ref(_SIZE);
 //     initialize(&d_i, &d_o, i_ref, o_ref);
 //     // run kernel
-//     cudaFuncSetAttribute(test_one_ker_vec, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
-//     test_one_ker_vec<<<1, 32, 100000>>>(d_i, d_o);
+//     cudaFuncSetAttribute(test_rvec_row_to_vec_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+//     test_rvec_row_to_vec_ker<<<1, 32, 100000>>>(d_i, d_o);
 //     // fill in correct results on cpu
-//     for(int i = 0; i < WIDTH*256; i++) o_ref[i] = i_ref[i];
+//     for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
 //     // check and cleanup
-//     bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_vec");
+//     bool passed = validate(d_i, d_o, i_ref, o_ref, "test_rvec_to_vec");
+//     return passed;
+// }
+
+// __global__ void test_vec_to_rvec_row_ker(const bf16 *input, bf16 *output) {
+//     const int _HEIGHT = 1;
+//     const int _WIDTH = 4;
+//     using tile_1x4 = st_bf<_HEIGHT, _WIDTH>;
+//     using rt_vec_1x4 = rt_row_bf<1, _WIDTH>::row_vec;
+    
+//     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+//     int* p = (int*)&__shm[0];
+//     tile_1x4::row_vec &smem_vec = shm_advance<tile_1x4::row_vec>(p);
+//     rt_vec_1x4 reg_vec;
+//     load(smem_vec, input);
+//     svec_to_rvec(reg_vec, smem_vec);
+//     store(output, reg_vec);
+// }
+
+// bool test_vec_to_rvec_row() {
+//     // initailize
+//     bf16 *d_i, *d_o;
+//     constexpr int _WIDTH = 4;
+//     const int _SIZE = _WIDTH*16;
+//     std::vector<float> i_ref(_SIZE);
+//     std::vector<float> o_ref(_SIZE);
+//     initialize(&d_i, &d_o, i_ref, o_ref);
+//     // run kernel
+//     cudaFuncSetAttribute(test_vec_to_rvec_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+//     test_vec_to_rvec_row_ker<<<1, 32, 100000>>>(d_i, d_o);
+//     // fill in correct results on cpu
+//     for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
+//     // check and cleanup
+//     bool passed = validate(d_i, d_o, i_ref, o_ref, "test_vec_to_rvec");
+//     return passed;
+// }
+
+// __global__ void test_rvec_col_to_vec_ker(const bf16 *input, bf16 *output) {
+//     const int _HEIGHT = 4;
+//     const int _WIDTH = 1;
+//     using tile_4x1 = st_bf<_HEIGHT, _WIDTH>;
+//     using rt_vec_4x1 = rt_col_bf<_HEIGHT, _WIDTH>::col_vec;
+    
+//     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+//     int* p = (int*)&__shm[0];
+//     tile_4x1::col_vec &smem_vec = shm_advance<tile_4x1::col_vec>(p);
+//     rt_vec_4x1 reg_vec;
+
+//     zero(smem_vec);
+//     one(reg_vec);
+//     rvec_to_svec(smem_vec, reg_vec);
+//     store(output, smem_vec);
+// }
+
+// bool test_rvec_col_to_vec() {
+//     // initailize
+//     bf16 *d_i, *d_o;
+//     constexpr int _WIDTH = 4;
+//     const int _SIZE = _WIDTH*16;
+//     std::vector<float> i_ref(_SIZE);
+//     std::vector<float> o_ref(_SIZE);
+//     initialize(&d_i, &d_o, i_ref, o_ref);
+//     // run kernel
+//     cudaFuncSetAttribute(test_rvec_col_to_vec_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+//     test_rvec_col_to_vec_ker<<<1, 32, 100000>>>(d_i, d_o);
+//     // fill in correct results on cpu
+//     for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
+//     // check and cleanup
+//     bool passed = validate(d_i, d_o, i_ref, o_ref, "test_rvec_to_vec");
 //     return passed;
 // }
 
@@ -111,6 +230,8 @@ int mem_tests() {
     int failures = 0;
     failures += !test_ones();
     failures += !test_copy();
-    // failures += !test_copy_rt_vec();
+    // failures += !test_rvec_row_to_vec();
+    // failures += !test_vec_to_rvec_row();
+    // failures += !test_rvec_col_to_vec();
     return failures;
 }
