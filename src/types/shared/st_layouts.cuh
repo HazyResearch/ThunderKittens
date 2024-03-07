@@ -17,6 +17,8 @@ struct st_wgmma_col_32b_layout{ static constexpr int swizzling_mode=3; };
 struct st_wgmma_col_64b_layout{ static constexpr int swizzling_mode=2; };
 struct st_wgmma_col_128b_layout{ static constexpr int swizzling_mode=1; };
 
+struct st_wgmma_col_t_0b_layout{ static constexpr int swizzling_mode=0; };
+
 template<typename T>
 concept st_wgmma_row_layout = (
     std::is_same_v<T, st_wgmma_row_0b_layout>   ||
@@ -29,7 +31,8 @@ concept st_wgmma_col_layout = (
     std::is_same_v<T, st_wgmma_col_0b_layout>   ||
     std::is_same_v<T, st_wgmma_col_32b_layout>  ||
     std::is_same_v<T, st_wgmma_col_64b_layout>  ||
-    std::is_same_v<T, st_wgmma_col_128b_layout>
+    std::is_same_v<T, st_wgmma_col_128b_layout> || 
+    std::is_same_v<T, st_wgmma_col_t_0b_layout>
 );
 template<typename T>
 concept st_row_layout = (
@@ -106,6 +109,16 @@ __device__ inline int st_idx<st_wgmma_col_0b_layout>(int r, int c, int height, i
             + ((r%16)/8)) * 8 // * 8 rows per tensormap
             + (c%8)) * 8 // * 8 columns per row
             + (r%8)
+    );
+}
+template<>
+__device__ inline int st_idx<st_wgmma_col_t_0b_layout>(int r, int c, int height, int width) {
+    return (
+        ((((r/16) * (2*width) // height is in units of 16, but we want units of 8
+            + (c/8)) * 2 // * 2 tensormaps across
+            + ((r%16)/8)) * 8 // * 8 rows per tensormap
+            + (r%8)) * 8 // * 8 columns per row
+            + (c%8)
     );
 }
 template<>

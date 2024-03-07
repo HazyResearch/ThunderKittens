@@ -55,7 +55,7 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
-struct alignas(128) alignment_dummy { int dummy; };
+struct alignas(256) alignment_dummy { int dummy; };
 struct shared_allocator {
 
     int *ptr;
