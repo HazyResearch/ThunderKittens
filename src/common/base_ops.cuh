@@ -67,7 +67,7 @@ struct neg_infty {
  * This operation calculates the exponential of the input value.
  *
  * @tparam T The data type of the input and output values.
- * @param x The input value.
+ * @param x[in] The input value.
  * @return The exponential of the input value.
  */
 struct exp {
@@ -84,7 +84,7 @@ template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2
  * This operation calculates the absolute value of the input.
  *
  * @tparam T The data type of the input and output values.
- * @param x The input value.
+ * @param x[in] The input value.
  * @return The absolute value of the input.
  */
 struct abs {
@@ -102,7 +102,7 @@ template<> __device__ inline bf16_2 abs::op<bf16_2>(const bf16_2 &x) { return __
  * maximum of zero and the input value.
  *
  * @tparam T The data type of the input and output values.
- * @param x The input value.
+ * @param x[in] The input value.
  * @return The result of ReLU function applied to the input.
  */
 struct relu {
@@ -119,7 +119,7 @@ template<> __device__ inline bf16_2 relu::op<bf16_2>(const bf16_2 &x) { return _
  * This operation returns the input value unchanged.
  *
  * @tparam T The data type of the input and output values.
- * @param a The input value.
+ * @param a[in] The input value.
  * @return The same value as the input.
  */
 struct copy { // for non-compile-time setters.
@@ -135,8 +135,8 @@ struct copy { // for non-compile-time setters.
  * This operation returns the second input value unchanged.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value (ignored).
- * @param b The second input value.
+ * @param a[in] The first input value (ignored).
+ * @param b[in] The second input value.
  * @return The same value as the second input.
  */
 struct copy2 { // this turns out to be a slightly hacky op that makes some code cleaner :/
@@ -149,8 +149,8 @@ struct copy2 { // this turns out to be a slightly hacky op that makes some code 
  * This operation calculates the sum of two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The sum of the input values.
  */
 struct sum {
@@ -166,8 +166,8 @@ template<> __device__ inline bf16_2 sum::op<bf16_2>(const bf16_2 &a, const bf16_
  * This operation calculates the difference between two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The difference between the input values.
  */
 struct sub {
@@ -183,8 +183,8 @@ template<> __device__ inline bf16_2 sub::op<bf16_2>(const bf16_2 &a, const bf16_
  * This operation calculates the product of two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The product of the input values.
  */
 struct mul {
@@ -200,8 +200,8 @@ template<> __device__ inline bf16_2 mul::op<bf16_2>(const bf16_2 &a, const bf16_
  * This operation calculates the quotient of two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The quotient of the input values.
  */
 struct div {
@@ -217,8 +217,8 @@ template<> __device__ inline bf16_2 div::op<bf16_2>(const bf16_2 &a, const bf16_
  * This operation calculates the maximum of two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The maximum of the input values.
  */
 struct max {
@@ -234,8 +234,8 @@ template<>  __device__ inline bf16_2 max::op<bf16_2>(const bf16_2 &a, const bf16
  * This operation calculates the minimum of two input values.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
  * @return The minimum of the input values.
  */
 struct min {
@@ -254,9 +254,9 @@ template<>  __device__ inline bf16_2 min::op<bf16_2>(const bf16_2 &a, const bf16
  * This operation performs a fused multiply-add, computing (A * B) + C with only one rounding.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The second input value.
- * @param c The third input value to be added.
+ * @param a[in] The first input value.
+ * @param b[in] The second input value.
+ * @param c[in] The third input value to be added.
  * @return The result of the fused multiply-add operation.
  */
 struct fma_AxBtC {
@@ -272,9 +272,9 @@ struct fma_AxBtC {
  * This is particularly useful for attention mechanisms in neural networks.
  *
  * @tparam T The data type of the input and output values.
- * @param a The first input value.
- * @param b The third input value to be added.
- * @param c The second input value.
+ * @param a[in] The first input value.
+ * @param b[in] The third input value to be added.
+ * @param c[in] The second input value.
  * @return The result of the fused multiply-add operation.
  */
 struct fma_AxCtB { // this is the one needed for attention

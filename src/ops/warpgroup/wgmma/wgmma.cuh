@@ -9,18 +9,18 @@ namespace kittens {
 namespace warpgroup {
 
 /**
- * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMA) primitives.
+ * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
  *
- * This function multiplies a register-tile matrix `a` with a shared-tile matrix `b` and accumulates the result into a register-tile matrix `d`.
+ * This function multiplies a register tile `a` with a shared tile `b` and writes the result into a register tile `d`.
  *
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
  * @tparam K The common dimension of matrices `a` and `b`.
  * @tparam M The width of the matrices `b` and `d`.
  * @tparam L_B The layout of the matrix `b`.
- * @param d The destination register-tile matrix where the result is accumulated or written.
- * @param a The source register-tile matrix to be multiplied.
- * @param b The source shared-tile matrix to be multiplied.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
  */
 template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_col_layout L_B>
 __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
@@ -52,9 +52,9 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
  * @tparam K The common dimension of matrices `a` and `b`.
  * @tparam M The width of the matrices `b` and `d`.
  * @tparam L_B The layout of the matrix `b`.
- * @param d The destination register-tile matrix where the result is accumulated.
- * @param a The source register-tile matrix to be multiplied.
- * @param b The source shared-tile matrix to be multiplied.
+ * @param d[out] The destination register tile where the result is accumulated.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
  */
 template<int N_DIV_4, int K, int M, st_wgmma_col_layout L_B>
 __device__ static inline void mma_accum(rt_fl<N_DIV_4, M, rt_row_layout> &d,
@@ -72,9 +72,9 @@ __device__ static inline void mma_accum(rt_fl<N_DIV_4, M, rt_row_layout> &d,
  * @tparam K The common dimension of matrices `a` and `b`.
  * @tparam M The width of the matrices `b` and `d`.
  * @tparam L_B The layout of the matrix `b`.
- * @param d The destination register-tile matrix where the result is written.
- * @param a The source register-tile matrix to be multiplied.
- * @param b The source shared-tile matrix to be multiplied.
+ * @param d[out] The destination register tile where the result is written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
  */
 template<int N_DIV_4, int K, int M, st_wgmma_col_layout L_B>
 __device__ static inline void mma_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
@@ -84,10 +84,24 @@ __device__ static inline void mma_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
 }
 
 // [(shared, shared) -> register] edition
+/**
+ * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function multiplies a shared tile `a` with a shared tile `b` and writes the result into a register tile `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_col_layout L_B>
 __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
-                            const st_bf<4*N_DIV_4, K, L_A>           &a,
-                            const st_bf<K, M, L_B>           &b) {
+                            const st_bf<4*N_DIV_4, K, L_A>         &a,
+                            const st_bf<K, M, L_B>                 &b) {
     wgmma_base<M>::st_st(
         d,
         a.descriptor(0),
@@ -104,12 +118,38 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         );
     }
 }
+/**
+ * @brief Perform matrix multiply-accumulate operation with accumulation behavior.
+ *
+ * This function is a wrapper around `mma` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
+ *
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_col_layout L_B>
 __device__ static inline void mma_accum(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const st_bf<4*N_DIV_4, K, L_A>           &a,
                                   const st_bf<K, M, L_B>           &b) {
     mma<1, N_DIV_4, K, M, L_A, L_B>(d, a, b);
 }
+/**
+ * @brief Perform matrix multiply-accumulate operation with reset behavior.
+ *
+ * This function is a wrapper around `mma` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
+ *
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is written.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_col_layout L_B>
 __device__ static inline void mma_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const st_bf<4*N_DIV_4, K, L_A>           &a,
@@ -118,6 +158,20 @@ __device__ static inline void mma_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
 }
 
 // [(register, shared) -> register] edition
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function computes an outer product of a register tile `a` with a shared tile `b` and writes the result into a register tile `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_B>
 __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const rt_bf<N_DIV_4, K, rt_row_layout> &a,
@@ -138,12 +192,40 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         );
     }
 }
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function is a wrapper around `dot` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_B>
 __device__ static inline void dot_accum(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const rt_bf<N_DIV_4, K, rt_row_layout> &a,
                                   const st_bf<M, K, L_B>           &b) {
     dot<1, N_DIV_4, K, M, L_B>(d, a, b);
 }
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function is a wrapper around `dot` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source register tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_B>
 __device__ static inline void dot_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const rt_bf<N_DIV_4, K, rt_row_layout> &a,
@@ -151,6 +233,20 @@ __device__ static inline void dot_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
     dot<0, N_DIV_4, K, M, L_B>(d, a, b);
 }
 // [(shared, shared) -> register] edition
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function computes an outer product of a shared tile `a` with a shared tile `b` and writes the result into a register tile `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_row_layout L_B>
 __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const st_bf<4*N_DIV_4, K, L_A>           &a,
@@ -171,12 +267,40 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         );
     }
 }
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function is a wrapper around `dot` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_row_layout L_B>
 __device__ static inline void dot_accum(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const st_bf<4*N_DIV_4, K, L_A>           &a,
                                   const st_bf<M, K, L_B>           &b) {
     dot<1, N_DIV_4, K, M, L_A, L_B>(d, a, b);
 }
+/**
+ * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ *
+ * This function is a wrapper around `dot` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The width of the matrices `b` and `d`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
 template<int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_wgmma_row_layout L_B>
 __device__ static inline void dot_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                                   const st_bf<4*N_DIV_4, K, L_A>           &a,
@@ -191,7 +315,7 @@ __device__ static inline void dot_reset(rt_fl<N_DIV_4, M, rt_row_layout> &d,
  *
  * @tparam height The height of the matrix `dst`.
  * @tparam width The width of the matrix `dst`.
- * @param dst The destination register-tile matrix to be synchronized.
+ * @param dst[in,out] The destination register-tile matrix to be synchronized.
  */
 template<int height, int width>
 __device__ inline void fence(rt_fl<height, width, rt_row_layout> &dst) {

@@ -21,8 +21,8 @@ namespace warpgroup {
  * @tparam width The width of the tile.
  * @tparam reg_layout The layout of the register tile (row or column major).
  * @tparam shared_layout The layout of the shared memory tile (row major).
- * @param dst The destination register tile.
- * @param src The source shared memory tile.
+ * @param dst[out] The destination register tile.
+ * @param src[in] The source shared memory tile.
  */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
@@ -71,8 +71,8 @@ __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, con
  * @tparam width The width of the tile.
  * @tparam reg_layout The layout of the register tile (row or column major).
  * @tparam shared_layout The layout of the shared memory tile (row major).
- * @param dst The destination shared memory tile.
- * @param src The source register tile.
+ * @param dst[out] The destination shared memory tile.
+ * @param src[in] The source register tile.
  */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height/4, width, reg_layout> &src) {

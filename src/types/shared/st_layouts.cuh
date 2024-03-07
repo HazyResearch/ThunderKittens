@@ -53,60 +53,54 @@ struct st_wgmma_col_64b_layout{ static constexpr int swizzling_mode=2; };
 struct st_wgmma_col_128b_layout{ static constexpr int swizzling_mode=1; };
 
 /**
- * @brief Struct to check if a type is a wgmma row layout.
+ * @brief Concept to check if a type is a wgmma row layout.
  */
 template<typename T>
-struct st_wgmma_row_layout : std::integral_constant<bool,
-    std::is_same<T, st_wgmma_row_0b_layout>::value   ||
-    std::is_same<T, st_wgmma_row_32b_layout>::value  ||
-    std::is_same<T, st_wgmma_row_64b_layout>::value  ||
-    std::is_same<T, st_wgmma_row_128b_layout>::value
-> {};
+concept st_wgmma_row_layout = (
+    std::is_same_v<T, st_wgmma_row_0b_layout>   ||
+    std::is_same_v<T, st_wgmma_row_32b_layout>  ||
+    std::is_same_v<T, st_wgmma_row_64b_layout>  ||
+    std::is_same_v<T, st_wgmma_row_128b_layout>
+);
 
 /**
- * @brief Struct to check if a type is a wgmma column layout.
+ * @brief Concept to check if a type is a wgmma column layout.
  */
 template<typename T>
-struct st_wgmma_col_layout : std::integral_constant<bool,
-    std::is_same<T, st_wgmma_col_0b_layout>::value   ||
-    std::is_same<T, st_wgmma_col_32b_layout>::value  ||
-    std::is_same<T, st_wgmma_col_64b_layout>::value  ||
-    std::is_same<T, st_wgmma_col_128b_layout>::value
-> {};
+concept st_wgmma_col_layout = (
+    std::is_same_v<T, st_wgmma_col_0b_layout>   ||
+    std::is_same_v<T, st_wgmma_col_32b_layout>  ||
+    std::is_same_v<T, st_wgmma_col_64b_layout>  ||
+    std::is_same_v<T, st_wgmma_col_128b_layout>
+);
 
 /**
- * @brief Struct to check if a type is a row layout.
+ * @brief Concept to check if a type is a row layout.
  */
 template<typename T>
-struct st_row_layout : std::integral_constant<bool,
-    st_wgmma_row_layout<T>::value                  ||
-    std::is_same<T, st_naive_row_layout>::value    ||
-    std::is_same<T, st_xor_row_layout>::value
-> {};
+concept st_row_layout = (
+    st_wgmma_row_layout<T>                  ||
+    std::is_same_v<T, st_naive_row_layout>  ||
+    std::is_same_v<T, st_xor_row_layout>
+);
 
 /**
- * @brief Struct to check if a type is a column layout.
+ * @brief Concept to check if a type is a column layout.
  */
 template<typename T>
-struct st_col_layout : std::integral_constant<bool,
-    st_wgmma_col_layout<T>::value
-> {}; // just an alias for now
+concept st_col_layout = st_wgmma_col_layout<T>; // just an alias for now
 
 /**
- * @brief Struct to check if a type is a wgmma layout.
+ * @brief Concept to check if a type is a wgmma layout.
  */
 template<typename T>
-struct st_wgmma_layout : std::integral_constant<bool,
-    st_wgmma_row_layout<T>::value || st_wgmma_col_layout<T>::value
-> {};
+concept st_wgmma_layout = st_wgmma_row_layout<T> || st_wgmma_col_layout<T>;
 
 /**
- * @brief Struct to check if a type is any layout.
+ * @brief Concept to check if a type is any st layout.
  */
 template<typename T>
-struct st_layout : std::integral_constant<bool,
-    st_row_layout<T>::value || st_col_layout<T>::value
-> {};
+concept st_layout = st_row_layout<T> || st_col_layout<T>;
 
 namespace detail {
 
@@ -114,13 +108,13 @@ namespace detail {
  * @brief Function template to calculate the index in a shared memory tile based on the layout.
  *
  * @tparam T The layout type.
- * @param r The row position.
- * @param c The column position.
- * @param height The height of the tile.
- * @param width The width of the tile.
+ * @param r[in] The row position.
+ * @param c[in] The column position.
+ * @param height[in] The height of the tile.
+ * @param width[in] The width of the tile.
  * @return The calculated index.
  */
-template<typename T, std::enable_if_t<st_layout<T>::value, int> = 0>
+template<st_layout T>
 __device__ inline int st_idx(int r, int c, int height, int width);
 
 /**

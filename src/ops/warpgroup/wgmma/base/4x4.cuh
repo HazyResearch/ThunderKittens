@@ -10,18 +10,6 @@ namespace warpgroup {
 
 template<>
 struct wgmma_base<4> {
-    /**
-     * @brief Perform warp-level matrix multiply-accumulate operation using register-tile for A and shared-tile for B.
-     *
-     * This function performs a warp-level matrix multiply-accumulate operation where the matrix A is stored in
-     * registers (register-tile) and matrix B is stored in shared memory (shared-tile). The result is accumulated
-     * into the destination register-tile. This operation is optimized for 4x4 matrix tiles.
-     *
-     * @param dst The destination register-tile for the result.
-     * @param a_rt The source register-tile for matrix A.
-     * @param b_st_desc The descriptor for the shared-tile of matrix B.
-     * @param scale_d The scaling factor for the destination matrix. Default is 1.
-     */
     __device__ static inline void rt_st(
         rt_fl<1, 4, rt_row_layout> &dst,
         const rt_base_bf<rt_row_layout> & a_rt,
@@ -38,7 +26,7 @@ struct wgmma_base<4> {
             "%36, " \
             "p, 1, 1, 0;\n" \
             "}\n"
-            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a
+            // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
         :   "+f"(dst.tiles[0][0].data[0].x), "+f"(dst.tiles[0][0].data[0].y),
             "+f"(dst.tiles[0][0].data[1].x), "+f"(dst.tiles[0][0].data[1].y),
@@ -59,23 +47,10 @@ struct wgmma_base<4> {
 
         :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
             "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
-
+            
             "l"(b_st_desc), "r"(scale_d)
         );
     }
-    /**
-     * @brief Perform warp-level matrix multiply-accumulate operation using shared-tiles for both A and B.
-     *
-     * This function performs a warp-level matrix multiply-accumulate operation where both matrices A and B are stored
-     * in shared memory (shared-tiles). The result is accumulated into the destination register-tile. This operation
-     * is optimized for 4x4 matrix tiles and is useful when both matrices are too large to fit in registers but can
-     * be efficiently accessed from shared memory.
-     *
-     * @param dst The destination register-tile for the result.
-     * @param a_st_desc The descriptor for the shared-tile of matrix A.
-     * @param b_st_desc The descriptor for the shared-tile of matrix B.
-     * @param scale_d The scaling factor for the destination matrix. Default is 1.
-     */
     __device__ static inline void st_st(
         rt_fl<1, 4, rt_row_layout> &dst,
         const uint64_t a_st_desc,
@@ -113,11 +88,11 @@ struct wgmma_base<4> {
 
         :   "l"(a_st_desc),
             "l"(b_st_desc),
-
+        
             "r"(scale_d)
         );
     }
 };
-
+    
 }
 }

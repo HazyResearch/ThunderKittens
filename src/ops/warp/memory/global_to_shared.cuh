@@ -17,7 +17,7 @@ namespace kittens {
  * @tparam layout The shared memory row layout.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory array.
- * @param row_stride The stride between rows in the source array.
+ * @param row_stride[in] The stride between rows in the source array.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
@@ -52,7 +52,7 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
  * @tparam layout The shared memory row layout.
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory tile.
- * @param row_stride The stride between rows in the destination array.
+ * @param row_stride[in] The stride between rows in the destination array.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {
@@ -126,8 +126,8 @@ __device__ inline static void store(U *dst, const ST &src) {
  * @tparam layout The shared memory row layout.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory array.
- * @param row_stride The stride between rows in the source array.
- * @param barrier The CUDA barrier used for synchronization.
+ * @param row_stride[in] The stride between rows in the source array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load_async(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
@@ -167,8 +167,8 @@ __device__ static inline void load_async(st<bf16, height, width, layout> &dst, c
  * @tparam layout The shared memory row layout.
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory tile.
- * @param row_stride The stride between rows in the destination array.
- * @param barrier The CUDA barrier used for synchronization.
+ * @param row_stride[in] The stride between rows in the destination array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store_async(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
@@ -211,7 +211,7 @@ __device__ static inline void store_async(bf16 *dst, const st<bf16, height, widt
  * @tparam layout The shared memory column layout.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory array.
- * @param row_stride The stride between rows in the source array.
+ * @param row_stride[in] The stride between rows in the source array.
  */
 template<int height, int width, st_col_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
@@ -243,7 +243,7 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
  * @tparam layout The shared memory column layout.
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory tile.
- * @param row_stride The stride between rows in the destination array.
+ * @param row_stride[in] The stride between rows in the destination array.
  */
 template<int height, int width, st_col_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {

@@ -74,8 +74,8 @@ namespace tma {
  * @tparam width The number of columns in the shared memory tile.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory pointer.
- * @param row_stride The stride between rows in the source memory.
- * @param barrier The barrier used for synchronization of the asynchronous copy.
+ * @param row_stride[in] The stride between rows in the source memory.
+ * @param barrier[in,out] The barrier used for synchronization of the asynchronous copy.
  */
 template<int height, int width>
 __device__ static inline void load_async(st<bf16, height, width, st_naive_row_layout> &dst, const bf16 *src, const int row_stride, uint64_t &barrier) {

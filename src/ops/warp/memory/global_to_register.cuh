@@ -10,9 +10,9 @@ namespace kittens {
  *
  * @tparam RT The row-major layout tile type.
  * @tparam U The data type of the source array.
- * @param dst The destination tile to load data into.
- * @param src The source array to load data from.
- * @param row_stride The stride between rows in the source array.
+ * @param dst[out] The destination tile to load data into.
+ * @param src[in] The source array to load data from.
+ * @param row_stride[in] The stride between rows in the source array.
  */
 template<rt_type_rowlayout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
@@ -42,9 +42,9 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  *
  * @tparam RT The column-major layout tile type.
  * @tparam U The data type of the source array.
- * @param dst The destination tile to load data into.
- * @param src The source array to load data from.
- * @param row_stride The stride between rows in the source array.
+ * @param dst[out] The destination tile to load data into.
+ * @param src[in] The source array to load data from.
+ * @param row_stride[in] The stride between rows in the source array.
  */
 template<rt_type_collayout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
@@ -87,7 +87,7 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  * @tparam U The data type of the destination array.
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register tile to store data from.
- * @param row_stride The stride between rows in the destination array.
+ * @param row_stride[in] The stride between rows in the destination array.
  */
 template<rt_type_rowlayout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
@@ -119,7 +119,7 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
  * @tparam U The data type of the destination array.
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register tile to store data from.
- * @param row_stride The stride between rows in the destination array.
+ * @param row_stride[in] The stride between rows in the destination array.
  */
 template<rt_type_collayout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {

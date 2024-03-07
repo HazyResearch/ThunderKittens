@@ -31,8 +31,8 @@ __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
  *
  * @tparam T2 The data type of the register tile elements.
  * @tparam layout The current layout of the register tile.
- * @param dst Reference to the destination register base tile where the result will be stored.
- * @param src Reference to the source register base tile to be swapped.
+ * @param dst[out] Reference to the destination register base tile where the result will be stored.
+ * @param src[in] Reference to the source register base tile to be swapped.
  */
 template<typename T2, rt_layout layout>
 __device__ inline void swap_layout(rt_base<T2, typename transpose_layout<layout>::type> &dst, const rt_base<T2, layout> &src) {
@@ -55,8 +55,8 @@ __device__ inline void swap_layout(rt_base<T2, typename transpose_layout<layout>
  * @tparam _height The height of the register tile.
  * @tparam _width The width of the register tile.
  * @tparam layout The current layout of the register tile.
- * @param dst Reference to the destination register tile where the result will be stored.
- * @param src Reference to the source register tile to be swapped.
+ * @param dst[out] Reference to the destination register tile where the result will be stored.
+ * @param src[in] Reference to the source register tile to be swapped.
  */
 template<typename T2, int _height, int _width, rt_layout layout>
 __device__ static inline void swap_layout(rt<T2, _height, _width, typename transpose_layout<layout>::type> &dst, const rt<T2, _height, _width, layout> &src) {
@@ -77,7 +77,7 @@ __device__ static inline void swap_layout(rt<T2, _height, _width, typename trans
  *
  * @tparam T2 The data type of the register tile elements.
  * @tparam layout The current layout of the register tile.
- * @param src Reference to the register base tile to be swapped in place.
+ * @param src[in] Reference to the register base tile to be swapped in place.
  * @return A reference to the swapped register base tile.
  */
 template<typename T2, rt_layout layout>
@@ -97,7 +97,7 @@ __device__ inline rt_base<T2, typename transpose_layout<layout>::type>& swap_lay
  * @tparam _height The height of the register tile.
  * @tparam _width The width of the register tile.
  * @tparam layout The current layout of the register tile.
- * @param tile Reference to the register tile to be swapped in place.
+ * @param tile[in,out] Reference to the register tile to be swapped in place.
  * @return A reference to the swapped register tile.
  */
 template<typename T2, int _height, int _width, rt_layout layout>
@@ -119,8 +119,8 @@ __device__ static inline rt<T2, _height, _width, typename transpose_layout<layou
  *
  * @tparam T2 The data type of the register tile elements.
  * @tparam layout The current layout of the register tile.
- * @param dst Reference to the register tile in which to store the transposed src.
- * @param src Reference to the register base tile to be transposed.
+ * @param dst[out] Reference to the register tile in which to store the transposed src.
+ * @param src[in] Reference to the register base tile to be transposed.
  */
 template<typename T2, rt_layout layout>
 __device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, layout> &src) {
@@ -142,8 +142,8 @@ __device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, lay
  * @tparam _height The height of the src register tile, and the width of the dst tile.
  * @tparam _width The width of the src register tile, and the height of the dst tile.
  * @tparam layout The layout of the register tile.
- * @param dst Reference to the register tile in which to store the transposed src.
- * @param src Reference to the register tile to be transposed.
+ * @param dst[out] Reference to the register tile in which to store the transposed src.
+ * @param src[in] Reference to the register tile to be transposed.
  */
 template<typename T2, int _height, int _width, rt_layout layout>
 __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst, const rt<T2, _height, _width, layout> &src) {
@@ -161,7 +161,7 @@ __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst
  *
  * @tparam T2 The data type of the register base tile elements.
  * @tparam layout The current layout of the register base tile.
- * @param src Reference to the register tile to be transposed.
+ * @param src[in] Reference to the register tile to be transposed.
  * @return A reference to the transposed register base tile.
  */
 template<typename T2, rt_layout layout>
@@ -173,10 +173,10 @@ __device__ inline rt_base<T2, layout>& transpose_inplace(const rt_base<T2, layou
  * @brief Transposes a square register tile in-place.
  *
  * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height of the src register tile, and the width of the dst tile. (Must be the same as _width.)
- * @tparam _width The width of the src register tile, and the height of the dst tile. (Must be the same as _height.)
+ * @tparam _height The height (in units of 16) of the src register tile, and the width of the dst tile. (Must be the same as _width.)
+ * @tparam _width The width (in units of 16) of the src register tile, and the height of the dst tile. (Must be the same as _height.)
  * @tparam layout The current layout of the register tile.
- * @param src Reference to the register tile to be transposed.
+ * @param src[in] Reference to the register tile to be transposed.
  * @return A reference to the transposed register tile.
  */
 template<typename T2, int _height, int _width, rt_layout layout>
@@ -203,9 +203,9 @@ __device__ static inline rt<T2, _width, _height, layout>& transpose_inplace(rt<T
  *
  * @tparam T2 The data type of the destination register elements.
  * @tparam U2 The data type of the source register elements.
- * @tparam layout The current layout of the register tile.
- * @param src Reference to the register tile to be transposed.
- * @return A reference to the transposed register tile.
+ * @tparam layout The current layout of the register base tile.
+ * @param[out] dst A reference to the destination register base tile.
+ * @param[in] src A reference to the source register base tile.
  */
 template<typename T2, typename U2, rt_layout layout>
 __device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, layout> &src) {
@@ -214,6 +214,17 @@ __device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, l
         dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
     }
 }
+/**
+ * @brief Copies a register tile, converting the underlying type if necessary.
+ *
+ * @tparam T2 The data type of the destination register elements.
+ * @tparam U2 The data type of the source register elements.
+ * @tparam _height The height (in units of 16) of the register tiles.
+ * @tparam _width The width (in units of 16) of the register tiles.
+ * @tparam layout The current layout of the register tile.
+ * @param[out] dst A reference to the destination register tile.
+ * @param[in] src A reference to the source register tile.
+ */
 template<typename T2, typename U2, int _height, int _width, rt_layout layout>
 __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
     #pragma unroll

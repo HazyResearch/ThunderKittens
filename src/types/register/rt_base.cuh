@@ -24,9 +24,7 @@ struct rt_base_id {};
  * @tparam T2 The packed data type for the elements of the tile.
  * @tparam _layout The layout of the matrix (row-major or column-major).
  */
-template<typename T2, typename _layout, 
-         typename = std::enable_if_t<kittens::is_packed_type<T2>::value>,
-         typename = std::enable_if_t<kittens::is_rt_layout<_layout>::value>>
+template<packed_type T2, rt_layout _layout>
 struct rt_base {
     using identifier = rt_base_id; ///< Type identifier for the base register tile.
     using layout = _layout;        ///< Layout of the matrix.
@@ -34,10 +32,10 @@ struct rt_base {
 
     static constexpr int tile_size            = 16; ///< Size of one side of the tile (16 elements).
     static constexpr int num_elements         = tile_size*tile_size; ///< Total number of elements in the tile (256).
-    static constexpr int elements_per_thread  = num_elements / 32;   ///< Number of elements processed by each thread (8).
+    static constexpr int elements_per_thread  = num_elements / 32;   ///< Number of elements held by each thread (8).
 
     // Static assert to ensure that packing<T2>::num() is valid
-    static_assert(kittens::is_packed_type<T2>::value, "T2 must be a packed type");
+    static_assert(kittens::base_types::packing<T2>::num() == 2, "T2 must be a packed type");
 
     static constexpr int packed_per_thread    = elements_per_thread / kittens::base_types::packing<T2>::num(); ///< Number of packed elements per thread.
     static constexpr int registers_per_thread = packed_per_thread * sizeof(T2) / 4; ///< Number of 32-bit registers needed per thread.

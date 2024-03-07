@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <type_traits>
+#include <concepts>
 
 namespace kittens {
 
@@ -79,27 +80,41 @@ static constexpr uint32_t MASK_ALL = 0xFFFFFFFF;
 /**
  * @brief Perform a shuffle down operation synchronously across a warp.
  * @tparam T The type of the value to be shuffled.
- * @param mask The mask of active threads.
- * @param f The value to be shuffled.
- * @param delta The number of positions to shuffle down.
+ * @param mask[in] The mask of active threads.
+ * @param f[in] The value to be shuffled.
+ * @param delta[in] The number of positions to shuffle down.
  * @return The result of the shuffle operation.
  */
-template<typename T>
-__device__ static inline T packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
+ template<typename T>
+__device__ static inline float2 packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
     return __shfl_down_sync(mask, f, delta);
+}
+template<>
+__device__ inline float2 packed_shfl_down_sync<float2>(uint32_t mask, const float2 &f, int delta) {
+    float2 r;
+    r.x = __shfl_down_sync(mask, f.x, delta);
+    r.y = __shfl_down_sync(mask, f.y, delta);
+    return r;
 }
 
 /**
  * @brief Perform a shuffle operation synchronously across a warp.
  * @tparam T The type of the value to be shuffled.
- * @param mask The mask of active threads.
- * @param f The value to be shuffled.
- * @param src The source lane from which to shuffle.
+ * @param mask[in] The mask of active threads.
+ * @param f[in] The value to be shuffled.
+ * @param src[in] The source lane from which to shuffle.
  * @return The result of the shuffle operation.
  */
 template<typename T>
-__device__ static inline T packed_shfl_sync(uint32_t mask, const T &f, int src) {
+__device__ static inline float2 packed_shfl_sync(uint32_t mask, const T &f, int src) {
     return __shfl_sync(mask, f, src);
+}
+template<>
+__device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f, int src) {
+    float2 r;
+    r.x = __shfl_sync(mask, f.x, src);
+    r.y = __shfl_sync(mask, f.y, src);
+    return r;
 }
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
@@ -117,8 +132,8 @@ struct shared_allocator {
     int *ptr; // < Pointer to the current position in shared memory.
 
     /**
-     * @brief Construct a new shared allocator.
-     * @param _ptr Pointer to the start of the extern shared memory.
+     * @brief Construct a new shared allocator using a pointer to extern shared memory.
+     * @param[in] _ptr Pointer to the start of the extern shared memory.
      */
     __device__ shared_allocator(int * _ptr): ptr(_ptr) {}
 

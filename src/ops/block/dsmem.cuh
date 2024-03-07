@@ -9,12 +9,12 @@ namespace dsmem {
 /**
  * @brief Distributes a tile of data across shared memory in different thread blocks.
  *
- * @param dst_ The destination shared memory tile.
- * @param src_ The source shared memory tile.
- * @param cluster_size The size of the cluster of thread blocks.
- * @param dst_idx The index of the destination thread block.
- * @param size_bytes The size of the data in bytes.
- * @param barrier The barrier used for synchronization.
+ * @param dst_[in] The destination shared memory tile.
+ * @param src_[in] The source shared memory tile.
+ * @param cluster_size[in] The size of the cluster of thread blocks.
+ * @param dst_idx[in] The index of the destination thread block.
+ * @param size_bytes[in] The size of the data in bytes.
+ * @param barrier[in,out] The barrier used for synchronization.
  */
 template<int height, int width, st_layout layout>
 __device__ static inline void tile_distribute_smem(st<bf16, height, width, layout> &dst_, st<bf16, height, width, layout> &src_, int cluster_size, int dst_idx, uint32_t size_bytes, uint64_t& barrier) 
@@ -59,8 +59,8 @@ __device__ static inline void tile_distribute_smem(st<bf16, height, width, layou
 /**
  * @brief Waits for the distribution of shared memory tiles to complete.
  *
- * @param barrier The barrier used for synchronization.
- * @param kPhaseBit The phase bit used for the mbarrier.
+ * @param barrier[in,out] The barrier used for synchronization.
+ * @param kPhaseBit[in,out] The phase bit used for the mbarrier.
  */
 __device__ static inline void distribution_wait(uint64_t& barrier, int kPhaseBit) {
     void const* const ptr = &barrier;
@@ -83,8 +83,8 @@ __device__ static inline void distribution_wait(uint64_t& barrier, int kPhaseBit
 /**
  * @brief Initializes a barrier for shared memory tile distribution.
  *
- * @param barrier The barrier to initialize.
- * @param tc The thread count for the barrier.
+ * @param barrier[in,out] The barrier to initialize.
+ * @param tc[in] The thread count for the barrier.
  */
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     if (threadIdx.x == 0) {
@@ -101,8 +101,8 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
 /**
  * @brief Sets the expected transaction bytes for a barrier.
  *
- * @param barrier The barrier to set.
- * @param bytes The expected transaction bytes.
+ * @param barrier[in,out] The barrier to set.
+ * @param bytes[in] The expected transaction bytes.
  */
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
     if (threadIdx.x == 0) {

@@ -2,7 +2,7 @@
 NVCC=nvcc
 
 # Compiler flags
-NVCCFLAGS=-g -G -std=c++17 --expt-relaxed-constexpr -arch=sm_70
+NVCCFLAGS=-g -G -std=c++20 --expt-relaxed-constexpr -arch=sm_90a
 
 # Target binary name
 TARGET=unit_tests

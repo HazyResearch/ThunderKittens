@@ -22,8 +22,8 @@ namespace kittens {
  * @tparam width         The width of the register tiles.
  * @tparam reg_layout    The layout of the register tiles.
  * @tparam shared_layout The layout of the shared memory.
- * @param dst            The destination register tiles.
- * @param src            The source shared memory.
+ * @param dst[out]            The destination register tiles.
+ * @param src[in]             The source shared memory.
  */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
@@ -69,8 +69,8 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
  * @tparam width         The width of the register tiles.
  * @tparam reg_layout    The layout of the register tiles.
  * @tparam shared_layout The layout of the shared memory.
- * @param dst            The destination shared memory.
- * @param src            The source register tiles.
+ * @param dst[out]            The destination shared memory.
+ * @param src[in]            The source register tiles.
  */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {
@@ -118,8 +118,8 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
  * @tparam width         The width of the register tiles.
  * @tparam reg_layout    The layout of the register tiles.
  * @tparam shared_layout The layout of the shared memory.
- * @param dst            The destination register tiles.
- * @param src            The source shared memory.
+ * @param dst[out]            The destination register tiles.
+ * @param src[in]            The source shared memory.
  */
 template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
 __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
@@ -168,8 +168,8 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
  * @tparam width         The width of the register tiles.
  * @tparam reg_layout    The layout of the register tiles.
  * @tparam shared_layout The layout of the shared memory.
- * @param dst            The destination shared memory.
- * @param src            The source register tiles.
+ * @param dst[out]            The destination shared memory.
+ * @param src[in]            The source register tiles.
  */
 template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {

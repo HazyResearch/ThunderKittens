@@ -110,7 +110,7 @@ template<> struct packing<bf16> {
     /**
      * @brief Packs a single bf16 element into a bf16_2 vector.
      *
-     * @param i The bf16 element to pack.
+     * @param i[in] The bf16 element to pack.
      * @return constexpr bf16_2 The packed bf16_2 vector.
      */
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; }
@@ -125,7 +125,7 @@ template<> struct packing<half> {
     /**
      * @brief Packs a single half element into a half_2 vector.
      *
-     * @param i The half element to pack.
+     * @param i[in] The half element to pack.
      * @return constexpr half_2 The packed half_2 vector.
      */
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; }
@@ -140,7 +140,7 @@ template<> struct packing<float> {
     /**
      * @brief Packs a single float element into a float2 vector.
      *
-     * @param i The float element to pack.
+     * @param i[in] The float element to pack.
      * @return constexpr float2 The packed float2 vector.
      */
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; }
@@ -155,7 +155,7 @@ template<> struct packing<bf16_2> {
     /**
      * @brief Packs a single bf16 element into a bf16_2 vector by replicating it.
      *
-     * @param i The bf16 element to pack.
+     * @param i[in] The bf16 element to pack.
      * @return constexpr bf16_2 The packed bf16_2 vector.
      */
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; } // this replication makes code cleaner later.
@@ -170,7 +170,7 @@ template<> struct packing<half_2> {
     /**
      * @brief Packs a single half element into a half_2 vector by replicating it.
      *
-     * @param i The half element to pack.
+     * @param i[in] The half element to pack.
      * @return constexpr half_2 The packed half_2 vector.
      */
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; } // this replication makes code cleaner later.
@@ -185,7 +185,7 @@ template<> struct packing<float2> {
     /**
      * @brief Packs a single float element into a float2 vector by replicating it.
      *
-     * @param i The float element to pack.
+     * @param i[in] The float element to pack.
      * @return constexpr float2 The packed float2 vector.
      */
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
@@ -222,7 +222,7 @@ template<typename T, typename U> struct convertor {
     /**
      * @brief Converts a value of type U to type T.
      *
-     * @param u The value of type U to convert.
+     * @param u[in] The value of type U to convert.
      * @return T The converted value of type T.
      */
     static __device__ inline T convert(const U & u) {

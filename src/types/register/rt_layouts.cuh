@@ -20,9 +20,10 @@ struct rt_col_layout { static constexpr bool row=false; };
  * @tparam T The type to check against the rt_row_layout and rt_col_layout.
  */
 template<typename T>
-struct is_rt_layout {
-    static constexpr bool value = std::is_same<T, rt_row_layout>::value || std::is_same<T, rt_col_layout>::value;
-};
+concept rt_layout = (
+    std::is_same_v<T, rt_row_layout>  ||
+    std::is_same_v<T, rt_col_layout>
+);
 
 /**
  * @brief Determines the transpose of a given layout type.

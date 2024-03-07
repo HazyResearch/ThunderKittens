@@ -12,8 +12,8 @@ namespace kittens {
  *
  * @tparam op Unary operation to apply.
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
  */
 template<typename op, rt_type T>
 __device__ static inline void unary_map(T &dst, const T &src) {
@@ -34,9 +34,9 @@ __device__ static inline void unary_map(T &dst, const T &src) {
  *
  * @tparam op Binary operation to apply.
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param param Scalar parameter for the binary operation.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param param[in] Scalar parameter for the binary operation.
  */
 template<typename op, rt_type T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
@@ -57,9 +57,9 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename T::dt
  *
  * @tparam op Binary operation to apply.
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param param Unpacked scalar parameter for the binary operation.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param param[in] Unpacked scalar parameter for the binary operation.
  */
 template<typename op, rt_type T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename base_types::packing<typename T::dtype>::unpacked_type &param) {
@@ -71,9 +71,9 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename base_
  *
  * @tparam op Binary operation to apply.
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the operation.
- * @param rhs Right-hand side source tile for the operation.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile for the operation.
  */
 template<typename op, rt_type T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
@@ -97,9 +97,9 @@ __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
  * @tparam op Operation to apply.
  * @tparam T Tile type with row-major layout.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param row_values Column vector containing values to apply across each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
  */
 // row-major layout
 template<typename op, rt_type_rowlayout T, rt_col_vec_type V>
@@ -132,9 +132,9 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
  * @tparam op Operation to apply.
  * @tparam T Tile type with column-major layout.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param row_values Column vector containing values to apply across each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
  */
 // col-major layout
 template<typename op, rt_type_collayout T, rt_col_vec_type V>
@@ -167,10 +167,10 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
  * @tparam op Operation to apply.
  * @tparam T Tile type with row-major layout.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param a First source tile to apply the operation on.
- * @param b Second source tile to apply the operation on.
- * @param row_values Column vector containing values to apply across each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
  */
 // row-major layout
 template<typename op, rt_type_rowlayout T, rt_col_vec_type V>
@@ -203,10 +203,10 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
  * @tparam op Operation to apply.
  * @tparam T Tile type with column-major layout.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param a First source tile to apply the operation on.
- * @param b Second source tile to apply the operation on.
- * @param row_values Column vector containing values to apply across each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
  */
 // col-major layout
 template<typename op, rt_type_collayout T, rt_col_vec_type V>
@@ -239,9 +239,9 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
  * @tparam op Operation to apply.
  * @tparam T Tile type with row-major layout.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param col_values Row vector containing values to apply across each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
  */
 // row-major layout
 template<typename op, rt_type_rowlayout T, rt_row_vec_type V>
@@ -271,9 +271,9 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
  * @tparam op Operation to apply.
  * @tparam T Tile type with column-major layout.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the operation on.
- * @param col_values Row vector containing values to apply across each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
  */
 // col-major layout
 template<typename op, rt_type_collayout T, rt_row_vec_type V>
@@ -307,10 +307,10 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
  * @tparam op Operation to apply.
  * @tparam T Tile type with row-major layout.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param a First source tile to apply the operation on.
- * @param b Second source tile to apply the operation on.
- * @param col_values Row vector containing values to apply across each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
  */
 // row-major layout
 template<typename op, rt_type_rowlayout T, rt_row_vec_type V>
@@ -340,10 +340,10 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
  * @tparam op Operation to apply.
  * @tparam T Tile type with column-major layout.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param a First source tile to apply the operation on.
- * @param b Second source tile to apply the operation on.
- * @param col_values Row vector containing values to apply across each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
  */
 // col-major layout
 template<typename op, rt_type_collayout T, rt_row_vec_type V>
@@ -379,7 +379,7 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
  * @brief Sets all elements of a tile to zero.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
+ * @param dst[out] Destination tile where the result is stored.
  */
 template<rt_type T>
 __device__ static inline void zero(T &dst) {
@@ -390,7 +390,7 @@ __device__ static inline void zero(T &dst) {
  * @brief Sets all elements of a tile to one.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
+ * @param dst[out] Destination tile where the result is stored.
  */
 template<rt_type T>
 __device__ static inline void one(T &dst) {
@@ -401,7 +401,7 @@ __device__ static inline void one(T &dst) {
  * @brief Sets all elements of a tile to positive infinity.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
+ * @param dst[out] Destination tile where the result is stored.
  */
 template<rt_type T>
 __device__ static inline void pos_infty(T &dst) {
@@ -412,7 +412,7 @@ __device__ static inline void pos_infty(T &dst) {
  * @brief Sets all elements of a tile to negative infinity.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
+ * @param dst[out] Destination tile where the result is stored.
  */
 template<rt_type T>
 __device__ static inline void neg_infty(T &dst) {
@@ -423,8 +423,8 @@ __device__ static inline void neg_infty(T &dst) {
  * @brief Applies the exponential function to each element of a tile.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the exponential function on.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the exponential function on.
  */
 template<rt_type T>
 __device__ static inline void exp(T &dst, const T &src) {
@@ -435,8 +435,8 @@ __device__ static inline void exp(T &dst, const T &src) {
  * @brief Applies the absolute value function to each element of a tile.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the absolute value function on.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the absolute value function on.
  */
 template<rt_type T>
 __device__ static inline void abs(T &dst, const T &src) {
@@ -447,8 +447,8 @@ __device__ static inline void abs(T &dst, const T &src) {
  * @brief Applies the rectified linear unit (ReLU) function to each element of a tile.
  *
  * @tparam T Tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the ReLU function on.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the ReLU function on.
  */
 template<rt_type T>
 __device__ static inline void relu(T &dst, const T &src) {
@@ -460,8 +460,8 @@ __device__ static inline void relu(T &dst, const T &src) {
  *
  * @tparam T Destination tile type.
  * @tparam U Source tile type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to copy from.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to copy from.
  */
 template<rt_type T, typename U>
 __device__ static inline void copy2(T &dst, const U &src) {
@@ -474,9 +474,9 @@ __device__ static inline void copy2(T &dst, const U &src) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the operation.
- * @param rhs Right-hand side source tile or scalar for the operation.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile or scalar for the operation.
  */
 template<rt_type T, typename U>
 __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
@@ -488,9 +488,9 @@ __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the operation.
- * @param rhs Right-hand side source tile or scalar for the operation.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile or scalar for the operation.
  */
 template<rt_type T, typename U>
 __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
@@ -502,9 +502,9 @@ __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the addition.
- * @param rhs Right-hand side source tile or scalar for the addition.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the addition.
+ * @param rhs[in] Right-hand side source tile or scalar for the addition.
  */
 template<rt_type T, typename U>
 __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
@@ -516,9 +516,9 @@ __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the subtraction.
- * @param rhs Right-hand side source tile or scalar for the subtraction.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the subtraction.
+ * @param rhs[in] Right-hand side source tile or scalar for the subtraction.
  */
 template<rt_type T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
@@ -530,9 +530,9 @@ __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the multiplication.
- * @param rhs Right-hand side source tile or scalar for the multiplication.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the multiplication.
+ * @param rhs[in] Right-hand side source tile or scalar for the multiplication.
  */
 template<rt_type T, typename U>
 __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
@@ -544,9 +544,9 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst Destination tile where the result is stored.
- * @param lhs Left-hand side source tile for the division.
- * @param rhs Right-hand side source tile or scalar for the division.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the division.
+ * @param rhs[in] Right-hand side source tile or scalar for the division.
  */
 template<rt_type T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
@@ -559,9 +559,9 @@ __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
  *
  * @tparam T Tile type.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the addition on.
- * @param row_values Column vector containing values to add to each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the addition on.
+ * @param row_values[in] Column vector containing values to add to each row.
  */
 template<rt_type T, rt_col_vec_type V>
 __device__ static inline void add_row(T &dst, const T &src, const V &row_values) {
@@ -573,9 +573,9 @@ __device__ static inline void add_row(T &dst, const T &src, const V &row_values)
  *
  * @tparam T Tile type.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the subtraction on.
- * @param row_values Column vector containing values to subtract from each row.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the subtraction on.
+ * @param row_values[in] Column vector containing values to subtract from each row.
  */
 template<rt_type T, rt_col_vec_type V>
 __device__ static inline void sub_row(T &dst, const T &src, const V &row_values) {
@@ -587,9 +587,9 @@ __device__ static inline void sub_row(T &dst, const T &src, const V &row_values)
  *
  * @tparam T Tile type.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the multiplication on.
- * @param row_values Column vector containing values to multiply each row by.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the multiplication on.
+ * @param row_values[in] Column vector containing values to multiply each row by.
  */
 template<rt_type T, rt_col_vec_type V>
 __device__ static inline void mul_row(T &dst, const T &src, const V &row_values) {
@@ -601,9 +601,9 @@ __device__ static inline void mul_row(T &dst, const T &src, const V &row_values)
  *
  * @tparam T Tile type.
  * @tparam V Column vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the division on.
- * @param row_values Column vector containing values to divide each row by.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the division on.
+ * @param row_values[in] Column vector containing values to divide each row by.
  */
 template<rt_type T, rt_col_vec_type V>
 __device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
@@ -616,9 +616,9 @@ __device__ static inline void div_row(T &dst, const T &src, const V &row_values)
  *
  * @tparam T Tile type.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the addition on.
- * @param col_values Row vector containing values to add to each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the addition on.
+ * @param col_values[in] Row vector containing values to add to each column.
  */
 template<rt_type T, rt_row_vec_type V>
 __device__ static inline void add_col(T &dst, const T &src, const V &col_values) {
@@ -630,9 +630,9 @@ __device__ static inline void add_col(T &dst, const T &src, const V &col_values)
  *
  * @tparam T Tile type.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the subtraction on.
- * @param col_values Row vector containing values to subtract from each column.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the subtraction on.
+ * @param col_values[in] Row vector containing values to subtract from each column.
  */
 template<rt_type T, rt_row_vec_type V>
 __device__ static inline void sub_col(T &dst, const T &src, const V &col_values) {
@@ -644,9 +644,9 @@ __device__ static inline void sub_col(T &dst, const T &src, const V &col_values)
  *
  * @tparam T Tile type.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the multiplication on.
- * @param col_values Row vector containing values to multiply each column by.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the multiplication on.
+ * @param col_values[in] Row vector containing values to multiply each column by.
  */
 template<rt_type T, rt_row_vec_type V>
 __device__ static inline void mul_col(T &dst, const T &src, const V &col_values) {
@@ -658,9 +658,9 @@ __device__ static inline void mul_col(T &dst, const T &src, const V &col_values)
  *
  * @tparam T Tile type.
  * @tparam V Row vector type.
- * @param dst Destination tile where the result is stored.
- * @param src Source tile to apply the division on.
- * @param col_values Row vector containing values to divide each column by.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the division on.
+ * @param col_values[in] Row vector containing values to divide each column by.
  */
 template<rt_type T, rt_row_vec_type V>
 __device__ static inline void div_col(T &dst, const T &src, const V &col_values) {

@@ -15,9 +15,9 @@ namespace warpgroup {
  *
  * @tparam RT Register tile type with row layout.
  * @tparam U Data type of the source in global memory.
- * @param dst Destination register tile where data will be loaded.
- * @param src Source pointer in global memory.
- * @param row_stride Stride between rows in global memory.
+ * @param dst[out] Destination register tile where data will be loaded.
+ * @param src[in] Source pointer in global memory.
+ * @param row_stride[in] Stride between rows in global memory.
  */
 template<rt_type_rowlayout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {

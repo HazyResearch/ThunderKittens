@@ -16,9 +16,9 @@ namespace warpgroup {
  * @tparam height The height of the structured tensor.
  * @tparam width The width of the structured tensor.
  * @tparam layout The layout type of the structured tensor.
- * @param dst The destination structured tensor.
- * @param src The source memory in global memory.
- * @param row_stride The stride between rows in the source memory.
+ * @param dst[out] The destination structured tensor.
+ * @param src[in] The source memory in global memory.
+ * @param row_stride[in] The stride between rows in the source memory.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
@@ -52,9 +52,9 @@ __device__ static inline void load(st<bf16, height, width, layout> &dst, const b
  * @tparam height The height of the structured tensor.
  * @tparam width The width of the structured tensor.
  * @tparam layout The layout type of the structured tensor.
- * @param dst The destination memory in global memory.
- * @param src The source structured tensor.
- * @param row_stride The stride between rows in the destination memory.
+ * @param dst[out] The destination memory in global memory.
+ * @param src[in] The source structured tensor.
+ * @param row_stride[in] The stride between rows in the destination memory.
  */
 template<int height, int width, st_row_layout layout>
 __device__ static inline void store(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride) {
