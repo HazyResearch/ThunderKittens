@@ -60,7 +60,7 @@ template<int height, int width>
 struct shared_indexer<height, width, st_xor_row_layout> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
-    static constexpr int swizzling_bytes = 16;
+    static constexpr int swizzling_bytes = sizeof(float4);
     static constexpr int swizzling_elements = swizzling_bytes / sizeof(bf16);
     __device__ static inline int idx(int r, int c) { // naive row-major index default
         return (r*cols + c) ^ (swizzling_elements*r);
@@ -172,7 +172,7 @@ struct shared_indexer<height, width, st_wgmma_col_0b_layout> {
         int idx4 = c%cols_per_core_matrix;
         int idx5 = r%rows_per_core_matrix;
         return (
-            (((idx1 * (2*height) // height is in units of 16, but we want units of 8
+            (((idx1 * (2*width) // height is in units of 16, but we want units of 8
              + idx2) * 2 // * 2 tensormaps across
              + idx3) * 8 // * 8 rows per tensormap
              + idx4) * 8 // * 8 columns per row
@@ -194,7 +194,7 @@ struct shared_indexer<height, width, st_wgmma_col_32b_layout> {
         int idx4 = (c%4)*2 + (r%rows_per_idx1)/rows_per_core_matrix;
         int idx5 = r%rows_per_core_matrix;
         return (
-            (((idx1 * (2*height) // height is in units of 16, but we want units of 8
+            (((idx1 * (2*width) // height is in units of 16, but we want units of 8
              + idx2) * 2 // * 2 tensormaps across
              + idx3) * 8 // * 8 rows per tensormap
              + idx4) * 8 // * 8 columns per row
@@ -216,7 +216,7 @@ struct shared_indexer<height, width, st_wgmma_col_64b_layout> {
         int idx4 = (c%2)*4 + ((c%16)/cols_per_core_matrix)*2 + (r%rows_per_idx1)/rows_per_core_matrix;
         int idx5 = r%rows_per_core_matrix;
         return (
-            (((idx1 * (2*height) // height is in units of 16, but we want units of 8
+            (((idx1 * (2*width) // height is in units of 16, but we want units of 8
              + idx2) * 2 // * 2 tensormaps across
              + idx3) * 8 // * 8 rows per tensormap
              + idx4) * 8 // * 8 columns per row
@@ -238,7 +238,7 @@ struct shared_indexer<height, width, st_wgmma_col_128b_layout> {
         int idx4 = ((c%32)/cols_per_core_matrix)*2 + (r%rows_per_idx1)/rows_per_core_matrix;
         int idx5 = r%rows_per_core_matrix;
         return (
-            (((idx1 * (2*height) // height is in units of 16, but we want units of 8
+            (((idx1 * (2*width) // height is in units of 16, but we want units of 8
              + idx2) * 2 // * 2 tensormaps across
              + idx3) * 8 // * 8 rows per tensormap
              + idx4) * 8 // * 8 columns per row

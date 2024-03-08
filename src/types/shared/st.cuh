@@ -62,17 +62,17 @@ struct st {
         desc |= matrix_descriptor_encode((uint64_t)128) << 16;
         desc |= matrix_descriptor_encode((uint64_t)256) << 32;
         uint64_t base_offset = 0;
-        if constexpr (layout::swizzling_mode == 1) {
+        if constexpr (layout::swizzling_mode == 3) { // 32 byte swizzling
             if((uint64_t)(start_addr) % 256 != 0) {
                 base_offset = (start_addr >> 0x7) ^ 0x7;
             }
         }
-        if constexpr (layout::swizzling_mode == 2) {
+        if constexpr (layout::swizzling_mode == 2) { // 64 byte swizzling
             if((uint64_t)(start_addr) % 512 != 0) {
                 base_offset = (start_addr >> 0x7) ^ 0x7;
             }
         }
-        if constexpr (layout::swizzling_mode == 3) {
+        if constexpr (layout::swizzling_mode == 1) { // 128 byte swizzling
             if((uint64_t)(start_addr) % 1024 != 0) {
                 base_offset = (start_addr >> 0x7) ^ 0x7;
             }
