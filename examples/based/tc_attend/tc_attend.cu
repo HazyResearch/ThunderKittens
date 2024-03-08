@@ -67,7 +67,7 @@ void shm_broadcast(float &f, float *shm, const int workers = 4) {
 
 // GEMV
 __device__
-void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { // SA: directions of these seem off
+void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { 
     rt_fl_1x4<> t;
     copy(t, a);
     // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
@@ -95,7 +95,7 @@ vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
     __syncwarp();    
     for(auto h = 0; h < dst.outer_dim; h++) {
         dst[h][0].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row]);    
-        dst[h][1].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row + 8]); // SA: IS THIS CORRECT???
+        dst[h][1].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row + 8]); 
     }
 }
 
