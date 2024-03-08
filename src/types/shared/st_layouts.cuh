@@ -18,6 +18,9 @@ struct st_wgmma_col_64b_layout{ static constexpr int swizzling_mode=2; };
 struct st_wgmma_col_128b_layout{ static constexpr int swizzling_mode=1; };
 
 struct st_wgmma_col_t_0b_layout{ static constexpr int swizzling_mode=0; };
+struct st_wgmma_col_t_32b_layout{ static constexpr int swizzling_mode=3; };
+struct st_wgmma_col_t_64b_layout{ static constexpr int swizzling_mode=2; };
+struct st_wgmma_col_t_128b_layout{ static constexpr int swizzling_mode=1; };
 
 template<typename T>
 concept st_wgmma_row_layout = (
@@ -28,11 +31,14 @@ concept st_wgmma_row_layout = (
 );
 template<typename T>
 concept st_wgmma_col_layout = (
-    std::is_same_v<T, st_wgmma_col_0b_layout>   ||
-    std::is_same_v<T, st_wgmma_col_32b_layout>  ||
-    std::is_same_v<T, st_wgmma_col_64b_layout>  ||
-    std::is_same_v<T, st_wgmma_col_128b_layout> || 
-    std::is_same_v<T, st_wgmma_col_t_0b_layout>
+    std::is_same_v<T, st_wgmma_col_0b_layout>     ||
+    std::is_same_v<T, st_wgmma_col_32b_layout>    ||
+    std::is_same_v<T, st_wgmma_col_64b_layout>    ||
+    std::is_same_v<T, st_wgmma_col_128b_layout>   || 
+    std::is_same_v<T, st_wgmma_col_t_0b_layout>   ||
+    std::is_same_v<T, st_wgmma_col_t_32b_layout>  ||
+    std::is_same_v<T, st_wgmma_col_t_64b_layout>  ||
+    std::is_same_v<T, st_wgmma_col_t_128b_layout>
 );
 template<typename T>
 concept st_row_layout = (

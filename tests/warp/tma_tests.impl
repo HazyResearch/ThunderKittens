@@ -161,62 +161,11 @@ bool test_tma() {
     return passed;
 }
 
-template<st_layout layout, bool store_test>
-bool test_tma_s() {
-    // initailize
-    bf16 *d_i, *d_o;
-    std::vector<float> i_ref(SIZE); 
-    std::vector<float> o_ref(SIZE); 
-    initialize(&d_i, &d_o, i_ref, o_ref);
-
-    CUtensorMap tma_desc_input = {};
-    tma::create_tensor_map<st_bf<HEIGHT, WIDTH, layout>, 1>(&tma_desc_input, d_i); 
-
-    CUtensorMap tma_desc_output = {};
-    tma::create_tensor_map<st_bf<HEIGHT, WIDTH, layout>, 1>(&tma_desc_output, d_o);
-
-    CUtensorMap* tma_desc_input_d;
-    CUtensorMap* tma_desc_output_d;
-
-    cudaMalloc(&tma_desc_input_d,                       sizeof(CUtensorMap));
-    cudaMalloc(&tma_desc_output_d,                      sizeof(CUtensorMap));
-    cudaMemcpy(tma_desc_input_d,    &tma_desc_input,    sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_desc_output_d,   &tma_desc_output,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-
-    unsigned long mem_size = 100000; 
-
-    // run kernel
-    bool passed; 
-    if constexpr (!store_test) {
-        cudaFuncSetAttribute(test_tmaload_ker<layout>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-        CudaCheckError();
-
-        test_tmaload_ker<layout><<<1, 32, mem_size>>>(d_i, d_o, tma_desc_input_d);
-        CudaCheckError();
-    }
-    else {
-        cudaFuncSetAttribute(test_tmastore_ker<layout>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-        CudaCheckError();
-
-        test_tmastore_ker<layout><<<1, 32, mem_size>>>(d_i, d_o, tma_desc_output_d);
-        CudaCheckError();
-    }
-
-    // output must be input with swizzled layout
-    swizzle<layout>(o_ref, i_ref, SIZE); 
-    
-    passed = validate(d_i, d_o, i_ref, o_ref, layout_name<layout>());
-
-    return passed;
-}
-
 int tma_tests() {
     std::cout << " ----- Starting tma tests! -----" << std::endl;
     int failures = 0;
     failures += !test_tma<st_naive_row_layout, false>();
     failures += !test_tma<st_naive_row_layout, true>();
-    // failures += !test_tma<st_xor_row_layout, false>();
-    // failures += !test_tma<st_xor_row_layout, true>();
 
     failures += !test_tma<st_wgmma_row_0b_layout, false>();
     failures += !test_tma<st_wgmma_row_0b_layout, true>();
@@ -227,14 +176,8 @@ int tma_tests() {
     // failures += !test_tma<st_wgmma_row_128b_layout, false>();
     // failures += !test_tma<st_wgmma_row_128b_layout, true>();
 
-    // failures += !test_tma<st_wgmma_col_0b_layout, false>();
-    // failures += !test_tma<st_wgmma_col_0b_layout, true>();
-    // failures += !test_tma<st_wgmma_col_32b_layout, false>();
-    // failures += !test_tma<st_wgmma_col_32b_layout, true>();
-    // failures += !test_tma<st_wgmma_col_64b_layout, false>();
-    // failures += !test_tma<st_wgmma_col_64b_layout, true>();
-    // failures += !test_tma<st_wgmma_col_128b_layout, false>();
-    // failures += !test_tma<st_wgmma_col_128b_layout, true>();
+    failures += !test_tma<st_wgmma_col_t_0b_layout, false>();
+    failures += !test_tma<st_wgmma_col_t_0b_layout, true>();
 
     return failures;
 }

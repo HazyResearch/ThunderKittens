@@ -24,8 +24,7 @@ __global__ void test_wgmma_tma_mma_ker_trans(const bf16 *input, bf16 *output, CU
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ uint64_t smem_barrier;  
-    constexpr int size_bytes = sizeof(bf16) * a_smem.num_elements;  
- 
+    constexpr int size_bytes = sizeof(bf16) * a_smem.num_elements;   
 
     if (warpid == 0) {
         tma::init_barrier(smem_barrier, 32); 

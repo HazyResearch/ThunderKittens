@@ -23,19 +23,19 @@ int main() {
     int failures = 0;
     
     std::cout << " ---------------  BEGINNING WARP TESTS  ---------------\n";
-    // failures += mem_tests();
-    // failures += st_vec_tests();
-    // failures += rt_layout_tests();
-    // failures += st_layout_tests();
-    // failures += map_tests();
-    // failures += reduction_tests();
-    // failures += mma_tests();
-    // failures += tma_tests();
+    failures += mem_tests();
+    failures += st_vec_tests();
+    failures += rt_layout_tests();
+    failures += st_layout_tests();
+    failures += map_tests();
+    failures += reduction_tests();
+    failures += mma_tests();
+    failures += tma_tests();
     failures += wgmma_tma_tests();
     std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
     failures += wgmma_tests();
-    // std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
-    // failures += dsmem_tests();
+    std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
+    failures += dsmem_tests();
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
     if(failures == 0) std::cout << "ALL TESTS PASSED!\n";

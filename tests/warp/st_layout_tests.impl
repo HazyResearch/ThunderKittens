@@ -9,6 +9,10 @@ template<> std::string layout_name<st_wgmma_col_0b_layout  >() { return "st_wgmm
 template<> std::string layout_name<st_wgmma_col_32b_layout >() { return "st_wgmma_col_32b_layout";  }
 template<> std::string layout_name<st_wgmma_col_64b_layout >() { return "st_wgmma_col_64b_layout";  }
 template<> std::string layout_name<st_wgmma_col_128b_layout>() { return "st_wgmma_col_128b_layout"; }
+template<> std::string layout_name<st_wgmma_col_t_0b_layout>() { return "st_wgmma_col_t_0b_layout";   }
+template<> std::string layout_name<st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
+template<> std::string layout_name<st_wgmma_col_t_64b_layout>() { return "st_wgmma_col_t_64b_layout";  }
+template<> std::string layout_name<st_wgmma_col_t_128b_layout>() { return "st_wgmma_col_t_128b_layout"; }
 
 template<st_layout layout>
 __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {

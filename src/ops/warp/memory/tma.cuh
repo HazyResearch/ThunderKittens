@@ -13,8 +13,7 @@ namespace detail {
 template<typename T> concept st_basic_row_layout_type = (
     st_type<T> && 
     (
-        std::is_same_v<typename T::layout, st_naive_row_layout> || 
-        std::is_same_v<typename T::layout, st_xor_row_layout>
+        std::is_same_v<typename T::layout, st_naive_row_layout>
     )
 );
 
@@ -41,8 +40,10 @@ template<typename T> concept st_wgmma_col_layout_type = (
 template<typename T> concept st_wgmma_col_t_layout_type = (
     st_type<T> && 
     (
-        std::is_same_v<typename T::layout, st_wgmma_col_t_0b_layout> 
-        // don't have swizzle for this yet
+        std::is_same_v<typename T::layout, st_wgmma_col_t_0b_layout> ||
+        std::is_same_v<typename T::layout, st_wgmma_col_t_32b_layout> ||
+        std::is_same_v<typename T::layout, st_wgmma_col_t_64b_layout> ||
+        std::is_same_v<typename T::layout, st_wgmma_col_t_128b_layout>
     )
 );
 
@@ -54,12 +55,14 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     constexpr uint32_t  tma_dim     = 2; 
     void                *global_addr = reinterpret_cast<void*>(src);
 
+    // static assert that xor layout is not supported
+    static_assert(!std::is_same_v<typename ST::layout, st_xor_row_layout>, "XOR layout is not supported");
+
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_xor_row_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_NONE; 
+    constexpr CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE; 
 
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
     constexpr uint64_t global_tile_width  = ST::cols; 
@@ -145,6 +148,9 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
     constexpr uint32_t  tma_dim     = 5; 
     void                *global_addr = reinterpret_cast<void*>(src);
+
+    // static assert that we currently only support 0B swizzle
+    static_assert(std::is_same_v<typename ST::layout, st_wgmma_row_0b_layout>, "Only 0B swizzle is supported");
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;  
