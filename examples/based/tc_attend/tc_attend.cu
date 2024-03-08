@@ -77,11 +77,11 @@ void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { /
 
 // GEMV
 __device__
-void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { // SA: directions of these seem off
+void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
     rt_fl_4x1<> t;
     copy(t, a);
     // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
-    mul_row(t, a, x); // multiply vv in place with aa: a * v.unsqueeze(1) // row, row, col
+    // mul_row(t, a, x); // SA: uncommenting this line leads to nans in the output
     col_sum(o, t, o); // aa.sum(0) sum across all the rows 
 }
 
@@ -107,7 +107,7 @@ rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
     __syncwarp();
     if(kittens::laneid() % 4 == 0) { // only the leaders write
         for(auto h = 0; h < src.outer_dim; h++) {
-            dst[h*TILE_DIM + row]     = base_types::convertor<U, T>::convert(src[h][0].x);     // SA: IS THIS CORRECT???
+            dst[h*TILE_DIM + row]     = base_types::convertor<U, T>::convert(src[h][0].x);  
             dst[h*TILE_DIM + row + 8] = base_types::convertor<U, T>::convert(src[h][1].x);
         }
     }    
@@ -141,6 +141,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     thread_block_load(k, _k + start_idx, threads);
     thread_block_load(v, _v + start_idx, threads);
     auto vec_idx = just_q ? 0 : j * d;
+    // printf("k: %f \n", k.data[0]);
 
     // rtiles
     rt_fl_1x4<> k_slice; 
@@ -152,15 +153,19 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     rt_fl_4x1<>::col_vec wv; // full local copy 
     rt_fl_4x1<>::row_vec os; // shards
-    
 
     // These are column slices of the matrix.: | K_1 | K_2 | K_3 |
     __syncthreads();
     load(qv, _q + vec_idx); // every warp gets a full copy of q  
 
     // We want a column-wise stripe of the vector. 
-    auto subtile = k.template subtile<1,4>(warpid, 0);
-    load(k_slice, subtile);
+    auto subtile = k.template subtile<1,4>(warpid, 0); 
+    // load(k_slice, subtile); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
+    
+    /** DEBUG **/ 
+    one(k_slice);
+    one(v_slice);
+    /** DEBUG **/
     
     // The algorithm.
     // qs = [q for j in range(4)] # broadcast q to each warp
@@ -194,9 +199,9 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     
     // we want a column stripe of V
     auto subtile_v = v.template subtile<4,1>(0, warpid);
-    load(v_slice, subtile_v);
+    // load(v_slice, subtile_v); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
     zero(os);
-    gemv_two(os, wv, v_slice); // row, col, tile
+    gemv_two(os, wv, v_slice);
     
     // now we have a fragment of v and we write, this write is to *global* memory.
     store(_o + warpid*kittens::TILE_DIM, os);
