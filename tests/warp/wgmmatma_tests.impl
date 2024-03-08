@@ -32,7 +32,6 @@ __global__ void test_wgmma_tma_mma_ker_trans(const bf16 *input, bf16 *output, CU
         __syncwarp();
 
         tma::prefetch(b_smem, input_tma_descriptor, tile_idx);
-        // B always runs in shared memory
         tma::load_async(b_smem, input_tma_descriptor, tile_idx, smem_barrier);
 
         constexpr int kPhaseBit = 1;

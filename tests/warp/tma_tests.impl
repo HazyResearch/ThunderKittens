@@ -1,7 +1,3 @@
-#define WORKERS    4
-#define WARP_SIZE  32
-#define BLOCKS     16
-
 template<st_layout layout>
 __global__ void
 test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
@@ -38,33 +34,6 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
 
     load(correct_lay, input, COLS);
     load(b_ref_lay, input, COLS);
-
-    // print out what input_tile has
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     // print out 1 x 2 tile
-    //     for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
-    //         printf("input_tile[%d] = %f\n", i, __bfloat162float(input_tile.data[i]));
-    //     }
-    // }
-    // __syncthreads();
-
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     // print out 1 x 2 tile
-    //     for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
-    //         printf("correct_lay[%d] = %f\n", i, __bfloat162float(correct_lay.data[i]));
-    //     }
-    // }
-
-    // __syncthreads();
-
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     // print out 1 x 2 tile
-    //     for (int i = 0; i < 16 * 16 * HEIGHT * WIDTH; i++) {
-    //         printf("0b_ref_lay[%d] = %f\n", i, __bfloat162float(b_ref_lay.data[i]));
-    //     }
-    // }
-
-    // __syncthreads();
 
     store(output, input_tile, COLS);
     // tma::store_async(output_tma_descriptor, input_tile, tile_idx);

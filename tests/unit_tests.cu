@@ -1,5 +1,6 @@
 #define WIDTH 2
 #define HEIGHT 4
+#define WARPSIZE 32
 
 #include "testing_commons.cuh"
 
