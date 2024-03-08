@@ -34,10 +34,10 @@ struct st {
     dtype data[rows*cols];
 
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return data[detail::st_idx<layout>(rowcol.x, rowcol.y, height, width)];
+        return data[detail::shared_indexer<height, width, layout>::idx(rowcol.x, rowcol.y)];
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return data[detail::st_idx<layout>(rowcol.x, rowcol.y, height, width)];
+        return data[detail::shared_indexer<height, width, layout>::idx(rowcol.x, rowcol.y)];
     }
     __device__ inline       dtype& operator[](int idx)       {
         return data[idx];
