@@ -12,13 +12,15 @@ struct wgmma_base {
         rt_fl<1, width, rt_row_layout> &dst,
         const rt_bf<1, 1, rt_row_layout> & a_rt,
         const uint64_t b_st_desc,
-        int scale_d = 1
+        int scale_d = 1, 
+        int imm_trans_b = 1
     );
     __device__ static inline void st_st(
         rt_fl<1, width, rt_row_layout> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
-        int scale_d = 1
+        int scale_d = 1, 
+        int imm_trans_b = 1
     );
 };
 

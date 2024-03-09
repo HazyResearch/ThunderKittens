@@ -330,7 +330,7 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
 // TMA STEP 2 = Prefetch Tensor Map using prefetch inside kernel (device side)
 template<int height, int width>
 __device__ static inline void prefetch(st<bf16, height, width, st_naive_row_layout> &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
         int32_t crd0 = 0;  
@@ -349,7 +349,7 @@ __device__ static inline void prefetch(st<bf16, height, width, st_naive_row_layo
 
 template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
 __device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
         int32_t crd0 = 0;  
@@ -371,7 +371,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout>
 
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
 __device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
         int32_t crd0 = 0;  
@@ -394,7 +394,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout>
 // TMA STEP 3 = Async load and store data from gmem/smem
 template<int height, int width>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, st_naive_row_layout> &src, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
@@ -413,7 +413,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
 }
 template<int height, int width>
 __device__ static inline void load_async(st<bf16, height, width, st_naive_row_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -434,7 +434,7 @@ __device__ static inline void load_async(st<bf16, height, width, st_naive_row_la
 
 template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_row_layout> &src, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
@@ -456,7 +456,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
 }
 template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
 __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -480,7 +480,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
 
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_col_layout> &src, int tile_idx) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
@@ -502,7 +502,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
 }
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
 __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -526,7 +526,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layou
 
 /// Barrier functions for async load/store
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -536,7 +536,7 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
 }
 
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -565,7 +565,7 @@ __device__ static inline void arrive_wait(uint64_t& barrier, int kPhaseBit) {
 
 // TMA (store async) STEP 4 = Commit group
 __device__ static inline void commit_group() {
-    if (threadIdx.x % WARP_SIZE == 0) {
+    if (kittens::laneid() == 0) {
         asm volatile("cp.async.bulk.commit_group;");
     } 
 }
