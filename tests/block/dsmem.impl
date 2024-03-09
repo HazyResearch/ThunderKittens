@@ -9,8 +9,7 @@ test_nextneighbor_ker(const bf16 *input, bf16 *output) {
     const int workers  = DSMEM_TEST_WORKERS;
 
     extern __shared__ int __shm[];
-    shared_allocator al((int*)&__shm[0]);
-    int* p = &__shm[0];
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     using layout = st_xor_row_layout;
     st_bf_1x4<layout> (&input_tile)[workers]  = al.allocate<st_bf_1x4<layout>, workers>();

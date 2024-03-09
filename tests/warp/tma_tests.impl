@@ -7,7 +7,7 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     CUtensorMap* input_tma_descriptor  = tma_desc_input;
 
     extern __shared__ int __shm[];
-    shared_allocator al(&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile;
     int tile_idx = (blockIdx.x) + warpid;
@@ -42,13 +42,13 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
 template<st_layout layout>
 __global__ void
 test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
-    auto warpid = threadIdx.x / 32; 
-    auto lane   = threadIdx.x % 32; 
+    auto warpid = threadIdx.x / WARP_SIZE; 
+    auto lane   = threadIdx.x % WARP_SIZE; 
 
     CUtensorMap* output_tma_descriptor = tma_desc_output;
 
     extern __shared__ int __shm[];
-    shared_allocator al(&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile;
     int tile_idx = (blockIdx.x) + warpid;
@@ -140,13 +140,11 @@ int tma_tests() {
     failures += !test_tma<st_wgmma_row_0b_layout, true>();
     // failures += !test_tma<st_wgmma_row_32b_layout, false>();
     // failures += !test_tma<st_wgmma_row_32b_layout, true>();
-    // failures += !test_tma<st_wgmma_row_64b_layout, false>();
-    // failures += !test_tma<st_wgmma_row_64b_layout, true>();
-    // failures += !test_tma<st_wgmma_row_128b_layout, false>();
-    // failures += !test_tma<st_wgmma_row_128b_layout, true>();
 
     failures += !test_tma<st_wgmma_col_t_0b_layout, false>();
     failures += !test_tma<st_wgmma_col_t_0b_layout, true>();
+    // failures += !test_tma<st_wgmma_col_t_32b_layout, false>();
+    // failures += !test_tma<st_wgmma_col_t_32b_layout, true>();
 
     return failures;
 }

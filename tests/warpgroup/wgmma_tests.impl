@@ -72,7 +72,7 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
     int warpid = threadIdx.x / 32;
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm22[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
 
     rt_fl<1, WGMMA_M> result;
     rt_bf<1, WGMMA_K> a_reg;
@@ -143,7 +143,7 @@ __global__ void test_wgmma_mma_ker_trans(const bf16 *input, bf16 *output) {
     int warpid = threadIdx.x / 32;
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm22[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
 
     rt_fl<1, WGMMA_M> result;
     rt_bf<1, WGMMA_K> a_reg;

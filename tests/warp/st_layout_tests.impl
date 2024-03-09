@@ -3,22 +3,16 @@ template<> std::string layout_name<st_naive_row_layout     >() { return "st_naiv
 template<> std::string layout_name<st_xor_row_layout       >() { return "st_xor_row_layout";        }
 template<> std::string layout_name<st_wgmma_row_0b_layout  >() { return "st_wgmma_row_0b_layout";   }
 template<> std::string layout_name<st_wgmma_row_32b_layout >() { return "st_wgmma_row_32b_layout";  }
-template<> std::string layout_name<st_wgmma_row_64b_layout >() { return "st_wgmma_row_64b_layout";  }
-template<> std::string layout_name<st_wgmma_row_128b_layout>() { return "st_wgmma_row_128b_layout"; }
 template<> std::string layout_name<st_wgmma_col_0b_layout  >() { return "st_wgmma_col_0b_layout";   }
 template<> std::string layout_name<st_wgmma_col_32b_layout >() { return "st_wgmma_col_32b_layout";  }
-template<> std::string layout_name<st_wgmma_col_64b_layout >() { return "st_wgmma_col_64b_layout";  }
-template<> std::string layout_name<st_wgmma_col_128b_layout>() { return "st_wgmma_col_128b_layout"; }
 template<> std::string layout_name<st_wgmma_col_t_0b_layout>() { return "st_wgmma_col_t_0b_layout";   }
 template<> std::string layout_name<st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
-template<> std::string layout_name<st_wgmma_col_t_64b_layout>() { return "st_wgmma_col_t_64b_layout";  }
-template<> std::string layout_name<st_wgmma_col_t_128b_layout>() { return "st_wgmma_col_t_128b_layout"; }
 
 template<st_layout layout>
 __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile;
 
@@ -60,7 +54,7 @@ template<st_layout L1, st_layout L2>
 __global__ void test_st_layout_conversion_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
     
     st_bf<HEIGHT, WIDTH, L1> &tile1 = al.allocate<st_bf<HEIGHT, WIDTH, L1>>();
     st_bf<HEIGHT, WIDTH, L2> &tile2 = al.allocate<st_bf<HEIGHT, WIDTH, L2>>();
@@ -95,55 +89,52 @@ int st_layout_tests() {
     failures += !test_st_layout<st_xor_row_layout       >();
     failures += !test_st_layout<st_wgmma_row_0b_layout  >();
     failures += !test_st_layout<st_wgmma_row_32b_layout >();
-    failures += !test_st_layout<st_wgmma_row_64b_layout >();
-    failures += !test_st_layout<st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout<st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout<st_wgmma_col_t_32b_layout>();
 
     failures += !test_st_layout_conversion<st_naive_row_layout, st_naive_row_layout     >();
     failures += !test_st_layout_conversion<st_naive_row_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_col_t_32b_layout>();
 
     failures += !test_st_layout_conversion<st_xor_row_layout, st_naive_row_layout     >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_col_t_32b_layout>();
 
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_naive_row_layout     >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_col_t_32b_layout>();
 
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_naive_row_layout     >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_naive_row_layout     >();
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_xor_row_layout       >();
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_wgmma_row_0b_layout  >();
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_64b_layout, st_wgmma_row_128b_layout>();
+    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_naive_row_layout     >();
+    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_xor_row_layout       >();
+    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_0b_layout  >();
+    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_32b_layout >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_naive_row_layout     >();
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_xor_row_layout       >();
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_wgmma_row_0b_layout  >();
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_wgmma_row_32b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_wgmma_row_64b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_128b_layout, st_wgmma_row_128b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_naive_row_layout     >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_xor_row_layout       >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_row_0b_layout  >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_row_32b_layout >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_col_t_32b_layout>();
 
-    // NOT YET IMPLEMENTED LAYOUTS
-    // failures += !test_st_layout<st_wgmma_col_0b_layout  >();
-    // failures += !test_st_layout<st_wgmma_col_32b_layout >();
-    // failures += !test_st_layout<st_wgmma_col_64b_layout >();
-    // failures += !test_st_layout<st_wgmma_col_128b_layout>();
+    // COL load/store async not supported currently
+
     return failures;
 }

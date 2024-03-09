@@ -21,9 +21,7 @@ template<typename T> concept st_wgmma_row_layout_type = (
     st_type<T> && 
     (
         std::is_same_v<typename T::layout, st_wgmma_row_0b_layout> || 
-        std::is_same_v<typename T::layout, st_wgmma_row_32b_layout> || 
-        std::is_same_v<typename T::layout, st_wgmma_row_64b_layout> || 
-        std::is_same_v<typename T::layout, st_wgmma_row_128b_layout>
+        std::is_same_v<typename T::layout, st_wgmma_row_32b_layout>
     )
 );
 
@@ -31,9 +29,7 @@ template<typename T> concept st_wgmma_col_t_layout_type = (
     st_type<T> && 
     (
         std::is_same_v<typename T::layout, st_wgmma_col_t_0b_layout> ||
-        std::is_same_v<typename T::layout, st_wgmma_col_t_32b_layout> ||
-        std::is_same_v<typename T::layout, st_wgmma_col_t_64b_layout> ||
-        std::is_same_v<typename T::layout, st_wgmma_col_t_128b_layout>
+        std::is_same_v<typename T::layout, st_wgmma_col_t_32b_layout>
     )
 );
 
@@ -45,9 +41,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
     constexpr uint32_t  tma_dim     = 2; 
     void                *global_addr = reinterpret_cast<void*>(src);
-
-    // static assert that xor layout is not supported
-    static_assert(!std::is_same_v<typename ST::layout, st_xor_row_layout>, "XOR layout is not supported");
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
@@ -128,12 +121,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_row_0b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_NONE : 
-                                                        (std::is_same_v<typename ST::layout, st_wgmma_row_32b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_32B : 
-                                                        (std::is_same_v<typename ST::layout, st_wgmma_row_64b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_64B : 
-                                                        CU_TENSOR_MAP_SWIZZLE_128B;
+                                                        CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_32B; 
 
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
     constexpr uint64_t global_tile_width  = ST::cols; 
@@ -196,20 +184,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     static_assert(smem_stride[0] == 1, "smem_stride[0] is ignored when interleave is none");
 
     if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 0; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
+        constexpr int swizzle_size = 32;
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
 
@@ -253,12 +228,7 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_col_t_0b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_NONE : 
-                                                        (std::is_same_v<typename ST::layout, st_wgmma_col_t_32b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_32B : 
-                                                        (std::is_same_v<typename ST::layout, st_wgmma_col_t_64b_layout>) ? 
-                                                        CU_TENSOR_MAP_SWIZZLE_64B : 
-                                                        CU_TENSOR_MAP_SWIZZLE_128B;
+                                                        CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_32B;
                                                         
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
     constexpr uint64_t global_tile_width  = ST::cols;
@@ -327,20 +297,7 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
     static_assert(smem_stride[0] == 1, "smem_stride[0] is ignored when interleave is none");
 
     if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        int swizzle_size = 0; 
-        switch (tma_swizzle) {
-            case CU_TENSOR_MAP_SWIZZLE_32B:
-                swizzle_size = 32;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_64B:
-                swizzle_size = 64;
-                break;
-            case CU_TENSOR_MAP_SWIZZLE_128B:
-                swizzle_size = 128;
-                break;
-            default:
-                assert(false);
-        }
+        int swizzle_size = 32; 
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
 
@@ -611,18 +568,6 @@ __device__ static inline void commit_group() {
     if (threadIdx.x % WARP_SIZE == 0) {
         asm volatile("cp.async.bulk.commit_group;");
     } 
-}
-
-// TMA (store async) STEP 5 = Wait for store read complete
-template <int N>
-__device__ static inline void wait_for_store_read() {
-    asm volatile (
-        "cp.async.bulk.wait_group.read %0;"
-        :
-        : "n"(N)
-        : "memory"
-    );
-    __syncwarp();
 }
 
 // TMA (store async) STEP 5 = Wait for store complete

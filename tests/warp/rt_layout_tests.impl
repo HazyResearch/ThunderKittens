@@ -76,7 +76,7 @@ bool test_swap_reg_layout_col2row_global() {
 __global__ void test_swap_reg_layout_row2col_shared_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile;
 
@@ -117,7 +117,7 @@ bool test_swap_reg_layout_row2col_shared() {
 __global__ void test_swap_reg_layout_col2row_shared_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH, rt_col_layout> reg_tile;
 

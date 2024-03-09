@@ -27,8 +27,6 @@ struct st {
     static constexpr int cols                = width  * 16;
     static constexpr int num_elements        = width  * height * 16*16;
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
-    static_assert(!std::is_same_v<layout, st_wgmma_row_128b_layout> || height >= 2); // if using 128-byte swizzling, needs at least 32 rows.
-    static_assert(!std::is_same_v<layout, st_wgmma_col_128b_layout> || width >= 2); // or cols
 
     // wgmma layout with swizzling
     dtype data[rows*cols];
@@ -141,20 +139,4 @@ template<st_layout layout=st_xor_row_layout> using st_bf_4x2 = st_bf<4, 2, layou
 template<st_layout layout=st_xor_row_layout> using st_bf_4x4 = st_bf<4, 4, layout>;
 
 template<st_layout layout=st_xor_row_layout> using st_bf_8x1 = st_bf<8, 1, layout>;
-
-
-// vector types
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_bf_row_1 = st<bf16,1,1,layout>::row_vec;
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_bf_row_4 = st<bf16,1,4,layout>::row_vec;
-
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_bf_col_1 = st<bf16,1,1,layout>::col_vec;
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_bf_col_4 = st<bf16,4,1,layout>::col_vec;
-
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_fl_row_1 = st<float,1,1,layout>::row_vec;
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_fl_row_4 = st<float,1,4,layout>::row_vec;
-
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_fl_col_1 = st<float,1,1,layout>::col_vec;
-template<st_layout layout=st_wgmma_row_64b_layout> using sv_fl_col_4 = st<float,4,1,layout>::col_vec;
-
-
 }
