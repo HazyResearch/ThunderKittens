@@ -2,7 +2,7 @@
 template<bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
 
-    int warpid = threadIdx.x / 32;
+    int warpid = kittens::warp_id(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
@@ -69,7 +69,7 @@ bool test_wgmma_dot() {
 template<bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
 
-    int warpid = threadIdx.x / 32;
+    int warpid = kittens::warp_id(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
@@ -140,7 +140,7 @@ bool test_wgmma_mma() {
 template<bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_mma_ker_trans(const bf16 *input, bf16 *output) {
 
-    int warpid = threadIdx.x / 32;
+    int warpid = kittens::warp_id();
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 

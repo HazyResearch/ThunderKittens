@@ -3,8 +3,8 @@
 
 __global__ void __cluster_dims__(DSMEM_TEST_CLUSTER_SIZE, 1, 1) 
 test_nextneighbor_ker(const bf16 *input, bf16 *output) {
-    auto warpid        = threadIdx.x / WARP_SIZE;
-    auto lane          = threadIdx.x % WARP_SIZE; 
+    auto warpid        = kittens::warp_id();
+    auto lane          = kittens::laneid(); 
 
     const int workers  = DSMEM_TEST_WORKERS;
 

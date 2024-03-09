@@ -4,7 +4,7 @@
 template<bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_tma_mma_ker_trans(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
 
-    int warpid   = threadIdx.x / 32;
+    int warpid   = kittens::warp_id(); 
     int tile_idx = blockIdx.x * 4 + warpid;
 
     CUtensorMap* input_tma_descriptor  = tma_desc_input;

@@ -36,7 +36,6 @@ using namespace kittens;
 #define COLS (WIDTH*16)
 #define SIZE (WIDTH*HEIGHT*256)
 #define SEED 42
-#define WARP_SIZE 32
 
 template<bool autofill=true>
 void initialize(bf16 **d_i, bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {

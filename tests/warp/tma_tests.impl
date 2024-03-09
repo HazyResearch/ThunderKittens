@@ -1,8 +1,8 @@
 template<st_layout layout>
 __global__ void
 test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
-    auto warpid = threadIdx.x / 32; 
-    auto lane   = threadIdx.x % 32; 
+    auto warpid = kittens::warp_id(); 
+    auto lane   = kittens::laneid(); 
 
     CUtensorMap* input_tma_descriptor  = tma_desc_input;
 
@@ -42,8 +42,8 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
 template<st_layout layout>
 __global__ void
 test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
-    auto warpid = threadIdx.x / WARP_SIZE; 
-    auto lane   = threadIdx.x % WARP_SIZE; 
+    auto warpid = kittens::warp_id();
+    auto lane   = kittens::laneid();
 
     CUtensorMap* output_tma_descriptor = tma_desc_output;
 
