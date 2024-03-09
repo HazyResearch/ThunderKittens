@@ -1,4 +1,5 @@
 import torch
+import pybind11
 from torch.utils.cpp_extension import load
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
@@ -32,12 +33,13 @@ def cuda_extension(name, debug):
                     '-arch=native', 
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
-                    f"-I {project_root}"
+                    f"-I {project_root}",
+                    f"-I {pybind11.get_include()}",
                     ]
     if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G']
     return CUDAExtension(f'{name}', 
                         sources=_sources(name), 
-                        extra_compile_args={'cxx' : ['-std=c++20'],
+                        extra_compile_args={'cxx' : ['-std=c++20', f"-I{pybind11.get_include()}"],
                                             'nvcc' : ['-O3'] + _cuda_flags})
 
 def library_build(name, debug=False):

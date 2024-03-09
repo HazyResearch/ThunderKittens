@@ -5,7 +5,7 @@
 import torch
 
 import test_build_utils as tbu
-from setuptools import setup
+from setuptools import setup, Extension
 from torch.utils.cpp_extension import BuildExtension
 
 name      = "tc_attend"
