@@ -17,7 +17,8 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         d,
         a.tiles[0][0],
         b.descriptor(0),
-        accumulate
+        accumulate, 
+        1
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
@@ -25,6 +26,7 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
             d,
             a.tiles[0][k],
             b.descriptor(k),
+            1, 
             1
         );
     }
@@ -50,7 +52,8 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         d,
         a.descriptor(0),
         b.descriptor(0),
-        accumulate
+        accumulate, 
+        1
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
@@ -58,6 +61,7 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
             d,
             a.descriptor(k),
             b.descriptor(k),
+            1, 
             1
         );
     }
@@ -84,7 +88,8 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         d,
         a.tiles[0][0],
         b.descriptor(0),
-        accumulate
+        accumulate, 
+        0
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
@@ -92,7 +97,8 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
             d,
             a.tiles[0][k],
             b.descriptor(k),
-            1
+            1, 
+            0
         );
     }
 }
@@ -117,7 +123,8 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
         d,
         a.descriptor(0),
         b.descriptor(0),
-        accumulate
+        accumulate, 
+        0
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
@@ -125,7 +132,8 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
             d,
             a.descriptor(k),
             b.descriptor(k),
-            1
+            1, 
+            0
         );
     }
 }
