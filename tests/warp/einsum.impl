@@ -1,0 +1,118 @@
+#define RAND_MAX 100
+
+static void __device__
+rowvec_to_vec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
+
+}
+
+static void __device__ 
+colvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
+
+}
+
+__global__ void einsum_ker(bf16 *d_i, bf16 *d_o, bf16 *d_ir, bf16 *d_or, int n, int d, int workers) {
+    int threads = workers * kittens::WARP_SIZE;
+
+    extern __shared__ alignment_dummy __shm[];
+    shared_allocator al((int*)&__shm[0]); 
+
+    st_bf_4x4<st_naive_row_layout> i = al.allocate<st_bf_4x4<st_naive_row_layout>>();
+    st_bf_4x4<st_naive_row_layour> o = al.allocate<st_bf_4x4<st_naive_row_layout>>();
+    st_bf_4x1<st_naive_row_layout> ir = al.allocate<st_bf_4x1<st_naive_row_layout>>();
+    st_bf_1x4<st_naive_row_layout> or = al.allocate<st_bf_1x4<st_naive_row_layout>>();
+
+    // initialize shared memory
+    load(i, d_i, n, d);
+    load(o, d_o, n, d);
+}
+
+bool test_einsum() {
+    // initialize input tensors
+    bf16 *d_i, *d_o; 
+    int n = 64; 
+    int d = 64; 
+
+    int workers = 4; 
+    int threads = workers * kittens::WARP_SIZE; 
+
+    std::vector<float> i(n * d);
+    std::vector<float> o(n * d);
+    for (int i = 0; i < n * d; i++) (
+        i[i] = (float)rand() / RAND_MAX;
+    )
+
+    // input = n x d, should be reduced to n x 1
+    // output = n x d, should be reduced to 1 x d
+    // create reference input and output (initialize to 0)
+    std::vector<float> i_ref(n * 1); 
+    std::vector<float> o_ref(1 * d); 
+
+    for (int i = 0; i < n; i++) {
+        i_ref[i] = 0;
+        for (int j = 0; j < d; j++) {
+            i_ref[i] += i[i * d + j];
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < d; j++) {
+            o_ref[j] += i[i * d + j];
+        }
+    }
+
+    // allocate device memory
+    cudaMalloc(&d_i, n * d * sizeof(float));
+    cudaMalloc(&d_ir, n * 1 * sizeof(float); 
+    cudaMalloc(&d_o, n * d * sizeof(float));
+    cudaMalloc(&d_or, 1 * d * sizeof(float);
+
+    // copy input data to device
+    cudaMemcpy(d_i, i.data(), n * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o, o.data(), n * d * sizeof(float), cudaMemcpyHostToDevice);
+
+    // run kernel
+    cudaFuncSetAttribute(einsum_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    einsum_ker<<<1, threads, 100000>>>(d_i, d_o, d_ir, d_or, n, d, workers);
+    cudaDeviceSynchronize();
+
+    // copy d_ir and d_or to host
+    std::vector<float> ir(n * 1);
+    std::vector<float> or(1 * d);
+    cudaMemcpy(ir.data(), d_ir, n * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(or.data(), d_or, 1 * d * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // compare results
+    bool passed = true;
+    for (int i = 0; i < n * 1; i++) {
+        if (ir[i] != i_ref[i]) {
+            std::cout << "ir[" << i << "] = " << ir[i] << " != " << i_ref[i] << std::endl;
+            passed = false;
+        }
+    }
+
+    for (int i = 0; i < 1 * d; i++) {
+        if (or[i] != o_ref[i]) {
+            std::cout << "or[" << i << "] = " << or[i] << " != " << o_ref[i] << std::endl;
+            passed = false;
+        }
+    }
+
+    // free device memory
+    cudaFree(d_i);
+    cudaFree(d_ir);
+    cudaFree(d_o);
+    cudaFree(d_or);
+
+    delete d_i;
+    delete d_ir;
+    delete d_o;
+    delete d_or;
+    delete i;
+    delete o;
+    delete i_ref;
+    delete o_ref;
+    delete ir;
+    delete or;
+
+    return passed;
+}

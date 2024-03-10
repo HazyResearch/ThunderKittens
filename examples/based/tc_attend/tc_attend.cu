@@ -89,11 +89,11 @@ void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a)
 static
 void __device__
 vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
-    using T = __nv_bfloat16;
     using U = float;
+    using T = __nv_bfloat16;
     auto row = kittens::laneid() / 4;
     __syncwarp();    
-    for(auto h = 0; h < dst.outer_dim; h++) {
+    for (auto h = 0; h < dst.outer_dim; h++) {
         dst[h][0].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row]);    
         dst[h][1].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row + 8]); // SA: IS THIS CORRECT???
     }
@@ -101,16 +101,16 @@ vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
 
 static void __device__
 rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
-    using U = __nv_bfloat16;
+    using U = __nv_bfloat16; 
     using T = float;
     auto row = kittens::laneid() / 4;
     __syncwarp();
     if(kittens::laneid() % 4 == 0) { // only the leaders write
-        for(auto h = 0; h < src.outer_dim; h++) {
+        for (auto h = 0; h < src.outer_dim; h++) {
             dst[h*TILE_DIM + row]     = base_types::convertor<U, T>::convert(src[h][0].x);     // SA: IS THIS CORRECT???
             dst[h*TILE_DIM + row + 8] = base_types::convertor<U, T>::convert(src[h][1].x);
         }
-    }    
+    }  
 }
 
 
@@ -152,6 +152,11 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     rt_fl_4x1<>::col_vec wv; // full local copy 
     rt_fl_4x1<>::row_vec os; // shards
+
+    if (threadIdx.x == 0) {
+        printf("got here\n");
+    }
+    __syncthreads();
     
 
     // These are column slices of the matrix.: | K_1 | K_2 | K_3 |
@@ -188,9 +193,20 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     div(ws, ws, local_sum);
 
     // broadcast w back to shared memory
+    if (threadIdx.x == 0) {
+        printf("got here\n"); 
+    }
+    __syncthreads();
     rvec_to_vec(&w.data[warpid*kittens::TILE_DIM], ws);
+    if (threadIdx.x == 0) {
+        printf("got here\n"); 
+    }
     __syncthreads(); // let the writes complete
     vec_to_rvec(wv, w.data); // read the *whole* v here.
+    if (threadIdx.x == 0) {
+        printf("got here\n"); 
+    }
+    __syncthreads(); // let the writes complete
     
     // we want a column stripe of V
     auto subtile_v = v.template subtile<4,1>(0, warpid);
@@ -224,7 +240,7 @@ sliding_window(int j,
     }
     k_same &= d == k.size(3);
     v_same &= d == v.size(3);
-    uint n     = k.size(2);
+    uint n       = k.size(2);
     v_same &= v.size(2) == n;
 
     // This is just a restriction of what we're doing now...
@@ -239,7 +255,7 @@ sliding_window(int j,
 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
-    sliding_window_ker_hack<H,T><<<batch*head,threads,0,stream>>>(n, j, q.size(2) == 1,
+    sliding_window_ker_hack<H,T><<<batch*head, threads, 100000, stream>>>(n, j, q.size(2) == 1,
                         q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(), 
                         o.data_ptr<T>());
 }
