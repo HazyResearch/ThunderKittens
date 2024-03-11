@@ -138,9 +138,9 @@ struct shared_indexer<height, width, st_wgmma_col_t_32b_layout> {
     __device__ static inline int idx(int r, int c) { // naive row-major index default
         int idx1 = (r/rows_per_idx1);
         int idx2 = c/cols_per_core_matrix;
-        int idx3 = (r%cols_per_core_matrix)/4;
+        int idx3 = (r%rows_per_core_matrix)/4;
         int idx4 = (r%4)*2 + (r%rows_per_idx1)/rows_per_core_matrix;
-        int idx5 = c%rows_per_core_matrix;
+        int idx5 = c%cols_per_core_matrix;
         return (
             (((idx1 * (2*width) // height is in units of 16, but we want units of 8
              + idx2) * 2 // * 2 tensormaps across

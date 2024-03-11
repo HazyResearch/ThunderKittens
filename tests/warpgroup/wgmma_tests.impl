@@ -5,7 +5,7 @@ __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
     int warpid = kittens::warp_id(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
 
     rt_fl<1, WGMMA_M> result;
     rt_bf<1, WGMMA_K> a_reg;
@@ -80,7 +80,7 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
     int warpid = kittens::warp_id();
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm22[0]); 
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
 
     rt_fl<1, WGMMA_M> result;
     rt_bf<1, WGMMA_K> a_reg;
@@ -149,37 +149,37 @@ int test_wgmma_dot_layout() {
     int failures = 0;
 
     failures += !test_wgmma_dot<L1, L2, false, 1, 1>();
-    // failures += !test_wgmma_dot<L1, L2, false, 1, 2>();
-    // failures += !test_wgmma_dot<L1, L2, false, 1, 3>();
-    // failures += !test_wgmma_dot<L1, L2, false, 1, 4>();
-    // failures += !test_wgmma_dot<L1, L2, false, 2, 1>();
-    // failures += !test_wgmma_dot<L1, L2, false, 2, 2>();
-    // failures += !test_wgmma_dot<L1, L2, false, 2, 3>();
-    // failures += !test_wgmma_dot<L1, L2, false, 2, 4>();
-    // failures += !test_wgmma_dot<L1, L2, false, 3, 1>();
-    // failures += !test_wgmma_dot<L1, L2, false, 3, 2>();
-    // failures += !test_wgmma_dot<L1, L2, false, 3, 3>();
-    // failures += !test_wgmma_dot<L1, L2, false, 3, 4>();
-    // failures += !test_wgmma_dot<L1, L2, false, 4, 1>();
-    // failures += !test_wgmma_dot<L1, L2, false, 4, 2>();
-    // failures += !test_wgmma_dot<L1, L2, false, 4, 3>();
-    // failures += !test_wgmma_dot<L1, L2, false, 4, 4>();
-    // failures += !test_wgmma_dot<L1, L2, true , 1, 1>();
-    // failures += !test_wgmma_dot<L1, L2, true , 1, 2>();
-    // failures += !test_wgmma_dot<L1, L2, true , 1, 3>();
-    // failures += !test_wgmma_dot<L1, L2, true , 1, 4>();
-    // failures += !test_wgmma_dot<L1, L2, true , 2, 1>();
-    // failures += !test_wgmma_dot<L1, L2, true , 2, 2>();
-    // failures += !test_wgmma_dot<L1, L2, true , 2, 3>();
-    // failures += !test_wgmma_dot<L1, L2, true , 2, 4>();
-    // failures += !test_wgmma_dot<L1, L2, true , 3, 1>();
-    // failures += !test_wgmma_dot<L1, L2, true , 3, 2>();
-    // failures += !test_wgmma_dot<L1, L2, true , 3, 3>();
-    // failures += !test_wgmma_dot<L1, L2, true , 3, 4>();
-    // failures += !test_wgmma_dot<L1, L2, true , 4, 1>();
-    // failures += !test_wgmma_dot<L1, L2, true , 4, 2>();
-    // failures += !test_wgmma_dot<L1, L2, true , 4, 3>();
-    // failures += !test_wgmma_dot<L1, L2, true , 4, 4>();
+    failures += !test_wgmma_dot<L1, L2, false, 1, 2>();
+    failures += !test_wgmma_dot<L1, L2, false, 1, 3>();
+    failures += !test_wgmma_dot<L1, L2, false, 1, 4>();
+    failures += !test_wgmma_dot<L1, L2, false, 2, 1>();
+    failures += !test_wgmma_dot<L1, L2, false, 2, 2>();
+    failures += !test_wgmma_dot<L1, L2, false, 2, 3>();
+    failures += !test_wgmma_dot<L1, L2, false, 2, 4>();
+    failures += !test_wgmma_dot<L1, L2, false, 3, 1>();
+    failures += !test_wgmma_dot<L1, L2, false, 3, 2>();
+    failures += !test_wgmma_dot<L1, L2, false, 3, 3>();
+    failures += !test_wgmma_dot<L1, L2, false, 3, 4>();
+    failures += !test_wgmma_dot<L1, L2, false, 4, 1>();
+    failures += !test_wgmma_dot<L1, L2, false, 4, 2>();
+    failures += !test_wgmma_dot<L1, L2, false, 4, 3>();
+    failures += !test_wgmma_dot<L1, L2, false, 4, 4>();
+    failures += !test_wgmma_dot<L1, L2, true , 1, 1>();
+    failures += !test_wgmma_dot<L1, L2, true , 1, 2>();
+    failures += !test_wgmma_dot<L1, L2, true , 1, 3>();
+    failures += !test_wgmma_dot<L1, L2, true , 1, 4>();
+    failures += !test_wgmma_dot<L1, L2, true , 2, 1>();
+    failures += !test_wgmma_dot<L1, L2, true , 2, 2>();
+    failures += !test_wgmma_dot<L1, L2, true , 2, 3>();
+    failures += !test_wgmma_dot<L1, L2, true , 2, 4>();
+    failures += !test_wgmma_dot<L1, L2, true , 3, 1>();
+    failures += !test_wgmma_dot<L1, L2, true , 3, 2>();
+    failures += !test_wgmma_dot<L1, L2, true , 3, 3>();
+    failures += !test_wgmma_dot<L1, L2, true , 3, 4>();
+    failures += !test_wgmma_dot<L1, L2, true , 4, 1>();
+    failures += !test_wgmma_dot<L1, L2, true , 4, 2>();
+    failures += !test_wgmma_dot<L1, L2, true , 4, 3>();
+    failures += !test_wgmma_dot<L1, L2, true , 4, 4>();
 
     return failures;
 }
@@ -229,15 +229,15 @@ int wgmma_tests() {
     std::cout << " ----- Starting Warpgroup MMA tests! -----" << std::endl;
     int failures = 0;
 
-    // failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_0b_layout >();
-    // failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_32b_layout>();
+    failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_0b_layout >();
+    failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_32b_layout>();
     failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_0b_layout >();
-    // failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout>();
+    failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout>();
 
-    // failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_0b_layout >();
-    // failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_32b_layout>();
-    // failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout >();
-    // failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
+    failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_0b_layout >();
+    failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_32b_layout>();
+    failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout >();
+    failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
 
     return failures;
 }
