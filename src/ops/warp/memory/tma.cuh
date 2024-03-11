@@ -168,13 +168,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     static_assert(gmem_stride[3] % 16 == 0, "gmem_stride[3] elements must be a multiple of 16B");
     static_assert(gmem_stride[4] % 16 == 0, "gmem_stride[4] elements must be a multiple of 16B");
 
-    if constexpr (tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B) {
-        static_assert(gmem_stride[1] % 32 == 0, "if swizzle is 32b, then gmem_stride[1] elements must be a multiple of 32B");
-        static_assert(gmem_stride[2] % 32 == 0, "if swizzle is 32b, then gmem_stride[2] elements must be a multiple of 32B");
-        static_assert(gmem_stride[3] % 32 == 0, "if swizzle is 32b, then gmem_stride[3] elements must be a multiple of 32B");
-        static_assert(gmem_stride[4] % 32 == 0, "if swizzle is 32b, then gmem_stride[4] elements must be a multiple of 32B");
-    }
-
     static_assert(smem_shape[0] <= 256, "smem_shape[0] elements must be less than= 256");
     static_assert(smem_shape[1] <= 256, "smem_shape[1] elements must be less than= 256");
     static_assert(smem_shape[2] <= 256, "smem_shape[2] elements must be less than= 256");
@@ -280,13 +273,6 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
     static_assert(gmem_stride[2] % 16 == 0, "gmem_stride[2] elements must be a multiple of 16B");
     static_assert(gmem_stride[3] % 16 == 0, "gmem_stride[3] elements must be a multiple of 16B");
     static_assert(gmem_stride[4] % 16 == 0, "gmem_stride[4] elements must be a multiple of 16B");
-
-    if constexpr (tma_swizzle == CU_TENSOR_MAP_SWIZZLE_32B) {
-        static_assert(gmem_stride[1] % 32 == 0, "if swizzle is 32b, then gmem_stride[1] elements must be a multiple of 32B");
-        static_assert(gmem_stride[2] % 32 == 0, "if swizzle is 32b, then gmem_stride[2] elements must be a multiple of 32B");
-        static_assert(gmem_stride[3] % 32 == 0, "if swizzle is 32b, then gmem_stride[3] elements must be a multiple of 32B");
-        static_assert(gmem_stride[4] % 32 == 0, "if swizzle is 32b, then gmem_stride[4] elements must be a multiple of 32B");
-    }
 
     static_assert(smem_shape[0] <= 256, "smem_shape[0] elements must be less than= 256");
     static_assert(smem_shape[1] <= 256, "smem_shape[1] elements must be less than= 256");
@@ -449,7 +435,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
         int32_t crd0 = 0;  
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (src.rows);
+        int32_t crd3 = tile_idx * (src.rows/8);
         int32_t crd4 = 0;
 
         asm volatile (
@@ -472,7 +458,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
         int32_t crd0 = 0;  
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (dst.rows);
+        int32_t crd3 = tile_idx * (dst.rows/8);
         int32_t crd4 = 0;
 
         asm volatile (
@@ -496,7 +482,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
         int32_t crd3 = 0;
-        int32_t crd4 = tile_idx * (src.rows);
+        int32_t crd4 = tile_idx * (src.rows/16);
 
         asm volatile (
             "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
@@ -519,7 +505,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layou
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
         int32_t crd3 = 0;
-        int32_t crd4 = tile_idx * (dst.rows);
+        int32_t crd4 = tile_idx * (dst.rows/16);
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"

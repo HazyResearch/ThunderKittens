@@ -80,7 +80,7 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
     rt_bf<WGMMA_K, WGMMA_M> tmp_loader;
     
     using L1 = st_wgmma_row_32b_layout;
-    using L2 = st_wgmma_col_0b_layout;
+    using L2 = st_wgmma_col_t_0b_layout; 
     st_bf<WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<WGMMA_N, WGMMA_K, L1>>();
     st_bf<WGMMA_K, WGMMA_M, L2> &b_smem = al.allocate<st_bf<WGMMA_K, WGMMA_M, L2>>();
 
