@@ -5,7 +5,7 @@
 #define ATTN_B 16
 #define ATTN_H 16
 #define ATTN_N 1024
-#define ATTN_D 64 // hardcoded into this kernel
+#define ATTN_D 64
 
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
     }
 
     // replicate into heads
+
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
         k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
@@ -103,16 +104,17 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    using layout = st_wgmma_row_0b_layout; 
+    using layout = st_wgmma_row_0b_layout;
+
     CUtensorMap tma_desc_q = {}; 
     CUtensorMap tma_desc_k = {};
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
     tma::create_tensor_map<st_bf<8,4,layout>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<8,4,layout>, ATTN_B*ATTN_H>(&tma_desc_o, d_o);
+    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<8,4,layout>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -135,7 +137,7 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 10;
+    const int ITER = 1;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();

@@ -1,8 +1,6 @@
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
-#define KITTENS_HOPPER // just in case the user forgot to put it in compilation flags
-
 #include "../../src/kittens.cuh"
 
 #define NUM_WORKERS 8
@@ -38,24 +36,44 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     st_bf_2x4<layout> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
     st_bf_2x4<layout> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
     
-    int qo_blocks = n / (q_smem[warpgroupid].rows*NUM_WARPGROUPS);
-    int kv_blocks = n / (q_reg.rows*NUM_WORKERS);
+    int qo_blocks = n / (q_smem[warpgroupid].rows * NUM_WARPGROUPS);
+    int kv_blocks = n / (q_reg.rows * NUM_WORKERS);
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> q_barrier;
     if (threadIdx.x == 0) {init(&q_barrier, block.size());}
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> kv_barrier;
     if (threadIdx.x == 0) {init(&kv_barrier, block.size());}
+
+    int tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;  
+    __shared__ uint64_t smem_barrier[2 * NUM_WORKERS]; 
+    constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements; 
+
+    tma::init_barrier(smem_barrier[0 + warpid], block.size());
+    tma::set_barrier_bytes(smem_barrier[0 + warpid], size_bytes);
+
+    tma::init_barrier(smem_barrier[1 + warpid], block.size());
+    tma::set_barrier_bytes(smem_barrier[1 + warpid], size_bytes);
     block.sync();
 
     int tic = 0, toc = 1;
 
+    tma::prefetch(k_smem[tic][warpid], tma_k, tile_idx);
+    tma::prefetch(v_smem[tic][warpid], tma_v, tile_idx);
+
     warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
 
-    load_async(k_smem[tic][warpid], _k + warpid * q_reg.rows*d, d, kv_barrier);
-    load_async(v_smem[tic][warpid], _v + warpid * q_reg.rows*d, d, kv_barrier);
+    if (lane == 0) {
+        // tma::load_async(q_smem[warpgroupid], tma_q, tile_idx, smem_barrier[warpgroupid]);
+        tma::load_async(k_smem[tic][warpid], tma_k, tile_idx, smem_barrier[0 + warpid]);
+        tma::load_async(v_smem[tic][warpid], tma_v, tile_idx, smem_barrier[1 + warpid]); 
+    }
 
-    // kv_barrier.arrive_and_wait(); // wait for the k fragments.
+    constexpr int kPhaseBit_k = 1; 
+    tma::arrive_wait(smem_barrier[0 + warpid], kPhaseBit_k);
+
+    constexpr int kPhaseBit_v = 1;
+    tma::arrive_wait(smem_barrier[1 + warpid], kPhaseBit_v); 
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
@@ -64,7 +82,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
         if(q_blk+1 < qo_blocks) {
-            warpgroup::load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
+            load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
         }
 
         neg_infty(max_vec);

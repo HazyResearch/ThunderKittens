@@ -1,8 +1,6 @@
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
-#define KITTENS_HOPPER // just in case the user forgot to put it in compilation flags
-
 #include "../../src/kittens.cuh"
 
 #define NUM_WORKERS 8
@@ -38,8 +36,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     st_bf_2x4<layout> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
     st_bf_2x4<layout> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
     
-    int qo_blocks = n / (q_smem[warpgroupid].rows*NUM_WARPGROUPS);
-    int kv_blocks = n / (q_reg.rows*NUM_WORKERS);
+    int qo_blocks = n / (q_smem[warpgroupid].rows * NUM_WARPGROUPS);
+    int kv_blocks = n / (q_reg.rows * NUM_WORKERS);
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> q_barrier;
@@ -49,13 +47,42 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     block.sync();
 
     int tic = 0, toc = 1;
+    
+    int q_b_idx  = 0; 
+    int tile_idx = ((blockIdx.x) * NUM_WARPGROUPS * qo_blocks) + warpgroupid;  
+    __shared__ uint64_t smem_barrier[NUM_WARPGROUPS]; 
+    constexpr int size_bytes = sizeof(bf16) * q_smem[warpgroupid].num_elements; 
 
-    warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
+    tma::prefetch(q_smem[warpgroupid], tma_q, tile_idx);
+    tma::init_barrier(smem_barrier[warpgroupid], 128);
+    tma::set_barrier_bytes(smem_barrier[warpgroupid], size_bytes);
+
+    block.sync();
+
+    if (threadIdx.x % 128 == 0) {
+        tma::load_async(q_smem[warpgroupid], tma_q, tile_idx, smem_barrier[warpgroupid]); 
+    }
+
+    constexpr int kPhaseBit = 1; 
+    tma::arrive_wait(smem_barrier[warpgroupid], kPhaseBit);
 
     load_async(k_smem[tic][warpid], _k + warpid * q_reg.rows*d, d, kv_barrier);
     load_async(v_smem[tic][warpid], _v + warpid * q_reg.rows*d, d, kv_barrier);
+    // __syncthreads(); 
 
-    // kv_barrier.arrive_and_wait(); // wait for the k fragments.
+    // print out q_smem[warpgroupid] to see if it's loaded
+    // if (threadIdx.x == 0 && blockIdx.x == 255) {
+    //     printf("After TMA\n"); 
+    //     for (int wg = 0; wg < 2; wg++) {
+    //         for (int i = 0; i < q_smem[wg].rows; i++) {
+    //             for (int j = 0; j < q_smem[wg].cols; j++) {
+    //                 printf("%f ", __bfloat162float(q_smem[wg].data[i * q_smem[wg].cols + j]));
+    //             }
+    //             printf("\n");
+    //         }
+    //         printf("\n");
+    //     }
+    // }
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
@@ -64,7 +91,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
         if(q_blk+1 < qo_blocks) {
-            warpgroup::load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
+            load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
         }
 
         neg_infty(max_vec);

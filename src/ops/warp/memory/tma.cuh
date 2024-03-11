@@ -522,7 +522,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layou
 
 /// Barrier functions for async load/store
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
-    if (kittens::laneid() == 0) {
+    if (threadIdx.x % 32 == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -532,7 +532,7 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
 }
 
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
-    if (kittens::laneid() == 0) {
+    if (threadIdx.x % 32 == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
