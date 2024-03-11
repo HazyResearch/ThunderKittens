@@ -8,16 +8,15 @@
 namespace kittens {
 namespace warpgroup {
 
-template<>
-struct wgmma_base<3> {
+template<int trans_b>
+struct wgmma_base<3, trans_b> {
     __device__ static inline void rt_st(
         rt_fl<1, 3, rt_row_layout> &dst,
         const rt_base_bf<rt_row_layout> & a_rt,
         const uint64_t b_st_desc,
-        int scale_d = 1, 
-        int imm_trans_b = 1
+        int scale_d = 1
     ) {
-        if (imm_trans_b == 1) {
+        if constexpr (trans_b) {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
@@ -86,10 +85,9 @@ struct wgmma_base<3> {
         rt_fl<1, 3, rt_row_layout> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
-        int scale_d = 1, 
-        int imm_trans_b = 1
+        int scale_d = 1
     ) {
-        if (imm_trans_b == 1) {
+        if constexpr (trans_b) {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \

@@ -2,7 +2,8 @@
 NVCC=nvcc
 
 # Compiler flags
-NVCCFLAGS=-g -G -std=c++20 --expt-relaxed-constexpr -arch=sm_90a -lcuda -lcudart
+NVCCFLAGS=-g -G -std=c++20 --expt-relaxed-constexpr -arch=sm_90a -DKITTENS_HOPPER -lcuda -lcudart
+# For 4090: -g -G -std=c++20 --expt-relaxed-constexpr -arch=sm89 -lcuda -lcudart
 
 # Target binary name
 TARGET=unit_tests

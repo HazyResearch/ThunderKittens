@@ -137,13 +137,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
         (global_tile_width/16)
     };
     
-    // constexpr uint64_t gmem_stride[tma_dim] = {
-    //     sizeof(bf16), 
-    //     global_tile_width * sizeof(bf16),
-    //     8 * sizeof(bf16), 
-    //     8 * global_tile_width * sizeof(bf16),
-    //     (global_tile_height/8) * 2 * sizeof(bf16)
-    // };
     constexpr uint64_t gmem_stride[tma_dim] = {
         sizeof(bf16), 
         global_tile_width * sizeof(bf16),
@@ -349,7 +342,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout>
         int32_t crd0 = 0;  
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (dst.rows);
+        int32_t crd3 = tile_idx * (dst.rows/8);
         int32_t crd4 = 0;
 
         asm volatile (
@@ -372,7 +365,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout>
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
         int32_t crd3 = 0; 
-        int32_t crd4 = tile_idx * (dst.rows);
+        int32_t crd4 = tile_idx * (dst.rows/16);
 
         asm volatile (
             "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"

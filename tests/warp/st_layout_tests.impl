@@ -1,11 +1,3 @@
-template<st_layout layout> std::string layout_name();
-template<> std::string layout_name<st_naive_row_layout     >() { return "st_naive_row_layout";      }
-template<> std::string layout_name<st_xor_row_layout       >() { return "st_xor_row_layout";        }
-template<> std::string layout_name<st_wgmma_row_0b_layout  >() { return "st_wgmma_row_0b_layout";   }
-template<> std::string layout_name<st_wgmma_row_32b_layout >() { return "st_wgmma_row_32b_layout";  }
-template<> std::string layout_name<st_wgmma_col_t_0b_layout>() { return "st_wgmma_col_t_0b_layout";   }
-template<> std::string layout_name<st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
-
 template<st_layout layout>
 __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {
 

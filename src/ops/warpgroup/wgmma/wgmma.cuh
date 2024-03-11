@@ -13,20 +13,18 @@ template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_col_layout L_B>
 __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const rt_bf<N_DIV_4, K, rt_row_layout> &a,
                             const st_bf<K, M, L_B>           &b) {
-    wgmma_base<M>::rt_st(
+    wgmma_base<M, 1>::rt_st(
         d,
         a.tiles[0][0],
         b.descriptor(0),
-        accumulate, 
-        1
+        accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M>::rt_st(
+        wgmma_base<M, 1>::rt_st(
             d,
             a.tiles[0][k],
             b.descriptor(k),
-            1, 
             1
         );
     }
@@ -48,20 +46,18 @@ template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_
 __device__ static inline void mma(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const st_bf<4*N_DIV_4, K, L_A>           &a,
                             const st_bf<K, M, L_B>           &b) {
-    wgmma_base<M>::st_st(
+    wgmma_base<M, 1>::st_st(
         d,
         a.descriptor(0),
         b.descriptor(0),
-        accumulate, 
-        1
+        accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M>::st_st(
+        wgmma_base<M, 1>::st_st(
             d,
             a.descriptor(k),
             b.descriptor(k),
-            1, 
             1
         );
     }
@@ -84,21 +80,19 @@ template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_B>
 __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const rt_bf<N_DIV_4, K, rt_row_layout> &a,
                             const st_bf<M, K, L_B>           &b) {
-    wgmma_base<M>::rt_st(
+    wgmma_base<M, 0>::rt_st(
         d,
         a.tiles[0][0],
         b.descriptor(0),
-        accumulate, 
-        0
+        accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M>::rt_st(
+        wgmma_base<M, 0>::rt_st(
             d,
             a.tiles[0][k],
             b.descriptor(k),
-            1, 
-            0
+            1
         );
     }
 }
@@ -119,21 +113,19 @@ template<int accumulate, int N_DIV_4, int K, int M, st_wgmma_row_layout L_A, st_
 __device__ static inline void dot(rt_fl<N_DIV_4, M, rt_row_layout> &d,
                             const st_bf<4*N_DIV_4, K, L_A>           &a,
                             const st_bf<M, K, L_B>           &b) {
-    wgmma_base<M>::st_st(
+    wgmma_base<M, 0>::st_st(
         d,
         a.descriptor(0),
         b.descriptor(0),
-        accumulate, 
-        0
+        accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M>::st_st(
+        wgmma_base<M, 0>::st_st(
             d,
             a.descriptor(k),
             b.descriptor(k),
-            1, 
-            0
+            1
         );
     }
 }

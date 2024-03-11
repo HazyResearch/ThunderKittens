@@ -1,5 +1,5 @@
 # pragma once
 
-// All of these files should include the "block" namespace.
+#ifdef KITTENS_HOPPER
 #include "dsmem.cuh"
-// eventually we'll write some functions here
+#endif

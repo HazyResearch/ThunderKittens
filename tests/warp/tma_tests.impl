@@ -29,8 +29,8 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
         tma::arrive_wait(smem_barrier, kPhaseBit);
 
         store(output + (input_tile.num_elements * tile_idx), input_tile, TMA_WIDTH * 16); 
+        // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
     }
-    // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
 }
 
 template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH>
@@ -50,15 +50,6 @@ test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output)
     constexpr int size_bytes = sizeof(bf16) * input_tile.num_elements;
 
     block.sync();
-
-    // print out what input_tile has
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     // print out 1 x 2 tile
-    //     for (int i = 0; i < 16 * 16 * TMA_HEIGHT * TMA_WIDTH; i++) {
-    //         printf("input_tile[%d] = %f\n", i, __bfloat162float(input_tile[warpid].data[i]));
-    //     }
-    // }
-    // __syncthreads();
 
     for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
         // tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
@@ -159,11 +150,13 @@ int tma_tests() {
 
     failures += tma_dim_test<st_wgmma_row_0b_layout, false>();
     failures += tma_dim_test<st_wgmma_row_0b_layout, true>();
+    // TMA not yet supported with 32B swizzling modes
     // failures += tma_dim_test<st_wgmma_row_32b_layout, false>();
     // failures += !test_tma<st_wgmma_row_32b_layout, true>();
 
     failures += tma_dim_test<st_wgmma_col_t_0b_layout, false>();
     failures += tma_dim_test<st_wgmma_col_t_0b_layout, true>();
+    // TMA not yet supported with 32B swizzling modes
     // failures += !test_tma<st_wgmma_col_t_32b_layout, false>();
     // failures += !test_tma<st_wgmma_col_t_32b_layout, true>();
 

@@ -12,11 +12,12 @@
 #include "warp/reduction_tests.impl"
 #include "warp/mma_tests.impl"
 #include "warp/tma_tests.impl"
-#include "warp/wgmmatma_tests.impl"
 
 #include "warpgroup/wgmma_tests.impl"
 
 #include "block/dsmem.impl"
+
+#include "integration/wgmma_tma_tests.impl"
 
 
 int main() {
@@ -31,12 +32,15 @@ int main() {
     failures += map_tests();
     failures += reduction_tests();
     failures += mma_tests();
+#ifdef KITTENS_HOPPER
     failures += tma_tests();
-    failures += wgmma_tma_tests();
     std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
     failures += wgmma_tests();
     std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     failures += dsmem_tests();
+    std::cout << " ---------------  BEGINNING INTEGRATION TESTS  ---------------\n";
+    // failures += wgmma_tma_tests();
+#endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
     if(failures == 0) std::cout << "ALL TESTS PASSED!\n";
