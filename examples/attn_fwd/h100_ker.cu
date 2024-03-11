@@ -24,7 +24,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
           bf16 *_o = __o__ + block_start;
 
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf_2x4<> q_reg;
     rt_fl_2x2<> att_block;
@@ -56,10 +56,41 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     load_async(v_smem[tic][warpid], _v + warpid * q_reg.rows*d, d, kv_barrier);
 
     // kv_barrier.arrive_and_wait(); // wait for the k fragments.
+    // q_barrier.arrive_and_wait(); // wait for the q fragments.
+
+    // // print out q_smem
+    // if (threadIdx.x == 0 && blockIdx.x == 3) {
+    //     printf("Before TMA\n"); 
+    //     for (int wg = 0; wg < 2; wg++) {
+    //         for (int i = 0; i < q_smem[wg].rows; i++) {
+    //             for (int j = 0; j < q_smem[wg].cols; j++) {
+    //                 printf("%f ", __bfloat162float(q_smem[wg].data[i * q_smem[wg].cols + j]));
+    //             }
+    //             printf("\n");
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // __syncthreads();
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
         q_barrier.arrive_and_wait();
+
+        // __syncthreads();
+        // if (threadIdx.x == 0 && blockIdx.x == 15) {
+        //     printf("Before TMA\n"); 
+        //     for (int wg = 0; wg < 2; wg++) {
+        //         for (int i = 0; i < q_smem[wg].rows; i++) {
+        //             for (int j = 0; j < q_smem[wg].cols; j++) {
+        //                 printf("%f ", __bfloat162float(q_smem[wg].data[i * q_smem[wg].cols + j]));
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        // }
+        // __syncthreads();
         
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
@@ -76,6 +107,28 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
             kv_barrier.arrive_and_wait(); // wait for the k fragments.
+
+            // __syncthreads();
+            // if (threadIdx.x == 0 && blockIdx.x == 3) {
+            //     // print out k and s 
+            //     for (int w = 0; w < 8; w++) {
+            //         for (int i = 0; i < k_smem[tic][w].rows; i++) {
+            //             for (int j = 0; j < k_smem[tic][w].cols; j++) {
+            //                 printf("%f ", __bfloat162float(k_smem[tic][w].data[i * k_smem[tic][w].cols + j]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //         for (int i = 0; i < v_smem[tic][w].rows; i++) {
+            //             for (int j = 0; j < v_smem[tic][w].cols; j++) {
+            //                 printf("%f ", __bfloat162float(v_smem[tic][w].data[i * v_smem[tic][w].cols + j]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //     }
+            // }
+            // __syncthreads(); 
  
             if(kv_idx+1 < kv_blocks) {
                 load_async(k_smem[toc][warpid], _k + ((kv_idx+1)*NUM_WORKERS + warpid) * q_reg.rows*d, d, kv_barrier);
