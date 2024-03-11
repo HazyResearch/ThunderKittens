@@ -20,8 +20,8 @@ concept st_wgmma_row_layout = (
 );
 template<typename T>
 concept st_wgmma_col_layout = (
-    std::is_same_v<T, st_wgmma_col_t_0b_layout>   ||
-    std::is_same_v<T, st_wgmma_col_t_32b_layout> 
+    std::is_same_v<T, st_wgmma_col_t_0b_layout>   // ||
+    // std::is_same_v<T, st_wgmma_col_t_32b_layout> 
 );
 template<typename T>
 concept st_row_layout = (
