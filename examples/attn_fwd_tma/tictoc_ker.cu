@@ -35,7 +35,6 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     st_bf<8,4,layout_row> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<8,4,layout_row>, NUM_WARPGROUPS>();
     st_bf_2x4<layout_row> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
     st_bf_2x4<layout_row> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
-    st_bf_2x4<layout_row> (&o_smem)[NUM_WORKERS]    = al.allocate<st_bf_2x4<layout_row>, NUM_WORKERS>();
     
     int qo_blocks = n / (q_smem[warpgroupid].rows * NUM_WARPGROUPS);
     int kv_blocks = n / (q_reg.rows * NUM_WORKERS);
