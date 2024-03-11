@@ -137,12 +137,19 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
         (global_tile_width/16)
     };
     
+    // constexpr uint64_t gmem_stride[tma_dim] = {
+    //     sizeof(bf16), 
+    //     global_tile_width * sizeof(bf16),
+    //     8 * sizeof(bf16), 
+    //     8 * global_tile_width * sizeof(bf16),
+    //     (global_tile_height/8) * 2 * sizeof(bf16)
+    // };
     constexpr uint64_t gmem_stride[tma_dim] = {
         sizeof(bf16), 
         global_tile_width * sizeof(bf16),
         8 * sizeof(bf16), 
         8 * global_tile_width * sizeof(bf16),
-        (global_tile_height/8) * 2 * sizeof(bf16)
+        16 * sizeof(bf16)
     };
 
     constexpr uint32_t smem_shape[tma_dim]  = {8, 8, 2, (shared_tile_height/8), (shared_tile_width/16)};
