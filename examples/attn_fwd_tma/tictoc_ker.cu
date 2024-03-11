@@ -45,15 +45,16 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> kv_barrier;
     if (threadIdx.x == 0) {init(&kv_barrier, block.size());}
 
-    int tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;  
+    int tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;
+
     __shared__ uint64_t smem_barrier[2 * NUM_WORKERS]; 
     constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements; 
 
-    tma::init_barrier(smem_barrier[0 + warpid], block.size());
-    tma::set_barrier_bytes(smem_barrier[0 + warpid], size_bytes);
+    tma::init_barrier(smem_barrier[warpid], block.size());
+    tma::set_barrier_bytes(smem_barrier[warpid], size_bytes);
 
-    tma::init_barrier(smem_barrier[1 + warpid], block.size());
-    tma::set_barrier_bytes(smem_barrier[1 + warpid], size_bytes);
+    tma::init_barrier(smem_barrier[NUM_WORKERS + warpid], block.size());
+    tma::set_barrier_bytes(smem_barrier[NUM_WORKERS + warpid], size_bytes);
     block.sync();
 
     int tic = 0, toc = 1;
@@ -65,15 +66,12 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     if (lane == 0) {
         // tma::load_async(q_smem[warpgroupid], tma_q, tile_idx, smem_barrier[warpgroupid]);
-        tma::load_async(k_smem[tic][warpid], tma_k, tile_idx, smem_barrier[0 + warpid]);
-        tma::load_async(v_smem[tic][warpid], tma_v, tile_idx, smem_barrier[1 + warpid]); 
+        tma::load_async(k_smem[tic][warpid], tma_k, tile_idx, smem_barrier[warpid]);
+        tma::load_async(v_smem[tic][warpid], tma_v, tile_idx, smem_barrier[NUM_WORKERS + warpid]);
     }
 
     constexpr int kPhaseBit_k = 1; 
-    tma::arrive_wait(smem_barrier[0 + warpid], kPhaseBit_k);
-
     constexpr int kPhaseBit_v = 1;
-    tma::arrive_wait(smem_barrier[1 + warpid], kPhaseBit_v); 
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
@@ -93,15 +91,26 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
-            kv_barrier.arrive_and_wait(); // wait for the k fragments.
+            // kv_barrier.arrive_and_wait(); // wait for the k fragments.
+            tma::arrive_wait(smem_barrier[warpid], kPhaseBit_k);
+            tma::arrive_wait(smem_barrier[NUM_WORKERS + warpid], kPhaseBit_v);
+            __syncthreads();
  
             if(kv_idx+1 < kv_blocks) {
-                load_async(k_smem[toc][warpid], _k + ((kv_idx+1)*NUM_WORKERS + warpid) * q_reg.rows*d, d, kv_barrier);
-                load_async(v_smem[toc][warpid], _v + ((kv_idx+1)*NUM_WORKERS + warpid) * q_reg.rows*d, d, kv_barrier);
+                tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + (kv_idx+1)*NUM_WORKERS + warpid;
+                // load_async(k_smem[toc][warpid], _k + ((kv_idx+1)*NUM_WORKERS + warpid) * q_reg.rows*d, d, kv_barrier);
+                // load_async(v_smem[toc][warpid], _v + ((kv_idx+1)*NUM_WORKERS + warpid) * q_reg.rows*d, d, kv_barrier);
+
+                tma::load_async(k_smem[toc][warpid], tma_k, tile_idx, smem_barrier[warpid]);
+                tma::load_async(v_smem[toc][warpid], tma_v, tile_idx, smem_barrier[NUM_WORKERS + warpid]);
             }
             else if(q_blk+1 < qo_blocks) {
-                load_async(k_smem[toc][warpid], _k + warpid * q_reg.rows*d, d, kv_barrier);
-                load_async(v_smem[toc][warpid], _v + warpid * q_reg.rows*d, d, kv_barrier);
+                tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;
+                // load_async(k_smem[toc][warpid], _k + warpid * q_reg.rows*d, d, kv_barrier);
+                // load_async(v_smem[toc][warpid], _v + warpid * q_reg.rows*d, d, kv_barrier);
+                
+                tma::load_async(k_smem[toc][warpid], tma_k, tile_idx, smem_barrier[warpid]);
+                tma::load_async(v_smem[toc][warpid], tma_v, tile_idx, smem_barrier[NUM_WORKERS + warpid]);
             }
 
             for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
