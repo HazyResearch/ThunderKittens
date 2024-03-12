@@ -105,32 +105,30 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    CUtensorMap tma_desc_q = {}; 
-    CUtensorMap tma_desc_k = {};
-    CUtensorMap tma_desc_v = {};
-    CUtensorMap tma_desc_o = {};
+    // CUtensorMap tma_desc_q = {}; 
+    // CUtensorMap tma_desc_k = {};
+    // CUtensorMap tma_desc_v = {};
+    // CUtensorMap tma_desc_o = {};
 
-    using layout_row = st_wgmma_row_0b_layout;
+    // tma::create_tensor_map<st_bf<8,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_q, d_q); 
+    // tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
+    // tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
+    // tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
 
-    tma::create_tensor_map<st_bf<8,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+    // CUtensorMap* tma_q_d; 
+    // CUtensorMap* tma_k_d;
+    // CUtensorMap* tma_v_d;
+    // CUtensorMap* tma_o_d;
 
-    CUtensorMap* tma_q_d; 
-    CUtensorMap* tma_k_d;
-    CUtensorMap* tma_v_d;
-    CUtensorMap* tma_o_d;
+    // cudaMalloc(&tma_q_d, sizeof(CUtensorMap));
+    // cudaMalloc(&tma_k_d, sizeof(CUtensorMap));
+    // cudaMalloc(&tma_v_d, sizeof(CUtensorMap));
+    // cudaMalloc(&tma_o_d, sizeof(CUtensorMap));
 
-    cudaMalloc(&tma_q_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_k_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_v_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_o_d, sizeof(CUtensorMap));
-
-    cudaMemcpy(tma_q_d, &tma_desc_q, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_k_d, &tma_desc_k, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_v_d, &tma_desc_v, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_o_d, &tma_desc_o, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    // cudaMemcpy(tma_q_d, &tma_desc_q, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    // cudaMemcpy(tma_k_d, &tma_desc_k, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    // cudaMemcpy(tma_v_d, &tma_desc_v, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    // cudaMemcpy(tma_o_d, &tma_desc_o, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     
     unsigned long mem_size = 230000; // kinda ballparking it
 
@@ -140,12 +138,12 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 100;
+    const int ITER = 1;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, ATTN_D, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, ATTN_D, d_q, d_k, d_v, d_o);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -180,10 +178,10 @@ int main(int argc, char **argv) {
     cudaFree(d_k);
     cudaFree(d_v);
     cudaFree(d_o);
-    cudaFree(tma_q_d);
-    cudaFree(tma_k_d);
-    cudaFree(tma_v_d);
-    cudaFree(tma_o_d);
+    // cudaFree(tma_q_d);
+    // cudaFree(tma_k_d);
+    // cudaFree(tma_v_d);
+    // cudaFree(tma_o_d);
 
     delete[] q, k, v, o, o_ref;
     delete[] q_bf, k_bf, v_bf, o_bf;
