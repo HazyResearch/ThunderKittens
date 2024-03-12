@@ -26,7 +26,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
-        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.rows*d, d);
+        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, d);
         mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
 
         neg_infty(max_vec); // zero registers for the Q chunk
@@ -35,8 +35,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
-            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.rows*d, d);
-            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.rows*d, d);
+            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, d);
+            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, d);
             __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
 
             for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
@@ -74,7 +74,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
         }
 
-        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.rows*d, o_prev, d); // write out o
+        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, d); // write out o
     }
 }
 
