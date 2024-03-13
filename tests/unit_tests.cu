@@ -43,7 +43,7 @@ int main() {
     std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     failures += dsmem_tests();
     std::cout << " ---------------  BEGINNING INTEGRATION TESTS  ---------------\n";
-    // failures += wgmma_tma_tests();
+    failures += wgmma_tma_tests();
 #endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
