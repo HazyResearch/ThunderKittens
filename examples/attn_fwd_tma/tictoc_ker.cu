@@ -35,6 +35,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     st_bf<8,4,layout_row> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<8,4,layout_row>, NUM_WARPGROUPS>();
     st_bf_2x4<layout_row> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
     st_bf_2x4<layout_row> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
+    // st_bf_2x4<layout_row> (&o_smem)[NUM_WORKERS]    = al.allocate<st_bf_2x4<layout_row>, NUM_WORKERS>();
     
     int qo_blocks = n / (q_smem[warpgroupid].rows * NUM_WARPGROUPS);
     int kv_blocks = n / (q_reg.rows * NUM_WORKERS);
@@ -77,6 +78,22 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         tma::arrive_wait(smem_barrier[warpgroupid], kPhaseBit_q); 
         q_barrier.arrive_and_wait();
+
+        // __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
+        // if (threadIdx.x == 0 && blockIdx.x == 0 && q_blk == 0) {
+        //     printf("q_smem[]:");
+        //     for (int w = 0; w < 2; w++) {
+        //         printf("q_smem[%d]: \n", w);
+        //         for (int r = 0; r < q_smem[w].rows; r++) {
+        //             for (int c = 0; c < q_smem[w].cols; c++) {
+        //                 printf("%f ", __bfloat162float(q_smem[w].data[c + r * q_smem[w].cols]));
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        // }
+        // __syncthreads();
         
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
@@ -99,6 +116,33 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + warpid], kPhaseBit_k);
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid], kPhaseBit_v);
             __syncthreads();
+
+            // __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
+            // if (threadIdx.x == 0 && blockIdx.x == 0 && q_blk == 0) {
+            //     printf("k_smem[]: \n");
+            //     for (int w = 0; w < NUM_WORKERS; w++) {
+            //         printf("k_smem[%d]: \n", w);
+            //         for (int r = 0; r < k_smem[tic][w].rows; r++) {
+            //             for (int c = 0; c < k_smem[tic][w].cols; c++) {
+            //                 printf("%f ", __bfloat162float(k_smem[tic][w].data[c + r * k_smem[tic][w].cols]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //     }
+            //     printf("v_smem[]:");
+            //     for (int w = 0; w < NUM_WORKERS; w++) {
+            //         printf("v_smem[%d]: \n", w);
+            //         for (int r = 0; r < v_smem[tic][w].rows; r++) {
+            //             for (int c = 0; c < v_smem[tic][w].cols; c++) {
+            //                 printf("%f ", __bfloat162float(v_smem[tic][w].data[c + r * v_smem[tic][w].cols]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //     }
+            // }
+            // __syncthreads();
  
             if(kv_idx+1 < kv_blocks) {
                 tile_idx_kv = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + (kv_idx+1)*NUM_WORKERS + warpid;
@@ -149,6 +193,23 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             tic ^= 1;
             toc ^= 1;
         }
+
+        // store(o_smem[warpid], o_prev);
+        // __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
+        // if (threadIdx.x == 0 && blockIdx.x == 0 && q_blk == 0) {
+        //     printf("o_smem[]: \n");
+        //     for (int w = 0; w < NUM_WORKERS; w++) {
+        //         printf("o_smem[%d]: \n", w);
+        //         for (int r = 0; r < o_smem[w].rows; r++) {
+        //             for (int c = 0; c < o_smem[w].cols; c++) {
+        //                 printf("%f ", __bfloat162float(o_smem[w].data[c + r * o_smem[w].cols]));
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        // }
+        // __syncthreads();
  
         store(_o + (q_blk*NUM_WORKERS + warpid) * q_reg.rows*d, o_prev, d);
     } 

@@ -101,20 +101,21 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_o, TOTAL_ELEMENTS * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-
-    using layout = st_wgmma_row_0b_layout;
 
     CUtensorMap tma_desc_q = {}; 
     CUtensorMap tma_desc_k = {};
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
-    tma::create_tensor_map<st_bf<8,4,layout>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf_2x4<layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<2,4,layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+    using layout_row = st_wgmma_row_0b_layout;
+
+    tma::create_tensor_map<st_bf<8,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(8 * 16)>(&tma_desc_q, d_q); 
+    tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf_2x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -139,7 +140,7 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 100;
+    const int ITER = 100; 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
