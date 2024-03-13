@@ -10,6 +10,14 @@
 
 #include "../src/kittens.cuh"
 
+template<kittens::st_layout layout> std::string layout_name();
+template<> std::string layout_name<kittens::st_naive_row_layout      >() { return "st_naive_row_layout";      }
+template<> std::string layout_name<kittens::st_xor_row_layout        >() { return "st_xor_row_layout";        }
+template<> std::string layout_name<kittens::st_wgmma_row_0b_layout   >() { return "st_wgmma_row_0b_layout";   }
+template<> std::string layout_name<kittens::st_wgmma_row_32b_layout  >() { return "st_wgmma_row_32b_layout";  }
+template<> std::string layout_name<kittens::st_wgmma_col_t_0b_layout >() { return "st_wgmma_col_t_0b_layout";   }
+template<> std::string layout_name<kittens::st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
+
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();
@@ -36,7 +44,6 @@ using namespace kittens;
 #define COLS (WIDTH*16)
 #define SIZE (WIDTH*HEIGHT*256)
 #define SEED 42
-#define WARP_SIZE 32
 
 template<bool autofill=true>
 void initialize(bf16 **d_i, bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {

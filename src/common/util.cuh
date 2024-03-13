@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <type_traits>
+#include <memory>
 
 namespace kittens {
 
@@ -54,33 +55,44 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
-struct alignas(128) alignment_dummy { int dummy; };
+struct alignas(256) alignment_dummy { int dummy; };
 struct shared_allocator {
-
     int *ptr;
 
-    __device__ shared_allocator(int * _ptr): ptr(_ptr) {}
+    private:
+        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
 
-    template<typename A> 
-    __device__ inline A& allocate() {
-        A*p = reinterpret_cast<A*>(ptr);
-        ptr += sizeof(A)/sizeof(int);
-        return *p;
-    }
-    template<typename A, size_t N> 
-    __device__ inline A (&allocate())[N] {
-        using at = A[N];
-        at*p = reinterpret_cast<at*>(ptr);
-        ptr += sizeof(at)/sizeof(int);
-        return *p;
-    }
-    template<typename A, size_t N, size_t M> 
-    __device__ inline A (&allocate())[N][M] {
-        using at = A[N][M];
-        at*p = reinterpret_cast<at*>(ptr);
-        ptr += sizeof(at)/sizeof(int);
-        return *p;
-    }
+    public:
+        __device__ inline static shared_allocator create_allocator(int *_ptr) {
+            shared_allocator sa(_ptr); 
+            return sa;
+        }
+        __device__ inline static shared_allocator create_allocator_tma(int *_ptr) {
+            shared_allocator sa(_ptr); 
+            uint64_t p = reinterpret_cast<uint64_t>(sa.ptr);
+            sa.ptr = (int*)(p + (128-(p%128)));
+            return sa;
+        }
+        template<typename A> 
+        __device__ inline A& allocate() {
+            A*p = reinterpret_cast<A*>(ptr);
+            ptr += sizeof(A)/sizeof(int);
+            return *p;
+        }
+        template<typename A, size_t N> 
+        __device__ inline A (&allocate())[N] {
+            using at = A[N];
+            at*p = reinterpret_cast<at*>(ptr);
+            ptr += sizeof(at)/sizeof(int);
+            return *p;
+        }
+        template<typename A, size_t N, size_t M> 
+        __device__ inline A (&allocate())[N][M] {
+            using at = A[N][M];
+            at*p = reinterpret_cast<at*>(ptr);
+            ptr += sizeof(at)/sizeof(int);
+            return *p;
+        }
 };
 
 }

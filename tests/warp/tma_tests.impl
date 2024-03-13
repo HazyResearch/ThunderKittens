@@ -1,0 +1,164 @@
+template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH>
+__global__ void
+test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
+    auto warpid = kittens::warp_id(); 
+    auto lane   = kittens::laneid(); 
+
+    CUtensorMap* input_tma_descriptor  = tma_desc_input;
+
+    extern __shared__ int __shm[];
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
+
+    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> &input_tile  = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>>();
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ uint64_t smem_barrier; 
+    constexpr int size_bytes = sizeof(bf16) * input_tile.num_elements;
+
+    tma::prefetch(input_tile, input_tma_descriptor, 0);
+    tma::init_barrier(smem_barrier, 1); 
+    tma::set_barrier_bytes(smem_barrier, size_bytes);
+
+    block.sync();
+
+    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
+        tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
+        // load(input_tile, input, TMA_WIDTH * 16);
+
+        int kPhaseBit = 0; 
+        tma::arrive_wait(smem_barrier, kPhaseBit);
+
+        store(output + (input_tile.num_elements * tile_idx), input_tile, TMA_WIDTH * 16); 
+        // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
+    }
+}
+
+template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH>
+__global__ void
+test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
+    auto warpid = kittens::warp_id();
+    auto lane   = kittens::laneid();
+
+    CUtensorMap* output_tma_descriptor = tma_desc_output;
+
+    extern __shared__ int __shm[];
+    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
+    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> &input_tile = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>>();
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ uint64_t smem_barrier; 
+    constexpr int size_bytes = sizeof(bf16) * input_tile.num_elements;
+
+    block.sync();
+
+    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
+        // tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
+        load(input_tile, input + (input_tile.num_elements * tile_idx), TMA_WIDTH * 16); 
+
+        // store(output, input_tile, TMA_WIDTH * 16);
+        tma::store_async(output_tma_descriptor, input_tile, tile_idx);
+    
+        tma::commit_group();
+
+        tma::wait_for_store_complete<0>();
+    }
+}
+
+template<st_layout layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH>
+bool test_tma() {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(TMA_HEIGHT * TMA_WIDTH * 1024); 
+    std::vector<float> o_ref(TMA_HEIGHT * TMA_WIDTH * 1024); 
+    initialize(&d_i, &d_o, i_ref, o_ref);
+
+    CUtensorMap tma_desc_input = {};
+    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
+
+    CUtensorMap tma_desc_output = {};
+    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_output, d_o);
+
+    CUtensorMap* tma_desc_input_d;
+    CUtensorMap* tma_desc_output_d;
+
+    cudaMalloc(&tma_desc_input_d,                     sizeof(CUtensorMap));
+    cudaMalloc(&tma_desc_output_d,                    sizeof(CUtensorMap));
+    cudaMemcpy(tma_desc_input_d,    &tma_desc_input,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_desc_output_d,   &tma_desc_output, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+
+    unsigned long mem_size = 100000; 
+
+    // run kernel
+    bool passed; 
+    if constexpr (!store_test) {
+        cudaFuncSetAttribute(test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        CudaCheckError();
+
+        test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH><<<1, 32, mem_size>>>(d_i, d_o, tma_desc_input_d);
+        CudaCheckError();
+    }
+    else {
+        cudaFuncSetAttribute(test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        CudaCheckError();
+
+        test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH><<<1, 32, mem_size>>>(d_i, d_o, tma_desc_output_d);
+        CudaCheckError();
+    }
+
+    // output identical to input
+    for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) o_ref[i] = i_ref[i];
+    std::string load_str = store_test ? "_store" : "_load";
+    load_str += "_"+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH);
+
+    passed = validate(d_i, d_o, i_ref, o_ref, layout_name<layout>()+load_str, 16 * TMA_WIDTH); 
+
+    return passed;
+}
+
+template<st_layout layout, bool store_test>
+int tma_dim_test() {
+    int failures = 0; 
+
+    failures += !test_tma<layout, store_test, 1, 1>();
+    failures += !test_tma<layout, store_test, 1, 2>();
+    failures += !test_tma<layout, store_test, 1, 3>();
+    failures += !test_tma<layout, store_test, 1, 4>();
+
+    failures += !test_tma<layout, store_test, 2, 1>();
+    failures += !test_tma<layout, store_test, 2, 2>();
+    failures += !test_tma<layout, store_test, 2, 3>();
+    failures += !test_tma<layout, store_test, 2, 4>();
+
+    failures += !test_tma<layout, store_test, 3, 1>();
+    failures += !test_tma<layout, store_test, 3, 2>();
+    failures += !test_tma<layout, store_test, 3, 3>();
+    failures += !test_tma<layout, store_test, 3, 4>();
+
+    failures += !test_tma<layout, store_test, 4, 1>();
+    failures += !test_tma<layout, store_test, 4, 2>();
+    failures += !test_tma<layout, store_test, 4, 3>();
+    failures += !test_tma<layout, store_test, 4, 4>();
+
+    return failures;
+}
+
+int tma_tests() {
+    std::cout << " ----- Starting tma tests! -----" << std::endl;
+    int failures = 0;
+    failures += tma_dim_test<st_naive_row_layout, false>();
+    failures += tma_dim_test<st_naive_row_layout, true>();
+
+    failures += tma_dim_test<st_wgmma_row_0b_layout, false>();
+    failures += tma_dim_test<st_wgmma_row_0b_layout, true>();
+    // TMA not yet supported with 32B swizzling modes
+    // failures += tma_dim_test<st_wgmma_row_32b_layout, false>();
+    // failures += !test_tma<st_wgmma_row_32b_layout, true>();
+
+    failures += tma_dim_test<st_wgmma_col_t_0b_layout, false>();
+    failures += tma_dim_test<st_wgmma_col_t_0b_layout, true>();
+    // TMA not yet supported with 32B swizzling modes
+    // failures += !test_tma<st_wgmma_col_t_32b_layout, false>();
+    // failures += !test_tma<st_wgmma_col_t_32b_layout, true>();
+
+    return failures;
+}

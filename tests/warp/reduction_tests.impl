@@ -1,7 +1,7 @@
 __global__ void test_row_normalize_row_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_fl<HEIGHT, WIDTH> reg_tile;
 
@@ -53,7 +53,7 @@ bool test_row_normalize_row() {
 __global__ void test_row_normalize_col_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile_bf;
     rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile_fl;
@@ -115,7 +115,7 @@ bool test_row_normalize_col() {
 __global__ void test_col_normalize_row_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_fl<HEIGHT, WIDTH> reg_tile;
 
@@ -168,7 +168,7 @@ bool test_col_normalize_row() {
 __global__ void test_col_normalize_col_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
     
     rt_bf<HEIGHT, WIDTH> reg_tile;
 
