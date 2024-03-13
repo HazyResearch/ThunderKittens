@@ -69,6 +69,16 @@ struct rt {
         __device__ inline       rt_base<dtype, layout>::row_type& operator[](size_t idx)       { return data[idx]; }
         __device__ inline const rt_base<dtype, layout>::row_type& operator[](size_t idx) const { return data[idx]; }
     };
+
+    /* ----------  SUBTILE  ---------- */
+
+    template<int subtile_height>
+    __device__ inline rt<dtype, subtile_height, width, layout> &subtile_inplace(int idx) {
+        static_assert(height % subtile_height == 0, "subtile height should evenly divide tile height.");
+        return reinterpret_cast<rt<dtype, subtile_height, width, layout>&>(
+            tiles[idx*subtile_height]
+        );
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */

@@ -11,14 +11,17 @@
 #include "warp/map_tests.impl"
 #include "warp/reduction_tests.impl"
 #include "warp/mma_tests.impl"
+
+#ifdef KITTENS_HOPPER
 #include "warp/tma_tests.impl"
 
 #include "warpgroup/wgmma_tests.impl"
+#include "warpgroup/tall_wgmma_tests.impl"
 
 #include "block/dsmem.impl"
 
 #include "integration/wgmma_tma_tests.impl"
-
+#endif
 
 int main() {
 
@@ -36,6 +39,7 @@ int main() {
     failures += tma_tests();
     std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
     failures += wgmma_tests();
+    failures += tall_wgmma_tests();
     std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     failures += dsmem_tests();
     std::cout << " ---------------  BEGINNING INTEGRATION TESTS  ---------------\n";

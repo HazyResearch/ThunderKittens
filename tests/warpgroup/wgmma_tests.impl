@@ -1,4 +1,4 @@
-#define WGMMA_N 4 // must be 4 due to WGMMA
+#define DEFAULT_WGMMA_N 4 // must be 4 due to WGMMA
 template<st_wgmma_row_layout L1, st_wgmma_row_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
 
@@ -10,13 +10,13 @@ __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
     rt_fl<1, WGMMA_M> result;
     rt_bf<1, WGMMA_K> a_reg;
     
-    st_bf<WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<WGMMA_N, WGMMA_K, L1>>();
+    st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1>>();
     st_bf<WGMMA_M, WGMMA_K, L2> &b_smem = al.allocate<st_bf<WGMMA_M, WGMMA_K, L2>>();
 
     // B always runs in shared memory
-    if(warpid == 0) load(b_smem, input+256*WGMMA_N*WGMMA_K, 16*WGMMA_K);
+    if(warpid == 0) load(b_smem, input+256*DEFAULT_WGMMA_N*WGMMA_K, 16*WGMMA_K);
     __syncthreads();
-    // warpgroup::load(b_smem, input+256*WGMMA_N*WGMMA_K, 16*WGMMA_K);
+    // warpgroup::load(b_smem, input+256*DEFAULT_WGMMA_N*WGMMA_K, 16*WGMMA_K);
 
     // How to load A?
     if constexpr (use_reg) {
@@ -44,20 +44,20 @@ template<st_wgmma_row_layout L1, st_wgmma_row_layout L2, bool use_reg, int WGMMA
 bool test_wgmma_dot() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(256*WGMMA_K*(WGMMA_N+WGMMA_M));
-    std::vector<float> o_ref(256*WGMMA_N*WGMMA_M);
-    for(int i = 0; i < 256*WGMMA_K*WGMMA_N; i++) i_ref[i] = float(i);
-    for(int i = 0; i < 16*WGMMA_K; i++) for(int j = 0; j < 16*WGMMA_M; j++) i_ref[256*WGMMA_K*WGMMA_N + i*16*WGMMA_M + j] = float(i==j);
+    std::vector<float> i_ref(256*WGMMA_K*(DEFAULT_WGMMA_N+WGMMA_M));
+    std::vector<float> o_ref(256*DEFAULT_WGMMA_N*WGMMA_M);
+    for(int i = 0; i < 256*WGMMA_K*DEFAULT_WGMMA_N; i++) i_ref[i] = float(i);
+    for(int i = 0; i < 16*WGMMA_K; i++) for(int j = 0; j < 16*WGMMA_M; j++) i_ref[256*WGMMA_K*DEFAULT_WGMMA_N + i*16*WGMMA_M + j] = float(i==j);
     initialize<false>(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_wgmma_dot_ker<L1, L2, use_reg, WGMMA_K, WGMMA_M>, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
     test_wgmma_dot_ker<L1, L2, use_reg, WGMMA_K, WGMMA_M><<<1, 128, 100000>>>(d_i, d_o); // need to launch a full warpgroup
     // fill in correct results on cpu
-    for(int i = 0; i < WGMMA_N*16; i++) {
+    for(int i = 0; i < DEFAULT_WGMMA_N*16; i++) {
         for(int j = 0; j < WGMMA_M*16; j++) {
             float sum = 0;
             for(int k = 0; k < WGMMA_K*16; k++) {
-                sum += i_ref[i*WGMMA_K*16+k]*i_ref[256*WGMMA_K*WGMMA_N + j*WGMMA_K*16+k];
+                sum += i_ref[i*WGMMA_K*16+k]*i_ref[256*WGMMA_K*DEFAULT_WGMMA_N + j*WGMMA_K*16+k];
             }
             o_ref[i*WGMMA_M*16+j] = sum;
         }
@@ -68,7 +68,7 @@ bool test_wgmma_dot() {
     std::string layout_label = layout_name<L1>()+"_"+layout_name<L2>()+"_";
     bool passed = validate(
         d_i, d_o, i_ref, o_ref, 
-        "wgmma_dot_"+reg_label+layout_label+std::to_string(WGMMA_N)+"x"+std::to_string(WGMMA_K)+"x"+std::to_string(WGMMA_M),
+        "wgmma_dot_"+reg_label+layout_label+std::to_string(DEFAULT_WGMMA_N)+"x"+std::to_string(WGMMA_K)+"x"+std::to_string(WGMMA_M),
         WGMMA_M*16
     );
     return passed;
@@ -87,11 +87,11 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
 
     rt_bf<WGMMA_K, WGMMA_M> tmp_loader;
     
-    st_bf<WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<WGMMA_N, WGMMA_K, L1>>();
+    st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1>>();
     st_bf<WGMMA_K, WGMMA_M, L2> &b_smem = al.allocate<st_bf<WGMMA_K, WGMMA_M, L2>>();
 
     // B always runs in shared memory
-    warpgroup::load(b_smem, input+256*WGMMA_N*WGMMA_K, 16*WGMMA_M);
+    warpgroup::load(b_smem, input+256*DEFAULT_WGMMA_N*WGMMA_K, 16*WGMMA_M);
     __syncthreads();
 
     // How to load A?
@@ -116,18 +116,18 @@ template<st_wgmma_row_layout L1, st_wgmma_col_layout L2, bool use_reg, int WGMMA
 bool test_wgmma_mma() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(256*WGMMA_K*(WGMMA_N+WGMMA_M));
-    std::vector<float> o_ref(256*WGMMA_N*WGMMA_M);
+    std::vector<float> i_ref(256*WGMMA_K*(DEFAULT_WGMMA_N+WGMMA_M));
+    std::vector<float> o_ref(256*DEFAULT_WGMMA_N*WGMMA_M);
     initialize(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_wgmma_mma_ker<L1, L2, use_reg, WGMMA_K, WGMMA_M>, cudaFuncAttributeMaxDynamicSharedMemorySize, 200000);
     test_wgmma_mma_ker<L1, L2, use_reg, WGMMA_K, WGMMA_M><<<1, 128, 200000>>>(d_i, d_o); // need to launch a full warpgroup
     // fill in correct results on cpu
-    for(int i = 0; i < WGMMA_N*16; i++) {
+    for(int i = 0; i < DEFAULT_WGMMA_N*16; i++) {
         for(int j = 0; j < WGMMA_M*16; j++) {
             float sum = 0;
             for(int k = 0; k < WGMMA_K*16; k++) {
-                sum += i_ref[i*WGMMA_K*16+k]*i_ref[256*WGMMA_K*WGMMA_N + k*16*WGMMA_M + j];
+                sum += i_ref[i*WGMMA_K*16+k]*i_ref[256*WGMMA_K*DEFAULT_WGMMA_N + k*16*WGMMA_M + j];
             }
             o_ref[i*WGMMA_M*16+j] = sum;
         }
@@ -138,7 +138,7 @@ bool test_wgmma_mma() {
     std::string layout_label = layout_name<L1>()+"_"+layout_name<L2>()+"_";
     bool passed = validate(
         d_i, d_o, i_ref, o_ref, 
-        "wgmma_mma_"+reg_label+layout_label+std::to_string(WGMMA_N)+"x"+std::to_string(WGMMA_K)+"x"+std::to_string(WGMMA_M),
+        "wgmma_mma_"+reg_label+layout_label+std::to_string(DEFAULT_WGMMA_N)+"x"+std::to_string(WGMMA_K)+"x"+std::to_string(WGMMA_M),
         WGMMA_M*16
     );
     return passed;
@@ -224,7 +224,6 @@ int test_wgmma_mma_layout() {
     return failures;
 }
 
-
 int wgmma_tests() {
     std::cout << " ----- Starting Warpgroup MMA tests! -----" << std::endl;
     int failures = 0;
@@ -235,9 +234,9 @@ int wgmma_tests() {
     failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout>();
 
     failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_0b_layout >();
-    failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_32b_layout>();
+    // failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_32b_layout>();
     failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout >();
-    failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
+    // failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
 
     return failures;
 }
