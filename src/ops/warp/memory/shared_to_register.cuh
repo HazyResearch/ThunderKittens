@@ -13,16 +13,23 @@ namespace kittens {
 
 // ----------  ROW LAYOUTS ----------
 
-template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
-__device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
+template<rt_type RT, st_type_rowlayout ST>
+__device__ inline static void load(RT &dst, const ST &src) {
+
+    static_assert(RT::height == ST::height, "register tile and shared tile must match height");
+    static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
+
+    using T2 = RT::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
+    using U  = ST::dtype;
     using U2 = base_types::packing<U >::packed_type;
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
                 // handle the row-major layout
                 int row = i*dst.tile_size + (laneid / 4);
                 int col = j*dst.tile_size + 2*(laneid % 4);
@@ -49,16 +56,23 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
 }
 
 
-template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_row_layout shared_layout>
-__device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {
+template<rt_type RT, st_type_rowlayout ST>
+__device__ inline static void store(ST &dst, const RT &src) {
+
+    static_assert(RT::height == ST::height, "register tile and shared tile must match height");
+    static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
+
+    using T2 = RT::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
-    using U2 = base_types::packing<U>::packed_type;
+    using U  = ST::dtype;
+    using U2 = base_types::packing<U >::packed_type;
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);
@@ -86,15 +100,23 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
 
 // ----------  COL LAYOUTS ---------- (slow for the time being)
 
-template<typename T2, typename U, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
-__device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
+template<rt_type RT, st_type_collayout ST>
+__device__ inline static void load(RT &dst, const ST &src) {
+
+    static_assert(RT::height == ST::height, "register tile and shared tile must match height");
+    static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
+
+    using T2 = RT::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
+    using U  = ST::dtype;
+    using U2 = base_types::packing<U >::packed_type;
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
                 // handle the row-major layout
                 int row = i*dst.tile_size + (laneid / 4);
                 int col = j*dst.tile_size + 2*(laneid % 4);
@@ -124,15 +146,23 @@ __device__ inline static void load(rt<T2, height, width, reg_layout> &dst, const
     }
 }
 
-template<typename U, typename T2, int height, int width, rt_layout reg_layout, st_col_layout shared_layout>
-__device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height, width, reg_layout> &src) {
+template<rt_type RT, st_type_collayout ST>
+__device__ inline static void store(ST &dst, const RT &src) {
+
+    static_assert(RT::height == ST::height, "register tile and shared tile must match height");
+    static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
+
+    using T2 = RT::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
+    using U  = ST::dtype;
+    using U2 = base_types::packing<U >::packed_type;
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);
@@ -161,6 +191,7 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
         }
     }
 }
+
 
 
 // register vector to shared vector

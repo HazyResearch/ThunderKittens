@@ -10,9 +10,9 @@ tile = 16
 # This is the commands for the pytorch jit...
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import os
-project_root = os.getenv("CUDATASTIC_ROOT")
+project_root = os.getenv("THUNDERKITTENS_ROOT")
 if project_root is None:
-    print("There is no project root set (env: cudatastic_root) did you run env.src?")
+    print("There is no project root set (env: thunderkittens_root) did you run env.src?")
     os._exit(-1)   
 
 def _sources(name): return [f"{name}_frontend.cpp", f"{name}.cu"]

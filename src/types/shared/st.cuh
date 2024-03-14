@@ -15,11 +15,11 @@ struct st_col_vec_id {};
 struct st_row_vec_id {};
 
 // NOT expecting a packed type
-template<typename T, int _height, int _width, st_layout _layout>
+template<typename _T, int _height, int _width, st_layout _layout>
 struct st {
     using identifier = st_id;
     using layout = _layout;
-    using dtype = T;
+    using dtype = _T;
 
     static constexpr int height              = _height;
     static constexpr int width               = _width;
@@ -83,7 +83,7 @@ struct st {
     // vector types
     struct col_vec {
         using identifier = st_col_vec_id;
-        using dtype = T;
+        using dtype = _T;
         static constexpr int length = rows;
 
         dtype data[length];
@@ -93,7 +93,7 @@ struct st {
     };
     struct row_vec {
         using identifier = st_row_vec_id;
-        using dtype = T;
+        using dtype = _T;
         static constexpr int length = cols;
 
         dtype data[length];
@@ -101,11 +101,74 @@ struct st {
         __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
         __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
     };
+
+    template<int _subtile_height, int _subtile_width>
+    struct subtile_t {
+        using identifier = st_id; // i quack like an st, shh, gcc will never know the difference
+        using layout = _layout;
+        using dtype = _T;
+
+        static constexpr int underlying_height   = _height;
+        static constexpr int underlying_width    = _width;
+        static constexpr int underlying_rows     = underlying_height * 16;
+        static constexpr int underlying_cols     = underlying_width  * 16;
+        static constexpr int num_elements        = underlying_height * underlying_width * 16*16;
+
+        static constexpr int height              = _subtile_height;
+        static constexpr int width               = _subtile_width;
+        static constexpr int rows                = height * 16;
+        static constexpr int cols                = width  * 16;
+
+        dtype *data;
+        int row_offset, col_offset;
+
+        __device__ subtile_t(dtype *src, int _row_offset, int _col_offset): data(src), row_offset(_row_offset), col_offset(_col_offset) {} // constructor
+
+        __device__ inline       dtype& operator[](const int2 &rowcol)       {
+            return data[detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
+                rowcol.x+row_offset, rowcol.y+col_offset
+            )];
+        }
+        __device__ inline const dtype& operator[](const int2 &rowcol) const {
+            return data[detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
+                rowcol.x+row_offset, rowcol.y+col_offset
+            )];
+        }
+
+        // vector types
+        struct col_vec {
+            using identifier = st_col_vec_id;
+            using dtype = _T;
+            static constexpr int length = rows;
+
+            dtype data[length];
+
+            __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
+            __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
+        };
+        struct row_vec {
+            using identifier = st_row_vec_id;
+            using dtype = _T;
+            static constexpr int length = cols;
+
+            dtype data[length];
+
+            __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
+            __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
+        };
+    };
+
+    template<int subtile_height, int subtile_width>
+    __device__ inline subtile_t<subtile_height, subtile_width> subtile(int tile_row_offset, int tile_col_offset) {
+        return subtile_t<subtile_height, subtile_width>(&data[0], subtile_height*16*tile_row_offset, subtile_width*16*tile_col_offset);
+    }
 };
 
 template<typename T> concept st_type = requires {
     typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, st_id>; // Checks if T::dentifier is abstract_rt
+} && std::is_same_v<typename T::identifier, st_id>; // Checks if T::identifier is st_id
+template<typename T> concept st_type_rowlayout = st_type<T> && st_row_layout<typename T::layout>;
+template<typename T> concept st_type_collayout = st_type<T> && st_col_layout<typename T::layout>;
 
 // Concepts
 template<typename T>

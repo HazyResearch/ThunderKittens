@@ -8,6 +8,7 @@
 #include "warp/st_vec_tests.impl"
 #include "warp/rt_layout_tests.impl"
 #include "warp/st_layout_tests.impl"
+#include "warp/st_subtile_tests.impl"
 #include "warp/map_tests.impl"
 #include "warp/reduction_tests.impl"
 #include "warp/broadcast_tests.impl"
@@ -33,6 +34,7 @@ int main() {
     failures += st_vec_tests();
     failures += rt_layout_tests();
     failures += st_layout_tests();
+    failures += st_subtile_tests();
     failures += map_tests();
     failures += reduction_tests();
     failures += broadcast_tests();

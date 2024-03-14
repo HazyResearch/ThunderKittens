@@ -16,7 +16,7 @@ import torch.nn as nn
 from typing import Optional
 
 # sys.path.append("/var/cr05_data/sim_data/code/based/train/")
-# sys.path.append("/cudatastic/based-dev/train/")
+# sys.path.append("/thunderkittens/based-dev/train/")
 # from csrc import causal_dot_product
 
 
