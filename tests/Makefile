@@ -1,9 +1,15 @@
+# GPU Selection: Set to either 4090 or H100
+GPU_TARGET=4090
+
 # Compiler
 NVCC=nvcc
 
 # Compiler flags
+ifeq ($(GPU_TARGET),4090)
+NVCCFLAGS=-g -G -std=c++20 --expt-relaxed-constexpr -arch=sm_89 -DKITTENS_4090 -lcuda -lcudart # for 4090
+else ifeq ($(GPU_TARGET),H100)
 NVCCFLAGS=-g -G -std=c++20 --expt-relaxed-constexpr -arch=sm_90a -DKITTENS_HOPPER -lcuda -lcudart
-# For 4090: -g -G -std=c++20 --expt-relaxed-constexpr -arch=sm89 -lcuda -lcudart
+endif
 
 # Target binary name
 TARGET=unit_tests

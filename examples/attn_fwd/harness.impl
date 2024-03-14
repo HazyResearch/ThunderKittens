@@ -97,7 +97,11 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     
+#ifdef KITTENS_HOPPER
     unsigned long mem_size = 227000; // kinda ballparking it
+#else
+    unsigned long mem_size = 101000; // kinda ballparking it
+#endif
 
     cudaFuncSetAttribute(
         attend_ker,
