@@ -4,13 +4,13 @@
 using namespace kittens;
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
 
-    auto warpid        = threadIdx.x / 32;
-    auto block_start   = blockIdx.x*(n*d);
+    auto warpid        = kittens::warpid();
+    auto block_start   = blockIdx.x*(n*64);
     const bf16 *_q = __q__ + block_start, *_k = __k__ + block_start, *_v = __v__ + block_start;
           bf16 *_o = __o__ + block_start;
 
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
     
     st_bf_1x4<st_xor_row_layout> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<st_xor_row_layout>, NUM_WORKERS>();
     st_bf_1x4<st_xor_row_layout> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<st_xor_row_layout>, NUM_WORKERS>();
@@ -26,7 +26,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
-        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, d);
+        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
         mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
 
         neg_infty(max_vec); // zero registers for the Q chunk
@@ -35,8 +35,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
-            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, d);
-            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, d);
+            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
+            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
             __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
 
             for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
@@ -74,7 +74,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
         }
 
-        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, d); // write out o
+        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, d); // write out o. compiler has an issue with register usage if d is made constexpr q_reg.rows :/
     }
 }
 

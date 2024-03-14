@@ -1,6 +1,8 @@
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
+#define KITTENS_HOPPER // just in case the user forgot to put it in compilation flags
+
 #include "../../src/kittens.cuh"
 
 #define NUM_WORKERS 8
