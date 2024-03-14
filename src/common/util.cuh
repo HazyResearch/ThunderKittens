@@ -14,8 +14,16 @@ constexpr int TILE_SIZE{TILE_DIM*TILE_DIM};
 constexpr int WARP_SIZE{32};
 constexpr int N_WARPS{8}; // default
 constexpr int THREADS_PER_BLOCK{N_WARPS*WARP_SIZE};
-__device__ __forceinline__ int warp_id() {return threadIdx.x >> 5; } 
-__device__ __forceinline__ int laneid() {return threadIdx.x & 0x1f; }
+__device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
+__device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
+
+#ifdef KITTENS_HOPPER
+constexpr int MAX_SHARED_MEMORY = 227000;
+#elif KITTENS_A100
+constexpr int MAX_SHARED_MEMORY = 164000;
+#elif KITTENS_4090
+constexpr int MAX_SHARED_MEMORY = 101000;
+#endif
 
 /* ----------  DEFAULT TYPE  ---------- */
 
