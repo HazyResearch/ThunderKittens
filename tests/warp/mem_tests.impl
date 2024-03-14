@@ -81,36 +81,151 @@ bool test_copy() {
     return passed;
 }
 
-// __global__ void test_one_ker_vec(const bf16 *input, bf16 *output) {
-//     using H = __nv_bfloat16;
-//     const H* _input = reinterpret_cast<const H*>(input);
-//     rt_row_bf<1, WIDTH>::row_vec reg_vec;
-//     __syncthreads();
-//     // load(reg_vec, _input); // TODO: Implement 
-//     one(reg_vec);
-//     // store(output, reg_vec);
-// }
-// bool test_copy_rt_vec() {
-//     // initailize
-//     bf16 *d_i, *d_o;
-//     std::vector<float> i_ref(COLS);
-//     std::vector<float> o_ref(COLS);
-//     initialize(&d_i, &d_o, i_ref, o_ref);
-//     // run kernel
-//     cudaFuncSetAttribute(test_one_ker_vec, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
-//     test_one_ker_vec<<<1, 32, 100000>>>(d_i, d_o);
-//     // fill in correct results on cpu
-//     for(int i = 0; i < WIDTH*256; i++) o_ref[i] = i_ref[i];
-//     // check and cleanup
-//     bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_vec");
-//     return passed;
-// }
+
+__global__ void test_rvec_row_to_vec_ker(const bf16 *input, bf16 *output) {
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    using rt_vec_1x4 = rt_bf<_HEIGHT, _WIDTH>::row_vec;
+    
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+
+    st_bf_1x4<st_xor_row_layout>::row_vec &smem_vec = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    rt_vec_1x4 reg_vec;
+
+    zero(smem_vec);
+    one(reg_vec);
+    rvec_to_svec(smem_vec, reg_vec);
+    store(output, smem_vec);
+}
+bool test_rvec_row_to_vec() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 4;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_rvec_row_to_vec_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_rvec_row_to_vec_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_rvec_to_svec");
+    return passed;
+}
+
+
+__global__ void test_vec_to_rvec_row_ker(const bf16 *input, bf16 *output) {
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    using rt_vec_1x4 = rt_bf<_HEIGHT, _WIDTH>::row_vec;
+    
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+
+    st_bf_1x4<st_xor_row_layout>::row_vec &smem_vec = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    rt_vec_1x4 reg_vec;
+
+    load(smem_vec, input);
+    svec_to_rvec(reg_vec, smem_vec);
+    store(output, reg_vec);
+}
+bool test_vec_to_rvec_row() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 4;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_vec_to_rvec_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_vec_to_rvec_row_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_svec_to_rvec");
+    return passed;
+}
+
+
+__global__ void test_gvec_to_rvec_row_ker(const bf16 *input, bf16 *output) {
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    using rt_vec_1x4 = rt_bf<_HEIGHT, _WIDTH>::row_vec;
+    
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+
+    st_bf_1x4<st_xor_row_layout>::row_vec &smem_vec = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    rt_vec_1x4 reg_vec;
+
+    load(reg_vec, input);
+    store(output, reg_vec);
+}
+bool test_gvec_to_rvec_row() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 4;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_gvec_to_rvec_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_gvec_to_rvec_row_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_hbm_to_rvec");
+    return passed;
+}
+
+
+__global__ void test_gvec_to_rvec_row_one_ker(const bf16 *input, bf16 *output) {
+    const int _HEIGHT = 1;
+    const int _WIDTH = 4;
+    using rt_vec_1x4 = rt_bf<_HEIGHT, _WIDTH>::row_vec;
+    
+    extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
+    // shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    st_bf_1x4<st_xor_row_layout>::row_vec &smem_vec = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    rt_vec_1x4 reg_vec;
+
+    load(reg_vec, input);
+    one(reg_vec);
+    store(output, reg_vec);
+}
+bool test_gvec_to_rvec_row_ones() {
+    // initailize
+    bf16 *d_i, *d_o;
+    constexpr int _WIDTH = 4;
+    const int _SIZE = _WIDTH*16;
+    std::vector<float> i_ref(_SIZE);
+    std::vector<float> o_ref(_SIZE);
+    initialize(&d_i, &d_o, i_ref, o_ref);
+    // run kernel
+    cudaFuncSetAttribute(test_gvec_to_rvec_row_one_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    test_gvec_to_rvec_row_one_ker<<<1, 32, 100000>>>(d_i, d_o);
+    // fill in correct results on cpu
+    for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
+    // check and cleanup
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_vec_to_rvec");
+    return passed;
+}
+
 
 int mem_tests() {
     std::cout << " ----- Starting memory tests! -----" << std::endl;
     int failures = 0;
     failures += !test_ones();
     failures += !test_copy();
-    // failures += !test_copy_rt_vec();
+    failures += !test_rvec_row_to_vec();
+    failures += !test_vec_to_rvec_row();
+    failures += !test_gvec_to_rvec_row();
+    failures += !test_gvec_to_rvec_row_ones();
     return failures;
 }

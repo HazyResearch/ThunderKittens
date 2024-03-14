@@ -5,7 +5,7 @@
 using namespace nvcuda;
 
 # include "src/kittens.cuh" // needs to come before torch_helpers, since torch_helpers relies on kittens.
-#include "src/pyutils/torch_helpers.cuh"
+#include "src/common/pyutils/torch_helpers.cuh"
 #include <cuda/pipeline>
 #include <cuda/barrier>
 #include <cooperative_groups.h>
@@ -26,7 +26,7 @@ template<> __device__ inline __nv_bfloat16 __typeconvert<float,__nv_bfloat16>(fl
 
 template <typename H, typename T>
 __global__
-void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out) { 
+void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out, T* __denom) { 
 
     auto block_start = blockIdx.x;
     auto warpid = kittens::warp_id();
@@ -56,10 +56,12 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     __shared__ alignas(alignof(float4)) H kv_state[2][buffer_size];
     __shared__ alignas(alignof(float4)) H q[d_state];
     __shared__ alignas(alignof(float4)) H k[d_state];
+    __shared__ alignas(alignof(float4)) H kq[d_state];
     __shared__ alignas(alignof(float4)) H k_state[d_state];
     __shared__ alignas(alignof(float4)) H v[d_model];
     __shared__ alignas(alignof(float4)) H num[d_model];
     __shared__ alignas(alignof(float4)) H num_help[workers][d_model];
+    __shared__ alignas(alignof(float4)) H den[1];
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
@@ -89,11 +91,26 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
     // Sum k to kstate and do kv. k_state += k 
     barrier_cheat.arrive_and_wait(); // Make sure q,k,v have arrived.
-    for(auto i = threadIdx.x; i < d_state; i+=nThreads) {k_state[i] += k[i];}
+    for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
+        k_state[i] += k[i]; 
+    }
+    __syncwarp();
+    
+    // den = torch.einsum("f,f->1", q, k_state) + eps;
+    for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
+        kq[i] = __typeconvert<float,H>(0.f);
+        kq[i] = (q[i]*k_state[i] + __float2bfloat16(0.0000000001f)); 
+    }
+    if (warpid == 0 && lane == 0) { 
+        den[0] = __typeconvert<float,H>(0.f); 
+        for (auto i = 0; i < d_state; i++) { den[0] += kq[i]; }
+    }
+    __syncwarp();
+    
 
     // Store v across threads for the next phase; 
     // Assumes d_model fits in register and is a multiple of 32
-    register H v_vals[d_model / kittens::WARP_SIZE];      // 64 / 32 = 2
+    register H v_vals[d_model / kittens::WARP_SIZE]; // 64 / 32 = 2
     register H num_vals[d_model / kittens::WARP_SIZE];
 
     auto j0 = 0;
@@ -101,9 +118,6 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
         v_vals[j0]   = v[j];
         num_vals[j0] = __typeconvert<float,H>(0.f);
     }
-    // Conduct the write back!
-    __syncthreads(); // Make sure all of k_state is written.
-    for(auto i = threadIdx.x; i < d_state*sizeof(H)/sizeof(float4); i+=nThreads) {_f4p(k_state_g)[i] = _f4p(k_state)[i];}
 
     auto outer_batches = d_state / buffer_rows;
     auto extra_batch   = d_state % buffer_rows;
@@ -124,17 +138,21 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
         auto next_batch_idx = (ob + 1) * buffer_rows * d_model;
 
         barrier.arrive_and_wait(); // wait on the work buffer to be free
-        if(ob + 1 < outer_batches) {// if there is more work fetch the next one.
-            cuda::memcpy_async(block, kv_state[toc], 
-                        kv_state_g + next_batch_idx, 
-                        batch_shape , barrier);
+        if(ob + 1 < outer_batches) { // if there is more work fetch the next one.
+            cuda::memcpy_async(
+                block, kv_state[toc], 
+                kv_state_g + next_batch_idx, 
+                batch_shape , barrier
+            );
         } else { // Last batch!
             if(extra_batch > 0) {
-                // NOTE: dmodel must be aligned for this to be true 
+                // NOTE: d_model must be aligned for this to be true 
                 const auto extra_batch_shape = cuda::aligned_size_t<alignof(float4)>(extra_bytes); 
-                cuda::memcpy_async(block, kv_state[toc], 
-                        kv_state_g + next_batch_idx, 
-                        extra_batch_shape, barrier); 
+                cuda::memcpy_async(
+                    block, kv_state[toc], 
+                    kv_state_g + next_batch_idx, 
+                    extra_batch_shape, barrier
+                ); 
             }
         }
         _buffer_rows = (ob == outer_batches) ? extra_batch : buffer_rows;
@@ -152,13 +170,18 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
                 num_vals[j0] += q_val*p_kvs[j];    
             }
         }
-        __syncthreads(); // Make sure the work is complete, then write back the buffered rows
+
+        __syncthreads(); // Make sure the work is complete, then write back the buffered rows of kv_state
         auto _stores = (ob == outer_batches) ? (extra_bytes/sizeof(float4)) : (bytes_per_batch/sizeof(float4)); // 64 * 64 = 4096
         for(auto j = threadIdx.x; j < _stores; j+=nThreads) {
-            _f4p(
-                kv_state_g + cur_batch_idx
-            )[j] = _f4p(kv_state[tic])[j];
+            _f4p(kv_state_g + cur_batch_idx)[j] = _f4p(kv_state[tic])[j];
         }
+        
+        __syncthreads(); // Write back k_state
+        for(auto i = threadIdx.x; i < d_state*sizeof(H)/sizeof(float4); i+=nThreads) {
+            _f4p(k_state_g)[i] = _f4p(k_state)[i];
+        }
+
     }
     
     // At the end of the loop, the threads hold fragments (shared on j and i) for q*KV i num_vals[j0]. 
@@ -168,21 +191,24 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     for(auto j = lane; j < d_model; j+= kittens::WARP_SIZE, ++j0) {
         num_help[warpid][j] = num_vals[j0];
     }
+
     __syncthreads(); // Num_help is done
     for(auto j = threadIdx.x; j < d_model; j+=nThreads) {
         H nj = num_help[0][j];
         #pragma unroll
         for(auto w = 1; w < workers; w++) { nj += num_help[w][j]; }
-        num[j] = nj;
+        num[j] = nj / den[0];
     }
 
     __syncthreads();
-    for(auto j = threadIdx.x; j < (d_model * sizeof(H))/sizeof(float4); j+=nThreads) {_f4p(num_g)[j] = _f4p(num)[j];}
+    for(auto j = threadIdx.x; j < (d_model * sizeof(H))/sizeof(float4); j+=nThreads) {
+        _f4p(num_g)[j] = _f4p(num)[j];
+    }
 }
 
 void 
 based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out) {
+            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out, torch::Tensor denom) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -209,5 +235,5 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     based_simple_ker<H,T><<<batch,threads,0,stream>>>(
                 q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(),
                 kv_state.data_ptr<T>(), k_state.data_ptr<T>(),
-                out.data_ptr<T>());
+                out.data_ptr<T>(), denom.data_ptr<T>());
 }

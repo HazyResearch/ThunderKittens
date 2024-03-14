@@ -25,6 +25,10 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 constexpr int MAX_SHARED_MEMORY = 101000;
 #endif
 
+/* ----------  DEFAULT TYPE  ---------- */
+
+struct default_type {};
+
 /* ----------  BOOL TYPE UTILS  ---------- */
 
 template<typename T>

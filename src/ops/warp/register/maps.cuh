@@ -289,8 +289,8 @@ __device__ static inline void relu(T &dst, const T &src) {
     unary_map<base_ops::relu, T>(dst, src);
 }
 template<rt_type T, typename U>
-__device__ static inline void copy2(T &dst, const U &src) {
-    bin_map<base_ops::copy, T>(dst, src);
+__device__ static inline void copy(T &dst, const U &src) {
+    bin_map<base_ops::copy2, T>(dst, src);
 }
 
 // uniform binary maps
@@ -336,6 +336,11 @@ template<rt_type T, rt_col_vec_type V>
 __device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::div, T, V>(dst, src, row_values);
 }
+template<rt_type T, rt_col_vec_type V>
+__device__ static inline void broadcast_row(T &dst, const V &row_values) {
+    row_map<base_ops::copy2, T, V>(dst, dst, row_values);
+}
+
 
 // col maps
 template<rt_type T, rt_row_vec_type V>
@@ -353,6 +358,10 @@ __device__ static inline void mul_col(T &dst, const T &src, const V &col_values)
 template<rt_type T, rt_row_vec_type V>
 __device__ static inline void div_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::div, T, V>(dst, src, col_values);
+}
+template<rt_type T, rt_row_vec_type V>
+__device__ static inline void broadcast_col(T &dst, const V &col_values) {
+    col_map<base_ops::copy2, T, V>(dst, dst, col_values);
 }
 
 }
