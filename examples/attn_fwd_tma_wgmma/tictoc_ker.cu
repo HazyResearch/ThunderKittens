@@ -32,6 +32,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
 
     using layout_row = st_wgmma_row_0b_layout;
+    using layout_col = st_wgmma_col_t_0b_layout; 
     st_bf<8,4,layout_row> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<8,4,layout_row>, NUM_WARPGROUPS>();
     st_bf_2x4<layout_row> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
     st_bf_2x4<layout_row> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
@@ -94,7 +95,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         zero(o_prev);
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
-            
+
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + warpid], kPhaseBit_k);
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid], kPhaseBit_v);
             __syncthreads();
@@ -114,13 +115,18 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
                 rt_bf_2x4 local_reg;
 
-                load(local_reg, k_smem[tic][subtile]);
+                // load(local_reg, k_smem[tic][subtile]);
 
-                zero(att_block);
-                dot(att_block, q_reg, local_reg, att_block);
+                // zero(att_block);
+                // dot(att_block, q_reg, local_reg, att_block);
+                warpgroup::fence(att_block); 
+                warpgroup::dot_reset(att_block, q_reg, k_smem[tic][subtile]); 
+                warpgroup::commit_group();
 
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
+
+                warpgroup::mma_async_wait();
 
                 row_max(max_vec, att_block, max_vec); // max-accumulate ONTO the max_vec
                 sub_row(att_block, att_block, max_vec);
@@ -142,7 +148,12 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 rt_bf_2x4<rt_col_layout> &v_reg_col = swap_layout_inplace(local_reg); // this is a reference and the call has invalidated v_reg
 
                 mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
+
                 mma(o_prev, att_block_mma, v_reg_col, o_prev);
+                // warpgroup::fence(o_prev);
+                // warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]); 
+                // warpgroup::commit_group(); 
+                // warpgroup::mma_async_wait(); 
             }
 
             tic ^= 1;

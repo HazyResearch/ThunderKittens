@@ -27,10 +27,11 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
-    using layout = st_xor_row_layout;
+    using layout = st_wgmma_row_0b_layout;
+    using layout_col = st_wgmma_col_t_0b_layout; 
     st_bf_1x4<layout> (&q_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>();
     st_bf_1x4<layout> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>();
-    st_bf_1x4<layout> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>();
+    st_bf_1x4<layout_col> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout_col>, NUM_WORKERS>();
 
     rt_bf_1x4<> q_reg, k_reg, v_reg;
     rt_fl_1x1<> att_block;
@@ -101,18 +102,18 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
         for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
 
-            load(k_reg, k_smem[subtile]);
+            // load(k_reg, k_smem[subtile]);
 
-            zero(att_block);
-            dot(att_block, q_reg, k_reg, att_block);
-            // warpgroup::fence(att_block); 
-            // warpgroup::dot_reset(att_block, q_reg, k_smem[subtile]); 
-            // warpgroup::commit_group();
+            // zero(att_block);
+            // dot(att_block, q_reg, k_reg, att_block);
+            warpgroup::fence(att_block); 
+            warpgroup::dot_reset(att_block, q_reg, k_smem[subtile]); 
+            warpgroup::commit_group();
 
             copy(norm_vec_last, norm_vec);
             copy(max_vec_last,  max_vec);
 
-            // warpgroup::mma_async_wait(); 
+            warpgroup::mma_async_wait(); 
 
             row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
             sub_row(att_block, att_block, max_vec);
@@ -130,16 +131,16 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
             copy(att_block_mma, att_block); // convert to bf16 for mma
 
-            load(v_reg, v_smem[subtile]);
-            rt_bf_1x4<rt_col_layout> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
+            // load(v_reg, v_smem[subtile]);
+            // rt_bf_1x4<rt_col_layout> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
             mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-            mma(o_prev, att_block_mma, v_reg_col, o_prev);
+            // mma(o_prev, att_block_mma, v_reg_col, o_prev);
 
-            // warpgroup::fence(o_prev);
-            // warpgroup::mma_accum(o_prev, att_block_mma, v_smem[subtile]); 
-            // warpgroup::commit_group(); 
-            // warpgroup::mma_async_wait(); 
+            warpgroup::fence(o_prev);
+            warpgroup::mma_accum(o_prev, att_block_mma, v_smem[subtile]); 
+            warpgroup::commit_group(); 
+            warpgroup::mma_async_wait(); 
         }
         // __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
     }
