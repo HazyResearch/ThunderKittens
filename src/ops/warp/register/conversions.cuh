@@ -77,7 +77,7 @@ __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst
 }
 
 template<typename T2, rt_layout layout>
-__device__ inline rt_base<T2, layout>& transpose_inplace(const rt_base<T2, layout> &src) {
+__device__ inline rt_base<T2, layout>& transpose_inplace(rt_base<T2, layout> &src) {
     transpose(src, src);
     return src;
 }

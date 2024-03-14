@@ -163,4 +163,51 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
 }
 
 
+// register vector to shared vector
+template<st_vec_type ST, rt_vec_type RT>
+__device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
+    int laneid = threadIdx.x % 32;
+    auto row = 2*(laneid % 4);
+    auto row_thread_id = laneid / 4;
+
+    if constexpr (src.inner_dim == 2) {
+        if(row_thread_id < 4) {
+            #pragma unroll 
+            for(auto w = 0; w < src.outer_dim; w++) { 
+                int col = w*TILE_DIM;
+                dst[col + row + 0] = src[w][row_thread_id].x;
+                dst[col + row + 1] = src[w][row_thread_id].y;
+                dst[col + row + 8] = src[w][row_thread_id+1].x;
+                dst[col + row + 9] = src[w][row_thread_id+1].y;
+            }
+        } 
+    } else {
+        // TODO: implement
+    }
+}
+
+// shared vector to register vector
+template<rt_vec_type RT, st_vec_type ST>
+__device__ inline static void svec_to_rvec(RT &dst, const ST &src) {
+    int laneid = threadIdx.x % 32;
+    auto row = 2*(laneid % 4);
+    auto row_thread_id = laneid / 4; 
+    
+    if constexpr (dst.inner_dim == 2) {
+        if (row_thread_id < 1) { 
+            #pragma unroll
+            for(auto w = 0; w < dst.outer_dim; w++) { 
+                int col = w*TILE_DIM;
+                dst[w][row_thread_id].x = src[col + row + 0];
+                dst[w][row_thread_id].y = src[col + row + 1]; 
+                dst[w][row_thread_id+1].x = src[col + row + 8]; 
+                dst[w][row_thread_id+1].y = src[col + row + 9]; 
+            }
+        }
+    } else {
+        // TODO: implement
+    }
+}
+
+
 }

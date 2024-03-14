@@ -10,6 +10,7 @@
 #include "warp/st_layout_tests.impl"
 #include "warp/map_tests.impl"
 #include "warp/reduction_tests.impl"
+#include "warp/broadcast_tests.impl"
 #include "warp/mma_tests.impl"
 
 #ifdef KITTENS_HOPPER
@@ -34,6 +35,7 @@ int main() {
     failures += st_layout_tests();
     failures += map_tests();
     failures += reduction_tests();
+    failures += broadcast_tests();
     failures += mma_tests();
 #ifdef KITTENS_HOPPER
     failures += tma_tests();

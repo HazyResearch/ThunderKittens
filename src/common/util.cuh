@@ -17,6 +17,10 @@ constexpr int THREADS_PER_BLOCK{N_WARPS*WARP_SIZE};
 __device__ __forceinline__ int warp_id() {return threadIdx.x >> 5; } 
 __device__ __forceinline__ int laneid() {return threadIdx.x & 0x1f; }
 
+/* ----------  DEFAULT TYPE  ---------- */
+
+struct default_type {};
+
 /* ----------  BOOL TYPE UTILS  ---------- */
 
 template<typename T>
