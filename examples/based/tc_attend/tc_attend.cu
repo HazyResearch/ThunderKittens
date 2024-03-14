@@ -7,42 +7,38 @@ using namespace nvcuda;
 # include <cuda/pipeline>
 # include <cooperative_groups.h>
 # include "src/kittens.cuh"
-# include "src/pyutils/torch_helpers.cuh"
+# include "src/common/pyutils/torch_helpers.cuh"
 
 #include <ATen/cuda/CUDAContext.h>  // Include necessary for getting the current stream
 
 using namespace kittens;
-typedef st_bf<4, 4> tile_4x4;
-typedef st_bf<1, 4> tile_1x4;
-// typedef sv_fl_row_4 vec_4;
 
-// template<typename H>
 __device__
-void thread_block_load(tile_4x4 &_dst, const typename tile_4x4::dtype *_src, const int nThreads=256) {
+void thread_block_load(st_bf_4x4<st_xor_row_layout> &_dst, const typename st_bf_4x4<st_xor_row_layout>::dtype *_src, const int nThreads=256) {
     float4* dst = (float4*) _dst.data;
     float4* src = (float4*) _src; 
-    using H = tile_4x4;
-    using T = typename H::dtype;
+    using H     = st_bf_4x4<st_xor_row_layout>;
+    using T     = typename H::dtype;
 
-    const int _row_stride = H::cols; // SA TODO: Confirm this is correct
-    auto bytes_per_row    = H::cols * sizeof(T); // non-padded
-    auto f4_stride        = (_row_stride*sizeof(T))/sizeof(float4);
-    auto reads_per_row    = bytes_per_row / sizeof(float4);
+    const int _row_stride  = H::cols; 
+    auto bytes_per_row     = H::cols * sizeof(T); // non-padded
+    auto f4_stride         = (_row_stride*sizeof(T))/sizeof(float4);
+    auto reads_per_row     = bytes_per_row / sizeof(float4);
     auto rows_per_block    = nThreads / reads_per_row; 
     auto row_skipping_only = (nThreads % reads_per_row) == 0; // if we read complete rows.
-    auto f4_elements      = (H::num_elements * sizeof(T)) / sizeof(float4);
+    auto f4_elements       = (H::num_elements * sizeof(T)) / sizeof(float4);
     
     if( row_skipping_only ) {
         auto col      = threadIdx.x % reads_per_row; // this will be fixed
         auto row_base = threadIdx.x / reads_per_row; 
         auto _stride  = f4_stride*rows_per_block; // we we will just skip!
-         __syncthreads();
+        __syncthreads();
         auto idx = row_base*f4_stride + col;
         for(auto i = threadIdx.x; i < f4_elements; i+=nThreads, idx += _stride) {
             dst[idx] = src[i];
         }
     } else {
-         __syncthreads();
+        __syncthreads();
         for(auto i = threadIdx.x; i < f4_elements; i+=nThreads) {
             auto col = i % reads_per_row;
             auto row = i / reads_per_row;
@@ -69,57 +65,59 @@ void shm_broadcast(float &f, float *shm, const int workers = 4) {
     f = shm[warpid];
 }
 
+// GEMV
+__device__
+void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { 
+    rt_fl_1x4<> t;
+    copy(t, a);
+    // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
+    mul_col(t, a, x); // multiply vv in place with aa: a * v.unsqueeze(1) // row, row, col
+    row_sum(o, t, o); // aa.sum(0) sum across all the rows 
+}
 
 // GEMV
 __device__
-void gemv(rt_col_bf_4x1::row_vec  &o, rt_row_fl_4x1::col_vec &x, rt_row_fl_4x1::col_vec &a) { // SA: directions of these seem off
-    rt_row_fl_4x1::col_vec t;
-    copy(t,a);
-    // The accumulator is row x column
-    // a row multiply means that each row is multiplied by a column matrix.
-    // So if the accumulator is 2 x 3 then 
-    // mul_row_accum_rvec(t, x); // multiply vv in place with aa: a * v.unsqueeze(1)
-    mul_row(t, x); // multiply vv in place with aa: a * v.unsqueeze(1)
-    // row_sum(o, t); // aa.sum(0) sum across all the rows 
+void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
+    rt_fl_4x1<> t;
+    copy(t, a);
+    // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
+    // mul_row(t, a, x); // SA: uncommenting this line leads to nans in the output
+    col_sum(o, t, o); // aa.sum(0) sum across all the rows 
 }
 
-static bool __inline__ __device__ is_row_leader() { return kittens::laneid() % 4 == 0; } 
-// template<typename T, typename U> __device__ inline U __typeconvert(T a);
-// https://github.com/chrismre/cudatastic_trash/blob/a149e1b9d2ef591c60b5f7560155d5ef99be1a48/src/global_warp_tile/type_helper.cuh#L1C1-L11C18
-// ptxas fatal   : Unresolved extern function '_Z13__typeconvertI6float2S0_ET0_T_'     
-
-template<typename H>
-static void __device__
-rvec_to_vec(H *dst, const rt_row_fl_1x4::col_vec &v) {
-    auto row = kittens::laneid() / 4;
-    const int tile_height = 4;
-    using T = rt_row_fl_1x4::dtype;
-    __syncwarp();
-    if(is_row_leader()) { // only the leaders write
-        for(auto h = 0; h < tile_height; h++) {
-            // dst[h*TILE_DIM + row]     = __typeconvert<T,H>(v[h][0]);
-            // dst[h*TILE_DIM + row + 8] = __typeconvert<T,H>(v[h][1]);
-        }
-    }    
-}
 
 static
 void __device__
-vec_to_rvec(const rt_row_bf_4x1::col_vec &v, const float2 *src) {
+vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
+    using T = __nv_bfloat16;
+    using U = float;
     auto row = kittens::laneid() / 4;
-    const int tile_height = 4;
     __syncwarp();    
-    for(auto h = 0; h < tile_height; h++) {
-        // v[h][0] = src[h*TILE_DIM + row];     
-        // v[h][1] = src[h*TILE_DIM + row + 8];
+    for(auto h = 0; h < dst.outer_dim; h++) {
+        dst[h][0].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row]);    
+        dst[h][1].x = base_types::convertor<U, T>::convert(src[h*kittens::TILE_DIM + row + 8]); 
     }
+}
+
+static void __device__
+rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
+    using U = __nv_bfloat16;
+    using T = float;
+    auto row = kittens::laneid() / 4;
+    __syncwarp();
+    if(kittens::laneid() % 4 == 0) { // only the leaders write
+        for(auto h = 0; h < src.outer_dim; h++) {
+            dst[h*TILE_DIM + row]     = base_types::convertor<U, T>::convert(src[h][0].x);  
+            dst[h*TILE_DIM + row + 8] = base_types::convertor<U, T>::convert(src[h][1].x);
+        }
+    }    
 }
 
 
 template<typename H, typename T>
 __global__
 void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* __k, const T* __v, T* __o) {
-    // ``just_q`` indicates whether q is for a single token vs. a chunk of toknens
+    
     auto warpid = kittens::warp_id();
     const int d = 64;
     const int window_size = 64;
@@ -127,75 +125,90 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     const int threads = workers * kittens::WARP_SIZE;
     auto head_offset  = blockIdx.x * n * d;
     
-    const H* _q = device_cast(__q) + (just_q ? blockIdx.x*d : head_offset);
+    const H* _q = device_cast(__q) + blockIdx.x*d;
     const H* _k = device_cast(__k) + head_offset;
     const H* _v = device_cast(__v) + head_offset;
           H* _o = device_cast(__o) + blockIdx.x*d; // just a single vector
 
-    __shared__ tile_4x4 k,v;
-    __shared__ tile_1x4::row_vec w;
-    __shared__ float _max[workers], _sum[workers];
-
-    const auto start_idx = just_q ? 0 : (j-window_size)*d;
-    thread_block_load(k, _k + start_idx, threads);
-    thread_block_load(v, _v + start_idx, threads);
-    auto vec_idx = just_q ? 0 : j * d;
-
-    rt_col_bf_1x4::row_vec qv; // full local copy 
-    rt_row_fl_1x4::col_vec ws; 
-    rt_col_bf_1x4::row_vec k_slice; // SA: Should this be float type?
-    
-    rt_row_bf_4x1::col_vec wv; // full local copy 
-    rt_col_bf_4x1::row_vec os; // shards
-    rt_col_bf_4x1::row_vec v_slice; // Each of the 4 workers stores a column
-
-    // These are column slices of the matrix.: | K_1 | K_2 | K_3 |
+    // Register
+    rt_fl_1x4<> k_slice; 
+    rt_fl_4x1<> v_slice; // Each of the 4 workers stores a column
+    rt_fl_1x4<>::row_vec qv; // full local copy 
+    rt_fl_1x4<>::col_vec ws; 
+    rt_fl_4x1<>::col_vec wv; // full local copy 
+    rt_fl_4x1<>::row_vec os; // shards
+    auto vec_idx = 0;
     __syncthreads();
-    TODO: load(qv, _q + vec_idx, d); // every warp gets a full copy of q 
+    load(qv, _q + vec_idx); // every warp gets a full copy of q; These are column slices of the matrix.: | K_1 | K_2 | K_3 |
 
-    // We want a column-wise stripe of the vector. 
-    // REPLACED rt1x4.tile_to_accum(k_slice, k.template subtile<1,4>(warpid, 0)); 
-    // load(k_slice, k.data + warpid*kittens::TILE_DIM, d);
-    
-    // ********
+    // Shared
+    extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
+    shared_allocator al((int*)&__shm[0]);
+    st_bf_1x4<st_xor_row_layout>::row_vec &w = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    __shared__ float _max[workers], _sum[workers];  
+
+    // Option A (References / Following the tests)
+    const auto start_idx = 0;
+    st_bf_4x4<st_xor_row_layout> &k = al.allocate<st_bf_4x4<st_xor_row_layout>>(); // We use 4x4 since 4x16 is 64 window size
+    st_bf_4x4<st_xor_row_layout> &v = al.allocate<st_bf_4x4<st_xor_row_layout>>();
+    if(warpid == 0) load(k, _k + start_idx, d); // One warp loads from global to shared
+    if(warpid == 0) load(v, _v + start_idx, d);
+    __syncthreads();
+    auto subtile = k.template subtile<1,4>(warpid, 0); // All the other warps load from shared to shared
+    load(k_slice, subtile);
+
+    // Option B
+    // st_bf_4x4<st_xor_row_layout> k = al.allocate<st_bf_4x4<st_xor_row_layout>>(); // We use 4x4 since 4x16 is 64 window size
+    // st_bf_4x4<st_xor_row_layout> v = al.allocate<st_bf_4x4<st_xor_row_layout>>();
+    // thread_block_load(k, _k + start_idx, threads); 
+    // thread_block_load(v, _v + start_idx, threads);   
+    // auto subtile = k.template subtile<1,4>(warpid, 0); 
+    // load(k_slice, subtile); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
+    __syncthreads();
+
+
+    one(k_slice);
+    one(v_slice);
+
+
     // The algorithm.
     // qs = [q for j in range(4)] # broadcast q to each warp
     // ks = [k[:,j*d//4:(j+1)*d//4] for j in range(4)] # shard k
     // ws = [torch.einsum("d, de->e", qs[j],ks[j]) for j in range(4)]
     zero(ws);
-    // gemv(ws, qv, k_slice);
+    gemv(ws, qv, k_slice);
 
     // local_max = [ws[j].max() for j in range(4)] # compute local, then global max
     // the_max = torch.tensor(local_max).max()
     float local_max= -INFINITY;
-    max(ws, local_max);
-    shm_broadcast<ops::mul>(local_max, _max);
+    max(ws, ws, local_max);
+    shm_broadcast<base_ops::mul>(local_max, _max);
     
     // ews = [torch.exp(ws[j] - the_max) for j in range(4)]
-    sub(ws, local_max);
-    exp(ws);
+    sub(ws, ws, local_max);
+    exp(ws, ws);
 
     // es  = [ews[j].sum() for j in range(4)]
     float local_sum = 0.f;
-    add(ws, local_sum);
-    shm_broadcast<ops::sum>(local_sum, _sum);
+    add(ws, ws, local_sum);
+    shm_broadcast<base_ops::sum>(local_sum, _sum);
     
     // w  /= the_sum
-    div(ws, local_sum);
+    div(ws, ws, local_sum);
 
     // broadcast w back to shared memory
-    // rvec_to_vec(&w.data[warpid*kittens::TILE_DIM], ws);
+    rvec_to_vec(&w.data[warpid*kittens::TILE_DIM], ws);
     __syncthreads(); // let the writes complete
     vec_to_rvec(wv, w.data); // read the *whole* v here.
     
     // we want a column stripe of V
-    // TODO rt4x1.tile_to_accum(v_slice, v.template subtile<4,1>(0, warpid));
+    auto subtile_v = v.template subtile<4,1>(0, warpid);
+    // load(v_slice, subtile_v); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
     zero(os);
-    // gemv(os, wv, v_slice);
+    gemv_two(os, wv, v_slice);
     
     // now we have a fragment of v and we write, this write is to *global* memory.
-    // store(_o + warpid*kittens::TILE_DIM, os, d);
-    //  argument types are: (__nv_bfloat16 *, kittens::rt<std::false_type, kittens::bf16_2, 4, 1>::row_vec, const int)      
+    store(_o + warpid*kittens::TILE_DIM, os);
 }
 
 void 

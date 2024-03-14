@@ -87,16 +87,17 @@ def run_based_test(dt, s, window_size=64, j=100, qw=None, kw=None, vw=None):
     b,h,n,d = s
     if qw is None:
         q,k,v = [torch.randn(s, device='cuda', dtype=dt)/d*h for i in range(3)]
-        kw = k[:,:,j-window_size:j].contiguous()
-        vw = v[:,:,j-window_size:j].contiguous()
-        qw = q[:,:,j].unsqueeze(2).contiguous()
+        kw = k[:,:,j-window_size:j]#.contiguous()
+        vw = v[:,:,j-window_size:j]#.contiguous()
+        qw = q[:,:,j].unsqueeze(2)#.contiguous()
     o     = torch.zeros((b,h,d), dtype=dt, device='cuda')
 
     # benchmark kernel
-    torch.cuda.synchronize()
+    # torch.cuda.synchronize()
     t0 = time.time()
     mod.sliding_window(j, qw, kw, vw, o)
-    torch.cuda.synchronize()
+    # breakpoint()
+    # torch.cuda.synchronize()
     t1 = time.time()
     tot = t1-t0
     return tot, o
@@ -165,9 +166,10 @@ def sliding_window_correctness(dt):
 
     torch_tot, torch_result = run_torch_test(dt, s, window_size=64, qw=qw, kw=kw, vw=vw)
     based_tot, based_result = run_based_test(dt, s, window_size=64, qw=qw, kw=kw, vw=vw)
+    breakpoint()
     __eq("sliding window", torch_result.bfloat16(), based_result, debug=False)
 
-print(f"Benchmarking...")
-sliding_window_benchmark(torch.bfloat16)
+# print(f"Benchmarking...")
+# sliding_window_benchmark(torch.bfloat16)
 print(f"\nChecking correctness...")
 sliding_window_correctness(torch.bfloat16)
