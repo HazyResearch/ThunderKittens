@@ -21,6 +21,7 @@ def based_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps: float=1e-6
     Return:
         out: (batch, d_model)
     """
+    print(f"{k.shape=}")
     k_state += k
     kv_state += torch.einsum("bf,bd->bdf", k, v)
     num = torch.einsum("bf,bdf->bd", q, kv_state)
@@ -56,12 +57,26 @@ def based_test(dt, device='cuda', benchmark=True):
     has_nans = torch.isnan(out_tc).any()
     has_inf  = torch.isinf(out_tc).any()
     num_infs = torch.isinf(out_tc).sum().item()
-    print(f"has_nans: {has_nans}, has_inf: {has_inf}, num_infs: {num_infs}")
+    num_nans = torch.isnan(out_tc).sum().item()
+    print(f"has_nans: {has_nans}, has_inf: {has_inf}, num_infs: {num_infs}, num_nans: {num_nans}")
 
     _kv_state = kv_state_t.transpose(1,2) 
+    print(f"out[0] max diff: {(out_tc[0] - out_ref[0]).abs().max().item()}")
+    print(f"out[100] max diff: {(out_tc[100] - out_ref[100]).abs().max().item()}")
+    print(f"out[1000] max diff: {(out_tc[1000] - out_ref[1000]).abs().max().item()}")
+    print(f"out[2000] max diff: {(out_tc[2000] - out_ref[2000]).abs().max().item()}")
+    num_diffs = 0
+    for i in range(out_ref.shape[0]):
+        diff = (out_tc[i] - out_ref[i]).abs().max().item()
+        if diff > 1: 
+            print(f"{i}: {diff}")
+            num_diffs += 1
+            # breakpoint()
+    print(f"{num_diffs=}")
+
     print(f"out max diff: {(out_tc - out_ref).abs().max().item()}")
     print(f"k_state  max diff: {(k_state - k_state_ref).abs().max().item()}")
     print(f"kv_state max diff: {(_kv_state - kv_state_ref).abs().max().item()}")
+    # breakpoint()
 
 based_test(torch.bfloat16, benchmark=False)
-# based_test(torch.float32, benchmark=False)

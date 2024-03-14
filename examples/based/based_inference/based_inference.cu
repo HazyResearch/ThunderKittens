@@ -56,6 +56,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     __shared__ alignas(alignof(float4)) H kv_state[2][buffer_size];
     __shared__ alignas(alignof(float4)) H q[d_state];
     __shared__ alignas(alignof(float4)) H k[d_state];
+    __shared__ alignas(alignof(float4)) H kq[d_state];
     __shared__ alignas(alignof(float4)) H k_state[d_state];
     __shared__ alignas(alignof(float4)) H v[d_model];
     __shared__ alignas(alignof(float4)) H num[d_model];
@@ -90,16 +91,19 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
     // Sum k to kstate and do kv. k_state += k 
     barrier_cheat.arrive_and_wait(); // Make sure q,k,v have arrived.
-    H denom = __typeconvert<float,H>(0.f);
     for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
         k_state[i] += k[i]; 
     }
     __syncwarp();
-    // den[0] = denom; // den = torch.einsum("f,f->1", q, k_state) + eps;
-    if (warpid == 0) {
-        for (auto i = lane; i < d_state; i+=kittens::WARP_SIZE) {
-             den[0] += q[i]*k_state[i];
-        }
+    
+    // den = torch.einsum("f,f->1", q, k_state) + eps;
+    for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
+        kq[i] = __typeconvert<float,H>(0.f);
+        kq[i] = (q[i]*k_state[i] + __float2bfloat16(0.0000000001f)); 
+    }
+    if (warpid == 0 && lane == 0) { 
+        den[0] = __typeconvert<float,H>(0.f); 
+        for (auto i = 0; i < d_state; i++) { den[0] += kq[i]; }
     }
     __syncwarp();
     
@@ -193,16 +197,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
         H nj = num_help[0][j];
         #pragma unroll
         for(auto w = 1; w < workers; w++) { nj += num_help[w][j]; }
-        num[j] = nj; // divide
-    }
-
-    // Divide num by den
-    __syncwarp();
-    H denom_val = den[0];
-    if (warpid == 0) {
-        for (auto i = lane; i < d_model; i+=kittens::WARP_SIZE) {
-            num[i] /= denom_val;
-        }
+        num[j] = nj / den[0];
     }
 
     __syncthreads();
