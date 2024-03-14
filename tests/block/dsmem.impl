@@ -39,7 +39,6 @@ test_nextneighbor_ker(const bf16 *input, bf16 *output) {
     dsmem::init_barrier(smem_barrier[0], 1); 
     dsmem::set_barrier_bytes(smem_barrier[0], size_bytes);
 
-    block.sync();
     cluster.sync();
 
     int neighbor_idx = (cluster_idx + 1) % cluster_size;

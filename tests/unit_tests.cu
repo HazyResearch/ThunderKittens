@@ -42,14 +42,14 @@ int main(int argc, char **argv) {
     failures += broadcast_tests();
     failures += mma_tests();
 #ifdef KITTENS_HOPPER
-    // failures += tma_tests();
-    // std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
-    // failures += wgmma_tests();
-    // failures += tall_wgmma_tests();
+    failures += tma_tests();
+    std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
+    failures += wgmma_tests();
+    failures += tall_wgmma_tests();
     std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
     failures += dsmem_tests();
     std::cout << " ---------------  BEGINNING INTEGRATION TESTS  ---------------\n";
-    // failures += wgmma_tma_tests();
+    failures += wgmma_tma_tests();
 #endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
