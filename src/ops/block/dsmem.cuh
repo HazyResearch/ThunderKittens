@@ -6,6 +6,10 @@
 namespace kittens {
 namespace dsmem {
 
+__device__ static inline void fence() {
+    asm volatile ("membar.;\n");
+}
+
 template<int height, int width, st_layout layout>
 __device__ static inline void tile_distribute_smem(st<bf16, height, width, layout> &dst_, st<bf16, height, width, layout> &src_, int cluster_size, int dst_idx, uint32_t size_bytes, uint64_t& barrier) 
 {

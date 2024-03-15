@@ -4,7 +4,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 1024
+#define ATTN_N 4096
 #define ATTN_D 64
 
 #define BLOCK_SIZE (32*NUM_WORKERS)
@@ -110,10 +110,9 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
-    using layout_row = st_wgmma_row_0b_layout; 
     tma::create_tensor_map<st_bf<1,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_q, d_q); 
     tma::create_tensor_map<st_bf_1x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf_1x4<layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf_1x4<layout_col>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_v, d_v);
     tma::create_tensor_map<st_bf<1,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
@@ -138,11 +137,13 @@ int main(int argc, char **argv) {
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
+    cudaFuncSetAttribute(attend_ker, cudaFuncAttributeNonPortableClusterSizeAllowed, CLUSTER_SIZE); 
+    CudaCheckError();
 
     const int ITER = 100;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    const auto start = std::chrono::high_resolution_clock::now();
+    const auto start  = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
         attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, ATTN_D, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }

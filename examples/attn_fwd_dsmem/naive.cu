@@ -4,10 +4,12 @@
 
 #define NUM_WORKERS 16
 
-#define CLUSTER_SIZE (1024/(8 * 2 * 16))
+#define CLUSTER_SIZE (1024*4/(16 * 16))
 
 using namespace kittens;
 
+using layout_row = st_wgmma_row_0b_layout;
+using layout_col = st_wgmma_col_t_0b_layout; 
 
 __global__ void __cluster_dims__(CLUSTER_SIZE, 1, 1) 
 attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
@@ -27,10 +29,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
-    using layout = st_wgmma_row_0b_layout;
-    using layout_col = st_wgmma_col_t_0b_layout; 
-    st_bf_1x4<layout> (&q_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>();
-    st_bf_1x4<layout> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>();
+    st_bf_1x4<layout_row> (&q_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout_row>, NUM_WORKERS>();
+    st_bf_1x4<layout_row> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout_row>, NUM_WORKERS>();
     st_bf_1x4<layout_col> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<layout_col>, NUM_WORKERS>();
 
     rt_bf_1x4<> q_reg, k_reg, v_reg;
@@ -58,14 +58,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     // tma::init_barrier(smem_barrier[warpid], block.size());
     // tma::set_barrier_bytes(smem_barrier[warpid], size_kv_bytes);
 
-    block.sync(); 
-    cluster.sync(); 
-
-    constexpr int kPhaseBit_dsmem_k = 1; 
-    constexpr int kPhaseBit_dsmem_v = 1;
-    constexpr int kPhaseBit_tma_k = 1;
-    constexpr int kPhaseBit_tma_v = 1;
-    
     int qo_blocks = n / (q_reg.rows * NUM_WORKERS), kv_blocks = n / (q_reg.rows*NUM_WORKERS);
 
     int q_idx_cluster  = (cluster_idx * NUM_WORKERS * qo_blocks); 
@@ -73,6 +65,11 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
     int kv_idx_cluster = (cluster_idx * NUM_WORKERS * kv_blocks);
     int kv_idx_warp    = kv_idx_cluster + (block_idx * NUM_WORKERS) + warpid;
+
+    constexpr int kPhaseBit_dsmem_k = 1; 
+    constexpr int kPhaseBit_dsmem_v = 1;
+    constexpr int kPhaseBit_tma_k = 1;
+    constexpr int kPhaseBit_tma_v = 1;
 
     load(q_reg, __q__ + (q_idx_warpid * q_reg.rows * d), d);
     mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
@@ -88,6 +85,37 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     // tma::arrive_wait(smem_barrier[warpid], kPhaseBit_tma_k);
     // tma::arrive_wait(smem_barrier[warpid], kPhaseBit_tma_v);
 
+    // __syncthreads();
+    // if (threadIdx.x == 0 && block_idx == 0 && cluster_idx == 0 && blockIdx.x == 0) {
+    //     // print out kv
+    //     printf("kv_idx_warp: %d\n", kv_idx_warp);
+    //     printf("kv_idx: %d\n", cluster_idx);
+    //     printf("k_smem[]:\n");
+    //     for (int w = 0; w < NUM_WORKERS; w++) {
+    //         for (int r = 0; r < k_smem[w].rows; r++) {
+    //             for (int c = 0; c < k_smem[w].cols; c++) {
+    //                 printf("%f ", __bfloat162float(k_smem[w].data[c + r * k_smem[w].cols]));
+    //             }
+    //             printf("\n");
+    //         }
+    //         printf("\n");
+    //     }
+    //     printf("v_smem[]:\n");
+    //     for (int w = 0; w < NUM_WORKERS; w++) {
+    //         for (int r = 0; r < v_smem[w].rows; r++) {
+    //             for (int c = 0; c < v_smem[w].cols; c++) {
+    //                 printf("%f ", __bfloat162float(v_smem[w].data[c + r * v_smem[w].cols]));
+    //             }
+    //             printf("\n");
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // __syncthreads();
+
+    block.sync(); 
+    cluster.sync(); 
+    
     for(auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
 
         if (kv_itr > 0) {
