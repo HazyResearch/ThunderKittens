@@ -26,7 +26,13 @@ struct st {
     static constexpr int rows                = height * 16;
     static constexpr int cols                = width  * 16;
     static constexpr int num_elements        = width  * height * 16*16;
+    
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
+
+    static_assert(
+        !std::is_same_v<layout, st_tma_row_layout> || width == 1 || width == 2 || width == 4,
+        "For TMA swizzled modes, shared tile width must be 1, 2, or 4."
+    ); // TMA swizzling only appears to work with a few particular layout dimensions.
 
     // wgmma layout with swizzling
     dtype data[rows*cols];

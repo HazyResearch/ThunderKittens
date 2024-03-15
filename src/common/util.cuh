@@ -79,10 +79,11 @@ struct shared_allocator {
             shared_allocator sa(_ptr); 
             return sa;
         }
+        template<int alignment=128>
         __device__ inline static shared_allocator create_allocator_tma(int *_ptr) {
             shared_allocator sa(_ptr); 
             uint64_t p = reinterpret_cast<uint64_t>(sa.ptr);
-            sa.ptr = (int*)(p + (128-(p%128)));
+            sa.ptr = (int*)(p + (alignment-(p%alignment)));
             return sa;
         }
         template<typename A> 

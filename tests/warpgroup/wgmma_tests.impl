@@ -2,7 +2,7 @@
 template<st_wgmma_row_layout L1, st_wgmma_row_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
 
-    int warpid = kittens::warp_id(); 
+    int warpid = kittens::warpid(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
@@ -77,7 +77,7 @@ bool test_wgmma_dot() {
 template<st_wgmma_row_layout L1, st_wgmma_col_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
 
-    int warpid = kittens::warp_id();
+    int warpid = kittens::warpid();
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
