@@ -75,49 +75,49 @@ bool test_st_layout_conversion() {
 int st_layout_tests() {
     std::cout << " ----- Starting shared layout tests! -----" << std::endl;
     int failures = 0;
-    failures += !test_st_layout<st_naive_row_layout     >();
+    failures += !test_st_layout<st_naive_row_0b_layout     >();
     failures += !test_st_layout<st_xor_row_layout       >();
     failures += !test_st_layout<st_wgmma_row_0b_layout  >();
     failures += !test_st_layout<st_wgmma_row_32b_layout >();
     // failures += !test_st_layout<st_wgmma_col_t_0b_layout>();
     // failures += !test_st_layout<st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_naive_row_layout     >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_xor_row_layout       >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_0b_layout  >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_32b_layout >();
-    // failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_col_t_0b_layout>();
-    // failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_col_t_32b_layout>();
+    failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_naive_row_0b_layout     >();
+    failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_xor_row_layout       >();
+    failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_wgmma_row_0b_layout  >();
+    failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_wgmma_row_32b_layout >();
+    // failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_wgmma_col_t_0b_layout>();
+    // failures += !test_st_layout_conversion<st_naive_row_0b_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_naive_row_layout     >();
+    failures += !test_st_layout_conversion<st_xor_row_layout, st_naive_row_0b_layout     >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_32b_layout >();
     // failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_col_t_0b_layout>();
     // failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_naive_row_layout     >();
+    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_naive_row_0b_layout     >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_32b_layout >();
     // failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_col_t_0b_layout>();
     // failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_naive_row_layout     >();
+    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_naive_row_0b_layout     >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout >();
     // failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout>();
     // failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_naive_row_layout     >();
+    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_naive_row_0b_layout     >();
     failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_xor_row_layout       >();
     failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_0b_layout  >();
     failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_32b_layout >();
     // failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_col_t_0b_layout>();
     // failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_col_t_32b_layout>();
 
-    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_naive_row_layout     >();
+    // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_naive_row_0b_layout     >();
     // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_xor_row_layout       >();
     // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_row_0b_layout  >();
     // failures += !test_st_layout_conversion<st_wgmma_col_t_32b_layout, st_wgmma_row_32b_layout >();

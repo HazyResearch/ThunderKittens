@@ -100,14 +100,14 @@ bool test_st_subtile_col() {
 int st_subtile_tests() {
     std::cout << " ----- Starting shared subtile tests! -----" << std::endl;
     int failures = 0;
-    failures += !test_st_subtile_row<st_naive_row_layout      >();
+    failures += !test_st_subtile_row<st_naive_row_0b_layout      >();
     failures += !test_st_subtile_row<st_xor_row_layout        >();
     failures += !test_st_subtile_row<st_wgmma_row_0b_layout   >();
     failures += !test_st_subtile_row<st_wgmma_row_32b_layout  >();
     failures += !test_st_subtile_row<st_wgmma_col_t_0b_layout >();
     failures += !test_st_subtile_row<st_wgmma_col_t_32b_layout>();
 
-    failures += !test_st_subtile_col<st_naive_row_layout      >();
+    failures += !test_st_subtile_col<st_naive_row_0b_layout      >();
     failures += !test_st_subtile_col<st_xor_row_layout        >();
     failures += !test_st_subtile_col<st_wgmma_row_0b_layout   >();
     failures += !test_st_subtile_col<st_wgmma_row_32b_layout  >();

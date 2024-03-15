@@ -4,7 +4,7 @@
 template<int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_tma_mma_ker_trans(CUtensorMap* tma_desc_a, CUtensorMap* tma_desc_b, CUtensorMap* tma_desc_out) {
 
-    int warpid   = kittens::warp_id();
+    int warpid   = kittens::warpid();
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
@@ -17,7 +17,7 @@ __global__ void test_wgmma_tma_mma_ker_trans(CUtensorMap* tma_desc_a, CUtensorMa
     using L2 = st_wgmma_col_t_0b_layout;
     st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1> &a_smem = al.allocate<st_bf<DEFAULT_WGMMA_N, WGMMA_K, L1>>();
     st_bf<WGMMA_K, WGMMA_M, L2> &b_smem = al.allocate<st_bf<WGMMA_K, WGMMA_M, L2>>();
-    st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_layout> &result_smem = al.allocate<st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_layout>>();
+    st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_0b_layout> &result_smem = al.allocate<st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_0b_layout>>();
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ uint64_t smem_barrier;  
@@ -63,7 +63,7 @@ bool test_wgmma_tma_mma_trans() {
     CUtensorMap tma_desc_input_a = {}, tma_desc_input_b = {}, tma_desc_output = {};
     tma::create_tensor_map<st_bf<DEFAULT_WGMMA_N, WGMMA_K, st_wgmma_row_0b_layout>, 1>(&tma_desc_input_a, d_i); 
     tma::create_tensor_map<st_bf<WGMMA_K, WGMMA_M, st_wgmma_col_t_0b_layout>, 1>(&tma_desc_input_b, d_i+256*DEFAULT_WGMMA_N*WGMMA_K); 
-    tma::create_tensor_map<st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_layout>, 1>(&tma_desc_output, d_o); 
+    tma::create_tensor_map<st_bf<DEFAULT_WGMMA_N, WGMMA_M, st_naive_row_0b_layout>, 1>(&tma_desc_output, d_o); 
 
     CUtensorMap* tma_desc_input_a_d, * tma_desc_input_b_d, * tma_desc_output_d;
     cudaMalloc(&tma_desc_input_a_d, sizeof(CUtensorMap));

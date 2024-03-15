@@ -1,13 +1,13 @@
 template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH>
 __global__ void
 test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
-    auto warpid = kittens::warp_id(); 
+    auto warpid = kittens::warpid(); 
     auto lane   = kittens::laneid(); 
 
     CUtensorMap* input_tma_descriptor  = tma_desc_input;
 
     extern __shared__ int __shm[];
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
+    shared_allocator al = shared_allocator::create_allocator_tma<1024>((int*)&__shm[0]); 
 
     st_bf<TMA_HEIGHT, TMA_WIDTH, layout> &input_tile  = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>>();
 
@@ -15,18 +15,26 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     __shared__ uint64_t smem_barrier; 
     constexpr int size_bytes = sizeof(bf16) * input_tile.num_elements;
 
+    if(threadIdx.x == 0) printf("starting prefetch and barrier init.\n");
+
     tma::prefetch(input_tile, input_tma_descriptor, 0);
     tma::init_barrier(smem_barrier, 1); 
     tma::set_barrier_bytes(smem_barrier, size_bytes);
 
     block.sync();
 
+    if(threadIdx.x == 0) printf("successful prefetch and barrier init.\n");
+
     for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
         tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
         // load(input_tile, input, TMA_WIDTH * 16);
 
+    if(threadIdx.x == 0) printf("launched load async.\n");
+
         int kPhaseBit = 0; 
         tma::arrive_wait(smem_barrier, kPhaseBit);
+
+    if(threadIdx.x == 0) printf("arrived load async.\n");
 
         store(output + (input_tile.num_elements * tile_idx), input_tile, TMA_WIDTH * 16); 
         // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
@@ -36,13 +44,13 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
 template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH>
 __global__ void
 test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
-    auto warpid = kittens::warp_id();
+    auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
     CUtensorMap* output_tma_descriptor = tma_desc_output;
 
     extern __shared__ int __shm[];
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm[0]); 
+    shared_allocator al = shared_allocator::create_allocator_tma<1024>((int*)&__shm[0]); 
     st_bf<TMA_HEIGHT, TMA_WIDTH, layout> &input_tile = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>>();
 
     auto block = cooperative_groups::this_thread_block();
@@ -110,31 +118,32 @@ bool test_tma() {
     std::string load_str = store_test ? "_store" : "_load";
     load_str += "_"+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH);
 
-    passed = validate(d_i, d_o, i_ref, o_ref, layout_name<layout>()+load_str, 16 * TMA_WIDTH); 
+    passed = validate(d_i, d_o, i_ref, o_ref, "tma_"+layout_name<layout>()+load_str, 16 * TMA_WIDTH); 
 
     return passed;
 }
 
-template<st_layout layout, bool store_test>
+template<st_layout layout, bool store_test, bool swizzled=false>
 int tma_dim_test() {
     int failures = 0; 
 
-    failures += !test_tma<layout, store_test, 1, 1>();
-    failures += !test_tma<layout, store_test, 1, 2>();
-    failures += !test_tma<layout, store_test, 1, 3>();
-    failures += !test_tma<layout, store_test, 1, 4>();
+    
+    if(!swizzled) failures += !test_tma<layout, store_test, 1, 1>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 1, 2>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 1, 3>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 1, 4>();
 
-    failures += !test_tma<layout, store_test, 2, 1>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 2, 1>();
     failures += !test_tma<layout, store_test, 2, 2>();
     failures += !test_tma<layout, store_test, 2, 3>();
     failures += !test_tma<layout, store_test, 2, 4>();
 
-    failures += !test_tma<layout, store_test, 3, 1>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 3, 1>();
     failures += !test_tma<layout, store_test, 3, 2>();
     failures += !test_tma<layout, store_test, 3, 3>();
     failures += !test_tma<layout, store_test, 3, 4>();
 
-    failures += !test_tma<layout, store_test, 4, 1>();
+    if(!swizzled) failures += !test_tma<layout, store_test, 4, 1>();
     failures += !test_tma<layout, store_test, 4, 2>();
     failures += !test_tma<layout, store_test, 4, 3>();
     failures += !test_tma<layout, store_test, 4, 4>();
@@ -145,8 +154,12 @@ int tma_dim_test() {
 int tma_tests() {
     std::cout << " ----- Starting tma tests! -----" << std::endl;
     int failures = 0;
-    failures += tma_dim_test<st_naive_row_layout, false>();
-    failures += tma_dim_test<st_naive_row_layout, true>();
+    failures += tma_dim_test<st_naive_row_0b_layout, false>();
+    failures += tma_dim_test<st_naive_row_0b_layout, true>();
+
+    // failures += tma_dim_test<st_naive_row_32b_layout,  false, true>();
+    failures += tma_dim_test<st_naive_row_64b_layout,  false, true>();
+    // failures += tma_dim_test<st_naive_row_128b_layout, false, true>();
 
     failures += tma_dim_test<st_wgmma_row_0b_layout, false>();
     failures += tma_dim_test<st_wgmma_row_0b_layout, true>();
