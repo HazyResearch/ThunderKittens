@@ -13,7 +13,7 @@ using namespace kittens;
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
                            CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) 
 {
-    auto warpid        = kittens::warp_id();
+    auto warpid        = kittens::warpid();
     auto warpgroupid   = threadIdx.x / 128;
     auto lane          = kittens::laneid();
     auto block_start   = blockIdx.x*(n*d);
