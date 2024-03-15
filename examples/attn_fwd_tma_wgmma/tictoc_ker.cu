@@ -6,6 +6,11 @@
 #define NUM_WORKERS 8
 #define NUM_WARPGROUPS (NUM_WORKERS/4)
 
+#define ATTN_B 16
+#define ATTN_H 16
+#define ATTN_N 1024
+#define ATTN_D 64
+
 using namespace kittens;
 
 using layout_row = st_wgmma_row_0b_layout; 
@@ -14,7 +19,7 @@ using layout_col = st_wgmma_col_t_0b_layout;
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
                            CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) 
 {
-    auto warpid        = kittens::warp_id();
+    auto warpid        = kittens::warpid();
     auto warpgroupid   = threadIdx.x / 128;
     auto lane          = kittens::laneid();
     auto block_start   = blockIdx.x*(n*d);
@@ -41,17 +46,17 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     int qo_blocks = n / (q_smem[warpgroupid].rows * NUM_WARPGROUPS);
     int kv_blocks = n / (q_reg.rows * NUM_WORKERS);
 
-    auto block = cooperative_groups::this_thread_block();
-
-    int tile_idx_kv = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;
-    int tile_idx_q  = ((blockIdx.x) * NUM_WARPGROUPS * qo_blocks) + warpgroupid;  
+    auto block = cooperative_groups::this_thread_block(); 
 
     __shared__ uint64_t smem_barrier[NUM_WARPGROUPS + (2 * NUM_WORKERS)];
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> q_barrier;
     if (threadIdx.x == 0) {init(&q_barrier, block.size());}
 
     constexpr int size_q_bytes  = sizeof(bf16) * q_smem[0].num_elements;
+    int tile_idx_q  = ((blockIdx.x) * NUM_WARPGROUPS * qo_blocks) + warpgroupid;  
+
     constexpr int size_kv_bytes = sizeof(bf16) * k_smem[0][0].num_elements; 
+    int tile_idx_kv = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;
 
     tma::init_barrier(smem_barrier[warpgroupid], block.size());
     tma::set_barrier_bytes(smem_barrier[warpgroupid], size_q_bytes);
@@ -100,32 +105,6 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + warpid], kPhaseBit_k);
             tma::arrive_wait(smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid], kPhaseBit_v);
             __syncthreads();
-
-            // if (threadIdx.x == 0 && blockIdx.x == 0 && q_blk == 0) {
-            //     // print out kv
-            //     printf("kv_idx: %d\n", kv_idx);
-            //     printf("k_smem[]:\n");
-            //     for (int w = 0; w < NUM_WORKERS; w++) {
-            //         for (int r = 0; r < k_smem[tic][w].rows; r++) {
-            //             for (int c = 0; c < k_smem[tic][w].cols; c++) {
-            //                 printf("%f ", __bfloat162float(k_smem[tic][w].data[c + r * k_smem[tic][w].cols]));
-            //             }
-            //             printf("\n");
-            //         }
-            //         printf("\n");
-            //     }
-            //     printf("v_smem[]:\n");
-            //     for (int w = 0; w < NUM_WORKERS; w++) {
-            //         for (int r = 0; r < v_smem[tic][w].rows; r++) {
-            //             for (int c = 0; c < v_smem[tic][w].cols; c++) {
-            //                 printf("%f ", __bfloat162float(v_smem[tic][w].data[c + r * v_smem[tic][w].cols]));
-            //             }
-            //             printf("\n");
-            //         }
-            //         printf("\n");
-            //     }
-            // }
-            // __syncthreads(); 
  
             if(kv_idx+1 < kv_blocks) {
                 tile_idx_kv = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + (kv_idx+1)*NUM_WORKERS + warpid;

@@ -13,7 +13,9 @@
 
 using namespace kittens;
 
-using layout_row = st_wgmma_row_0b_layout;
+using layout_row = st_naive_row_layout; 
+// using layout_row = st_wgmma_row_0b_layout;
+// using layout_row = st_tma_row_layout; 
 
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
                            CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) 
@@ -70,7 +72,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     int tic = 0, toc = 1;
     
-    warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
+    // warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
+    load(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d);
 
     tma::load_async(k_smem[tic][warpid], tma_k, tile_idx_kv, smem_barrier[NUM_WARPGROUPS + warpid]);
     tma::load_async(v_smem[tic][warpid], tma_v, tile_idx_kv, smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid]);
@@ -85,6 +88,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         q_barrier.arrive_and_wait();
         
         warpgroup::load(q_reg, q_smem[warpgroupid]);
+        // load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
         if(q_blk+1 < qo_blocks) {
             if (threadIdx.x % 128 == 0) {

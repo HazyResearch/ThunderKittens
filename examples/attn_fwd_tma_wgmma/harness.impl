@@ -2,11 +2,6 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 16
-#define ATTN_H 16
-#define ATTN_N 1024
-#define ATTN_D 64
-
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -87,13 +82,7 @@ int main(int argc, char **argv) {
         k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
     }
-
-    // for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-    //     q_bf[i] = __float2bfloat16(i % TOTAL_UNIQUE_ELEMENTS);
-    //     k_bf[i] = __float2bfloat16(i % TOTAL_UNIQUE_ELEMENTS);
-    //     v_bf[i] = __float2bfloat16(i % TOTAL_UNIQUE_ELEMENTS);
-    // }
-
+    
     bf16 *d_q, *d_k, *d_v, *d_o;
     cudaMalloc(&d_q, TOTAL_ELEMENTS * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS * sizeof(bf16));

@@ -476,7 +476,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
 
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_col_layout> &src, int tile_idx) {
-    if (kittens::laneid() == 0) {
+    if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
@@ -498,7 +498,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
 }
 template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
 __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (kittens::laneid() == 0) {
+    if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));

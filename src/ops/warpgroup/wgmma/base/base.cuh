@@ -10,7 +10,7 @@ template<int width, int trans_b>
 struct wgmma_base {
     __device__ static inline void rt_st(
         rt_fl<1, width, rt_row_layout> &dst,
-        const rt_base_bf<rt_row_layout> & a_rt,
+        const rt_bf<1, 1, rt_row_layout> & a_rt,
         const uint64_t b_st_desc
     );
     __device__ static inline void st_st(
@@ -32,4 +32,4 @@ struct wgmma_base {
 // #include "4x5.impl"
 // #include "4x6.impl"
 // #include "4x7.impl"
-#include "4x8.cuh"
+// #include "4x8.impl"
