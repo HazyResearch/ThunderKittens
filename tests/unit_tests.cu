@@ -25,7 +25,9 @@
 #include "integration/wgmma_tma_tests.impl"
 #endif
 
-int main() {
+int main(int argc, char **argv) {
+
+    should_write_outputs = argc>1; // write outputs if user says so
 
     int failures = 0;
     

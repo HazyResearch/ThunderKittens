@@ -5,12 +5,10 @@
 namespace kittens {
 
 // row layouts are very much the default
-struct st_naive_row_0b_layout{}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
-struct st_naive_row_32b_layout{};
-struct st_naive_row_64b_layout{};
-struct st_naive_row_128b_layout{};
+struct st_naive_row_layout{}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
+struct st_tma_row_layout{}; // only defined for x1, x2, x4 tiles.
+struct st_xor_row_layout{}; // generic, non-tma swizzling mode
 
-struct st_xor_row_layout{}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
 struct st_wgmma_row_0b_layout{ static constexpr int swizzling_mode=0; };
 struct st_wgmma_row_32b_layout{ static constexpr int swizzling_mode=3; };
 // however, we do need a few column layouts for wgmma mma's.
@@ -18,11 +16,9 @@ struct st_wgmma_col_t_0b_layout{ static constexpr int swizzling_mode=0; };
 struct st_wgmma_col_t_32b_layout{ static constexpr int swizzling_mode=3; };
 
 template<typename T>
-concept st_naive_row_layout = (
-    std::is_same_v<T, st_naive_row_0b_layout>   ||
-    std::is_same_v<T, st_naive_row_32b_layout>  ||
-    std::is_same_v<T, st_naive_row_64b_layout>  ||
-    std::is_same_v<T, st_naive_row_128b_layout>
+concept st_type_2d_tma_layout = (
+    std::is_same_v<T, st_naive_row_layout>   ||
+    std::is_same_v<T, st_tma_row_layout> 
 );
 template<typename T>
 concept st_wgmma_row_layout = (
@@ -36,9 +32,10 @@ concept st_wgmma_col_layout = (
 );
 template<typename T>
 concept st_row_layout = (
-    st_wgmma_row_layout<T> ||
-    st_naive_row_layout<T> ||
-    std::is_same_v<T, st_xor_row_layout>
+    st_wgmma_row_layout<T>                 ||
+    std::is_same_v<T, st_naive_row_layout> ||
+    std::is_same_v<T, st_tma_row_layout>   ||
+    std::is_same_v<T, st_xor_row_layout>  
 );
 template<typename T>
 concept st_col_layout = st_wgmma_col_layout<T> || std::is_same_v<T, st_wgmma_col_t_32b_layout>;
@@ -49,7 +46,7 @@ concept st_layout = st_row_layout<T> || st_col_layout<T>;
 
 namespace detail {
 
-template<int height, int width, st_layout T=st_naive_row_0b_layout>
+template<int height, int width, st_layout T=st_naive_row_layout>
 struct shared_indexer {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
@@ -57,6 +54,16 @@ struct shared_indexer {
     static constexpr int cols_per_core_matrix = 8;
     __device__ static inline int idx(int r, int c) { // naive row-major index default
         return r*cols + c;
+    }
+};
+template<int height, int width>
+struct shared_indexer<height, width, st_tma_row_layout> {
+    static constexpr int rows = height*16;
+    static constexpr int cols = width*16;
+    static constexpr int rows_per_core_matrix = 8;
+    static constexpr int cols_per_core_matrix = 8;
+    __device__ static inline int idx(int r, int c) { // naive row-major index default
+        return (r*cols + c) ^ (((r%8)*width/4)*8);
     }
 };
 template<int height, int width>

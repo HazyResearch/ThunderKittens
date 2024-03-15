@@ -11,10 +11,8 @@
 #include "../src/kittens.cuh"
 
 template<kittens::st_layout layout> std::string layout_name();
-template<> std::string layout_name<kittens::st_naive_row_0b_layout      >() { return "st_naive_row_0b_layout";       }
-template<> std::string layout_name<kittens::st_naive_row_32b_layout  >() { return "st_naive_row_32b_layout";   }
-template<> std::string layout_name<kittens::st_naive_row_64b_layout  >() { return "st_naive_row_64b_layout";   }
-template<> std::string layout_name<kittens::st_naive_row_128b_layout >() { return "st_naive_row_128b_layout";  }
+template<> std::string layout_name<kittens::st_naive_row_layout      >() { return "st_naive_row_layout";       }
+template<> std::string layout_name<kittens::st_tma_row_layout        >() { return "st_tma_row_layout";         }
 template<> std::string layout_name<kittens::st_xor_row_layout        >() { return "st_xor_row_layout";         }
 template<> std::string layout_name<kittens::st_wgmma_row_0b_layout   >() { return "st_wgmma_row_0b_layout";    }
 template<> std::string layout_name<kittens::st_wgmma_row_32b_layout  >() { return "st_wgmma_row_32b_layout";   }
@@ -40,6 +38,8 @@ inline void __cudaCheckError( const char *file, const int line ) {
         exit( -1 );
     }
 }
+
+bool should_write_outputs = true;
 
 using namespace kittens;
 
@@ -97,25 +97,27 @@ bool validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector
     }
     if(good) std::cout << "PASSED" << std::endl;
     else std::cout << " ----- ALERT! FAILED TEST `" << test_name << "` -----" << std::endl;
-    std::ofstream reffile("outputs/"+test_name+"_ref.txt");
-    std::ofstream outfile("outputs/"+test_name+"_out.txt");
-    for(int i = 0; i < output_size; i++) {
-        reffile << o_ref[i] << ' ';
-        outfile << o[i] << ' ';
-        if(i%cols == cols-1) {
-            reffile << '\n';
-            outfile << '\n';
+    if(should_write_outputs) {
+        std::ofstream reffile("outputs/"+test_name+"_ref.txt");
+        std::ofstream outfile("outputs/"+test_name+"_out.txt");
+        for(int i = 0; i < output_size; i++) {
+            reffile << o_ref[i] << ' ';
+            outfile << o[i] << ' ';
+            if(i%cols == cols-1) {
+                reffile << '\n';
+                outfile << '\n';
+            }
         }
-    }
-    reffile << "\n\n\nINPUTS:\n\n";
-    for(int i = 0; i < input_size; i++) {
-        reffile << i_ref[i] << ' ';
-        if(i%cols == cols-1) {
-            reffile << '\n';
+        reffile << "\n\n\nINPUTS:\n\n";
+        for(int i = 0; i < input_size; i++) {
+            reffile << i_ref[i] << ' ';
+            if(i%cols == cols-1) {
+                reffile << '\n';
+            }
         }
+        reffile.close();
+        outfile.close();
     }
-    reffile.close();
-    outfile.close();
     cudaFree(d_i);
     cudaFree(d_o);
     delete[] o_bf, o;
