@@ -49,8 +49,6 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     auto block = cooperative_groups::this_thread_block();
 
-    static_assert(kv_blocks == qo_blocks, "kv_blocks and qo_blocks must be equal for now");
-
     __shared__ uint64_t qsmem_barrier[NUM_WORKERS];
     __shared__ uint64_t ksmem_barrier[NUM_WORKERS];
     __shared__ uint64_t vsmem_barrier[NUM_WORKERS];
