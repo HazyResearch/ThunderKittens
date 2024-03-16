@@ -60,7 +60,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
         if(q_blk+1 < qo_blocks) {
-            load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
+            warpgroup::load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); // stride is a whole row of the array, in bytes
         }
 
         neg_infty(max_vec);
