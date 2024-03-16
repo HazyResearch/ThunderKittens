@@ -13,8 +13,8 @@
 
 using namespace kittens;
 
-using layout_row = st_naive_row_layout; 
-// using layout_row = st_wgmma_row_0b_layout;
+// using layout_row = st_naive_row_layout; 
+using layout_row = st_wgmma_row_0b_layout; 
 // using layout_row = st_tma_row_layout; 
 
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
@@ -63,7 +63,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     tma::set_barrier_bytes(smem_barrier[warpgroupid], size_q_bytes);
 
     tma::init_barrier(smem_barrier[NUM_WARPGROUPS + warpid], block.size());
-    tma::set_barrier_bytes(smem_barrier[NUM_WARPGROUPS + warpid], size_kv_bytes);
+    tma::set_barrier_bytes(smem_barrier[NUM_WARPGROUPS + warpid], size_kv_bytes); 
 
     tma::init_barrier(smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid], block.size());
     tma::set_barrier_bytes(smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid], size_kv_bytes);
@@ -72,8 +72,10 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     int tic = 0, toc = 1;
     
-    // warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
-    load(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].rows*d, d);
+    warpgroup::load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].num_elements, d, q_barrier); //start getting block 0
+    // if (warpid % 4 == 0) {
+    //     load_async(q_smem[warpgroupid], _q + warpgroupid * q_smem[warpgroupid].num_elements, d, q_barrier);
+    // }
 
     tma::load_async(k_smem[tic][warpid], tma_k, tile_idx_kv, smem_barrier[NUM_WARPGROUPS + warpid]);
     tma::load_async(v_smem[tic][warpid], tma_v, tile_idx_kv, smem_barrier[NUM_WARPGROUPS + NUM_WORKERS + warpid]);
@@ -84,17 +86,18 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
-        tma::arrive_wait(smem_barrier[warpgroupid], kPhaseBit_q); 
+        // tma::arrive_wait(smem_barrier[warpgroupid], kPhaseBit_q); 
         q_barrier.arrive_and_wait();
         
         warpgroup::load(q_reg, q_smem[warpgroupid]);
         // load(q_reg, q_smem[warpgroupid]);
         mul(q_reg, q_reg, __float2bfloat16(0.125f));
         if(q_blk+1 < qo_blocks) {
-            if (threadIdx.x % 128 == 0) {
-                tile_idx_q = ((blockIdx.x) * NUM_WARPGROUPS * qo_blocks) + (q_blk+1)*NUM_WARPGROUPS + warpgroupid;
-                tma::load_async(q_smem[warpgroupid], tma_q, tile_idx_q, smem_barrier[warpgroupid]);
-            }
+            // if (warpid % 4 == 0) {
+            //     tile_idx_q = ((blockIdx.x) * NUM_WARPGROUPS * qo_blocks) + (q_blk+1)*NUM_WARPGROUPS + warpgroupid;
+            //     tma::load_async(q_smem[warpgroupid], tma_q, tile_idx_q, smem_barrier[warpgroupid]);
+            // }
+            warpgroup::load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
         }
 
         neg_infty(max_vec);
