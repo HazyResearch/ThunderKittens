@@ -13,7 +13,7 @@
 
 using namespace kittens;
 
-// using layout_row = st_naive_row_layout; 
+using layout_row = st_naive_row_layout; 
 // using layout_row = st_wgmma_row_0b_layout; 
 // using layout_row = st_tma_row_layout; 
 
