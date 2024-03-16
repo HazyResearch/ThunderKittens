@@ -106,6 +106,20 @@ struct shared_allocator {
             ptr += sizeof(at)/sizeof(int);
             return *p;
         }
+        template<typename A, size_t N, size_t M, size_t L> 
+        __device__ inline A (&allocate())[N][M][L] {
+            using at = A[N][M][L];
+            at*p = reinterpret_cast<at*>(ptr);
+            ptr += sizeof(at)/sizeof(int);
+            return *p;
+        }
+        template<typename A, size_t N, size_t M, size_t L, size_t K> 
+        __device__ inline A (&allocate())[N][M][L][K] {
+            using at = A[N][M][L][K];
+            at*p = reinterpret_cast<at*>(ptr);
+            ptr += sizeof(at)/sizeof(int);
+            return *p;
+        }
 };
 
 }
