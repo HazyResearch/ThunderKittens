@@ -12,7 +12,7 @@ namespace kittens {
 struct rt_base_id {};
 
 // base register tile is 16x16
-template<packed_type T2, rt_layout _layout> struct rt_base {
+template<kittens::concepts::packed_type T2, rt_layout _layout> struct rt_base {
     using identifier = rt_base_id;
     using layout = _layout;
     using dtype = T2;

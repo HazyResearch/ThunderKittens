@@ -19,7 +19,7 @@ struct rt_row_vec_id {};
 
 // base register tile is 16x16
 // row major flag will help compiler catch orientation errors during mma and whatnot
-template<packed_type T2, int _height, int _width, rt_layout _layout=rt_row_layout>
+template<kittens::concepts::packed_type T2, int _height, int _width, rt_layout _layout=rt_row_layout>
 struct rt {
     using identifier = rt_id;
     using layout = _layout;

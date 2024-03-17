@@ -16,14 +16,15 @@ seems necessary when we have types we really care about that are less than word 
 */
 
 namespace kittens {
+namespace concepts {
+    template<typename T>
+    concept packed_type = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+}
 
 using bf16 = __nv_bfloat16;
 using half = __half;
 using bf16_2 = __nv_bfloat162;
 using half_2 = __half2;
-
-template<typename T>
-concept packed_type = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
 
 namespace base_types {
 
