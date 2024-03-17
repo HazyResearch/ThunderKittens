@@ -3,6 +3,7 @@
 #include <concepts>
 
 namespace kittens {
+namespace concepts {
 
 // row layouts are very much the default
 struct st_naive_row_layout{}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
@@ -44,7 +45,8 @@ concept st_wgmma_layout = st_wgmma_row_layout<T> || st_wgmma_col_layout<T>;
 template<typename T>
 concept st_layout = st_row_layout<T> || st_col_layout<T>;
 
-namespace detail {
+} // namespace concepts
+} // namespace kittens
 
 template<int height, int width, st_layout T=st_naive_row_layout>
 struct shared_indexer {

@@ -8,6 +8,8 @@ namespace kittens {
 
 namespace base_ops {
 
+namespace concepts {
+
 /* ----------  CONST OPS  ---------- */
 
 struct zero {
@@ -26,21 +28,21 @@ struct neg_infty {
 
 /* ----------  UNARY OPS  ---------- */
 
-struct exp { 
+struct exp {
     template<typename T> static __device__ inline T op(const T &x) { return exp(x); }
 };
 template<> __device__ inline float  exp::op<float> (const float &x ) { return __expf(x);                        }
 template<> __device__ inline float2 exp::op<float2>(const float2 &x) { return float2{__expf(x.x), __expf(x.y)}; }
 template<> __device__ inline bf16   exp::op<bf16>  (const bf16 &x  ) { return hexp(x);                          }
 template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2exp(x);                         }
-struct abs { 
+struct abs {
     template<typename T> static __device__ inline T op(const T &x) { return abs(x); }
 };
 template<> __device__ inline float  abs::op<float> (const float &x ) { return fabsf(x);                       }
 template<> __device__ inline float2 abs::op<float2>(const float2 &x) { return float2{fabsf(x.x), fabsf(x.y)}; }
 template<> __device__ inline bf16   abs::op<bf16>  (const bf16 &x  ) { return __habs(x);                      }
 template<> __device__ inline bf16_2 abs::op<bf16_2>(const bf16_2 &x) { return __habs2(x);                     }
-struct relu { 
+struct relu {
     template<typename T> static __device__ inline T op(const T &x) { return max(x, base_types::constants<T>::zero()); }
 };
 template<> __device__ inline float  relu::op<float> (const float &x ) { return max(x, 0.f);                                  }
@@ -99,7 +101,7 @@ template<>  __device__ inline bf16_2 min::op<bf16_2>(const bf16_2 &a, const bf16
 /* ----------  TERNARY OPS  ---------- */
 
 // I might change these names but I don't want the kitten names to be overfit onto attention, either.
-struct fma_AxBtC { 
+struct fma_AxBtC {
     template<typename T> static __device__ inline T op(const T &a, const T &b, const T &c) {
         return sum::op<T>(mul::op<T>(a, b), c);
     }
@@ -109,6 +111,8 @@ struct fma_AxCtB { // this is the one needed for attention
         return sum::op<T>(mul::op<T>(a, c), b);
     }
 };
+
+} // namespace concepts
 
 }
 
