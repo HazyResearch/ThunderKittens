@@ -3,6 +3,7 @@
 #include <concepts>
 
 namespace kittens {
+namespace concepts {
 
 struct rt_row_layout { static constexpr bool row=true;  }; // for most matrices
 struct rt_col_layout { static constexpr bool row=false; }; // for the B-matrix of MMA ops.
@@ -16,4 +17,5 @@ concept rt_layout = (
 template<rt_layout L> struct transpose_layout                { using type = rt_col_layout; };
 template<>            struct transpose_layout<rt_col_layout> { using type = rt_row_layout; };
 
-}
+} // namespace concepts
+} // namespace kittens
