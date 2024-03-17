@@ -64,8 +64,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
     constexpr int kPhaseBit_dsmem_k = 1; 
     constexpr int kPhaseBit_dsmem_v = 1;
-    constexpr int kPhaseBit_tma_k = 1;
-    constexpr int kPhaseBit_tma_v = 1;
+    constexpr int kPhaseBit_tma_k   = 1;
+    constexpr int kPhaseBit_tma_v   = 1;
 
     load(q_reg, __q__ + warp_idx*q_reg.num_elements, d);
     mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment head 64
@@ -92,7 +92,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
             dsmem::distribution_wait(k_dsmem_barrier[0], kPhaseBit_dsmem_k);
             dsmem::distribution_wait(v_dsmem_barrier[0], kPhaseBit_dsmem_v);
         }
-        cluster.sync();
+        // cluster.sync();
 
         for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
 

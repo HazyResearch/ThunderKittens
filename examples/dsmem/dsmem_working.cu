@@ -2,16 +2,18 @@
 
 #include "../../src/kittens.cuh"
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 2048
+#define ATTN_N 4096
 #define ATTN_D 64
 
 #define NUM_WORKERS 8
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define Q_ROWS 32
-#define CLUSTER_SIZE (ATTN_N/(NUM_WORKERS * Q_ROWS))
+#define CLUSTER_SIZE MIN(ATTN_N / (NUM_WORKERS * Q_ROWS), 16)
 
 using namespace kittens;
 
@@ -31,6 +33,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     unsigned int cluster_size = CLUSTER_SIZE; // cluster.num_blocks(); but i want this at compile time
     unsigned int block_idx    = cluster.block_rank();;
     unsigned int cluster_idx  = grid.cluster_rank();
+
+    static_assert(CLUSTER_SIZE <= 16, "CLUSTER_SIZE must not exceed 16");
 
     auto block = cg::this_thread_block();
 
@@ -56,24 +60,24 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     int warp_idx  = (cluster_idx * cluster_size + block_idx) * NUM_WORKERS + warpid;
 
     //**// TMA set-up
-    __shared__ uint64_t ksmem_barrier[NUM_WORKERS];
-    __shared__ uint64_t vsmem_barrier[NUM_WORKERS];
+    // __shared__ uint64_t ksmem_barrier[NUM_WORKERS];
+    // __shared__ uint64_t vsmem_barrier[NUM_WORKERS];
 
-    constexpr int tma_tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
+    // constexpr int tma_tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
 
-    tma::init_barrier(ksmem_barrier[warpid], block.size());
-    tma::set_barrier_bytes(ksmem_barrier[warpid], tma_tile_bytes); 
+    // tma::init_barrier(ksmem_barrier[warpid], block.size());
+    // tma::set_barrier_bytes(ksmem_barrier[warpid], tma_tile_bytes); 
 
-    tma::init_barrier(vsmem_barrier[warpid], block.size());
-    tma::set_barrier_bytes(vsmem_barrier[warpid], tma_tile_bytes); 
-    block.sync();
+    // tma::init_barrier(vsmem_barrier[warpid], block.size());
+    // tma::set_barrier_bytes(vsmem_barrier[warpid], tma_tile_bytes); 
+    // block.sync();
 
-    constexpr int kPhaseBit_k = 1; 
-    constexpr int kPhaseBit_v = 1;
-    constexpr int kPhaseBit_q = 1; 
+    // constexpr int kPhaseBit_k = 1; 
+    // constexpr int kPhaseBit_v = 1;
+    // constexpr int kPhaseBit_q = 1; 
 
-    tma::load_async(k_smem[tic][warpid], tma_k, warp_idx, ksmem_barrier[warpid]);
-    tma::load_async(v_smem[tic][warpid], tma_v, warp_idx, vsmem_barrier[warpid]);
+    // tma::load_async(k_smem[tic][warpid], tma_k, warp_idx, ksmem_barrier[warpid]);
+    // tma::load_async(v_smem[tic][warpid], tma_v, warp_idx, vsmem_barrier[warpid]);
     // load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
     // load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
 
@@ -107,10 +111,10 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     zero(norm_vec);
     zero(o_prev);
 
-    // load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-    // load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
-    tma::arrive_wait(ksmem_barrier[warpid], kPhaseBit_tma_k);
-    tma::arrive_wait(vsmem_barrier[warpid], kPhaseBit_tma_v);
+    load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
+    load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
+    // tma::arrive_wait(ksmem_barrier[warpid], kPhaseBit_tma_k);
+    // tma::arrive_wait(vsmem_barrier[warpid], kPhaseBit_tma_v);
 
     cluster.sync(); // make sure all the memory has arrived!
     
@@ -120,7 +124,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         if(kv_itr > 0) {
             dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
             dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-        }
+        } 
 
         if(kv_itr+1 < kv_blocks) {
             int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
@@ -165,8 +169,10 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
         tic ^= 1;
         toc ^= 1;
-        // cluster.sync(); I would think this is necessary but seems to work without it? Saves a lot of time too.
+        // cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
+        __syncthreads(); // this seems to suffice for now?
     }
+    cluster.sync(); // make sure all the memory has arrived!
 
     store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
 

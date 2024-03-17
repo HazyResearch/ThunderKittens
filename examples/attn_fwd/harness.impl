@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 10;
+    const int ITER = 100;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();

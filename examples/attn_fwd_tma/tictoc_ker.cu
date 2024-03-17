@@ -13,8 +13,8 @@
 
 using namespace kittens;
 
-using layout_row = st_naive_row_layout; 
-// using layout_row = st_wgmma_row_0b_layout; 
+// using layout_row = st_naive_row_layout; 
+using layout_row = st_wgmma_row_0b_layout;
 // using layout_row = st_tma_row_layout; 
 
 __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
