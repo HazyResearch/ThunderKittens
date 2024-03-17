@@ -9,6 +9,7 @@
 // So, this is going to be the starting point for now.
 
 namespace kittens {
+namespace concepts {
 
 struct st_id {};
 struct st_col_vec_id {};
@@ -26,7 +27,7 @@ struct st {
     static constexpr int rows                = height * 16;
     static constexpr int cols                = width  * 16;
     static constexpr int num_elements        = width  * height * 16*16;
-    
+
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static_assert(
@@ -188,6 +189,7 @@ concept st_row_vec_type = requires {
 template<typename T>
 concept st_vec_type = st_col_vec_type<T> || st_row_vec_type<T>;
 
+} // namespace concepts
 
 // Provided templates
 template<int _height, int _width, st_layout layout=st_xor_row_layout> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
