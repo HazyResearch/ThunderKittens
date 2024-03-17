@@ -11,7 +11,7 @@
 namespace kittens {
 
 /* ----------  MAIN TILE STRUCT  ---------- */
-    
+
 // these are helper structs for type inference in vector maps
 struct rt_id {};
 struct rt_col_vec_id {};
@@ -83,26 +83,27 @@ struct rt {
 
 /* ----------  CONCEPTS  ---------- */
 
-template<typename T> concept rt_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_id>; // Checks if T::dentifier is abstract_rt
-// specialized types for specialized functions
-template<typename T>
-concept rt_type_rowlayout = rt_type<T> && std::is_same_v<typename T::layout, rt_row_layout>;
-template<typename T>
-concept rt_type_collayout = rt_type<T> && std::is_same_v<typename T::layout, rt_col_layout>;
+namespace concepts {
+    template<typename T> concept rt_type = requires {
+        typename T::identifier; // Checks if T::vector_identifier exists
+    } && std::is_same_v<typename T::identifier, rt_id>; // Checks if T::dentifier is abstract_rt
+    // specialized types for specialized functions
+    template<typename T>
+    concept rt_type_rowlayout = rt_type<T> && std::is_same_v<typename T::layout, rt_row_layout>;
+    template<typename T>
+    concept rt_type_collayout = rt_type<T> && std::is_same_v<typename T::layout, rt_col_layout>;
 
-template<typename T>
-concept rt_col_vec_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_col_vec_id>; // Checks if T::identifier is abstract_vector
-template<typename T>
-concept rt_row_vec_type = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, rt_row_vec_id>; // Checks if T::identifier is abstract_vector
-template<typename T>
-concept rt_vec_type = rt_row_vec_type<T> || rt_col_vec_type<T>;
-
+    template<typename T>
+    concept rt_col_vec_type = requires {
+        typename T::identifier; // Checks if T::vector_identifier exists
+    } && std::is_same_v<typename T::identifier, rt_col_vec_id>; // Checks if T::identifier is abstract_vector
+    template<typename T>
+    concept rt_row_vec_type = requires {
+        typename T::identifier; // Checks if T::vector_identifier exists
+    } && std::is_same_v<typename T::identifier, rt_row_vec_id>; // Checks if T::identifier is abstract_vector
+    template<typename T>
+    concept rt_vec_type = rt_row_vec_type<T> || rt_col_vec_type<T>;
+} // namespace concepts
 
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
