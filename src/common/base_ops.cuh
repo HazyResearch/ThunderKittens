@@ -8,8 +8,6 @@ namespace kittens {
 
 namespace base_ops {
 
-namespace concepts {
-
 /* ----------  CONST OPS  ---------- */
 
 struct zero {
@@ -112,8 +110,6 @@ struct fma_AxCtB { // this is the one needed for attention
     }
 };
 
-} // namespace concepts
+} // namespace base_ops
 
-}
-
-}
+} // namespace kittens

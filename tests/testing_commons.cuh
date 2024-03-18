@@ -10,14 +10,14 @@
 
 #include "../src/kittens.cuh"
 
-template<kittens::st_layout layout> std::string layout_name();
-template<> std::string layout_name<kittens::st_naive_row_layout      >() { return "st_naive_row_layout";       }
-template<> std::string layout_name<kittens::st_tma_row_layout        >() { return "st_tma_row_layout";         }
-template<> std::string layout_name<kittens::st_xor_row_layout        >() { return "st_xor_row_layout";         }
-template<> std::string layout_name<kittens::st_wgmma_row_0b_layout   >() { return "st_wgmma_row_0b_layout";    }
-template<> std::string layout_name<kittens::st_wgmma_row_32b_layout  >() { return "st_wgmma_row_32b_layout";   }
-template<> std::string layout_name<kittens::st_wgmma_col_t_0b_layout >() { return "st_wgmma_col_t_0b_layout";  }
-template<> std::string layout_name<kittens::st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout"; }
+template<kittens::ducks::st_layout::all layout> std::string layout_name();
+template<> std::string layout_name<kittens::ducks::st_layout::naive          >() { return "naive";           }
+template<> std::string layout_name<kittens::ducks::st_layout::tma_swizzle    >() { return "tma_swizzle";     }
+template<> std::string layout_name<kittens::ducks::st_layout::xor_swizzle    >() { return "xor_swizzle";     }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_0b   >() { return "wgmma_row_0b";    }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_32b  >() { return "wgmma_row_32b";   }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_0b >() { return "wgmma_col_t_0b";  }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_32b>() { return "wgmma_col_t_32b"; }
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {

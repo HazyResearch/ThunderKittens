@@ -8,7 +8,7 @@ namespace kittens {
 /* ----------  Uniform tile maps (independent of layout)  ---------- */
 
 // Uniform unary map on tile
-template<typename op, rt_type T> // T2, w, h can be inferred from dst as long as op is specialized
+template<typename op, ducks::rt::all T> // T2, w, h can be inferred from dst as long as op is specialized
 __device__ static inline void unary_map(T &dst, const T &src) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
@@ -23,7 +23,7 @@ __device__ static inline void unary_map(T &dst, const T &src) {
 }
 
 // Uniform map from packed to tile
-template<typename op, rt_type T>
+template<typename op, ducks::rt::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
@@ -37,13 +37,13 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename T::dt
     }
 }
 // Uniform map from single to tile
-template<typename op, rt_type T>
+template<typename op, ducks::rt::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename base_types::packing<typename T::dtype>::unpacked_type &param) {
     // The optimizing compiler should eliminate this pack in the 32-bit case but not in the 16-bit case
     bin_map<op, T>(dst, src, base_types::packing<typename T::dtype>::pack(param));
 }
 // Tile-to-tile element-wise map. Only enforces same layout.
-template<typename op, rt_type T>
+template<typename op, ducks::rt::all T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
@@ -60,7 +60,7 @@ __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
 /* ----------  Row tile maps  ----------*/
 
 // row-major layout
-template<typename op, rt_type_rowlayout T, rt_col_vec_type V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::col_vec V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -84,7 +84,7 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
     }
 }
 // col-major layout
-template<typename op, rt_type_collayout T, rt_col_vec_type V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::col_vec V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -109,7 +109,7 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
 
 // Three-operand row map
 // row-major layout
-template<typename op, rt_type_rowlayout T, rt_col_vec_type V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::col_vec V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -133,7 +133,7 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
     }
 }
 // col-major layout
-template<typename op, rt_type_collayout T, rt_col_vec_type V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::col_vec V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -158,7 +158,7 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
 /* ----------  Col major tile maps  ----------*/
 
 // row-major layout
-template<typename op, rt_type_rowlayout T, rt_row_vec_type V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::row_vec V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -180,7 +180,7 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
     }
 }
 // col-major layout
-template<typename op, rt_type_collayout T, rt_row_vec_type V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::row_vec V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -206,7 +206,7 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
 
 // Three-operand col map
 // row-major layout
-template<typename op, rt_type_rowlayout T, rt_row_vec_type V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::row_vec V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -228,7 +228,7 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
     }
 }
 // col-major layout
-template<typename op, rt_type_collayout T, rt_row_vec_type V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::row_vec V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
@@ -258,108 +258,108 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
 // So, syntax should just be kittens::add_row(tile, colvec);
 
 // const maps
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void zero(T &dst) {
     unary_map<base_ops::zero, T>(dst, dst);
 }
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void one(T &dst) {
     unary_map<base_ops::one, T>(dst, dst);
 }
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void pos_infty(T &dst) {
     unary_map<base_ops::pos_infty, T>(dst, dst);
 }
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void neg_infty(T &dst) {
     unary_map<base_ops::neg_infty, T>(dst, dst);
 }
 
 // unary maps
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     unary_map<base_ops::exp, T>(dst, src);
 }
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void abs(T &dst, const T &src) {
     unary_map<base_ops::abs, T>(dst, src);
 }
-template<rt_type T>
+template<ducks::rt::all T>
 __device__ static inline void relu(T &dst, const T &src) {
     unary_map<base_ops::relu, T>(dst, src);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void copy(T &dst, const U &src) {
     bin_map<base_ops::copy2, T>(dst, src);
 }
 
 // uniform binary maps
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::max, T>(dst, lhs, rhs);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::min, T>(dst, lhs, rhs);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sum, T>(dst, lhs, rhs);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sub, T>(dst, lhs, rhs);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::mul, T>(dst, lhs, rhs);
 }
-template<rt_type T, typename U>
+template<ducks::rt::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::div, T>(dst, lhs, rhs);
 }
 
 // row maps
-template<rt_type T, rt_col_vec_type V>
+template<ducks::rt::all T, ducks::rv::col_vec V>
 __device__ static inline void add_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sum, T, V>(dst, src, row_values);
 }
-template<rt_type T, rt_col_vec_type V>
+template<ducks::rt::all T, ducks::rv::col_vec V>
 __device__ static inline void sub_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sub, T, V>(dst, src, row_values);
 }
-template<rt_type T, rt_col_vec_type V>
+template<ducks::rt::all T, ducks::rv::col_vec V>
 __device__ static inline void mul_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::mul, T, V>(dst, src, row_values);
 }
-template<rt_type T, rt_col_vec_type V>
+template<ducks::rt::all T, ducks::rv::col_vec V>
 __device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::div, T, V>(dst, src, row_values);
 }
-template<rt_type T, rt_col_vec_type V>
+template<ducks::rt::all T, ducks::rv::col_vec V>
 __device__ static inline void broadcast_row(T &dst, const V &row_values) {
     row_map<base_ops::copy2, T, V>(dst, dst, row_values);
 }
 
 
 // col maps
-template<rt_type T, rt_row_vec_type V>
+template<ducks::rt::all T, ducks::rv::row_vec V>
 __device__ static inline void add_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sum, T, V>(dst, src, col_values);
 }
-template<rt_type T, rt_row_vec_type V>
+template<ducks::rt::all T, ducks::rv::row_vec V>
 __device__ static inline void sub_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sub, T, V>(dst, src, col_values);
 }
-template<rt_type T, rt_row_vec_type V>
+template<ducks::rt::all T, ducks::rv::row_vec V>
 __device__ static inline void mul_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::mul, T, V>(dst, src, col_values);
 }
-template<rt_type T, rt_row_vec_type V>
+template<ducks::rt::all T, ducks::rv::row_vec V>
 __device__ static inline void div_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::div, T, V>(dst, src, col_values);
 }
-template<rt_type T, rt_row_vec_type V>
+template<ducks::rt::all T, ducks::rv::row_vec V>
 __device__ static inline void broadcast_col(T &dst, const V &col_values) {
     col_map<base_ops::copy2, T, V>(dst, dst, col_values);
 }

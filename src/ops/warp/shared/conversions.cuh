@@ -7,7 +7,7 @@ namespace kittens {
 
 /* ----------  COPIES  ---------- */
 
-template<typename T, typename U, int _height, int _width, st_layout L1, st_layout L2>
+template<typename T, typename U, int _height, int _width, ducks::st_layout::all L1, ducks::st_layout::all L2>
 __device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, _height, _width, L2> &src) {
     using T2 = base_types::packing<T>::packed_type;
     using U2 = base_types::packing<U>::packed_type;

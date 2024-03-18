@@ -7,7 +7,7 @@
 namespace kittens {
 
 
-template<typename op, concepts::st_vec_type T>
+template<typename op, ducks::sv::all T>
 __device__ 
 __device__ static inline void st_unary_map(T &dst) {
     __syncwarp();
@@ -20,13 +20,13 @@ __device__ static inline void st_unary_map(T &dst) {
     }
 }
 
-template<concepts::st_vec_type T>
+template<ducks::sv::all T>
 __device__ static inline void zero(T &dst)      { st_unary_map<base_ops::zero, T>(dst);      }
-template<concepts::st_vec_type T>
+template<ducks::sv::all T>
 __device__ static inline void one(T &dst)       { st_unary_map<base_ops::one, T>(dst);       }
-template<concepts::st_vec_type T>
+template<ducks::sv::all T>
 __device__ static inline void pos_infty(T &dst) { st_unary_map<base_ops::pos_infty, T>(dst); }
-template<concepts::st_vec_type T>
+template<ducks::sv::all T>
 __device__ static inline void neg_infty(T &dst) { st_unary_map<base_ops::neg_infty, T>(dst); }
 
 

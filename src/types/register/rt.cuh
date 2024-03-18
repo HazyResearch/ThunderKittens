@@ -5,23 +5,29 @@
 
 #include "../../common/common.cuh"
 
-#include "rt_layouts.cuh"
+#include "rt_layout.cuh"
 #include "rt_base.cuh"
 
 namespace kittens {
 
 /* ----------  MAIN TILE STRUCT  ---------- */
 
-// these are helper structs for type inference in vector maps
-struct rt_id {};
-struct rt_col_vec_id {};
-struct rt_row_vec_id {};
+// these are helper structs for type inference
+namespace ducks {
+namespace rt {
+struct identifier {};
+} // namespace rt
+namespace rv {
+struct col_vec_identifier {}; // these are temp anyways
+struct row_vec_identifier {}; // these are temp anyways
+} // namespace rv
+} // namespace ducks
 
 // base register tile is 16x16
 // row major flag will help compiler catch orientation errors during mma and whatnot
-template<kittens::concepts::packed_type T2, int _height, int _width, rt_layout _layout=rt_row_layout>
+template<typename T2, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt {
-    using identifier = rt_id;
+    using identifier = ducks::rt::identifier;
     using layout = _layout;
     using dtype = T2;
 
@@ -42,7 +48,7 @@ struct rt {
     // essentially, each thread handles part of two separate rows in each 16x16 tile_base
     // correspondingly, we use a packed type where the .x is the top row and .y the bottom.
     struct col_vec {
-        using identifier = rt_col_vec_id;
+        using identifier = ducks::rv::col_vec_identifier;
         using layout = layout;
         using dtype = dtype;
 
@@ -57,7 +63,7 @@ struct rt {
     // in the case of a column reduction, each thread contains data from 4 columns, so in
     // eager mode it will store a bit of all of them.
     struct row_vec {
-        using identifier = rt_row_vec_id;
+        using identifier = ducks::rv::row_vec_identifier;
         using layout = layout;
         using dtype = dtype;
 
@@ -83,60 +89,68 @@ struct rt {
 
 /* ----------  CONCEPTS  ---------- */
 
-namespace concepts {
-    template<typename T> concept rt_type = requires {
-        typename T::identifier; // Checks if T::vector_identifier exists
-    } && std::is_same_v<typename T::identifier, rt_id>; // Checks if T::dentifier is abstract_rt
-    // specialized types for specialized functions
-    template<typename T>
-    concept rt_type_rowlayout = rt_type<T> && std::is_same_v<typename T::layout, rt_row_layout>;
-    template<typename T>
-    concept rt_type_collayout = rt_type<T> && std::is_same_v<typename T::layout, rt_col_layout>;
+namespace ducks {
+namespace rt {
 
-    template<typename T>
-    concept rt_col_vec_type = requires {
-        typename T::identifier; // Checks if T::vector_identifier exists
-    } && std::is_same_v<typename T::identifier, rt_col_vec_id>; // Checks if T::identifier is abstract_vector
-    template<typename T>
-    concept rt_row_vec_type = requires {
-        typename T::identifier; // Checks if T::vector_identifier exists
-    } && std::is_same_v<typename T::identifier, rt_row_vec_id>; // Checks if T::identifier is abstract_vector
-    template<typename T>
-    concept rt_vec_type = rt_row_vec_type<T> || rt_col_vec_type<T>;
-} // namespace concepts
+template<typename T> concept all = requires {
+    typename T::identifier; // Checks if T::vector_identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is rt::identifier
+// specialized types for specialized functions
+template<typename T>
+concept row_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::row>;
+template<typename T>
+concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::col>;
+
+} // namespace rt
+
+namespace rv {
+
+template<typename T>
+concept col_vec = requires {
+    typename T::identifier; // Checks if T::vector_identifier exists
+} && std::is_same_v<typename T::identifier, col_vec_identifier>; // Checks if T::identifier is abstract_vector
+template<typename T>
+concept row_vec = requires {
+    typename T::identifier; // Checks if T::vector_identifier exists
+} && std::is_same_v<typename T::identifier, row_vec_identifier>; // Checks if T::identifier is abstract_vector
+template<typename T>
+concept all = col_vec<T> || row_vec<T>;
+
+} // namespace rv
+} // namespace ducks
 
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // layout and type wrappers
 
-template<int _height, int _width, rt_layout layout=rt_row_layout> using rt_fl = rt<float2, _height, _width, layout>;
-template<int _height, int _width, rt_layout layout=rt_row_layout> using rt_bf = rt<bf16_2, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float2, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16_2, _height, _width, layout>;
 
 // layout, type, and size wrappers
 // sizes are chosen with the assumption that you aren't going to want to fit more than
 // 8 subtiles on a thread. (if you need more, you can of course add your own using's.)
 
-template<rt_layout layout=rt_row_layout> using rt_fl_1x1 = rt_fl<1, 1, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x2 = rt_fl<1, 2, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x4 = rt_fl<1, 4, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_1x8 = rt_fl<1, 8, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x1 = rt_fl<2, 1, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x2 = rt_fl<2, 2, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_2x4 = rt_fl<2, 4, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_4x1 = rt_fl<4, 1, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_4x2 = rt_fl<4, 2, layout>; // 64 registers used
-template<rt_layout layout=rt_row_layout> using rt_fl_8x1 = rt_fl<8, 1, layout>; // 64 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x1 = rt_fl<1, 1, layout>; //  8 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x2 = rt_fl<1, 2, layout>; // 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x4 = rt_fl<1, 4, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x8 = rt_fl<1, 8, layout>; // 64 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x1 = rt_fl<2, 1, layout>; // 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x2 = rt_fl<2, 2, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x4 = rt_fl<2, 4, layout>; // 64 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x1 = rt_fl<4, 1, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x2 = rt_fl<4, 2, layout>; // 64 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_8x1 = rt_fl<8, 1, layout>; // 64 registers used
 
-template<rt_layout layout=rt_row_layout> using rt_bf_1x1 = rt_bf<1, 1, layout>; //  4 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x2 = rt_bf<1, 2, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x4 = rt_bf<1, 4, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_1x8 = rt_bf<1, 8, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x1 = rt_bf<2, 1, layout>; //  8 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x2 = rt_bf<2, 2, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_2x4 = rt_bf<2, 4, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_4x1 = rt_bf<4, 1, layout>; // 16 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
-template<rt_layout layout=rt_row_layout> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x1 = rt_bf<1, 1, layout>; //  4 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x2 = rt_bf<1, 2, layout>; //  8 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x4 = rt_bf<1, 4, layout>; // 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x8 = rt_bf<1, 8, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x1 = rt_bf<2, 1, layout>; //  8 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x2 = rt_bf<2, 2, layout>; // 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x4 = rt_bf<2, 4, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = rt_bf<4, 1, layout>; // 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
 
 }

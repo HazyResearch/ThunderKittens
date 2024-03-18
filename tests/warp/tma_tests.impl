@@ -1,4 +1,4 @@
-template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
 test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     auto warpid = kittens::warpid(); 
@@ -33,7 +33,7 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     }
 }
 
-template<st_layout layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
 test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
     auto warpid = kittens::warpid();
@@ -64,7 +64,7 @@ test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output)
     }
 }
 
-template<st_layout layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
+template<ducks::st_layout::all layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
 bool test_tma() {
     // initailize
     bf16 *d_i, *d_o;
@@ -117,7 +117,7 @@ bool test_tma() {
     return passed;
 }
 
-template<st_layout layout, bool store_test, bool swizzled=false>
+template<ducks::st_layout::all layout, bool store_test, bool swizzled=false>
 int tma_dim_test() {
     int failures = 0; 
 
@@ -208,22 +208,22 @@ int tma_dim_test() {
 int tma_tests() {
     std::cout << " ----- Starting tma tests! -----" << std::endl;
     int failures = 0;
-    failures += tma_dim_test<st_naive_row_layout, false>();
-    failures += tma_dim_test<st_naive_row_layout, true>();
+    failures += tma_dim_test<ducks::st_layout::naive, false>();
+    failures += tma_dim_test<ducks::st_layout::naive, true>();
 
-    failures += tma_dim_test<st_tma_row_layout,  false, true>();
+    failures += tma_dim_test<ducks::st_layout::tma_swizzle,  false, true>();
 
-    failures += tma_dim_test<st_wgmma_row_0b_layout, false>();
-    failures += tma_dim_test<st_wgmma_row_0b_layout, true>();
+    failures += tma_dim_test<ducks::st_layout::wgmma_row_0b, false>();
+    failures += tma_dim_test<ducks::st_layout::wgmma_row_0b, true>();
     // TMA not yet supported with 32B swizzling modes
-    // failures += tma_dim_test<st_wgmma_row_32b_layout, false>();
-    // failures += !test_tma<st_wgmma_row_32b_layout, true>();
+    // failures += tma_dim_test<ducks::st_layout::wgmma_row_32b, false>();
+    // failures += !test_tma<ducks::st_layout::wgmma_row_32b, true>();
 
-    failures += tma_dim_test<st_wgmma_col_t_0b_layout, false>();
-    failures += tma_dim_test<st_wgmma_col_t_0b_layout, true>();
+    failures += tma_dim_test<ducks::st_layout::wgmma_col_t_0b, false>();
+    failures += tma_dim_test<ducks::st_layout::wgmma_col_t_0b, true>();
     // TMA not yet supported with 32B swizzling modes
-    // failures += !test_tma<st_wgmma_col_t_32b_layout, false>();
-    // failures += !test_tma<st_wgmma_col_t_32b_layout, true>();
+    // failures += !test_tma<wgmma_col_t_32b, false>();
+    // failures += !test_tma<wgmma_col_t_32b, true>();
 
     return failures;
 }

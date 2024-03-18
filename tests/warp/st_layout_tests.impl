@@ -1,4 +1,4 @@
-template<st_layout layout, int LAYOUT_H=4, int LAYOUT_W=4>
+template<ducks::st_layout::all layout, int LAYOUT_H=4, int LAYOUT_W=4>
 __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
@@ -17,13 +17,13 @@ __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {
     load_async(smem_tile, input, LAYOUT_W*16, barrier);
     barrier.arrive_and_wait();
     load(reg_tile, smem_tile);
-    rt_bf<LAYOUT_H, LAYOUT_W, rt_col_layout> &reg_tile_col = swap_layout_inplace(reg_tile);
+    rt_bf<LAYOUT_H, LAYOUT_W, ducks::rt_layout::col> &reg_tile_col = swap_layout_inplace(reg_tile);
     store(smem_tile, reg_tile_col);
 
     store_async(output, smem_tile, LAYOUT_W*16, barrier);
     barrier.arrive_and_wait();
 }
-template<st_layout layout, int LAYOUT_H=4, int LAYOUT_W=4>
+template<ducks::st_layout::all layout, int LAYOUT_H=4, int LAYOUT_W=4>
 bool test_st_layout() {
     constexpr int LAYOUT_SIZE = LAYOUT_H*LAYOUT_W;
     // initailize
@@ -41,7 +41,7 @@ bool test_st_layout() {
     return passed;
 }
 
-template<st_layout L1, st_layout L2, int LAYOUT_H=4, int LAYOUT_W=4>
+template<ducks::st_layout::all L1, ducks::st_layout::all L2, int LAYOUT_H=4, int LAYOUT_W=4>
 __global__ void test_st_layout_conversion_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
@@ -56,7 +56,7 @@ __global__ void test_st_layout_conversion_ker(const bf16 *input, bf16 *output) {
     __syncthreads();
     store(output, tile2, LAYOUT_W*16);
 }
-template<st_layout L1, st_layout L2, int LAYOUT_H=4, int LAYOUT_W=4>
+template<ducks::st_layout::all L1, ducks::st_layout::all L2, int LAYOUT_H=4, int LAYOUT_W=4>
 bool test_st_layout_conversion() {
     constexpr int LAYOUT_SIZE = LAYOUT_H*LAYOUT_W;
     // initailize
@@ -77,47 +77,47 @@ bool test_st_layout_conversion() {
 int st_layout_tests() {
     std::cout << " ----- Starting shared layout tests! -----" << std::endl;
     int failures = 0;
-    failures += !test_st_layout<st_naive_row_layout    >();
-    failures += !test_st_layout<st_tma_row_layout      >();
-    failures += !test_st_layout<st_xor_row_layout      >();
-    failures += !test_st_layout<st_wgmma_row_0b_layout >();
-    failures += !test_st_layout<st_wgmma_row_32b_layout>();
+    failures += !test_st_layout<ducks::st_layout::naive    >();
+    failures += !test_st_layout<ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout<ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout<ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout<ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_naive_row_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::naive, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::naive, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::naive, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::naive, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::naive, ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_tma_row_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_tma_row_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_tma_row_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_tma_row_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_tma_row_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::tma_swizzle, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::tma_swizzle, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::tma_swizzle, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::tma_swizzle, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::tma_swizzle, ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_xor_row_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::xor_swizzle, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::xor_swizzle, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::xor_swizzle, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::xor_swizzle, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::xor_swizzle, ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_0b_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_0b, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_0b, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_0b, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_0b, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_0b, ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_32b, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_32b, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_32b, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_32b, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_row_32b, ducks::st_layout::wgmma_row_32b>();
 
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_naive_row_layout    >();
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_tma_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_xor_row_layout      >();
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_0b_layout >();
-    failures += !test_st_layout_conversion<st_wgmma_col_t_0b_layout, st_wgmma_row_32b_layout>();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_col_t_0b, ducks::st_layout::naive    >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_col_t_0b, ducks::st_layout::tma_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_col_t_0b, ducks::st_layout::xor_swizzle      >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_col_t_0b, ducks::st_layout::wgmma_row_0b >();
+    failures += !test_st_layout_conversion<ducks::st_layout::wgmma_col_t_0b, ducks::st_layout::wgmma_row_32b>();
 
     // COL load/store async not supported currently
 

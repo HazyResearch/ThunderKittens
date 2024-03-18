@@ -56,7 +56,7 @@ __global__ void test_row_normalize_col_ker(const bf16 *input, bf16 *output) {
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf<HEIGHT, WIDTH> reg_tile_bf;
-    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile_fl;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile_fl;
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
@@ -71,11 +71,11 @@ __global__ void test_row_normalize_col_ker(const bf16 *input, bf16 *output) {
     
     load(reg_tile_bf, smem_tile);
 
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_bf_col = swap_layout_inplace(reg_tile_bf);
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> &reg_tile_bf_col = swap_layout_inplace(reg_tile_bf);
 
     copy(reg_tile_fl, reg_tile_bf_col);
     
-    rt_fl<HEIGHT, WIDTH, rt_col_layout>::col_vec rowsums;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::col_vec rowsums;
     zero(rowsums);
     row_sum(rowsums, reg_tile_fl);
     div_row(reg_tile_fl, reg_tile_fl, rowsums);
@@ -186,14 +186,14 @@ __global__ void test_col_normalize_col_ker(const bf16 *input, bf16 *output) {
     load(reg_tile, smem_tile);
 
     // let's use a column layout for now
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_col = swap_layout_inplace(reg_tile);
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> &reg_tile_col = swap_layout_inplace(reg_tile);
 
     // we actually need to do this in fp32 for the test to pass
-    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile_col_fl;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile_col_fl;
     copy(reg_tile_col_fl, reg_tile_col);
     
     // actually do the column normalization
-    rt_fl<HEIGHT, WIDTH, rt_col_layout>::row_vec colsums;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::row_vec colsums;
     zero(colsums);
     col_sum(colsums, reg_tile_col_fl); // sum over the column
     div_col(reg_tile_col_fl, reg_tile_col_fl, colsums); // divide by the sum
