@@ -36,12 +36,12 @@ bool test_row_broadcast_row() {
 
 __global__ void test_row_broadcast_col_ker(const bf16 *input, bf16 *output) {
     
-    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
 
     load(reg_tile, input, COLS);
     __syncthreads();
     
-    rt_fl<HEIGHT, WIDTH, rt_col_layout>::col_vec rowsums;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::col_vec rowsums;
     row_sum(rowsums, reg_tile);
     broadcast_row(reg_tile, rowsums);
 
@@ -108,12 +108,12 @@ bool test_col_broadcast_row() {
 
 __global__ void test_col_broadcast_col_ker(const bf16 *input, bf16 *output) {
     
-    rt_fl<HEIGHT, WIDTH, rt_col_layout> reg_tile;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
 
     load(reg_tile, input, COLS);
     __syncthreads();
     
-    rt_fl<HEIGHT, WIDTH, rt_col_layout>::row_vec colsums;
+    rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::row_vec colsums;
     col_sum(colsums, reg_tile);
     broadcast_col(reg_tile, colsums);
 

@@ -28,12 +28,12 @@ typedef rt_col_bf<1, 4> _rtd_v_col;
 // To handle 1, we add in total_a0 to a0
 __device__
 void tb_cumsum(
-    st_bf_1x4<st_xor_row_layout> (&dst)[kittens::N_WARPS], 
-    st_bf_1x4<st_xor_row_layout>::row_vec &total, // tile should have same width as the tile and same type.
-    const st_bf_1x4<st_xor_row_layout> (&src)[kittens::N_WARPS],  
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&dst)[kittens::N_WARPS], 
+    st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &total, // tile should have same width as the tile and same type.
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[kittens::N_WARPS],  
     const int nThreads = 256
 ) {
-    using T = st_bf_1x4<st_xor_row_layout>;
+    using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using H = T::dtype;
 
     const int width = T::width;
@@ -66,11 +66,11 @@ void tb_cumsum(
 // // Then a1 has the "preceding" a1 for each warp; total_a1 is the next stage of what we need to build.
 __device__
 void tb_cumsum_delay_tiles_inplace(
-    st_bf_1x4<st_xor_row_layout> (&x)[kittens::N_WARPS], 
-    st_bf_1x4<st_xor_row_layout> &total, 
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&x)[kittens::N_WARPS], 
+    st_bf_1x4<ducks::st_layout::xor_swizzle> &total, 
     const int nThreads = 256
 ) {
-    using T = st_bf_1x4<st_xor_row_layout>;
+    using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using TT = T::dtype;
 
     auto col = threadIdx.x % (kittens::TILE_DIM*T::width);
@@ -114,11 +114,11 @@ void tb_cumsum_delay_tiles_inplace(
 
 __device__
 void reduce_tile_tiles(
-    st_bf_1x4<st_xor_row_layout> &dst, 
-    const st_bf_1x4<st_xor_row_layout> (&src)[kittens::N_WARPS], 
+    st_bf_1x4<ducks::st_layout::xor_swizzle> &dst, 
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[kittens::N_WARPS], 
     const int nThreads = 256
 ) {
-    using T = st_bf_1x4<st_xor_row_layout>;
+    using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using TT = T::dtype;
     auto col = threadIdx.x % (kittens::TILE_DIM*T::width);
     auto row = threadIdx.x / (kittens::TILE_DIM*T::width); 
@@ -256,17 +256,17 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
     // this is the CUDA shared memory
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
-    st_bf_1x1<st_xor_row_layout> (&q)[2][workers] = al.allocate<st_bf_1x1<st_xor_row_layout>, 2, workers>();
-    st_bf_1x1<st_xor_row_layout> (&k)[2][workers] = al.allocate<st_bf_1x1<st_xor_row_layout>, 2, workers>();
-    st_bf_1x4<st_xor_row_layout> (&v)[2][workers] = al.allocate<st_bf_1x4<st_xor_row_layout>, 2, workers>();
-    st_bf_1x4<st_xor_row_layout> (&y)[workers] = al.allocate<st_bf_1x4<st_xor_row_layout>, workers>();
-    st_bf_1x4<st_xor_row_layout> (&ty)[workers] = al.allocate<st_bf_1x4<st_xor_row_layout>, workers>();
-    st_bf_1x4<st_xor_row_layout> (&a0)[workers] = al.allocate<st_bf_1x4<st_xor_row_layout>, workers>();
-    st_bf_1x4<st_xor_row_layout> (&a1)[workers] = al.allocate<st_bf_1x4<st_xor_row_layout>, workers>();
+    st_bf_1x1<ducks::st_layout::xor_swizzle> (&q)[2][workers] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, workers>();
+    st_bf_1x1<ducks::st_layout::xor_swizzle> (&k)[2][workers] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, workers>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&v)[2][workers] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, 2, workers>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&y)[workers] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, workers>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&ty)[workers] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, workers>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&a0)[workers] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, workers>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&a1)[workers] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, workers>();
 
     // A0, A1, A2 (a2 is stored in register throughout)
-    __shared__ st_bf_1x4<st_xor_row_layout>::row_vec total_a0;
-    __shared__ st_bf_1x4<st_xor_row_layout> total_a1;
+    __shared__ st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec total_a0;
+    __shared__ st_bf_1x4<ducks::st_layout::xor_swizzle> total_a1;
 
     // Registers per thread for fragments
     _rtd_qk qj0, qj1, kj0, kj1;
@@ -473,10 +473,10 @@ a012_compute(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o)
     const int workers = 8;
 
     // q,k,v, and o are all double buffered
-    unsigned long mem_size  =  2*2*workers*sizeof(st_bf_1x1<st_xor_row_layout>); // q, k and v are double buffered.
-                  mem_size +=    2*workers*sizeof(st_bf_1x4<st_xor_row_layout>);
-                  mem_size += (workers+workers)*sizeof(st_bf_1x4<st_xor_row_layout>);
-                  mem_size += 2*workers*sizeof(st_bf_1x4<st_xor_row_layout>); // a0 and a1y
+    unsigned long mem_size  =  2*2*workers*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>); // q, k and v are double buffered.
+                  mem_size +=    2*workers*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
+                  mem_size += (workers+workers)*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
+                  mem_size += 2*workers*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>); // a0 and a1y
 
     TORCH_CHECK(n % (workers*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
     auto threads = workers * kittens::WARP_SIZE;

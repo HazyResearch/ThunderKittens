@@ -5,7 +5,7 @@
 
 namespace kittens {
 
-template<rt_type_rowlayout RT, typename U>
+template<ducks::rt::row_layout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
     using T2 = RT::dtype;
     using U2 = base_types::packing<U>::packed_type;
@@ -27,7 +27,7 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         }
     }
 }
-template<rt_type_collayout RT, typename U>
+template<ducks::rt::col_layout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     int laneid = threadIdx.x % 32;
@@ -62,7 +62,7 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
 }
 
 
-template<rt_type_rowlayout RT, typename U>
+template<ducks::rt::row_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T2 = RT::dtype;
     using U2 = base_types::packing<U>::packed_type;
@@ -84,7 +84,7 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         }
     }
 }
-template<rt_type_collayout RT, typename U>
+template<ducks::rt::col_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     int laneid = threadIdx.x % 32;

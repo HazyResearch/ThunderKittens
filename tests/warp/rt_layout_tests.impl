@@ -30,7 +30,7 @@ bool test_reg_transpose() {
 __global__ void test_swap_reg_layout_row2col_global_ker(const bf16 *input, bf16 *output) {
     rt_bf<HEIGHT, WIDTH> reg_tile;
     load(reg_tile, input, COLS);
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_col = swap_layout_inplace(reg_tile);
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> &reg_tile_col = swap_layout_inplace(reg_tile);
     store(output, reg_tile_col, COLS);
 }
 bool test_swap_reg_layout_row2col_global() {
@@ -51,7 +51,7 @@ bool test_swap_reg_layout_row2col_global() {
 
 // layout 2 test loads in col format, swaps, and writes in row format.
 __global__ void test_swap_reg_layout_col2row_global_ker(const bf16 *input, bf16 *output) {
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> reg_tile;
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
     load(reg_tile, input, COLS);
     rt_bf<HEIGHT, WIDTH> &reg_tile_row = swap_layout_inplace(reg_tile);
     store(output, reg_tile_row, COLS);
@@ -91,7 +91,7 @@ __global__ void test_swap_reg_layout_row2col_shared_ker(const bf16 *input, bf16 
     load_async(smem_tile, input, COLS, barrier);
     barrier.arrive_and_wait();
     load(reg_tile, smem_tile);
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> &reg_tile_col = swap_layout_inplace(reg_tile);
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> &reg_tile_col = swap_layout_inplace(reg_tile);
     store(smem_tile, reg_tile_col);
 
     store_async(output, smem_tile, COLS, barrier);
@@ -119,7 +119,7 @@ __global__ void test_swap_reg_layout_col2row_shared_ker(const bf16 *input, bf16 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
-    rt_bf<HEIGHT, WIDTH, rt_col_layout> reg_tile;
+    rt_bf<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;

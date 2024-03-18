@@ -32,7 +32,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     rt_fl_2x2<>::col_vec max_vec_last, max_vec;
     rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
 
-    using layout = st_wgmma_row_32b_layout;
+    using layout = ducks::st_layout::wgmma_row_32b;
     st_bf<8,4,layout> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<8,4,layout>, NUM_WARPGROUPS>();
     st_bf_2x4<layout> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
     st_bf_2x4<layout> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout>, 2, NUM_WORKERS>();
@@ -111,7 +111,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 copy(att_block_mma, att_block);
                 
                 load(local_reg, v_smem[tic][subtile]);
-                rt_bf_2x4<rt_col_layout> &v_reg_col = swap_layout_inplace(local_reg); // this is a reference and the call has invalidated v_reg
+                rt_bf_2x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(local_reg); // this is a reference and the call has invalidated v_reg
 
                 mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
                 mma(o_prev, att_block_mma, v_reg_col, o_prev);

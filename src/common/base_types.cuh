@@ -22,8 +22,14 @@ using half = __half;
 using bf16_2 = __nv_bfloat162;
 using half_2 = __half2;
 
+namespace ducks {
+namespace base_types {
+
 template<typename T>
-concept packed_type = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+
+} // namespace base_types
+} // namespace ducks
 
 namespace base_types {
 

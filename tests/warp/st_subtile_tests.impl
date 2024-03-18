@@ -3,7 +3,7 @@
 #define SUBTILE_COLS (SUBTILE_N*16)
 #define SUBTILE_SIZE (SUBTILE_ROWS*SUBTILE_COLS)
 
-template<st_layout layout>
+template<ducks::st_layout::all layout>
 __global__ void test_st_subtile_row_ker(const bf16 *input, bf16 *output) {
 
     int warpid = threadIdx.x / 32;
@@ -29,7 +29,7 @@ __global__ void test_st_subtile_row_ker(const bf16 *input, bf16 *output) {
 
     if(warpid == 0) store(output, smem_tile, SUBTILE_COLS); // great, write to global
 }
-template<st_layout layout>
+template<ducks::st_layout::all layout>
 bool test_st_subtile_row() {
     // initailize
     bf16 *d_i, *d_o;
@@ -50,7 +50,7 @@ bool test_st_subtile_row() {
     return passed;
 }
 
-template<st_layout layout>
+template<ducks::st_layout::all layout>
 __global__ void test_st_subtile_col_ker(const bf16 *input, bf16 *output) {
 
     int warpid = threadIdx.x / 32;
@@ -76,7 +76,7 @@ __global__ void test_st_subtile_col_ker(const bf16 *input, bf16 *output) {
 
     if(warpid == 0) store(output, smem_tile, SUBTILE_COLS); // great, write to global
 }
-template<st_layout layout>
+template<ducks::st_layout::all layout>
 bool test_st_subtile_col() {
     // initailize
     bf16 *d_i, *d_o;
@@ -100,18 +100,18 @@ bool test_st_subtile_col() {
 int st_subtile_tests() {
     std::cout << " ----- Starting shared subtile tests! -----" << std::endl;
     int failures = 0;
-    failures += !test_st_subtile_row<st_naive_row_layout      >();
-    failures += !test_st_subtile_row<st_xor_row_layout        >();
-    failures += !test_st_subtile_row<st_wgmma_row_0b_layout   >();
-    failures += !test_st_subtile_row<st_wgmma_row_32b_layout  >();
-    failures += !test_st_subtile_row<st_wgmma_col_t_0b_layout >();
-    failures += !test_st_subtile_row<st_wgmma_col_t_32b_layout>();
+    failures += !test_st_subtile_row<ducks::st_layout::naive      >();
+    failures += !test_st_subtile_row<ducks::st_layout::xor_swizzle        >();
+    failures += !test_st_subtile_row<ducks::st_layout::wgmma_row_0b   >();
+    failures += !test_st_subtile_row<ducks::st_layout::wgmma_row_32b  >();
+    failures += !test_st_subtile_row<ducks::st_layout::wgmma_col_t_0b >();
+    failures += !test_st_subtile_row<ducks::st_layout::wgmma_col_t_32b>();
 
-    failures += !test_st_subtile_col<st_naive_row_layout      >();
-    failures += !test_st_subtile_col<st_xor_row_layout        >();
-    failures += !test_st_subtile_col<st_wgmma_row_0b_layout   >();
-    failures += !test_st_subtile_col<st_wgmma_row_32b_layout  >();
-    failures += !test_st_subtile_col<st_wgmma_col_t_0b_layout >();
-    failures += !test_st_subtile_col<st_wgmma_col_t_32b_layout>();
+    failures += !test_st_subtile_col<ducks::st_layout::naive      >();
+    failures += !test_st_subtile_col<ducks::st_layout::xor_swizzle        >();
+    failures += !test_st_subtile_col<ducks::st_layout::wgmma_row_0b   >();
+    failures += !test_st_subtile_col<ducks::st_layout::wgmma_row_32b  >();
+    failures += !test_st_subtile_col<ducks::st_layout::wgmma_col_t_0b >();
+    failures += !test_st_subtile_col<ducks::st_layout::wgmma_col_t_32b>();
     return failures;
 }

@@ -14,10 +14,10 @@ using namespace nvcuda;
 using namespace kittens;
 
 __device__
-void thread_block_load(st_bf_4x4<st_xor_row_layout> &_dst, const typename st_bf_4x4<st_xor_row_layout>::dtype *_src, const int nThreads=256) {
+void thread_block_load(st_bf_4x4<ducks::st_layout::xor_swizzle> &_dst, const typename st_bf_4x4<ducks::st_layout::xor_swizzle>::dtype *_src, const int nThreads=256) {
     float4* dst = (float4*) _dst.data;
     float4* src = (float4*) _src; 
-    using H     = st_bf_4x4<st_xor_row_layout>;
+    using H     = st_bf_4x4<ducks::st_layout::xor_swizzle>;
     using T     = typename H::dtype;
 
     const int _row_stride  = H::cols; 
@@ -144,13 +144,13 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     // Shared
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
-    st_bf_1x4<st_xor_row_layout>::row_vec &w = al.allocate<st_bf_1x4<st_xor_row_layout>::row_vec>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &w = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec>();
     __shared__ float _max[workers], _sum[workers];  
 
     // Option A (References / Following the tests)
     const auto start_idx = 0;
-    st_bf_4x4<st_xor_row_layout> &k = al.allocate<st_bf_4x4<st_xor_row_layout>>(); // We use 4x4 since 4x16 is 64 window size
-    st_bf_4x4<st_xor_row_layout> &v = al.allocate<st_bf_4x4<st_xor_row_layout>>();
+    st_bf_4x4<ducks::st_layout::xor_swizzle> &k = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>(); // We use 4x4 since 4x16 is 64 window size
+    st_bf_4x4<ducks::st_layout::xor_swizzle> &v = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>();
     if(warpid == 0) load(k, _k + start_idx, d); // One warp loads from global to shared
     if(warpid == 0) load(v, _v + start_idx, d);
     __syncthreads();
@@ -158,8 +158,8 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     load(k_slice, subtile);
 
     // Option B
-    // st_bf_4x4<st_xor_row_layout> k = al.allocate<st_bf_4x4<st_xor_row_layout>>(); // We use 4x4 since 4x16 is 64 window size
-    // st_bf_4x4<st_xor_row_layout> v = al.allocate<st_bf_4x4<st_xor_row_layout>>();
+    // st_bf_4x4<ducks::st_layout::xor_swizzle> k = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>(); // We use 4x4 since 4x16 is 64 window size
+    // st_bf_4x4<ducks::st_layout::xor_swizzle> v = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>();
     // thread_block_load(k, _k + start_idx, threads); 
     // thread_block_load(v, _v + start_idx, threads);   
     // auto subtile = k.template subtile<1,4>(warpid, 0); 
