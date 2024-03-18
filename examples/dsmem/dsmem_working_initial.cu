@@ -2,16 +2,21 @@
 
 #include "../../src/kittens.cuh"
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+// 4096, 64  = 236 tflops
+// 2048, 128 = 180 tflops
+
 #define ATTN_B 16
 #define ATTN_H 16
 #define ATTN_N 2048
-#define ATTN_D 64
+#define ATTN_D 128
 
 #define NUM_WORKERS 8
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
-#define Q_ROWS 32
-#define CLUSTER_SIZE (ATTN_N/(NUM_WORKERS * Q_ROWS))
+#define Q_ROWS 16
+#define CLUSTER_SIZE MIN(ATTN_N / (NUM_WORKERS * Q_ROWS), 16)
 
 using namespace kittens;
 
@@ -32,6 +37,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     unsigned int block_idx    = cluster.block_rank();;
     unsigned int cluster_idx  = grid.cluster_rank();
 
+    static_assert(CLUSTER_SIZE <= 16, "CLUSTER_SIZE must not exceed 16");
+
     auto block = cg::this_thread_block();
 
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -40,16 +47,17 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     // layout:
     // index 0: which part of the cache is this? (0,1) are used as a tic-toc for message passing, 2 is async load.
     // index 1: which worker is responsible
-    st_bf_2x4<layout_row> (&k_smem)[3][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 3, NUM_WORKERS>();
-    st_bf_2x4<layout_col> (&v_smem)[3][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_col>, 3, NUM_WORKERS>();
+    st_bf_1x8<layout_row> (&q_smem)[NUM_WORKERS]    = al.allocate<st_bf_1x8<layout_row>, NUM_WORKERS>();
+    st_bf_1x8<layout_row> (&k_smem)[3][NUM_WORKERS] = al.allocate<st_bf_1x8<layout_row>, 3, NUM_WORKERS>();
+    st_bf_1x8<layout_col> (&v_smem)[3][NUM_WORKERS] = al.allocate<st_bf_1x8<layout_col>, 3, NUM_WORKERS>();
 
-    rt_bf_2x4<> q_reg;
+    rt_bf_1x8<> q_reg;
     static_assert(Q_ROWS == q_reg.rows);
-    rt_fl_2x2<> att_block;
-    rt_bf_2x2<> att_block_mma;
-    rt_fl_2x4<> o_prev;
-    rt_fl_2x2<>::col_vec max_vec_last, max_vec;
-    rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
+    rt_fl_1x1<> att_block;
+    rt_bf_1x1<> att_block_mma;
+    rt_fl_1x8<> o_prev;
+    rt_fl_1x1<>::col_vec max_vec_last, max_vec;
+    rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
 
     //**// General set-up
     int tic = 0, toc = 1;
@@ -68,9 +76,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     tma::set_barrier_bytes(vsmem_barrier[warpid], tma_tile_bytes); 
     block.sync();
 
-    constexpr int kPhaseBit_k = 1; 
-    constexpr int kPhaseBit_v = 1;
-    constexpr int kPhaseBit_q = 1; 
+    constexpr int kPhaseBit_tma_k = 1;
+    constexpr int kPhaseBit_tma_v = 1;
 
     tma::load_async(k_smem[tic][warpid], tma_k, warp_idx, ksmem_barrier[warpid]);
     tma::load_async(v_smem[tic][warpid], tma_v, warp_idx, vsmem_barrier[warpid]);
@@ -92,8 +99,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     }
 
     constexpr int kPhaseBit_dsmem_kv = 1;
-    constexpr int kPhaseBit_tma_k = 1;
-    constexpr int kPhaseBit_tma_v = 1;
 
     load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
     if constexpr (ATTN_D == 64) {
@@ -120,7 +125,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         if(kv_itr > 0) {
             dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
             dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-        }
+        } 
 
         if(kv_itr+1 < kv_blocks) {
             int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
@@ -165,8 +170,10 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
         tic ^= 1;
         toc ^= 1;
-        // cluster.sync(); I would think this is necessary but seems to work without it? Saves a lot of time too.
+        // cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
+        __syncthreads(); // this seems to suffice for now?
     }
+    cluster.sync(); // make sure all the memory has arrived!
 
     store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
 
