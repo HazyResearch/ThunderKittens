@@ -3,52 +3,56 @@
 #include <concepts>
 
 namespace kittens {
-namespace concepts {
+namespace ducks {
+namespace st_layout {
 
 // row layouts are very much the default
-struct st_naive_row_layout{}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
-struct st_tma_row_layout{}; // only defined for x1, x2, x4 tiles.
-struct st_xor_row_layout{}; // generic, non-tma swizzling mode
+struct naive {}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
+struct tma_swizzle {}; // only defined for x1, x2, x4 tiles.
+struct xor_swizzle {}; // generic, non-tma swizzling mode
 
-struct st_wgmma_row_0b_layout{ static constexpr int swizzling_mode=0; };
-struct st_wgmma_row_32b_layout{ static constexpr int swizzling_mode=3; };
+struct wgmma_row_0b { static constexpr int swizzling_mode=0; };
+struct wgmma_row_32b { static constexpr int swizzling_mode=3; };
 // however, we do need a few column layouts for wgmma mma's.
-struct st_wgmma_col_t_0b_layout{ static constexpr int swizzling_mode=0; };
-struct st_wgmma_col_t_32b_layout{ static constexpr int swizzling_mode=3; };
+struct wgmma_col_t_0b{ static constexpr int swizzling_mode=0; };
+struct wgmma_col_t_32b{ static constexpr int swizzling_mode=3; }; // Swizzled transposed layout not yet working
 
 template<typename T>
-concept st_type_2d_tma_layout = (
-    std::is_same_v<T, st_naive_row_layout>   ||
-    std::is_same_v<T, st_tma_row_layout> 
+concept tma_2d = (
+    std::is_same_v<T, naive>   ||
+    std::is_same_v<T, tma_swizzle> 
 );
 template<typename T>
-concept st_wgmma_row_layout = (
-    std::is_same_v<T, st_wgmma_row_0b_layout>   ||
-    std::is_same_v<T, st_wgmma_row_32b_layout> 
+concept wgmma_row = (
+    std::is_same_v<T, wgmma_row_0b>   ||
+    std::is_same_v<T, wgmma_row_32b> 
 );
 template<typename T>
-concept st_wgmma_col_layout = (
-    std::is_same_v<T, st_wgmma_col_t_0b_layout>   // ||
-    // std::is_same_v<T, st_wgmma_col_t_32b_layout> 
+concept wgmma_col = (
+    std::is_same_v<T, wgmma_col_t_0b>   // ||
+    // std::is_same_v<T, wgmma_col_t_32b> 
 );
 template<typename T>
-concept st_row_layout = (
-    st_wgmma_row_layout<T>                 ||
-    std::is_same_v<T, st_naive_row_layout> ||
-    std::is_same_v<T, st_tma_row_layout>   ||
-    std::is_same_v<T, st_xor_row_layout>  
+concept row = (
+    wgmma_row<T>  ||
+    wgmma_col<T>  || // wgmma col_t layouts are actually row layouts in terms of local contiguity.
+    tma_2d<T>     ||
+    std::is_same_v<T, xor_swizzle>  ||
+    std::is_same_v<T, wgmma_col_t_32b>   // temporary, until it merges into wgmma_col
 );
 template<typename T>
-concept st_col_layout = st_wgmma_col_layout<T> || std::is_same_v<T, st_wgmma_col_t_32b_layout>;
+concept col = false; // There are actually no column layouts right now. Which is good because they're slow!
 template<typename T>
-concept st_wgmma_layout = st_wgmma_row_layout<T> || st_wgmma_col_layout<T>;
+concept wgmma = wgmma_row<T> || wgmma_col<T>;
 template<typename T>
-concept st_layout = st_row_layout<T> || st_col_layout<T>;
+concept all = row<T> || col<T>;
 
-} // namespace concepts
-} // namespace kittens
+}
+} // namespace ducks
 
-template<int height, int width, st_layout T=st_naive_row_layout>
+namespace detail {
+
+template<int height, int width, ducks::st_layout::all T=ducks::st_layout::naive>
 struct shared_indexer {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
@@ -59,7 +63,7 @@ struct shared_indexer {
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, st_tma_row_layout> {
+struct shared_indexer<height, width, ducks::st_layout::tma_swizzle> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;
@@ -69,7 +73,7 @@ struct shared_indexer<height, width, st_tma_row_layout> {
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, st_xor_row_layout> {
+struct shared_indexer<height, width, ducks::st_layout::xor_swizzle> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int swizzling_bytes = sizeof(float4);
@@ -79,7 +83,7 @@ struct shared_indexer<height, width, st_xor_row_layout> {
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, st_wgmma_row_0b_layout> {
+struct shared_indexer<height, width, ducks::st_layout::wgmma_row_0b> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;
@@ -103,7 +107,7 @@ struct shared_indexer<height, width, st_wgmma_row_0b_layout> {
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, st_wgmma_row_32b_layout> {
+struct shared_indexer<height, width, ducks::st_layout::wgmma_row_32b> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;
@@ -127,7 +131,7 @@ struct shared_indexer<height, width, st_wgmma_row_32b_layout> {
 };
 // column layouts for wgmma
 template<int height, int width>
-struct shared_indexer<height, width, st_wgmma_col_t_0b_layout> {
+struct shared_indexer<height, width, ducks::st_layout::wgmma_col_t_0b> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;
@@ -148,8 +152,9 @@ struct shared_indexer<height, width, st_wgmma_col_t_0b_layout> {
         );
     }
 };
+// This is what it seems like it should be but the hardware appears to disagree.
 template<int height, int width>
-struct shared_indexer<height, width, st_wgmma_col_t_32b_layout> {
+struct shared_indexer<height, width, ducks::st_layout::wgmma_col_t_32b> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;

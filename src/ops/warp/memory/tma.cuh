@@ -12,25 +12,25 @@ namespace tma {
 namespace detail {
 
 template<typename T> concept st_type_2d_tma_layout = (
-    st_type<T> && 
+    ducks::st::all<T> && 
     (
-        std::is_same_v<typename T::layout, st_naive_row_layout> || 
-        std::is_same_v<typename T::layout, st_tma_row_layout>
+        std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
+        std::is_same_v<typename T::layout, ducks::st_layout::tma_swizzle>
     )
 );
 
 template<typename T> concept st_type_wgmma_row_layout = (
-    st_type<T> && 
+    ducks::st::all<T> && 
     (
-        std::is_same_v<typename T::layout, st_wgmma_row_0b_layout> || 
-        std::is_same_v<typename T::layout, st_wgmma_row_32b_layout>
+        std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_0b> || 
+        std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_32b>
     )
 );
 
 template<typename T> concept st_type_wgmma_col_t_layout = (
-    st_type<T> && 
+    ducks::st::all<T> && 
     (
-        std::is_same_v<typename T::layout, st_wgmma_col_t_0b_layout>
+        std::is_same_v<typename T::layout, ducks::st_layout::wgmma_col_t_0b>
     )
 );
 
@@ -55,7 +55,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_naive_row_layout>) ?
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::naive>) ?
                                                             CU_TENSOR_MAP_SWIZZLE_NONE : tma_swizzle_from_size;
 
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
@@ -124,13 +124,13 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     void                *global_addr = reinterpret_cast<void*>(src);
 
     // static assert that we currently only support 0B swizzle
-    static_assert(std::is_same_v<typename ST::layout, st_wgmma_row_0b_layout>, "Only 0B swizzle is currently supported");
+    static_assert(std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_row_0b>, "Only 0B swizzle is currently supported");
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;  
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_row_0b_layout>) ? 
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_row_0b>) ? 
                                                         CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_32B; 
 
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
@@ -224,13 +224,13 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
     void      *global_addr = reinterpret_cast<void*>(src);
 
     // static assert that we currently only support 0B swizzle
-    static_assert(std::is_same_v<typename ST::layout, st_wgmma_col_t_0b_layout>, "Only 0B swizzle is currently supported");
+    static_assert(std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_col_t_0b>, "Only 0B swizzle is currently supported");
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, st_wgmma_col_t_0b_layout>) ? 
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_col_t_0b>) ? 
                                                         CU_TENSOR_MAP_SWIZZLE_NONE : CU_TENSOR_MAP_SWIZZLE_32B;
                                                         
     constexpr uint64_t global_tile_height = num_blocks * ST::rows;
@@ -324,7 +324,7 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
 }
 
 // TMA STEP 2 = Prefetch Tensor Map using prefetch inside kernel (device side)
-template<int height, int width, st_type_2d_tma_layout L>
+template<int height, int width, ducks::st_layout::tma_2d L>
 __device__ static inline void prefetch(st<bf16, height, width, L> &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
@@ -343,7 +343,7 @@ __device__ static inline void prefetch(st<bf16, height, width, L> &dst, void con
     }
 }
 
-template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
+template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
 __device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
@@ -365,7 +365,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout>
     }
 }
 
-template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
+template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
 __device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
@@ -388,7 +388,7 @@ __device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout>
 }
 
 // TMA STEP 3 = Async load and store data from gmem/smem
-template<int height, int width, st_type_2d_tma_layout L>
+template<int height, int width, ducks::st_layout::tma_2d L>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, L> &src, int tile_idx) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
@@ -407,7 +407,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
         );
     }
 }
-template<int height, int width, st_type_2d_tma_layout L>
+template<int height, int width, ducks::st_layout::tma_2d L>
 __device__ static inline void load_async(st<bf16, height, width, L> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
@@ -428,7 +428,7 @@ __device__ static inline void load_async(st<bf16, height, width, L> &dst, void c
     }
 }
 
-template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
+template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_row_layout> &src, int tile_idx) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
@@ -450,7 +450,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
         );
     }
 }
-template<int height, int width, st_wgmma_row_layout wgmma_row_layout>
+template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
 __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
@@ -474,7 +474,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
     }
 }
 
-template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
+template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
 __device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_col_layout> &src, int tile_idx) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
@@ -496,7 +496,7 @@ __device__ static inline void store_async(void *dst_tma_map, const st<bf16, heig
         );
     }
 }
-template<int height, int width, st_wgmma_col_layout wgmma_col_layout>
+template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
 __device__ static inline void load_async(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);

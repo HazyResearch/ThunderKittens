@@ -12,8 +12,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
     
-    st_bf_1x4<st_xor_row_layout> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<st_xor_row_layout>, NUM_WORKERS>();
-    st_bf_1x4<st_xor_row_layout> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<st_xor_row_layout>, NUM_WORKERS>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, NUM_WORKERS>();
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, NUM_WORKERS>();
 
     rt_bf_1x4<> q_reg, k_reg, v_reg;
     rt_fl_1x1<> att_block;
@@ -66,7 +66,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 copy(att_block_mma, att_block); // convert to bf16 for mma
 
                 load(v_reg, v_smem[subtile]);
-                rt_bf_1x4<rt_col_layout> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
+                rt_bf_1x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
                 mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
                 mma(o_prev, att_block_mma, v_reg_col, o_prev);

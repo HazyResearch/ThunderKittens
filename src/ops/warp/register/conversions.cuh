@@ -14,8 +14,8 @@ __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
     :   "r"(*(uint32_t*)(&src))
     );
 }
-template<typename T2, rt_layout layout>
-__device__ inline void swap_layout(rt_base<T2, typename transpose_layout<layout>::type> &dst, const rt_base<T2, layout> &src) {
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline void swap_layout(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T2, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
     // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
@@ -24,8 +24,8 @@ __device__ inline void swap_layout(rt_base<T2, typename transpose_layout<layout>
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
 }
-template<typename T2, int _height, int _width, rt_layout layout>
-__device__ static inline void swap_layout(rt<T2, _height, _width, typename transpose_layout<layout>::type> &dst, const rt<T2, _height, _width, layout> &src) {
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline void swap_layout(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt<T2, _height, _width, layout> &src) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -35,14 +35,14 @@ __device__ static inline void swap_layout(rt<T2, _height, _width, typename trans
     }
 }
 
-template<typename T2, rt_layout layout>
-__device__ inline rt_base<T2, typename transpose_layout<layout>::type>& swap_layout_inplace(const rt_base<T2, layout> &src) {
-    rt_base<T2, typename transpose_layout<layout>::type> &dst = *(rt_base<T2, typename transpose_layout<layout>::type>*)(&src);
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline rt_base<T2, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(const rt_base<T2, layout> &src) {
+    rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst = *(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type>*)(&src);
     swap_layout(dst, src);
     return dst;
 }
-template<typename T2, int _height, int _width, rt_layout layout>
-__device__ static inline rt<T2, _height, _width, typename transpose_layout<layout>::type>& swap_layout_inplace(rt<T2, _height, _width, layout> &tile) {
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt<T2, _height, _width, layout> &tile) {
     #pragma unroll
     for(int i = 0; i < tile.height; i++) {
         #pragma unroll
@@ -50,12 +50,12 @@ __device__ static inline rt<T2, _height, _width, typename transpose_layout<layou
             swap_layout_inplace(tile.tiles[i][j]);
         }
     }
-    return *(rt<T2, _height, _width, typename transpose_layout<layout>::type>*)(&tile);
+    return *(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>*)(&tile);
 }
 
 /* ----------  TRANSPOSE  ---------- */
 
-template<typename T2, rt_layout layout>
+template<typename T2, ducks::rt_layout::all layout>
 __device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
@@ -65,7 +65,7 @@ __device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, lay
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
 }
-template<typename T2, int _height, int _width, rt_layout layout>
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
 __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst, const rt<T2, _height, _width, layout> &src) {
     #pragma unroll
     for(int i = 0; i < _height; i++) {
@@ -76,12 +76,12 @@ __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst
     }
 }
 
-template<typename T2, rt_layout layout>
+template<typename T2, ducks::rt_layout::all layout>
 __device__ inline rt_base<T2, layout>& transpose_inplace(rt_base<T2, layout> &src) {
     transpose(src, src);
     return src;
 }
-template<typename T2, int _height, int _width, rt_layout layout>
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
 __device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T2, _height, _width, layout> &tile) {
     static_assert(_width == _height, "in-place register tile transpose is only allowed for square tiles.");
     #pragma unroll
@@ -100,14 +100,14 @@ __device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T
 
 /* ----------  TYPE SWAPS  ---------- */
 
-template<typename T2, typename U2, rt_layout layout>
+template<typename T2, typename U2, ducks::rt_layout::all layout>
 __device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, layout> &src) {
     #pragma unroll
     for(int k = 0; k < dst.packed_per_thread; k++) {
         dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
     }
 }
-template<typename T2, typename U2, int _height, int _width, rt_layout layout>
+template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
 __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {

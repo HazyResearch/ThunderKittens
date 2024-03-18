@@ -13,7 +13,7 @@ namespace kittens {
 
 // ----------  ROW LAYOUTS ----------
 
-template<rt_type RT, st_type_rowlayout ST>
+template<ducks::rt::all RT, ducks::st::row_layout ST>
 __device__ inline static void load(RT &dst, const ST &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");
@@ -29,7 +29,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = i*dst.tile_size + (laneid / 4);
                 int col = j*dst.tile_size + 2*(laneid % 4);
@@ -56,7 +56,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
 }
 
 
-template<rt_type RT, st_type_rowlayout ST>
+template<ducks::rt::all RT, ducks::st::row_layout ST>
 __device__ inline static void store(ST &dst, const RT &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");
@@ -72,7 +72,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);
@@ -100,7 +100,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
 
 // ----------  COL LAYOUTS ---------- (slow for the time being)
 
-template<rt_type RT, st_type_collayout ST>
+template<ducks::rt::all RT, ducks::st::col_layout ST>
 __device__ inline static void load(RT &dst, const ST &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");
@@ -116,7 +116,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = i*dst.tile_size + (laneid / 4);
                 int col = j*dst.tile_size + 2*(laneid % 4);
@@ -146,7 +146,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
     }
 }
 
-template<rt_type RT, st_type_collayout ST>
+template<ducks::rt::all RT, ducks::st::col_layout ST>
 __device__ inline static void store(ST &dst, const RT &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");
@@ -162,7 +162,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, rt_row_layout>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);
@@ -195,7 +195,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
 
 
 // register vector to shared vector
-template<st_vec_type ST, rt_vec_type RT>
+template<ducks::sv::all ST, ducks::rv::all RT>
 __device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
@@ -218,7 +218,7 @@ __device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
 }
 
 // shared vector to register vector
-template<rt_vec_type RT, st_vec_type ST>
+template<ducks::rv::all RT, ducks::sv::all ST>
 __device__ inline static void svec_to_rvec(RT &dst, const ST &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);

@@ -1,0 +1,1520 @@
+ ---------------  BEGINNING WARP TESTS  ---------------
+ ----- Starting memory tests! -----
+Test `ones_tile`
+PASSED
+Test `copy_tile`
+PASSED
+Test `test_rvec_to_svec`
+PASSED
+Test `test_svec_to_rvec`
+PASSED
+Test `test_hbm_to_rvec`
+PASSED
+Test `test_vec_to_rvec`
+PASSED
+ ----- Starting shared vector tests! -----
+Launching kernel!
+Launched kernel!
+Test `ones_st_vec`
+PASSED
+Test `copy_st_vec`
+PASSED
+Test `copy_offset_st_vec`
+PASSED
+ ----- Starting register layout tests! -----
+Test `reg_transpose_ker`
+PASSED
+Test `swap_reg_layout_row2col_global`
+PASSED
+Test `swap_reg_layout_col2row_global`
+PASSED
+Test `swap_reg_layout_row2col_shared`
+PASSED
+Test `swap_reg_layout_col2row_shared`
+PASSED
+ ----- Starting shared layout tests! -----
+Test `ducks::st_layout::naive`
+PASSED
+Test `ducks::st_layout::tma_swizzle`
+PASSED
+Test `ducks::st_layout::xor_swizzle`
+PASSED
+Test `ducks::st_layout::wgmma_row_0b`
+PASSED
+Test `ducks::st_layout::wgmma_row_32b`
+PASSED
+Test `st_naive_row_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_naive_row_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_naive_row_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_naive_row_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_naive_row_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+Test `st_tma_row_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_tma_row_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_tma_row_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_tma_row_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_tma_row_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+Test `st_xor_row_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_xor_row_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_xor_row_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_xor_row_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_xor_row_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+Test `st_wgmma_row_0b_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_wgmma_row_0b_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_wgmma_row_0b_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_wgmma_row_0b_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_wgmma_row_0b_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+Test `st_wgmma_row_32b_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_wgmma_row_32b_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_wgmma_row_32b_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_wgmma_row_32b_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_wgmma_row_32b_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+Test `st_wgmma_col_t_0b_layout_bf_convertto_st_naive_row_layout_fl`
+PASSED
+Test `st_wgmma_col_t_0b_layout_bf_convertto_st_tma_row_layout_fl`
+PASSED
+Test `st_wgmma_col_t_0b_layout_bf_convertto_st_xor_row_layout_fl`
+PASSED
+Test `st_wgmma_col_t_0b_layout_bf_convertto_st_wgmma_row_0b_layout_fl`
+PASSED
+Test `st_wgmma_col_t_0b_layout_bf_convertto_st_wgmma_row_32b_layout_fl`
+PASSED
+ ----- Starting shared subtile tests! -----
+Test `test_subtile_row_st_naive_row_layout`
+PASSED
+Test `test_subtile_row_st_xor_row_layout`
+PASSED
+Test `test_subtile_row_st_wgmma_row_0b_layout`
+PASSED
+Test `test_subtile_row_st_wgmma_row_32b_layout`
+PASSED
+Test `test_subtile_row_st_wgmma_col_t_0b_layout`
+PASSED
+Test `test_subtile_row_st_wgmma_col_t_32b_layout`
+PASSED
+Test `test_subtile_col_st_naive_row_layout`
+PASSED
+Test `test_subtile_col_st_xor_row_layout`
+PASSED
+Test `test_subtile_col_st_wgmma_row_0b_layout`
+PASSED
+Test `test_subtile_col_st_wgmma_row_32b_layout`
+PASSED
+Test `test_subtile_col_st_wgmma_col_t_0b_layout`
+PASSED
+Test `test_subtile_col_st_wgmma_col_t_32b_layout`
+PASSED
+ ----- Starting map tests! -----
+Test `exp_tile`
+PASSED
+ ----- Starting reduction tests! -----
+Test `row_normalize_row_tile`
+PASSED
+Test `row_normalize_col_tile`
+PASSED
+Test `col_normalize_row_tile`
+PASSED
+Test `col_normalize_col_tile`
+PASSED
+ ----- Starting broadcast tests! -----
+Test `row_broadcast_row_tile`
+PASSED
+Test `row_broadcast_col_tile`
+PASSED
+Test `col_broadcast_row_tile`
+PASSED
+Test `col_broadcast_col_tile`
+PASSED
+ ----- Starting MMA tests! -----
+Test `dot_tile`
+PASSED
+Test `mma_tile`
+PASSED
+ ----- Starting tma tests! -----
+Test `tma_st_naive_row_layout_load_1x1_1`
+PASSED
+Test `tma_st_naive_row_layout_load_1x2_1`
+PASSED
+Test `tma_st_naive_row_layout_load_1x3_1`
+PASSED
+Test `tma_st_naive_row_layout_load_1x4_1`
+PASSED
+Test `tma_st_naive_row_layout_load_1x1_2`
+PASSED
+Test `tma_st_naive_row_layout_load_1x2_2`
+PASSED
+Test `tma_st_naive_row_layout_load_1x3_2`
+PASSED
+Test `tma_st_naive_row_layout_load_1x4_2`
+PASSED
+Test `tma_st_naive_row_layout_load_1x1_3`
+PASSED
+Test `tma_st_naive_row_layout_load_1x2_3`
+PASSED
+Test `tma_st_naive_row_layout_load_1x3_3`
+PASSED
+Test `tma_st_naive_row_layout_load_1x4_3`
+PASSED
+Test `tma_st_naive_row_layout_load_1x1_4`
+PASSED
+Test `tma_st_naive_row_layout_load_1x2_4`
+PASSED
+Test `tma_st_naive_row_layout_load_1x3_4`
+PASSED
+Test `tma_st_naive_row_layout_load_1x4_4`
+PASSED
+Test `tma_st_naive_row_layout_load_2x1_1`
+PASSED
+Test `tma_st_naive_row_layout_load_2x2_1`
+PASSED
+Test `tma_st_naive_row_layout_load_2x3_1`
+PASSED
+Test `tma_st_naive_row_layout_load_2x4_1`
+PASSED
+Test `tma_st_naive_row_layout_load_2x1_2`
+PASSED
+Test `tma_st_naive_row_layout_load_2x2_2`
+PASSED
+Test `tma_st_naive_row_layout_load_2x3_2`
+PASSED
+Test `tma_st_naive_row_layout_load_2x4_2`
+PASSED
+Test `tma_st_naive_row_layout_load_2x1_3`
+PASSED
+Test `tma_st_naive_row_layout_load_2x2_3`
+PASSED
+Test `tma_st_naive_row_layout_load_2x3_3`
+PASSED
+Test `tma_st_naive_row_layout_load_2x4_3`
+PASSED
+Test `tma_st_naive_row_layout_load_2x1_4`
+PASSED
+Test `tma_st_naive_row_layout_load_2x2_4`
+PASSED
+Test `tma_st_naive_row_layout_load_2x3_4`
+PASSED
+Test `tma_st_naive_row_layout_load_2x4_4`
+PASSED
+Test `tma_st_naive_row_layout_load_3x1_1`
+PASSED
+Test `tma_st_naive_row_layout_load_3x2_1`
+PASSED
+Test `tma_st_naive_row_layout_load_3x3_1`
+PASSED
+Test `tma_st_naive_row_layout_load_3x4_1`
+PASSED
+Test `tma_st_naive_row_layout_load_3x1_2`
+PASSED
+Test `tma_st_naive_row_layout_load_3x2_2`
+PASSED
+Test `tma_st_naive_row_layout_load_3x3_2`
+PASSED
+Test `tma_st_naive_row_layout_load_3x4_2`
+PASSED
+Test `tma_st_naive_row_layout_load_3x1_3`
+PASSED
+Test `tma_st_naive_row_layout_load_3x2_3`
+PASSED
+Test `tma_st_naive_row_layout_load_3x3_3`
+PASSED
+Test `tma_st_naive_row_layout_load_3x4_3`
+PASSED
+Test `tma_st_naive_row_layout_load_3x1_4`
+PASSED
+Test `tma_st_naive_row_layout_load_3x2_4`
+PASSED
+Test `tma_st_naive_row_layout_load_3x3_4`
+PASSED
+Test `tma_st_naive_row_layout_load_3x4_4`
+PASSED
+Test `tma_st_naive_row_layout_load_4x1_1`
+PASSED
+Test `tma_st_naive_row_layout_load_4x2_1`
+PASSED
+Test `tma_st_naive_row_layout_load_4x3_1`
+PASSED
+Test `tma_st_naive_row_layout_load_4x4_1`
+PASSED
+Test `tma_st_naive_row_layout_load_4x1_2`
+PASSED
+Test `tma_st_naive_row_layout_load_4x2_2`
+PASSED
+Test `tma_st_naive_row_layout_load_4x3_2`
+PASSED
+Test `tma_st_naive_row_layout_load_4x4_2`
+PASSED
+Test `tma_st_naive_row_layout_load_4x1_3`
+PASSED
+Test `tma_st_naive_row_layout_load_4x2_3`
+PASSED
+Test `tma_st_naive_row_layout_load_4x3_3`
+PASSED
+Test `tma_st_naive_row_layout_load_4x4_3`
+PASSED
+Test `tma_st_naive_row_layout_load_4x1_4`
+PASSED
+Test `tma_st_naive_row_layout_load_4x2_4`
+PASSED
+Test `tma_st_naive_row_layout_load_4x3_4`
+PASSED
+Test `tma_st_naive_row_layout_load_4x4_4`
+PASSED
+Test `tma_st_naive_row_layout_store_1x1_1`
+PASSED
+Test `tma_st_naive_row_layout_store_1x2_1`
+PASSED
+Test `tma_st_naive_row_layout_store_1x3_1`
+PASSED
+Test `tma_st_naive_row_layout_store_1x4_1`
+PASSED
+Test `tma_st_naive_row_layout_store_1x1_2`
+PASSED
+Test `tma_st_naive_row_layout_store_1x2_2`
+PASSED
+Test `tma_st_naive_row_layout_store_1x3_2`
+PASSED
+Test `tma_st_naive_row_layout_store_1x4_2`
+PASSED
+Test `tma_st_naive_row_layout_store_1x1_3`
+PASSED
+Test `tma_st_naive_row_layout_store_1x2_3`
+PASSED
+Test `tma_st_naive_row_layout_store_1x3_3`
+PASSED
+Test `tma_st_naive_row_layout_store_1x4_3`
+PASSED
+Test `tma_st_naive_row_layout_store_1x1_4`
+PASSED
+Test `tma_st_naive_row_layout_store_1x2_4`
+PASSED
+Test `tma_st_naive_row_layout_store_1x3_4`
+PASSED
+Test `tma_st_naive_row_layout_store_1x4_4`
+PASSED
+Test `tma_st_naive_row_layout_store_2x1_1`
+PASSED
+Test `tma_st_naive_row_layout_store_2x2_1`
+PASSED
+Test `tma_st_naive_row_layout_store_2x3_1`
+PASSED
+Test `tma_st_naive_row_layout_store_2x4_1`
+PASSED
+Test `tma_st_naive_row_layout_store_2x1_2`
+PASSED
+Test `tma_st_naive_row_layout_store_2x2_2`
+PASSED
+Test `tma_st_naive_row_layout_store_2x3_2`
+PASSED
+Test `tma_st_naive_row_layout_store_2x4_2`
+PASSED
+Test `tma_st_naive_row_layout_store_2x1_3`
+PASSED
+Test `tma_st_naive_row_layout_store_2x2_3`
+PASSED
+Test `tma_st_naive_row_layout_store_2x3_3`
+PASSED
+Test `tma_st_naive_row_layout_store_2x4_3`
+PASSED
+Test `tma_st_naive_row_layout_store_2x1_4`
+PASSED
+Test `tma_st_naive_row_layout_store_2x2_4`
+PASSED
+Test `tma_st_naive_row_layout_store_2x3_4`
+PASSED
+Test `tma_st_naive_row_layout_store_2x4_4`
+PASSED
+Test `tma_st_naive_row_layout_store_3x1_1`
+PASSED
+Test `tma_st_naive_row_layout_store_3x2_1`
+PASSED
+Test `tma_st_naive_row_layout_store_3x3_1`
+PASSED
+Test `tma_st_naive_row_layout_store_3x4_1`
+PASSED
+Test `tma_st_naive_row_layout_store_3x1_2`
+PASSED
+Test `tma_st_naive_row_layout_store_3x2_2`
+PASSED
+Test `tma_st_naive_row_layout_store_3x3_2`
+PASSED
+Test `tma_st_naive_row_layout_store_3x4_2`
+PASSED
+Test `tma_st_naive_row_layout_store_3x1_3`
+PASSED
+Test `tma_st_naive_row_layout_store_3x2_3`
+PASSED
+Test `tma_st_naive_row_layout_store_3x3_3`
+PASSED
+Test `tma_st_naive_row_layout_store_3x4_3`
+PASSED
+Test `tma_st_naive_row_layout_store_3x1_4`
+PASSED
+Test `tma_st_naive_row_layout_store_3x2_4`
+PASSED
+Test `tma_st_naive_row_layout_store_3x3_4`
+PASSED
+Test `tma_st_naive_row_layout_store_3x4_4`
+PASSED
+Test `tma_st_naive_row_layout_store_4x1_1`
+PASSED
+Test `tma_st_naive_row_layout_store_4x2_1`
+PASSED
+Test `tma_st_naive_row_layout_store_4x3_1`
+PASSED
+Test `tma_st_naive_row_layout_store_4x4_1`
+PASSED
+Test `tma_st_naive_row_layout_store_4x1_2`
+PASSED
+Test `tma_st_naive_row_layout_store_4x2_2`
+PASSED
+Test `tma_st_naive_row_layout_store_4x3_2`
+PASSED
+Test `tma_st_naive_row_layout_store_4x4_2`
+PASSED
+Test `tma_st_naive_row_layout_store_4x1_3`
+PASSED
+Test `tma_st_naive_row_layout_store_4x2_3`
+PASSED
+Test `tma_st_naive_row_layout_store_4x3_3`
+PASSED
+Test `tma_st_naive_row_layout_store_4x4_3`
+PASSED
+Test `tma_st_naive_row_layout_store_4x1_4`
+PASSED
+Test `tma_st_naive_row_layout_store_4x2_4`
+PASSED
+Test `tma_st_naive_row_layout_store_4x3_4`
+PASSED
+Test `tma_st_naive_row_layout_store_4x4_4`
+PASSED
+Test `tma_st_tma_row_layout_load_1x1_1`
+PASSED
+Test `tma_st_tma_row_layout_load_1x2_1`
+PASSED
+Test `tma_st_tma_row_layout_load_1x4_1`
+PASSED
+Test `tma_st_tma_row_layout_load_1x1_2`
+PASSED
+Test `tma_st_tma_row_layout_load_1x2_2`
+PASSED
+Test `tma_st_tma_row_layout_load_1x4_2`
+PASSED
+Test `tma_st_tma_row_layout_load_1x1_3`
+PASSED
+Test `tma_st_tma_row_layout_load_1x2_3`
+PASSED
+Test `tma_st_tma_row_layout_load_1x4_3`
+PASSED
+Test `tma_st_tma_row_layout_load_1x1_4`
+PASSED
+Test `tma_st_tma_row_layout_load_1x2_4`
+PASSED
+Test `tma_st_tma_row_layout_load_1x4_4`
+PASSED
+Test `tma_st_tma_row_layout_load_2x1_1`
+PASSED
+Test `tma_st_tma_row_layout_load_2x2_1`
+PASSED
+Test `tma_st_tma_row_layout_load_2x4_1`
+PASSED
+Test `tma_st_tma_row_layout_load_2x1_2`
+PASSED
+Test `tma_st_tma_row_layout_load_2x2_2`
+PASSED
+Test `tma_st_tma_row_layout_load_2x4_2`
+PASSED
+Test `tma_st_tma_row_layout_load_2x1_3`
+PASSED
+Test `tma_st_tma_row_layout_load_2x2_3`
+PASSED
+Test `tma_st_tma_row_layout_load_2x4_3`
+PASSED
+Test `tma_st_tma_row_layout_load_2x1_4`
+PASSED
+Test `tma_st_tma_row_layout_load_2x2_4`
+PASSED
+Test `tma_st_tma_row_layout_load_2x4_4`
+PASSED
+Test `tma_st_tma_row_layout_load_3x1_1`
+PASSED
+Test `tma_st_tma_row_layout_load_3x2_1`
+PASSED
+Test `tma_st_tma_row_layout_load_3x4_1`
+PASSED
+Test `tma_st_tma_row_layout_load_3x1_2`
+PASSED
+Test `tma_st_tma_row_layout_load_3x2_2`
+PASSED
+Test `tma_st_tma_row_layout_load_3x4_2`
+PASSED
+Test `tma_st_tma_row_layout_load_3x1_3`
+PASSED
+Test `tma_st_tma_row_layout_load_3x2_3`
+PASSED
+Test `tma_st_tma_row_layout_load_3x4_3`
+PASSED
+Test `tma_st_tma_row_layout_load_3x1_4`
+PASSED
+Test `tma_st_tma_row_layout_load_3x2_4`
+PASSED
+Test `tma_st_tma_row_layout_load_3x4_4`
+PASSED
+Test `tma_st_tma_row_layout_load_4x1_1`
+PASSED
+Test `tma_st_tma_row_layout_load_4x2_1`
+PASSED
+Test `tma_st_tma_row_layout_load_4x4_1`
+PASSED
+Test `tma_st_tma_row_layout_load_4x1_2`
+PASSED
+Test `tma_st_tma_row_layout_load_4x2_2`
+PASSED
+Test `tma_st_tma_row_layout_load_4x4_2`
+PASSED
+Test `tma_st_tma_row_layout_load_4x1_3`
+PASSED
+Test `tma_st_tma_row_layout_load_4x2_3`
+PASSED
+Test `tma_st_tma_row_layout_load_4x4_3`
+PASSED
+Test `tma_st_tma_row_layout_load_4x1_4`
+PASSED
+Test `tma_st_tma_row_layout_load_4x2_4`
+PASSED
+Test `tma_st_tma_row_layout_load_4x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_1x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_2x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_3x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_load_4x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_1x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_2x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_3x4_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x1_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x2_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x3_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x4_1`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x1_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x2_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x3_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x4_2`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x1_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x2_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x3_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x4_3`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x1_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x2_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x3_4`
+PASSED
+Test `tma_st_wgmma_row_0b_layout_store_4x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_1x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_2x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_3x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_load_4x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_1x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_2x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_3x4_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x1_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x2_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x3_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x4_1`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x1_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x2_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x3_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x4_2`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x1_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x2_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x3_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x4_3`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x1_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x2_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x3_4`
+PASSED
+Test `tma_st_wgmma_col_t_0b_layout_store_4x4_4`
+PASSED
+ ---------------  BEGINNING WARPGROUP TESTS  ---------------
+ ----- Starting Warpgroup MMA tests! -----
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_0b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_0b_layout_st_wgmma_row_32b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_0b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_st_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x1x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x2x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x3x4`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x1`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x2`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x3`
+PASSED
+Test `wgmma_dot_rt_st_st_wgmma_row_32b_layout_st_wgmma_row_32b_layout_4x4x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x2`
+ ----- ALERT! FAILED TEST `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x2` -----
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x1x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x2x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x3x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x2`
+ ----- ALERT! FAILED TEST `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x2` -----
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_0b_layout_st_wgmma_col_t_0b_layout_4x4x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x2`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x4`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x1`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x2`
+ ----- ALERT! FAILED TEST `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x2` -----
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x3`
+PASSED
+Test `wgmma_mma_st_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x1x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x2x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x2`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x3x4`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x1`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x2`
+ ----- ALERT! FAILED TEST `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x2` -----
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x3`
+PASSED
+Test `wgmma_mma_rt_st_st_wgmma_row_32b_layout_st_wgmma_col_t_0b_layout_4x4x4`
+PASSED
+ ----- Starting Tall Warpgroup MMA tests! -----
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_8x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_8x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_8x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_8x4x4`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_12x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_12x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_12x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_12x4x4`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_16x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_16x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_16x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_0b_layout_16x4x4`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_8x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_8x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_8x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_8x4x4`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_12x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_12x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_12x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_12x4x4`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_16x4x1`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_16x4x2`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_16x4x3`
+PASSED
+Test `wgmma_tall_dot_rt_st_st_wgmma_row_32b_layout_16x4x4`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_8x4x1`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_8x4x2`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_8x4x3`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_8x4x4`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x1`
+ ----- ALERT! FAILED TEST `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x1` -----
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x2`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x3`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x4`
+ ----- ALERT! FAILED TEST `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_12x4x4` -----
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_16x4x1`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_16x4x2`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_16x4x3`
+PASSED
+Test `wgmma_tall_mma_rt_st_st_wgmma_col_t_0b_layout_16x4x4`
+PASSED
+ ---------------  BEGINNING BLOCK TESTS  ---------------
+ ----- Starting dsmem tests! -----
+Test `dsmem_nextneighbor`
+PASSED
+ ---------------  BEGINNING INTEGRATION TESTS  ---------------
+ ----- Starting Integrated TMA+WGMMA tests! -----
+Test `wgmma_tma_mma_st_st_4x1x1`
+PASSED
+Test `wgmma_tma_mma_st_st_4x1x2`
+PASSED
+Test `wgmma_tma_mma_st_st_4x1x3`
+PASSED
+Test `wgmma_tma_mma_st_st_4x1x4`
+PASSED
+Test `wgmma_tma_mma_st_st_4x2x1`
+PASSED
+Test `wgmma_tma_mma_st_st_4x2x2`
+PASSED
+Test `wgmma_tma_mma_st_st_4x2x3`
+PASSED
+Test `wgmma_tma_mma_st_st_4x2x4`
+PASSED
+Test `wgmma_tma_mma_st_st_4x3x1`
+PASSED
+Test `wgmma_tma_mma_st_st_4x3x2`
+PASSED
+Test `wgmma_tma_mma_st_st_4x3x3`
+PASSED
+Test `wgmma_tma_mma_st_st_4x3x4`
+PASSED
+Test `wgmma_tma_mma_st_st_4x4x1`
+PASSED
+Test `wgmma_tma_mma_st_st_4x4x2`
+ ----- ALERT! FAILED TEST `wgmma_tma_mma_st_st_4x4x2` -----
+Test `wgmma_tma_mma_st_st_4x4x3`
+PASSED
+Test `wgmma_tma_mma_st_st_4x4x4`
+PASSED
+ ---------------  SUMMARY  ---------------
+7 TESTS FAILED :(

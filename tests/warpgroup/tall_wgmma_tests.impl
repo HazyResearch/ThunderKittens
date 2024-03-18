@@ -1,6 +1,6 @@
 
 
-template<st_wgmma_row_layout L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_tall_dot_ker(const bf16 *input, bf16 *output) {
     constexpr int WGMMA_N = WGMMA_NDIV4*4;
 
@@ -30,7 +30,7 @@ __global__ void test_wgmma_tall_dot_ker(const bf16 *input, bf16 *output) {
     warpgroup::store(output, result, 16*WGMMA_M); // this is going to break
     __syncthreads();
 }
-template<st_wgmma_row_layout L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
 bool test_wgmma_tall_dot() {
     constexpr int WGMMA_N = WGMMA_NDIV4*4;
     // initialize
@@ -63,7 +63,7 @@ bool test_wgmma_tall_dot() {
     );
     return passed;
 }
-template<st_wgmma_col_layout L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_col L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_tall_mma_ker(const bf16 *input, bf16 *output) {
     constexpr int WGMMA_N = WGMMA_NDIV4*4;
 
@@ -93,7 +93,7 @@ __global__ void test_wgmma_tall_mma_ker(const bf16 *input, bf16 *output) {
     warpgroup::store(output, result, 16*WGMMA_M); // this is going to break
     __syncthreads();
 }
-template<st_wgmma_col_layout L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_col L, int WGMMA_NDIV4, int WGMMA_K, int WGMMA_M>
 bool test_wgmma_tall_mma() {
     constexpr int WGMMA_N = WGMMA_NDIV4*4;
     // initialize
@@ -128,7 +128,7 @@ bool test_wgmma_tall_mma() {
 }
 
 
-template<st_wgmma_row_layout L>
+template<ducks::st_layout::wgmma_row L>
 int test_tall_wgmma_dot_layout() {
     int failures = 0;
 
@@ -148,7 +148,7 @@ int test_tall_wgmma_dot_layout() {
     return failures;
 }
 
-template<st_wgmma_col_layout L>
+template<ducks::st_layout::wgmma_col L>
 int test_tall_wgmma_mma_layout() {
     int failures = 0;
 
@@ -173,10 +173,10 @@ int tall_wgmma_tests() {
     std::cout << " ----- Starting Tall Warpgroup MMA tests! -----" << std::endl;
     int failures = 0;
 
-    failures += test_tall_wgmma_dot_layout<st_wgmma_row_0b_layout>();
-    failures += test_tall_wgmma_dot_layout<st_wgmma_row_32b_layout>();
+    failures += test_tall_wgmma_dot_layout<ducks::st_layout::wgmma_row_0b>();
+    failures += test_tall_wgmma_dot_layout<ducks::st_layout::wgmma_row_32b>();
 
-    failures += test_tall_wgmma_mma_layout<st_wgmma_col_t_0b_layout>();
+    failures += test_tall_wgmma_mma_layout<ducks::st_layout::wgmma_col_t_0b>();
 
     return failures;
 }

@@ -1,5 +1,5 @@
 #define DEFAULT_WGMMA_N 4 // must be 4 due to WGMMA
-template<st_wgmma_row_layout L1, st_wgmma_row_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_row L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
 
     int warpid = kittens::warpid(); 
@@ -40,7 +40,7 @@ __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
     store(output+256*WGMMA_M*warpid, result, 16*WGMMA_M);
     __syncthreads();
 }
-template<st_wgmma_row_layout L1, st_wgmma_row_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_row L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 bool test_wgmma_dot() {
     // initailize
     bf16 *d_i, *d_o;
@@ -74,7 +74,7 @@ bool test_wgmma_dot() {
     return passed;
 }
 
-template<st_wgmma_row_layout L1, st_wgmma_col_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_col L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
 
     int warpid = kittens::warpid();
@@ -112,7 +112,7 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
     
     warpgroup::store(output, result, 16*WGMMA_M); // this is going to break
 }
-template<st_wgmma_row_layout L1, st_wgmma_col_layout L2, bool use_reg, int WGMMA_K, int WGMMA_M>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_col L2, bool use_reg, int WGMMA_K, int WGMMA_M>
 bool test_wgmma_mma() {
     // initailize
     bf16 *d_i, *d_o;
@@ -144,7 +144,7 @@ bool test_wgmma_mma() {
     return passed;
 }
 
-template<st_wgmma_row_layout L1, st_wgmma_row_layout L2>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_row L2>
 int test_wgmma_dot_layout() {
     int failures = 0;
 
@@ -184,7 +184,7 @@ int test_wgmma_dot_layout() {
     return failures;
 }
 
-template<st_wgmma_row_layout L1, st_wgmma_col_layout L2>
+template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_col L2>
 int test_wgmma_mma_layout() {
     int failures = 0;
 
@@ -228,15 +228,15 @@ int wgmma_tests() {
     std::cout << " ----- Starting Warpgroup MMA tests! -----" << std::endl;
     int failures = 0;
 
-    failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_0b_layout >();
-    failures += test_wgmma_dot_layout<st_wgmma_row_0b_layout,  st_wgmma_row_32b_layout>();
-    failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_0b_layout >();
-    failures += test_wgmma_dot_layout<st_wgmma_row_32b_layout, st_wgmma_row_32b_layout>();
+    failures += test_wgmma_dot_layout<ducks::st_layout::wgmma_row_0b,  ducks::st_layout::wgmma_row_0b >();
+    failures += test_wgmma_dot_layout<ducks::st_layout::wgmma_row_0b,  ducks::st_layout::wgmma_row_32b>();
+    failures += test_wgmma_dot_layout<ducks::st_layout::wgmma_row_32b, ducks::st_layout::wgmma_row_0b >();
+    failures += test_wgmma_dot_layout<ducks::st_layout::wgmma_row_32b, ducks::st_layout::wgmma_row_32b>();
 
-    failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_0b_layout >();
-    // failures += test_wgmma_mma_layout<st_wgmma_row_0b_layout,  st_wgmma_col_t_32b_layout>();
-    failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_0b_layout >();
-    // failures += test_wgmma_mma_layout<st_wgmma_row_32b_layout, st_wgmma_col_t_32b_layout>();
+    failures += test_wgmma_mma_layout<ducks::st_layout::wgmma_row_0b,  ducks::st_layout::wgmma_col_t_0b >();
+    // failures += test_wgmma_mma_layout<ducks::st_layout::wgmma_row_0b,  wgmma_col_t_32b>();
+    failures += test_wgmma_mma_layout<ducks::st_layout::wgmma_row_32b, ducks::st_layout::wgmma_col_t_0b >();
+    // failures += test_wgmma_mma_layout<ducks::st_layout::wgmma_row_32b, wgmma_col_t_32b>();
 
     return failures;
 }

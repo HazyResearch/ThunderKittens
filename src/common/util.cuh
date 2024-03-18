@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <type_traits>
+#include <concepts>
 #include <memory>
 
 namespace kittens {
@@ -24,19 +25,6 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 #elif KITTENS_4090
 constexpr int MAX_SHARED_MEMORY = 101000;
 #endif
-
-/* ----------  DEFAULT TYPE  ---------- */
-
-struct default_type {};
-
-/* ----------  BOOL TYPE UTILS  ---------- */
-
-template<typename T>
-concept bool_type = std::is_same_v<T, std::true_type> || std::is_same_v<T, std::false_type>;
-
-// turns out to be a useful alias for swapping layouts
-template<bool_type B> struct not_type      { using type = std::true_type;  };
-template<> struct not_type<std::true_type> { using type = std::false_type; };
 
 /* ----------  SHUFFLE UTILS  ---------- */
 
@@ -86,6 +74,7 @@ struct shared_allocator {
             sa.ptr = (int*)(p + (alignment-(p%alignment)));
             return sa;
         }
+        // TODO: Redo this with a variadic template.
         template<typename A> 
         __device__ inline A& allocate() {
             A*p = reinterpret_cast<A*>(ptr);

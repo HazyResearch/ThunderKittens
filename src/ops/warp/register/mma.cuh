@@ -34,10 +34,10 @@ __device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
     );
 }
 
-__device__ static inline void mma_base(rt_base<float2, rt_row_layout> &d,
-                                 const rt_base<bf16_2, rt_row_layout> &a,
-                                 const rt_base<bf16_2, rt_col_layout> &b, // in col-major mode
-                                 const rt_base<float2, rt_row_layout> &c) {
+__device__ static inline void mma_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                 const rt_base<bf16_2, ducks::rt_layout::row> &a,
+                                 const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
+                                 const rt_base<float2, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -51,10 +51,10 @@ __device__ static inline void mma_base(rt_base<float2, rt_row_layout> &d,
         c.data[2], c.data[3]
     );
 }
-__device__ static inline void dot_base(rt_base<float2, rt_row_layout> &d,
-                                 const rt_base<bf16_2, rt_row_layout> &a,
-                                 const rt_base<bf16_2, rt_row_layout> &b, // in row-major mode
-                                 const rt_base<float2, rt_row_layout> &c) {
+__device__ static inline void dot_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                 const rt_base<bf16_2, ducks::rt_layout::row> &a,
+                                 const rt_base<bf16_2, ducks::rt_layout::row> &b, // in row-major mode
+                                 const rt_base<float2, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -70,10 +70,10 @@ __device__ static inline void dot_base(rt_base<float2, rt_row_layout> &d,
 }
 
 template<int N, int K, int M>
-__device__ static inline void mma(rt_fl<N, M, rt_row_layout> &d,
-                            const rt_bf<N, K, rt_row_layout> &a,
-                            const rt_bf<K, M, rt_col_layout> &b,
-                            const rt_fl<N, M, rt_row_layout> &c) {
+__device__ static inline void mma(rt_fl<N, M, ducks::rt_layout::row> &d,
+                            const rt_bf<N, K, ducks::rt_layout::row> &a,
+                            const rt_bf<K, M, ducks::rt_layout::col> &b,
+                            const rt_fl<N, M, ducks::rt_layout::row> &c) {
     #pragma unroll
     for(int n = 0; n < N; n++) {
         #pragma unroll
@@ -98,10 +98,10 @@ __device__ static inline void mma(rt_fl<N, M, rt_row_layout> &d,
 }
 
 template<int N, int K, int M>
-__device__ static inline void dot(rt_fl<N, M, rt_row_layout> &d,
-                            const rt_bf<N, K, rt_row_layout> &a,
-                            const rt_bf<M, K, rt_row_layout> &b, // notice row and (M, K) instead of col and (K, M)
-                            const rt_fl<N, M, rt_row_layout> &c) {
+__device__ static inline void dot(rt_fl<N, M, ducks::rt_layout::row> &d,
+                            const rt_bf<N, K, ducks::rt_layout::row> &a,
+                            const rt_bf<M, K, ducks::rt_layout::row> &b, // notice row and (M, K) instead of col and (K, M)
+                            const rt_fl<N, M, ducks::rt_layout::row> &c) {
     #pragma unroll
     for(int n = 0; n < N; n++) {
         #pragma unroll

@@ -3,19 +3,28 @@
 #include <type_traits>
 
 #include "../../common/common.cuh"
-#include "rt_layouts.cuh"
+#include "rt_layout.cuh"
 
 namespace kittens {
 
 /* ----------  BASE 16x16 SUBTILE STRUCT  ---------- */
 
-struct rt_base_id {};
+namespace ducks {
+namespace rt_base {
+struct identifier {};
+}
+} // namespace ducks
 
 // base register tile is 16x16
-template<kittens::concepts::packed_type T2, rt_layout _layout> struct rt_base {
-    using identifier = rt_base_id;
+template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
+    using identifier = ducks::rt_base::identifier;
     using layout = _layout;
     using dtype = T2;
+
+    static_assert(
+        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2>,
+        "rt_base was provided an unsupported type."
+    );
 
     static constexpr int tile_size            = 16;
     static constexpr int num_elements         = tile_size*tile_size; // 256
@@ -26,15 +35,15 @@ template<kittens::concepts::packed_type T2, rt_layout _layout> struct rt_base {
 
     // using an array type for both makes the access a bit more regular, which simplifies rt_vector.cuh
     // all this should be hidden from the user, anyways.
-    using col_type = std::conditional<layout::row, T2[1], T2[2]>::type; // for holding row reductions
-    using row_type = std::conditional<layout::row, T2[2], T2[1]>::type; // for holding column reductions
+    using col_type = std::conditional<layout::is_row, T2[1], T2[2]>::type; // for holding row reductions
+    using row_type = std::conditional<layout::is_row, T2[2], T2[1]>::type; // for holding column reductions
 
     T2 data[packed_per_thread];
 };
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<rt_layout L=rt_row_layout> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
-template<rt_layout L=rt_row_layout> using rt_base_bf = rt_base<bf16_2, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16_2, L>;
 
 }
