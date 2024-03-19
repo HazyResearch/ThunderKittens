@@ -95,7 +95,7 @@ __global__ void test_rvec_row_to_vec_ker(const bf16 *input, bf16 *output) {
 
     zero(smem_vec);
     one(reg_vec);
-    rvec_to_svec(smem_vec, reg_vec);
+    store(smem_vec, reg_vec);
     store(output, smem_vec);
 }
 bool test_rvec_row_to_vec() {
@@ -112,7 +112,7 @@ bool test_rvec_row_to_vec() {
     // fill in correct results on cpu
     for(int i = 0; i < _SIZE; i++) o_ref[i] = 1;
     // check and cleanup
-    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_rvec_to_svec");
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_store");
     return passed;
 }
 
@@ -129,7 +129,7 @@ __global__ void test_vec_to_rvec_row_ker(const bf16 *input, bf16 *output) {
     rt_vec_1x4 reg_vec;
 
     load(smem_vec, input);
-    svec_to_rvec(reg_vec, smem_vec);
+    load(reg_vec, smem_vec);
     store(output, reg_vec);
 }
 bool test_vec_to_rvec_row() {
@@ -146,7 +146,7 @@ bool test_vec_to_rvec_row() {
     // fill in correct results on cpu
     for(int i = 0; i < _SIZE; i++) o_ref[i] = i_ref[i];
     // check and cleanup
-    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_svec_to_rvec");
+    bool passed = validate(d_i, d_o, i_ref, o_ref, "test_load");
     return passed;
 }
 

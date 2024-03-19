@@ -35,8 +35,8 @@ template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
 
     // using an array type for both makes the access a bit more regular, which simplifies rt_vector.cuh
     // all this should be hidden from the user, anyways.
-    using col_type = std::conditional<layout::is_row, T2[1], T2[2]>::type; // for holding row reductions
-    using row_type = std::conditional<layout::is_row, T2[2], T2[1]>::type; // for holding column reductions
+    static constexpr int col_vec_pack = layout::is_row ? 1 : 2; // for holding row reductions
+    static constexpr int row_vec_pack = layout::is_row ? 2 : 1; // for holding column reductions
 
     T2 data[packed_per_thread];
 };
