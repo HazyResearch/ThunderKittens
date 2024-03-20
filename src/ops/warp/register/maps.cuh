@@ -60,11 +60,11 @@ __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
 /* ----------  Row tile maps  ----------*/
 
 // row-major layout
-template<typename op, ducks::rt::row_layout T, ducks::rv::col_vec V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -84,11 +84,11 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
     }
 }
 // col-major layout
-template<typename op, ducks::rt::col_layout T, ducks::rv::col_vec V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -109,11 +109,11 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
 
 // Three-operand row map
 // row-major layout
-template<typename op, ducks::rt::row_layout T, ducks::rv::col_vec V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -133,11 +133,11 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
     }
 }
 // col-major layout
-template<typename op, ducks::rt::col_layout T, ducks::rv::col_vec V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -158,11 +158,11 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
 /* ----------  Col major tile maps  ----------*/
 
 // row-major layout
-template<typename op, ducks::rt::row_layout T, ducks::rv::row_vec V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -180,11 +180,11 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
     }
 }
 // col-major layout
-template<typename op, ducks::rt::col_layout T, ducks::rv::row_vec V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -206,11 +206,11 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
 
 // Three-operand col map
 // row-major layout
-template<typename op, ducks::rt::row_layout T, ducks::rv::row_vec V>
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -228,11 +228,11 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
     }
 }
 // col-major layout
-template<typename op, ducks::rt::col_layout T, ducks::rv::row_vec V>
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -320,46 +320,46 @@ __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
 }
 
 // row maps
-template<ducks::rt::all T, ducks::rv::col_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void add_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sum, T, V>(dst, src, row_values);
 }
-template<ducks::rt::all T, ducks::rv::col_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void sub_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sub, T, V>(dst, src, row_values);
 }
-template<ducks::rt::all T, ducks::rv::col_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void mul_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::mul, T, V>(dst, src, row_values);
 }
-template<ducks::rt::all T, ducks::rv::col_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::div, T, V>(dst, src, row_values);
 }
-template<ducks::rt::all T, ducks::rv::col_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void broadcast_row(T &dst, const V &row_values) {
     row_map<base_ops::copy2, T, V>(dst, dst, row_values);
 }
 
 
 // col maps
-template<ducks::rt::all T, ducks::rv::row_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void add_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sum, T, V>(dst, src, col_values);
 }
-template<ducks::rt::all T, ducks::rv::row_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void sub_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sub, T, V>(dst, src, col_values);
 }
-template<ducks::rt::all T, ducks::rv::row_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void mul_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::mul, T, V>(dst, src, col_values);
 }
-template<ducks::rt::all T, ducks::rv::row_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void div_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::div, T, V>(dst, src, col_values);
 }
-template<ducks::rt::all T, ducks::rv::row_vec V>
+template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void broadcast_col(T &dst, const V &col_values) {
     col_map<base_ops::copy2, T, V>(dst, dst, col_values);
 }

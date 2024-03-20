@@ -192,11 +192,11 @@ __device__ inline static void store(ST &dst, const RT &src) {
     }
 }
 
-
+// ----------  VECTOR LAYOUTS LAYOUTS ---------- (slow for the time being)
 
 // register vector to shared vector
 template<ducks::sv::all ST, ducks::rv::all RT>
-__device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
+__device__ inline static void store(ST &dst, const RT &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
     auto row_thread_id = laneid / 4;
@@ -219,7 +219,7 @@ __device__ inline static void rvec_to_svec(ST &dst, const RT &src) {
 
 // shared vector to register vector
 template<ducks::rv::all RT, ducks::sv::all ST>
-__device__ inline static void svec_to_rvec(RT &dst, const ST &src) {
+__device__ inline static void load(RT &dst, const ST &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
     auto row_thread_id = laneid / 4; 

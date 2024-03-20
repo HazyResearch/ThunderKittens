@@ -17,7 +17,7 @@ __global__ void test_st_subtile_row_ker(const bf16 *input, bf16 *output) {
     if(warpid == 0) load(smem_tile, input, SUBTILE_COLS);
     __syncthreads();
 
-    auto subtile = smem_tile.template subtile<1,SUBTILE_N>(warpid, 0);
+    auto subtile = subtile_inplace<1,SUBTILE_N>(smem_tile, warpid, 0);
 
     load(reg_tile, subtile);
 
@@ -64,7 +64,7 @@ __global__ void test_st_subtile_col_ker(const bf16 *input, bf16 *output) {
     if(warpid == 0) load(smem_tile, input, SUBTILE_COLS);
     __syncthreads();
 
-    auto subtile = smem_tile.template subtile<SUBTILE_N,1>(0,warpid);
+    auto subtile = subtile_inplace<SUBTILE_N,1>(smem_tile, 0,warpid);
 
     load(reg_tile, subtile);
 

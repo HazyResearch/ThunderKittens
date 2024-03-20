@@ -28,4 +28,13 @@ __device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, 
     }
 }
 
+/* ----------  SUBTILE  ---------- */
+
+template<int subtile_height, int subtile_width, ducks::st::all ST>
+__device__ inline typename ST::subtile<subtile_height, subtile_width> subtile_inplace(ST &src, int tile_row_offset, int tile_col_offset) {
+    return typename ST::subtile<subtile_height, subtile_width>(
+        &src[0], subtile_height*16*tile_row_offset, subtile_width*16*tile_col_offset
+    );
+}
+
 }

@@ -7,11 +7,11 @@ namespace kittens {
 
 // Row reduction. Written to give (hopefully) better ILP than before.
 // row-major layout
-template<typename op, ducks::rv::col_vec V, ducks::rt::row_layout T, bool reset>
+template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = V::dtype;
@@ -49,11 +49,11 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
     }
 }
 // col-major layout
-template<typename op, ducks::rv::col_vec V, ducks::rt::col_layout T, bool reset>
+template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = V::dtype;
@@ -98,11 +98,11 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 
 // Col reduction.
 // row-major layout
-template<typename op, ducks::rv::row_vec V, ducks::rt::row_layout T, bool reset>
+template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = V::dtype;
@@ -145,11 +145,11 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
     }
 }
 // col-major layout
-template<typename op, ducks::rv::row_vec V, ducks::rt::col_layout T, bool reset>
+template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(std::is_same_v<typename V::layout, typename T::layout>); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = V::dtype;
@@ -190,71 +190,71 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // two-operand row reductions. (Accumulate and REPLACE.)
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_max(V &row_accum, const T &src)  {
     row_reduce<base_ops::max, V, T, true>(row_accum, src, row_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_min(V &row_accum, const T &src)  {
     row_reduce<base_ops::min, V, T, true>(row_accum, src, row_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_sum(V &row_accum, const T &src)  {
     row_reduce<base_ops::sum, V, T, true>(row_accum, src, row_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_prod(V &row_accum, const T &src) {
     row_reduce<base_ops::mul, V, T, true>(row_accum, src, row_accum);
 }
 // three-operand row reductions. (Accumulate ONTO.)
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_max(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::max, V, T, false>(row_accum, src, src_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_min(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::min, V, T, false>(row_accum, src, src_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_sum(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::sum, V, T, false>(row_accum, src, src_accum);
 }
-template<ducks::rv::col_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_prod(V &row_accum, const T &src, const V &src_accum) {
     row_reduce<base_ops::mul, V, T, false>(row_accum, src, src_accum);
 }
 
 // two-operand col reductions. (Accumulate and REPLACE.)
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_max(V &col_accum, const T &src)  {
     col_reduce<base_ops::max, V, T, true>(col_accum, src, col_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_min(V &col_accum, const T &src)  {
     col_reduce<base_ops::min, V, T, true>(col_accum, src, col_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_sum(V &col_accum, const T &src)  {
     col_reduce<base_ops::sum, V, T, true>(col_accum, src, col_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_prod(V &col_accum, const T &src) {
     col_reduce<base_ops::mul, V, T, true>(col_accum, src, col_accum);
 }
 // three-operand col reductions. (Accumulate ONTO.)
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_max(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::max, V, T, false>(col_accum, src, src_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_min(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::min, V, T, false>(col_accum, src, src_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_sum(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::sum, V, T, false>(col_accum, src, src_accum);
 }
-template<ducks::rv::row_vec V, ducks::rt::all T>
+template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_accum) {
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
 }

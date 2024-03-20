@@ -7,20 +7,17 @@
 
 #include "rt_layout.cuh"
 #include "rt_base.cuh"
+#include "rv.cuh"
 
 namespace kittens {
 
 /* ----------  MAIN TILE STRUCT  ---------- */
 
-// these are helper structs for type inference
+// helper struct for type inference
 namespace ducks {
 namespace rt {
 struct identifier {};
 } // namespace rt
-namespace rv {
-struct col_vec_identifier {}; // these are temp anyways
-struct row_vec_identifier {}; // these are temp anyways
-} // namespace rv
 } // namespace ducks
 
 // base register tile is 16x16
@@ -43,38 +40,8 @@ struct rt {
 
     rt_base<dtype, layout> tiles[height][width]; // should be row-major since we broadly expect row-major inputs
 
-    // (assuming row_layout; if col_major then these are swapped)
-    // relies on T2 being a packed type due to the particular layout demanded by mma.
-    // essentially, each thread handles part of two separate rows in each 16x16 tile_base
-    // correspondingly, we use a packed type where the .x is the top row and .y the bottom.
-    struct col_vec {
-        using identifier = ducks::rv::col_vec_identifier;
-        using layout = layout;
-        using dtype = dtype;
-
-        rt_base<dtype, layout>::col_type data[height];
-
-        static constexpr int outer_dim = height;
-        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]);
-
-        __device__ inline       rt_base<dtype, layout>::col_type& operator[](size_t idx)       { return data[idx]; }
-        __device__ inline const rt_base<dtype, layout>::col_type& operator[](size_t idx) const { return data[idx]; }
-    };
-    // in the case of a column reduction, each thread contains data from 4 columns, so in
-    // eager mode it will store a bit of all of them.
-    struct row_vec {
-        using identifier = ducks::rv::row_vec_identifier;
-        using layout = layout;
-        using dtype = dtype;
-
-        rt_base<dtype, layout>::row_type data[width];
-
-        static constexpr int outer_dim = width;
-        static constexpr int inner_dim = sizeof(data[0])/sizeof(data[0][0]);
-
-        __device__ inline       rt_base<dtype, layout>::row_type& operator[](size_t idx)       { return data[idx]; }
-        __device__ inline const rt_base<dtype, layout>::row_type& operator[](size_t idx) const { return data[idx]; }
-    };
+    using col_vec = rv<dtype, height, rt_base<dtype, layout>::col_vec_pack>;
+    using row_vec = rv<dtype, width , rt_base<dtype, layout>::row_vec_pack>;
 
     /* ----------  SUBTILE  ---------- */
 
@@ -102,21 +69,6 @@ template<typename T>
 concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::col>;
 
 } // namespace rt
-
-namespace rv {
-
-template<typename T>
-concept col_vec = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, col_vec_identifier>; // Checks if T::identifier is abstract_vector
-template<typename T>
-concept row_vec = requires {
-    typename T::identifier; // Checks if T::vector_identifier exists
-} && std::is_same_v<typename T::identifier, row_vec_identifier>; // Checks if T::identifier is abstract_vector
-template<typename T>
-concept all = col_vec<T> || row_vec<T>;
-
-} // namespace rv
 } // namespace ducks
 
 
@@ -153,4 +105,4 @@ template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = r
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
 
-}
+} // namespace kittens
