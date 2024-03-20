@@ -11,8 +11,8 @@ namespace warpgroup {
 template<int trans_b>
 struct wgmma_base<8, trans_b> {
     __device__ static inline void rt_st(
-        rt_fl<1, 8, rt_row_layout> &dst,
-        const rt_base_bf<rt_row_layout> & a_rt,
+        rt_fl<1, 8, ducks::rt_layout::row> &dst,
+        const rt_base_bf<ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
         int scale_d = 1
     ) {
@@ -122,7 +122,7 @@ struct wgmma_base<8, trans_b> {
         }
     }
     __device__ static inline void st_st(
-        rt_fl<1, 8, rt_row_layout> &dst,
+        rt_fl<1, 8, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
         int scale_d = 1
