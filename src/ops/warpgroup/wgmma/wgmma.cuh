@@ -15,7 +15,7 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                             const st_bf<K, M, L_B>           &b) {
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
-        rt_fl<1, M, ducks::rt_layout::row> &d_ref = d.subtile_inplace<1>(n);
+        rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
         wgmma_base<M, 1>::rt_st(
             d_ref,
             a.tiles[n][0],
@@ -86,7 +86,7 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                             const st_bf<M, K, L_B>           &b) {
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
-        rt_fl<1, M, ducks::rt_layout::row> &d_ref = d.subtile_inplace<1>(n);
+        rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
         wgmma_base<M, 0>::rt_st(
             d_ref,
             a.tiles[n][0],
