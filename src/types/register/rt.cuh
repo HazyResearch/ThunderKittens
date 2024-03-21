@@ -42,16 +42,6 @@ struct rt {
 
     using col_vec = rv<dtype, height, rt_base<dtype, layout>::col_vec_pack>;
     using row_vec = rv<dtype, width , rt_base<dtype, layout>::row_vec_pack>;
-
-    /* ----------  SUBTILE  ---------- */
-
-    template<int subtile_height>
-    __device__ inline rt<dtype, subtile_height, width, layout> &subtile_inplace(int idx) {
-        static_assert(height % subtile_height == 0, "subtile height should evenly divide tile height.");
-        return reinterpret_cast<rt<dtype, subtile_height, width, layout>&>(
-            tiles[idx*subtile_height]
-        );
-    }
 };
 
 /* ----------  CONCEPTS  ---------- */
