@@ -34,14 +34,14 @@ template<typename T> concept st_type_wgmma_col_t_layout = (
     )
 );
 
-template<typename T> concept st_tma_layout = (
+template<typename T> concept st_type_tma_layout = (
     st_type_2d_tma_layout<T> || st_type_wgmma_row_layout<T> || st_type_wgmma_col_t_layout<T>
 );
 
 }; 
 
 // TMA STEP 1 = Create Tensor Map outside kernel (host side)
-template<detail::st_tma_layout ST, int num_blocks>
+template<detail::st_type_tma_layout ST, int num_blocks>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
     constexpr uint32_t  tma_dim      = detail::st_type_2d_tma_layout<ST> ? 2 : 5; 
@@ -175,66 +175,40 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
 };
 
 // TMA STEP 2 = Prefetch Tensor Map using prefetch inside kernel (device side)
-template<int height, int width, ducks::st_layout::tma_2d L>
-__device__ static inline void prefetch(st<bf16, height, width, L> &dst, void const* const src_tma_map, int tile_idx) {
+template<detail::st_type_tma_layout ST>
+__device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
-        int32_t crd0 = 0;  
-        int32_t crd1 = tile_idx * (dst.rows); 
+        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+            int32_t crd0 = 0;  
+            int32_t crd1 = tile_idx * (dst.rows); 
 
-        asm volatile (
-            "cp.async.bulk.prefetch.tensor.2d.L2.global.tile"
-            " [%0, {%1, %2}];"
-            :
-            : "l"(tma_ptr),
-            "r"(crd0), "r"(crd1)
-            : "memory"
-        );
-    }
-}
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.2d.L2.global.tile"
+                " [%0, {%1, %2}];"
+                :
+                : "l"(tma_ptr),
+                "r"(crd0), "r"(crd1)
+                : "memory"
+            );
+        }
+        else {
+            int32_t crd0 = 0;  
+            int32_t crd1 = 0; 
+            int32_t crd2 = 0;
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (dst.rows/8) : 0;
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (dst.rows/16);
 
-template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
-__device__ static inline void prefetch(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (dst.rows/8);
-        int32_t crd4 = 0;
-
-        asm volatile (
-            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
-            " [%0, {%1, %2, %3, %4, %5}];"
-            :
-            : "l"(tma_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
-    }
-}
-
-template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
-__device__ static inline void prefetch(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = 0; 
-        int32_t crd4 = tile_idx * (dst.rows/16);
-
-        asm volatile (
-            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
-            " [%0, {%1, %2, %3, %4, %5}];"
-            :
-            : "l"(tma_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
+                " [%0, {%1, %2, %3, %4, %5}];"
+                :
+                : "l"(tma_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+                : "memory"
+            );
+        }
     }
 }
 
