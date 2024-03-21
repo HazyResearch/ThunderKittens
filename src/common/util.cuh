@@ -7,7 +7,6 @@
 
 namespace kittens {
 
-
 /* ----------  GENERAL CONSTANTS FOR KITTENS  ---------- */
 
 constexpr int TILE_DIM{16};
@@ -25,6 +24,17 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 #elif KITTENS_4090
 constexpr int MAX_SHARED_MEMORY = 101000;
 #endif
+
+/* ----------  TYPE HELPERS  ---------- */
+
+namespace ducks {
+
+// a type representing an empty default for a template.
+struct default_type {};
+
+#define typeof(A) typename std::remove_const<typename std::remove_reference<decltype(A)>::type>::type
+
+}
 
 /* ----------  SHUFFLE UTILS  ---------- */
 

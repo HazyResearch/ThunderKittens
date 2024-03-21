@@ -23,7 +23,7 @@ __global__ void test_wgmma_tall_dot_ker(const bf16 *input, bf16 *output) {
     warpgroup::fence(result);
 
     warpgroup::dot_reset(result, a_reg, b_smem);
-    warpgroup::commit_group();
+    warpgroup::mma_commit_group();
 
     warpgroup::mma_async_wait();
     
@@ -86,7 +86,7 @@ __global__ void test_wgmma_tall_mma_ker(const bf16 *input, bf16 *output) {
     warpgroup::fence(result);
 
     warpgroup::mma_reset(result, a_reg, b_smem);
-    warpgroup::commit_group();
+    warpgroup::mma_commit_group();
 
     warpgroup::mma_async_wait();
     

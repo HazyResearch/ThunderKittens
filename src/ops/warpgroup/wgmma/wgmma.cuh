@@ -167,7 +167,7 @@ __device__ inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
     asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory"); 
 }
 
-__device__ inline void commit_group() {
+__device__ inline void mma_commit_group() {
     asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
 }
 

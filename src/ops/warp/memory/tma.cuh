@@ -18,29 +18,20 @@ template<typename T> concept st_type_2d_tma_layout = (
         std::is_same_v<typename T::layout, ducks::st_layout::tma_swizzle>
     )
 );
-
 template<typename T> concept st_type_wgmma_row_layout = (
-    ducks::st::all<T> && 
-    (
-        std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_0b> // || 
-        // std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_32b>
-    )
+    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_0b>
 );
-
 template<typename T> concept st_type_wgmma_col_t_layout = (
-    ducks::st::all<T> && 
-    (
-        std::is_same_v<typename T::layout, ducks::st_layout::wgmma_col_t_0b>
-    )
+    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_col_t_0b>
 );
-
 template<typename T> concept st_type_tma_layout = (
     st_type_2d_tma_layout<T> || st_type_wgmma_row_layout<T> || st_type_wgmma_col_t_layout<T>
 );
 
 }; 
 
-// TMA STEP 1 = Create Tensor Map outside kernel (host side)
+/* ----------   Create tensor map descriptor (HOST)  ---------- */
+
 template<detail::st_type_tma_layout ST, int num_blocks>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
@@ -174,7 +165,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     }
 };
 
-// TMA STEP 2 = Prefetch Tensor Map using prefetch inside kernel (device side)
+/* ----------   Prefetch Tensor Map  ---------- */
+
 template<detail::st_type_tma_layout ST>
 __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
@@ -212,149 +204,85 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
     }
 }
 
-// TMA STEP 3 = Async load and store data from gmem/smem
-template<int height, int width, ducks::st_layout::tma_2d L>
-__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, L> &src, int tile_idx) {
+/* ----------   Async load and store data from gmem/smem  ---------- */
+
+template<detail::st_type_tma_layout ST>
+__device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_idx) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = 0;  
-        int32_t crd1 = tile_idx * (src.rows); 
+        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+            int32_t crd0 = 0;  
+            int32_t crd1 = tile_idx * (src.rows); 
 
-        asm volatile (
-            "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2, %3}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1)
-            : "memory"
-        );
+            asm volatile (
+                "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1)
+                : "memory"
+            );
+        }
+        else {
+            int32_t crd0 = 0;  
+            int32_t crd1 = 0; 
+            int32_t crd2 = 0;
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (src.rows/8) : 0;
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (src.rows/16);
+
+            asm volatile (
+                "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+                : "memory"
+            );
+        }
     }
 }
-template<int height, int width, ducks::st_layout::tma_2d L>
-__device__ static inline void load_async(st<bf16, height, width, L> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
+template<detail::st_type_tma_layout ST>
+__device__ static inline void load_async(ST &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
     if (kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
-        int32_t crd0 = 0;  
-        int32_t crd1 = tile_idx * (dst.rows); 
+        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+            int32_t crd0 = 0;  
+            int32_t crd1 = tile_idx * (dst.rows); 
 
-        asm volatile (
-            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3, %4}], [%2];"
-            :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1)
-            : "memory"
-        );
+            asm volatile (
+                "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+                " [%0], [%1, {%3, %4}], [%2];"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "r"(crd0), "r"(crd1)
+                : "memory"
+            );
+        }
+        else {
+            int32_t crd0 = 0;  
+            int32_t crd1 = 0; 
+            int32_t crd2 = 0;
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (dst.rows/8) : 0;
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (dst.rows/16);
+
+            asm volatile (
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+                : "memory"
+            );
+        }
     }
 }
 
-template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
-__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_row_layout> &src, int tile_idx) {
-    if (kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
-        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (src.rows/8);
-        int32_t crd4 = 0;
-
-        asm volatile (
-            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
-    }
-}
-template<int height, int width, ducks::st_layout::wgmma_row wgmma_row_layout>
-__device__ static inline void load_async(st<bf16, height, width, wgmma_row_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
-        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
-        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = tile_idx * (dst.rows/8);
-        int32_t crd4 = 0;
-
-        asm volatile (
-            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
-            :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
-    }
-}
-
-template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
-__device__ static inline void store_async(void *dst_tma_map, const st<bf16, height, width, wgmma_col_layout> &src, int tile_idx) {
-    if (kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
-        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = 0;
-        int32_t crd4 = tile_idx * (src.rows/16);
-
-        asm volatile (
-            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
-    }
-}
-template<int height, int width, ducks::st_layout::wgmma_col wgmma_col_layout>
-__device__ static inline void load_async(st<bf16, height, width, wgmma_col_layout> &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
-        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
-        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-
-        int32_t crd0 = 0;  
-        int32_t crd1 = 0; 
-        int32_t crd2 = 0;
-        int32_t crd3 = 0;
-        int32_t crd4 = tile_idx * (dst.rows/16);
-
-        asm volatile (
-            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
-            :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
-            : "memory"
-        );
-    }
-}
-
-/// Barrier functions for async load/store
-__device__ static inline void init_barrier(uint64_t& barrier, int tc) {
-    if (kittens::laneid() == 0) {
-        void const* const ptr = &barrier;
-        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
-
-        asm volatile ("mbarrier.init.shared::cta.b64 [%0], %1;\n"
-            :: "r"(bar_ptr), "r"(tc));
-    }
-}
+/* ----------   Barrier functions for async load  ---------- */
 
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
     if (kittens::laneid() == 0) {
@@ -363,6 +291,21 @@ __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t byte
 
         asm volatile ("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
             :: "r"(bar_ptr), "r"(bytes));
+    }
+}
+template<typename T=ducks::default_type>
+__device__ static inline void init_barrier(uint64_t& barrier, int tc) {
+    static_assert(detail::st_type_tma_layout<T> || std::is_same_v<T, ducks::default_type>);
+    if (kittens::laneid() == 0) {
+        void const* const ptr = &barrier;
+        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+        asm volatile ("mbarrier.init.shared::cta.b64 [%0], %1;\n"
+            :: "r"(bar_ptr), "r"(tc));
+
+        if constexpr (detail::st_type_tma_layout<T>) {
+            set_barrier_bytes(barrier, sizeof(T)); // set barrier bytes automatically
+        }
     }
 }
 
@@ -384,16 +327,16 @@ __device__ static inline void arrive_wait(uint64_t& barrier, int kPhaseBit) {
     );
 }
 
-// TMA (store async) STEP 4 = Commit group
-__device__ static inline void commit_group() {
+
+/* ----------   Synchronization functions for async store  ---------- */
+
+__device__ static inline void store_commit_group() {
     if (kittens::laneid() == 0) {
         asm volatile("cp.async.bulk.commit_group;");
     } 
 }
-
-// TMA (store async) STEP 5 = Wait for store complete
-template <int N>
-__device__ static inline void wait_for_store_complete() {
+template <int N=0>
+__device__ static inline void store_async_wait() {
     asm volatile (
         "cp.async.bulk.wait_group %0;"
         :
@@ -403,5 +346,5 @@ __device__ static inline void wait_for_store_complete() {
     __syncwarp();
 }
 
-}
-}
+} // namespace tma
+} // namespace kittens

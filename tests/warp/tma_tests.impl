@@ -9,6 +9,7 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     extern __shared__ int __shm[];
     shared_allocator al = shared_allocator::create_allocator_tma<1024>((int*)&__shm[0]); 
 
+    using worker_type = st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
     st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
 
     auto block = cooperative_groups::this_thread_block();
@@ -16,8 +17,7 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
 
     tma::prefetch(input_tile[warpid], input_tma_descriptor, 0);
-    tma::init_barrier(smem_barrier[warpid], 1); 
-    tma::set_barrier_bytes(smem_barrier[warpid], size_bytes);
+    tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
 
     block.sync();
 
@@ -58,9 +58,9 @@ test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output)
         // store(output, input_tile, TMA_WIDTH * 16);
         tma::store_async(output_tma_descriptor, input_tile[warpid], tile_idx);
     
-        tma::commit_group();
+        tma::store_commit_group();
 
-        tma::wait_for_store_complete<0>();
+        tma::store_async_wait<0>();
     }
 }
 
