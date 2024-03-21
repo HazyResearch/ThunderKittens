@@ -34,7 +34,7 @@ __global__ void test_wgmma_tma_mma_ker_trans(CUtensorMap* tma_desc_a, CUtensorMa
         tma::load_async(b_smem, tma_desc_b, 0, smem_barrier);
 
         constexpr int kPhaseBit = 1;
-        tma::arrive_wait(smem_barrier, kPhaseBit);
+        tma::arrive_and_wait(smem_barrier, kPhaseBit);
     }
 
     __syncthreads();

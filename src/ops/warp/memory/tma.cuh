@@ -309,7 +309,7 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     }
 }
 
-__device__ static inline void arrive_wait(uint64_t& barrier, int kPhaseBit) {
+__device__ static inline void arrive_and_wait(uint64_t& barrier, int kPhaseBit) {
     void const* const ptr = &barrier;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
