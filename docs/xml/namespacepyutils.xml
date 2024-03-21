@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.9.1" xml:lang="en-US">
+  <compounddef id="namespacepyutils" kind="namespace" language="Python">
+    <compoundname>pyutils</compoundname>
+    <innernamespace refid="namespacepyutils_1_1test__build__utils">pyutils::test_build_utils</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+<para><verbatim>Just some build utils</verbatim> </para>
+    </detaileddescription>
+    <location file="src/common/pyutils/__init__.py" line="1" column="1"/>
+  </compounddef>
+</doxygen>

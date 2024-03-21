@@ -1,0 +1,273 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.9.1" xml:lang="en-US">
+  <compounddef id="namespacepyutils_1_1test__build__utils" kind="namespace" language="Python">
+    <compoundname>pyutils::test_build_utils</compoundname>
+      <sectiondef kind="var">
+      <memberdef kind="variable" id="test__build__utils_8py_1a4e9bc8475e0af0507e59ee4fb3bb6e11" prot="public" static="no" mutable="no">
+        <type>int</type>
+        <definition>int pyutils::test_build_utils.tile</definition>
+        <argsstring></argsstring>
+        <name>tile</name>
+        <initializer>=  16</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="5" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="5" bodyend="-1"/>
+      </memberdef>
+      <memberdef kind="variable" id="test__build__utils_8py_1ac210c33a162a2f8273d29c1acdc67241" prot="public" static="no" mutable="no">
+        <type></type>
+        <definition>pyutils::test_build_utils.project_root</definition>
+        <argsstring></argsstring>
+        <name>project_root</name>
+        <initializer>=  os.getenv(&quot;THUNDERKITTENS_ROOT&quot;)</initializer>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="13" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="13" bodyend="-1"/>
+      </memberdef>
+      </sectiondef>
+      <sectiondef kind="func">
+      <memberdef kind="function" id="test__build__utils_8py_1a10725a2ee83d244d13c9c2b864a4087a" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils._sources</definition>
+        <argsstring>(name)</argsstring>
+        <name>_sources</name>
+        <param>
+          <type>name</type>
+          <defname>name</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="18" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="18" bodyend="18"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1aa5c0fa15c2f068f225a71b7611795367" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils.jit_build</definition>
+        <argsstring>(name, debug=False)</argsstring>
+        <name>jit_build</name>
+        <param>
+          <type>name</type>
+          <defname>name</defname>
+        </param>
+        <param>
+          <type>debug</type>
+          <defname>debug</defname>
+          <defval>False</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="19" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="19" bodyend="27"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a932a71ce73e8108f6931875794cb3984" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils.cuda_extension</definition>
+        <argsstring>(name, debug)</argsstring>
+        <name>cuda_extension</name>
+        <param>
+          <type>name</type>
+          <defname>name</defname>
+        </param>
+        <param>
+          <type>debug</type>
+          <defname>debug</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="28" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="28" bodyend="42"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a466e9877bcbd0ecf8dc381e55577a748" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils.library_build</definition>
+        <argsstring>(name, debug=False)</argsstring>
+        <name>library_build</name>
+        <param>
+          <type>name</type>
+          <defname>name</defname>
+        </param>
+        <param>
+          <type>debug</type>
+          <defname>debug</defname>
+          <defval>False</defval>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="43" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="43" bodyend="47"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a6718c9f4b105de57f2b12b1cf4b4b4fc" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils.__eq</definition>
+        <argsstring>(str, x, y, tol=1e-5, debug=False)</argsstring>
+        <name>__eq</name>
+        <param>
+          <type>str</type>
+          <defname>str</defname>
+        </param>
+        <param>
+          <type>x</type>
+          <defname>x</defname>
+        </param>
+        <param>
+          <type>y</type>
+          <defname>y</defname>
+        </param>
+        <param>
+          <type>tol</type>
+          <defname>tol</defname>
+          <defval>1e-5</defval>
+        </param>
+        <param>
+          <type>debug</type>
+          <defname>debug</defname>
+          <defval>False</defval>
+        </param>
+        <briefdescription>
+<para>Helpers. </para>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="51" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="51" bodyend="61"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a1c2b6182adf0d04cbfb812a1c9f1426a" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils._rtile</definition>
+        <argsstring>(b, n, d, dt)</argsstring>
+        <name>_rtile</name>
+        <param>
+          <type>b</type>
+          <defname>b</defname>
+        </param>
+        <param>
+          <type>n</type>
+          <defname>n</defname>
+        </param>
+        <param>
+          <type>d</type>
+          <defname>d</defname>
+        </param>
+        <param>
+          <type>dt</type>
+          <defname>dt</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="62" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="62" bodyend="62"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1ab8ff6cda0e61559484a9a2d10cb4b580" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils._rhtile</definition>
+        <argsstring>(b, h, n, d, dt)</argsstring>
+        <name>_rhtile</name>
+        <param>
+          <type>b</type>
+          <defname>b</defname>
+        </param>
+        <param>
+          <type>h</type>
+          <defname>h</defname>
+        </param>
+        <param>
+          <type>n</type>
+          <defname>n</defname>
+        </param>
+        <param>
+          <type>d</type>
+          <defname>d</defname>
+        </param>
+        <param>
+          <type>dt</type>
+          <defname>dt</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="63" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="63" bodyend="63"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a73d6a4d214feb965ff4dda94fddbaf69" prot="private" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils._rones</definition>
+        <argsstring>(b, n, d, dt)</argsstring>
+        <name>_rones</name>
+        <param>
+          <type>b</type>
+          <defname>b</defname>
+        </param>
+        <param>
+          <type>n</type>
+          <defname>n</defname>
+        </param>
+        <param>
+          <type>d</type>
+          <defname>d</defname>
+        </param>
+        <param>
+          <type>dt</type>
+          <defname>dt</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="64" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="64" bodyend="65"/>
+      </memberdef>
+      <memberdef kind="function" id="test__build__utils_8py_1a16422555d10fc478f43f97e9869e81b4" prot="public" static="no" const="no" explicit="no" inline="no" virt="non-virtual">
+        <type>def</type>
+        <definition>def pyutils.test_build_utils.print_tiles</definition>
+        <argsstring>(str, t)</argsstring>
+        <name>print_tiles</name>
+        <param>
+          <type>str</type>
+          <defname>str</defname>
+        </param>
+        <param>
+          <type>t</type>
+          <defname>t</defname>
+        </param>
+        <briefdescription>
+        </briefdescription>
+        <detaileddescription>
+        </detaileddescription>
+        <inbodydescription>
+        </inbodydescription>
+        <location file="src/common/pyutils/test_build_utils.py" line="66" column="1" bodyfile="src/common/pyutils/test_build_utils.py" bodystart="66" bodyend="70"/>
+      </memberdef>
+      </sectiondef>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <location file="src/common/pyutils/test_build_utils.py" line="1" column="1"/>
+  </compounddef>
+</doxygen>

@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<doxygen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="compound.xsd" version="1.9.1" xml:lang="en-US">
+  <compounddef id="____init_____8py" kind="file" language="Python">
+    <compoundname>__init__.py</compoundname>
+    <innernamespace refid="namespacepyutils">pyutils</innernamespace>
+    <briefdescription>
+    </briefdescription>
+    <detaileddescription>
+    </detaileddescription>
+    <programlisting>
+<codeline lineno="1" refid="namespacepyutils" refkind="compound"><highlight class="stringliteral">&quot;&quot;&quot;Just<sp/>some<sp/>build<sp/>utils&quot;&quot;&quot;</highlight></codeline>
+    </programlisting>
+    <location file="src/common/pyutils/__init__.py"/>
+  </compounddef>
+</doxygen>
