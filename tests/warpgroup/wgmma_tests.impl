@@ -33,7 +33,7 @@ __global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
         warpgroup::fence(result);
         warpgroup::dot_reset(result, a_smem, b_smem);
     }
-    warpgroup::commit_group();
+    warpgroup::mma_commit_group();
     warpgroup::mma_async_wait();
     
     // warpgroup::store(output, result, 16*WGMMA_M); // this is going to break
@@ -107,7 +107,7 @@ __global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
         warpgroup::fence(result);
         warpgroup::mma_reset(result, a_smem, b_smem);
     }
-    warpgroup::commit_group();
+    warpgroup::mma_commit_group();
     warpgroup::mma_async_wait();
     
     warpgroup::store(output, result, 16*WGMMA_M); // this is going to break

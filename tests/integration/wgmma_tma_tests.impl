@@ -34,21 +34,21 @@ __global__ void test_wgmma_tma_mma_ker_trans(CUtensorMap* tma_desc_a, CUtensorMa
         tma::load_async(b_smem, tma_desc_b, 0, smem_barrier);
 
         constexpr int kPhaseBit = 1;
-        tma::arrive_wait(smem_barrier, kPhaseBit);
+        tma::arrive_and_wait(smem_barrier, kPhaseBit);
     }
 
     __syncthreads();
     warpgroup::fence(result);
     warpgroup::mma_reset(result, a_smem, b_smem);
-    warpgroup::commit_group();
+    warpgroup::mma_commit_group();
     warpgroup::mma_async_wait();
     
     warpgroup::store(result_smem, result); // this is going to break
     if (warpid == 0) {
         tma::set_barrier_bytes(smem_barrier, size_bytes_result);
         tma::store_async(tma_desc_out, result_smem, 0);
-        tma::commit_group();
-        tma::wait_for_store_complete<0>();
+        tma::store_commit_group();
+        tma::store_async_wait<0>();
     }
     __syncthreads();
 }

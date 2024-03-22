@@ -68,6 +68,17 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 constexpr int MAX_SHARED_MEMORY = 101000;
 #endif
 
+/* ----------  TYPE HELPERS  ---------- */
+
+namespace ducks {
+
+// a type representing an empty default for a template.
+struct default_type {};
+
+#define typeof(A) typename std::remove_const<typename std::remove_reference<decltype(A)>::type>::type
+
+}
+
 /* ----------  SHUFFLE UTILS  ---------- */
 
 static constexpr uint32_t MASK_ALL = 0xFFFFFFFF;
@@ -154,7 +165,7 @@ struct shared_allocator {
          * @return A new shared_allocator instance.
          */
         __device__ inline static shared_allocator create_allocator(int *_ptr) {
-            shared_allocator sa(_ptr); 
+            shared_allocator sa(_ptr);
             return sa;
         }
 
@@ -164,7 +175,7 @@ struct shared_allocator {
          * @return A new shared_allocator instance with alignment.
          */
         __device__ inline static shared_allocator create_allocator_tma(int *_ptr) {
-            shared_allocator sa(_ptr); 
+            shared_allocator sa(_ptr);
             uint64_t p = reinterpret_cast<uint64_t>(sa.ptr);
             sa.ptr = (int*)(p + (alignment-(p%alignment)));
             return sa;
@@ -174,7 +185,7 @@ struct shared_allocator {
          * @brief Allocate shared memory for a variadic array type.
          * @return Reference to the allocated array.
          */
-        template<typename A, size_t... dims> 
+        template<typename A, size_t... dims>
         __device__ inline variadic_array_t<A, dims...>& allocate() {
             using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);
@@ -186,7 +197,7 @@ struct shared_allocator {
          * @brief Allocate shared memory for a 3D array.
          * @return Reference to the allocated 3D array.
          */
-        template<typename A, size_t N, size_t M, size_t L> 
+        template<typename A, size_t N, size_t M, size_t L>
         __device__ inline A (&allocate())[N][M][L] {
             using at = A[N][M][L];
             at*p = reinterpret_cast<at*>(ptr);
@@ -198,7 +209,7 @@ struct shared_allocator {
          * @brief Allocate shared memory for a 4D array.
          * @return Reference to the allocated 4D array.
          */
-        template<typename A, size_t N, size_t M, size_t L, size_t K> 
+        template<typename A, size_t N, size_t M, size_t L, size_t K>
         __device__ inline A (&allocate())[N][M][L][K] {
             using at = A[N][M][L][K];
             at*p = reinterpret_cast<at*>(ptr);

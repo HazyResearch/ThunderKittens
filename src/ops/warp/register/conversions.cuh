@@ -120,7 +120,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
 /* ----------  SUBTILE  ---------- */
 
-template<ducks::rt::all RT, int subtile_height>
+template<int subtile_height, ducks::rt::all RT>
 __device__ inline rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
     static_assert(RT::height % subtile_height == 0, "subtile height should evenly divide tile height.");
     return reinterpret_cast<rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout>&>(
