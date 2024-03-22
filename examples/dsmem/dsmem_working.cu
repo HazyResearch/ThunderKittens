@@ -6,7 +6,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N (4096 * 4)
+#define ATTN_N (4096 * 16)
 #define ATTN_D 64
 
 #define NUM_WORKERS 8
@@ -21,7 +21,8 @@ using layout_row = st_wgmma_row_0b_layout;
 using layout_col = st_wgmma_col_t_0b_layout;
 
 __global__ void __cluster_dims__(CLUSTER_SIZE, 1, 1) 
-attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__)
+attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__,
+            CUtensorMap *q_desc, CUtensorMap *k_desc, CUtensorMap *v_desc, CUtensorMap *o_desc)
 {
     auto warpid        = threadIdx.x / 32;
     
@@ -65,14 +66,17 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     
     constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
 
-    // dsmem works at threadblock level (not using warp)
-    for(int i = 0; i < 2; i++) {
-        dsmem::init_barrier(k_dsmem_barrier[i], block.size());
-        dsmem::set_barrier_bytes(k_dsmem_barrier[i], size_bytes);
-        
-        dsmem::init_barrier(v_dsmem_barrier[i], block.size());
-        dsmem::set_barrier_bytes(v_dsmem_barrier[i], size_bytes);
-    }
+    dsmem::init_barrier(k_dsmem_barrier[0], block.size());
+    dsmem::set_barrier_bytes(k_dsmem_barrier[0], size_bytes);
+
+    dsmem::init_barrier(v_dsmem_barrier[0], block.size());
+    dsmem::set_barrier_bytes(v_dsmem_barrier[0], size_bytes);
+
+    dsmem::init_barrier(k_dsmem_barrier[1], block.size());
+    dsmem::set_barrier_bytes(k_dsmem_barrier[1], size_bytes);
+
+    dsmem::init_barrier(v_dsmem_barrier[1], block.size());
+    dsmem::set_barrier_bytes(v_dsmem_barrier[1], size_bytes);
 
     constexpr int kPhaseBit_dsmem_kv = 1;
 
@@ -81,7 +85,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
     for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
 
-        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + warpid;
         warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
         if constexpr (ATTN_D == 64) {
@@ -106,16 +109,15 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
             for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
                 
                 if(kv_block > 0) {
-                    dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-                    dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-                } 
+                    dsmem::distribution_wait(k_dsmem_barrier[1], kPhaseBit_dsmem_kv);
+                    dsmem::distribution_wait(v_dsmem_barrier[1], kPhaseBit_dsmem_kv);
+                }
         
                 if(kv_block+1 < cluster_size) {
                     int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
-                    dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[toc]);
-                    dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[toc]);
+                    dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[0]);
+                    dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[0]);
                 }
-                cluster.sync(); 
 
                 for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
 
@@ -154,8 +156,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
                 tic ^= 1;
                 toc ^= 1;
-                cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
-                __syncthreads(); // this seems to suffice for now?
             }
         }
 
