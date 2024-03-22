@@ -6,7 +6,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 4096
+#define ATTN_N (4096 * 2)
 #define ATTN_D 64
 
 #define NUM_WORKERS 8
@@ -68,6 +68,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     for(int i = 0; i < 2; i++) {
         dsmem::init_barrier(k_dsmem_barrier[i], block.size());
         dsmem::set_barrier_bytes(k_dsmem_barrier[i], size_bytes);
+        
         dsmem::init_barrier(v_dsmem_barrier[i], block.size());
         dsmem::set_barrier_bytes(v_dsmem_barrier[i], size_bytes);
     }
@@ -79,7 +80,8 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
     for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
 
-        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * NUM_WORKERS) + warpid;
+        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + warpid;
+        warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
         if constexpr (ATTN_D == 64) {
             mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment head 64
@@ -94,7 +96,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
         for (auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
 
-            // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * NUM_WORKERS) + warpid;
+            warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * (NUM_WORKERS * cluster_size)) + warpid;
             load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
             load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
 
@@ -158,7 +160,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         
         cluster.sync(); // make sure all the memory has arrived!
 
-        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * NUM_WORKERS) + warpid;
+        warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
     }
 }
