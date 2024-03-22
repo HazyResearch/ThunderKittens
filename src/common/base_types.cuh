@@ -7,24 +7,39 @@
 #include <bit>
 
 /*
-
 This file is a bunch of utilities for going back and forth between different types
-
 Many of them are for the compiler, so as to clean up the code. It unfortunately
 seems necessary when we have types we really care about that are less than word width.
-
 */
 
 namespace kittens {
 
+/**
+ * @brief Alias for CUDA's built-in bfloat16 type.
+ */
 using bf16 = __nv_bfloat16;
+
+/**
+ * @brief Alias for CUDA's built-in half-precision floating-point type.
+ */
 using half = __half;
+
+/**
+ * @brief Alias for CUDA's built-in bfloat16 vector of 2 elements.
+ */
 using bf16_2 = __nv_bfloat162;
+
+/**
+ * @brief Alias for CUDA's built-in half-precision floating-point vector of 2 elements.
+ */
 using half_2 = __half2;
 
 namespace ducks {
 namespace base_types {
 
+/**
+ * @brief Concept to check if a type is a vector of 2 elements of either float or bfloat16.
+ */
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
 
