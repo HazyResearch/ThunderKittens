@@ -6,7 +6,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N (4096 * 2)
+#define ATTN_N (4096 * 4)
 #define ATTN_D 64
 
 #define NUM_WORKERS 8
@@ -29,6 +29,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
     auto grid = cg::this_grid();
     auto cluster = cg::this_cluster();
+
     unsigned int cluster_size = CLUSTER_SIZE; // cluster.num_blocks(); but i want this at compile time
     unsigned int block_idx    = cluster.block_rank();;
     unsigned int cluster_idx  = grid.cluster_rank();
@@ -114,6 +115,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
                     dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[toc]);
                     dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[toc]);
                 }
+                cluster.sync(); 
 
                 for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
 
@@ -152,13 +154,10 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
 
                 tic ^= 1;
                 toc ^= 1;
-                // cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
+                cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
                 __syncthreads(); // this seems to suffice for now?
             }
-            cluster.sync(); // make sure all the memory has arrived!
         }
-        
-        cluster.sync(); // make sure all the memory has arrived!
 
         warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
