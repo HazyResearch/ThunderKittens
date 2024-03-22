@@ -79,6 +79,26 @@ struct rv {
     __device__ inline const dtype& operator[](int2 outin) const { return data[outin.x][outin.y]; }
 };
 
+/* ----------  TEMPLATE SPECIALIZATIONS  ---------- */
+
+/**
+ * @brief Specialization of rv for float data type with 1x1 dimension.
+ * @details Utilizes 1 register.
+ */
+template<> struct rv<float, 1, 1> {
+    // ... (implementation details)
+};
+
+/**
+ * @brief Specialization of rv for float data type with 2x2 dimension.
+ * @details Utilizes 4 registers.
+ */
+template<> struct rv<float, 2, 2> {
+    // ... (implementation details)
+};
+
+// ... (additional specializations)
+
 /* ----------  CONCEPTS  ---------- */
 
 /**
