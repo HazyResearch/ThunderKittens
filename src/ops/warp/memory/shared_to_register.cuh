@@ -13,6 +13,18 @@ namespace kittens {
 
 // ----------  ROW LAYOUTS ----------
 
+/**
+ * @brief Loads data from shared memory into a register tile with a row layout.
+ *
+ * This function transfers data from a shared memory tile to a register tile, ensuring
+ * that the data layout matches between the source and destination. It handles both
+ * row-major and column-major layouts and performs type conversion if necessary.
+ *
+ * @tparam RT Register tile type with row layout.
+ * @tparam ST Shared memory tile type with row layout.
+ * @param dst Reference to the destination register tile.
+ * @param src Reference to the source shared memory tile.
+ */
 template<ducks::rt::all RT, ducks::st::row_layout ST>
 __device__ inline static void load(RT &dst, const ST &src) {
 
@@ -203,15 +215,15 @@ __device__ inline static void store(ST &dst, const RT &src) {
 
     if constexpr (src.inner_dim == 2) {
         if(row_thread_id < 4) {
-            #pragma unroll 
-            for(auto w = 0; w < src.outer_dim; w++) { 
+            #pragma unroll
+            for(auto w = 0; w < src.outer_dim; w++) {
                 int col = w*TILE_DIM;
                 dst[col + row + 0] = src[w][row_thread_id].x;
                 dst[col + row + 1] = src[w][row_thread_id].y;
                 dst[col + row + 8] = src[w][row_thread_id+1].x;
                 dst[col + row + 9] = src[w][row_thread_id+1].y;
             }
-        } 
+        }
     } else {
         // TODO: implement
     }
@@ -222,17 +234,17 @@ template<ducks::rv::all RT, ducks::sv::all ST>
 __device__ inline static void load(RT &dst, const ST &src) {
     int laneid = threadIdx.x % 32;
     auto row = 2*(laneid % 4);
-    auto row_thread_id = laneid / 4; 
-    
+    auto row_thread_id = laneid / 4;
+
     if constexpr (dst.inner_dim == 2) {
-        if (row_thread_id < 1) { 
+        if (row_thread_id < 1) {
             #pragma unroll
-            for(auto w = 0; w < dst.outer_dim; w++) { 
+            for(auto w = 0; w < dst.outer_dim; w++) {
                 int col = w*TILE_DIM;
                 dst[w][row_thread_id].x = src[col + row + 0];
-                dst[w][row_thread_id].y = src[col + row + 1]; 
-                dst[w][row_thread_id+1].x = src[col + row + 8]; 
-                dst[w][row_thread_id+1].y = src[col + row + 9]; 
+                dst[w][row_thread_id].y = src[col + row + 1];
+                dst[w][row_thread_id+1].x = src[col + row + 8];
+                dst[w][row_thread_id+1].y = src[col + row + 9];
             }
         }
     } else {

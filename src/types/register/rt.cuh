@@ -76,33 +76,124 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 
 // layout and type wrappers
 
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float2, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16_2, _height, _width, layout>;
+/**
+ * @brief Specialization of rt for float2 data type with 1x1 dimension in row layout.
+ * @details Utilizes 8 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x1 = rt<float2, 1, 1, layout>;
 
-// layout, type, and size wrappers
-// sizes are chosen with the assumption that you aren't going to want to fit more than
-// 8 subtiles on a thread. (if you need more, you can of course add your own using's.)
+/**
+ * @brief Specialization of rt for float2 data type with 1x2 dimension in row layout.
+ * @details Utilizes 16 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x2 = rt<float2, 1, 2, layout>;
 
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x1 = rt_fl<1, 1, layout>; //  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x2 = rt_fl<1, 2, layout>; // 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x4 = rt_fl<1, 4, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x8 = rt_fl<1, 8, layout>; // 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x1 = rt_fl<2, 1, layout>; // 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x2 = rt_fl<2, 2, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x4 = rt_fl<2, 4, layout>; // 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x1 = rt_fl<4, 1, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x2 = rt_fl<4, 2, layout>; // 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_8x1 = rt_fl<8, 1, layout>; // 64 registers used
+/**
+ * @brief Specialization of rt for float2 data type with 1x4 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x4 = rt<float2, 1, 4, layout>;
 
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x1 = rt_bf<1, 1, layout>; //  4 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x2 = rt_bf<1, 2, layout>; //  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x4 = rt_bf<1, 4, layout>; // 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x8 = rt_bf<1, 8, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x1 = rt_bf<2, 1, layout>; //  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x2 = rt_bf<2, 2, layout>; // 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x4 = rt_bf<2, 4, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = rt_bf<4, 1, layout>; // 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt_bf<4, 2, layout>; // 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt_bf<8, 1, layout>; // 32 registers used
+/**
+ * @brief Specialization of rt for float2 data type with 1x8 dimension in row layout.
+ * @details Utilizes 64 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x8 = rt<float2, 1, 8, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 2x1 dimension in row layout.
+ * @details Utilizes 16 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x1 = rt<float2, 2, 1, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 2x2 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x2 = rt<float2, 2, 2, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 2x4 dimension in row layout.
+ * @details Utilizes 64 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x4 = rt<float2, 2, 4, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 4x1 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x1 = rt<float2, 4, 1, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 4x2 dimension in row layout.
+ * @details Utilizes 64 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x2 = rt<float2, 4, 2, layout>;
+
+/**
+ * @brief Specialization of rt for float2 data type with 8x1 dimension in row layout.
+ * @details Utilizes 64 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_8x1 = rt<float2, 8, 1, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 1x1 dimension in row layout.
+ * @details Utilizes 4 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x1 = rt<bf16_2, 1, 1, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 1x2 dimension in row layout.
+ * @details Utilizes 8 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x2 = rt<bf16_2, 1, 2, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 1x4 dimension in row layout.
+ * @details Utilizes 16 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x4 = rt<bf16_2, 1, 4, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 1x8 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x8 = rt<bf16_2, 1, 8, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 2x1 dimension in row layout.
+ * @details Utilizes 8 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x1 = rt<bf16_2, 2, 1, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 2x2 dimension in row layout.
+ * @details Utilizes 16 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x2 = rt<bf16_2, 2, 2, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 2x4 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x4 = rt<bf16_2, 2, 4, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 4x1 dimension in row layout.
+ * @details Utilizes 16 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = rt<bf16_2, 4, 1, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 4x2 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt<bf16_2, 4, 2, layout>;
+
+/**
+ * @brief Specialization of rt for bf16_2 data type with 8x1 dimension in row layout.
+ * @details Utilizes 32 registers.
+ */
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt<bf16_2, 8, 1, layout>;
 
 } // namespace kittens
