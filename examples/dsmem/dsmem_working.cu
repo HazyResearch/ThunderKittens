@@ -21,8 +21,7 @@ using layout_row = st_wgmma_row_0b_layout;
 using layout_col = st_wgmma_col_t_0b_layout;
 
 __global__ void __cluster_dims__(CLUSTER_SIZE, 1, 1) 
-attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
-            CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o)
+attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__)
 {
     auto warpid        = threadIdx.x / 32;
     
@@ -59,28 +58,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     int tic = 0, toc = 1;
     int warp_idx  = (cluster_idx * cluster_size + block_idx) * NUM_WORKERS + warpid;
 
-    //**// TMA set-up
-    // __shared__ uint64_t ksmem_barrier[NUM_WORKERS];
-    // __shared__ uint64_t vsmem_barrier[NUM_WORKERS];
-
-    // constexpr int tma_tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
-
-    // tma::init_barrier(ksmem_barrier[warpid], block.size());
-    // tma::set_barrier_bytes(ksmem_barrier[warpid], tma_tile_bytes); 
-
-    // tma::init_barrier(vsmem_barrier[warpid], block.size());
-    // tma::set_barrier_bytes(vsmem_barrier[warpid], tma_tile_bytes); 
-    // block.sync();
-
-    // constexpr int kPhaseBit_k = 1; 
-    // constexpr int kPhaseBit_v = 1;
-    // constexpr int kPhaseBit_q = 1; 
-
-    // tma::load_async(k_smem[tic][warpid], tma_k, warp_idx, ksmem_barrier[warpid]);
-    // tma::load_async(v_smem[tic][warpid], tma_v, warp_idx, vsmem_barrier[warpid]);
-    // load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-    // load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
-
     //**// DSMEM set-up
     __shared__ uint64_t k_dsmem_barrier[2];
     __shared__ uint64_t v_dsmem_barrier[2];
@@ -96,86 +73,94 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     }
 
     constexpr int kPhaseBit_dsmem_kv = 1;
-    constexpr int kPhaseBit_tma_k = 1;
-    constexpr int kPhaseBit_tma_v = 1;
 
-    load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
-    if constexpr (ATTN_D == 64) {
-        mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment head 64
-    }
-    else if constexpr (ATTN_D == 128) {
-        mul(q_reg, q_reg, __float2bfloat16(0.08838834764831843f)); // temperature adjustment head 128
-    }
+    int qo_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size);
+    int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size); 
 
-    neg_infty(max_vec); // zero registers for the Q chunk
-    zero(norm_vec);
-    zero(o_prev);
+    for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
 
-    load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-    load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
-    // tma::arrive_wait(ksmem_barrier[warpid], kPhaseBit_tma_k);
-    // tma::arrive_wait(vsmem_barrier[warpid], kPhaseBit_tma_v);
-
-    cluster.sync(); // make sure all the memory has arrived!
-    
-    const int &kv_blocks = cluster_size; // just for clarity
-    for(auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
-
-        if(kv_itr > 0) {
-            dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-            dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
-        } 
-
-        if(kv_itr+1 < kv_blocks) {
-            int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
-            dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[toc]);
-            dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[toc]);
+        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * NUM_WORKERS) + warpid;
+        load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
+        if constexpr (ATTN_D == 64) {
+            mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment head 64
+        }
+        else if constexpr (ATTN_D == 128) {
+            mul(q_reg, q_reg, __float2bfloat16(0.08838834764831843f)); // temperature adjustment head 128
         }
 
-        for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
+        neg_infty(max_vec); // zero registers for the Q chunk
+        zero(norm_vec);
+        zero(o_prev);
 
-            warpgroup::fence(att_block); 
-            warpgroup::dot_reset(att_block, q_reg, k_smem[tic][subtile]); 
-            warpgroup::commit_group();
+        for (auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
 
-            copy(norm_vec_last, norm_vec);
-            copy(max_vec_last,  max_vec);
+            // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * NUM_WORKERS) + warpid;
+            load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
+            load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
 
-            warpgroup::mma_async_wait();
+            cluster.sync(); // make sure all the memory has arrived!
 
-            row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
-            sub_row(att_block, att_block, max_vec);
-            exp(att_block, att_block);
+            for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
+                
+                if(kv_block > 0) {
+                    dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
+                    dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
+                } 
+        
+                if(kv_block+1 < cluster_size) {
+                    int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
+                    dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[toc]);
+                    dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[toc]);
+                }
 
-            sub(max_vec_last, max_vec_last, max_vec);
-            exp(max_vec_last, max_vec_last);
-            mul(norm_vec, norm_vec, max_vec_last);
+                for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
 
-            row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
-            div_row(att_block, att_block, norm_vec);
+                    warpgroup::fence(att_block); 
+                    warpgroup::dot_reset(att_block, q_reg, k_smem[tic][subtile]); 
+                    warpgroup::commit_group();
+        
+                    copy(norm_vec_last, norm_vec);
+                    copy(max_vec_last,  max_vec);
+        
+                    warpgroup::mma_async_wait();
+        
+                    row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
+                    sub_row(att_block, att_block, max_vec);
+                    exp(att_block, att_block);
+        
+                    sub(max_vec_last, max_vec_last, max_vec);
+                    exp(max_vec_last, max_vec_last);
+                    mul(norm_vec, norm_vec, max_vec_last);
+        
+                    row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
+                    div_row(att_block, att_block, norm_vec);
+        
+                    mul(norm_vec_last, norm_vec_last, max_vec_last);
+                    div(norm_vec_last, norm_vec_last, norm_vec);
+        
+                    copy(att_block_mma, att_block); // convert to bf16 for mma
+        
+                    mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
+        
+                    warpgroup::fence(o_prev); 
+                    warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]); 
+                    warpgroup::commit_group();
+                    warpgroup::mma_async_wait();
+                }
 
-            mul(norm_vec_last, norm_vec_last, max_vec_last);
-            div(norm_vec_last, norm_vec_last, norm_vec);
-
-            copy(att_block_mma, att_block); // convert to bf16 for mma
-
-            mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-
-            warpgroup::fence(o_prev); 
-            warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]); 
-            warpgroup::commit_group();
-            warpgroup::mma_async_wait();
+                tic ^= 1;
+                toc ^= 1;
+                // cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
+                __syncthreads(); // this seems to suffice for now?
+            }
+            cluster.sync(); // make sure all the memory has arrived!
         }
+        
+        cluster.sync(); // make sure all the memory has arrived!
 
-        tic ^= 1;
-        toc ^= 1;
-        // cluster.sync(); // I would think this is necessary but seems to work without it? Saves a lot of time too.
-        __syncthreads(); // this seems to suffice for now?
+        // warp_idx  = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * NUM_WORKERS) + warpid;
+        store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
     }
-    cluster.sync(); // make sure all the memory has arrived!
-
-    store(__o__ + warp_idx*q_reg.num_elements, o_prev, ATTN_D);
-
 }
 
-#include "harness.impl"
+#include "harness_working_initial.impl"
