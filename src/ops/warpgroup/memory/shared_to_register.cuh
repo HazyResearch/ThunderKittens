@@ -12,6 +12,21 @@ namespace warpgroup {
 // They currently work fine with xor layout but it should be
 // possible to reduce their bank conflicts with other layouts too.
 
+/**
+ * @brief Loads data from shared memory into register tiles with a specified layout.
+ *
+ * This function supports both row-major and column-major layouts and requires the tile height to be a multiple of 4.
+ * It is designed for use within a warp group where each thread contributes to loading a portion of the tile.
+ *
+ * @tparam T2 The data type of the destination register tiles.
+ * @tparam U The data type of the source shared memory.
+ * @tparam height The number of rows in the tile, must be a multiple of 4.
+ * @tparam width The number of columns in the tile.
+ * @tparam reg_layout The register layout type, can be row or column major.
+ * @tparam shared_layout The shared memory layout type, currently only row major is supported.
+ * @param dst The destination register tiles.
+ * @param src The source shared memory.
+ */
 template<typename T2, typename U, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::row shared_layout>
 __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
     static_assert(height%4 == 0, "Warpgroup load / store requires tile height to be a multiple of 4.");
@@ -50,7 +65,21 @@ __device__ inline static void load(rt<T2, height/4, width, reg_layout> &dst, con
     }
 }
 
-
+/**
+ * @brief Stores data from register tiles into shared memory with a specified layout.
+ *
+ * This function supports both row-major and column-major layouts and requires the tile height to be a multiple of 4.
+ * It is designed for use within a warp group where each thread contributes to storing a portion of the tile.
+ *
+ * @tparam U The data type of the destination shared memory.
+ * @tparam T2 The data type of the source register tiles.
+ * @tparam height The number of rows in the tile, must be a multiple of 4.
+ * @tparam width The number of columns in the tile.
+ * @tparam reg_layout The register layout type, can be row or column major.
+ * @tparam shared_layout The shared memory layout type, currently only row major is supported.
+ * @param dst The destination shared memory.
+ * @param src The source register tiles.
+ */
 template<typename U, typename T2, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::row shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height/4, width, reg_layout> &src) {
     static_assert(height%4 == 0, "Warpgroup load / store requires tile height to be a multiple of 4.");
