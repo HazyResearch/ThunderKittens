@@ -3,9 +3,30 @@
 #include "../../common/common.cuh"
 #include "../../types/shared/shared.cuh"
 
+/**
+ * @namespace kittens::dsmem
+ * @brief Provides device-side shared memory distribution utilities.
+ *
+ * This namespace includes functions for distributing shared memory tiles
+ * across different thread blocks and managing synchronization barriers.
+ */
+
 namespace kittens {
 namespace dsmem {
 
+/**
+ * @brief Distributes a tile of shared memory across thread blocks.
+ *
+ * @tparam height The height of the shared memory tile.
+ * @tparam width The width of the shared memory tile.
+ * @tparam layout The layout of the shared memory tile.
+ * @param dst_ Reference to the destination shared memory tile.
+ * @param src_ Reference to the source shared memory tile.
+ * @param cluster_size The size of the cluster of thread blocks.
+ * @param dst_idx The index of the destination thread block.
+ * @param size_bytes The size of the shared memory tile in bytes.
+ * @param barrier Reference to the synchronization barrier.
+ */
 template<int height, int width, ducks::st_layout::all layout>
 __device__ static inline void tile_distribute_smem(st<bf16, height, width, layout> &dst_, st<bf16, height, width, layout> &src_, int cluster_size, int dst_idx, uint32_t size_bytes, uint64_t& barrier) 
 {
@@ -30,14 +51,14 @@ __device__ static inline void tile_distribute_smem(st<bf16, height, width, layou
             : "=r"(neighbor_addr_dst)
             : "r"(dst_ptr), "r"(neighbor_rank)
         );
-        
+
         uint32_t neighbor_addr_mbar = mbar_ptr;
         asm volatile (
             "mapa.shared::cluster.u32  %0, %1, %2;\n"
             : "=r"(neighbor_addr_mbar)
             : "r"(mbar_ptr), "r"(neighbor_rank)
         );
-        
+
         // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
         // copy src into dst in neighbor's cta
         asm volatile (
@@ -49,6 +70,12 @@ __device__ static inline void tile_distribute_smem(st<bf16, height, width, layou
     }
 }
 
+/**
+ * @brief Waits for a synchronization barrier to be completed.
+ *
+ * @param barrier Reference to the synchronization barrier.
+ * @param kPhaseBit The phase bit to be used for the barrier wait.
+ */
 __device__ static inline void distribution_wait(uint64_t& barrier, int kPhaseBit) {
     void const* const ptr = &barrier;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -67,6 +94,12 @@ __device__ static inline void distribution_wait(uint64_t& barrier, int kPhaseBit
     );
 }
 
+/**
+ * @brief Initializes a synchronization barrier.
+ *
+ * @param barrier Reference to the synchronization barrier to initialize.
+ * @param tc The thread count for the barrier.
+ */
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     if (threadIdx.x == 0) {
         void const* const ptr = &barrier;
@@ -79,6 +112,12 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     }
 }
 
+/**
+ * @brief Sets the expected transaction bytes for a synchronization barrier.
+ *
+ * @param barrier Reference to the synchronization barrier.
+ * @param bytes The number of bytes expected to transact.
+ */
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
     if (threadIdx.x == 0) {
         void const* const ptr = &barrier;
