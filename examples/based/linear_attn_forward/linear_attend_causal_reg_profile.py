@@ -6,6 +6,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
 sys.path.insert(0, project_root)
 from src.common.pyutils.test_build_utils import __eq
+sys.path.append('build/lib.linux-x86_64-cpython-311')
 import linear_attend_causal_reg as mod
 
 from collections import defaultdict

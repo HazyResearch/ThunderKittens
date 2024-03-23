@@ -77,7 +77,7 @@ struct shared_allocator {
         struct variadic_array;
         template<typename A, size_t first_dim, size_t... rest_dims>
         struct variadic_array<A, first_dim, rest_dims...> {
-            using type = typename variadic_array<A[first_dim], rest_dims...>::type;
+            using type = typename variadic_array<A, rest_dims...>::type[first_dim];
         };
         template<typename A>
         struct variadic_array<A> {
