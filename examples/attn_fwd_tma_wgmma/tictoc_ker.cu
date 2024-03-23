@@ -8,8 +8,10 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 1024
+#define ATTN_N (1024)
 #define ATTN_D 64
+
+#define Q_ROWS 32
 
 using namespace kittens;
 
@@ -33,18 +35,19 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
 
     rt_bf_2x4<> q_reg;
+    static_assert(Q_ROWS == q_reg.rows);
     rt_fl_2x2<> att_block;
     rt_bf_2x2<> att_block_mma;
     rt_fl_2x4<> o_prev;
     rt_fl_2x2<>::col_vec max_vec_last, max_vec;
     rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
 
-    st_bf<2,4,layout_row> (&q_smem)[NUM_WORKERS] = al.allocate<st_bf<2,4,layout_row>, NUM_WORKERS>();
+    st_bf<2,4,layout_row> (&q_smem)[NUM_WORKERS]    = al.allocate<st_bf<2,4,layout_row>, NUM_WORKERS>();
     st_bf_2x4<layout_row> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 2, NUM_WORKERS>();
     st_bf_2x4<layout_col> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_col>, 2, NUM_WORKERS>();
     
-    constexpr int qo_blocks = ATTN_N / (q_reg.rows * NUM_WORKERS);
-    constexpr int kv_blocks = ATTN_N / (q_reg.rows * NUM_WORKERS);
+    constexpr int qo_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS);
+    constexpr int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS);
 
     auto block = cooperative_groups::this_thread_block();
 
@@ -87,9 +90,20 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
         
         // warpgroup::load(q_reg, q_smem[warpgroupid]);
         load(q_reg, q_smem[warpid]);
-        mul(q_reg, q_reg, __float2bfloat16(0.125f));
+
+        if constexpr (ATTN_D == 64) {
+            mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment head 64
+        }
+        else if constexpr (ATTN_D == 128) {
+            mul(q_reg, q_reg, __float2bfloat16(0.08838834764831843f)); // temperature adjustment head 128
+        }
+
         if(q_blk+1 < qo_blocks) {
             tile_idx = ((blockIdx.x) * NUM_WORKERS * qo_blocks) + (q_blk+1)*NUM_WORKERS + warpid;
+
+            tma::init_barrier(qsmem_barrier[warpid], block.size());
+            tma::set_barrier_bytes(qsmem_barrier[warpid], tile_bytes);
+
             tma::load_async(q_smem[warpid], tma_q, tile_idx, qsmem_barrier[warpid]);
             // warpgroup::load_async(q_smem[warpgroupid], _q + ((q_blk+1)*NUM_WARPGROUPS + warpgroupid) * q_smem[warpgroupid].rows*d, d, q_barrier); //start getting block 0
         }
@@ -108,11 +122,23 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             __syncthreads();
  
             if(kv_idx+1 < kv_blocks) {
+                tma::init_barrier(ksmem_barrier[warpid], block.size());
+                tma::set_barrier_bytes(ksmem_barrier[warpid], tile_bytes);
+
+                tma::init_barrier(vsmem_barrier[warpid], block.size());
+                tma::set_barrier_bytes(vsmem_barrier[warpid], tile_bytes);
+
                 tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + (kv_idx+1)*NUM_WORKERS + warpid;
                 tma::load_async(k_smem[toc][warpid], tma_k, tile_idx, ksmem_barrier[warpid]);
                 tma::load_async(v_smem[toc][warpid], tma_v, tile_idx, vsmem_barrier[warpid]);
             }
             else if(q_blk+1 < qo_blocks) {
+                tma::init_barrier(ksmem_barrier[warpid], block.size());
+                tma::set_barrier_bytes(ksmem_barrier[warpid], tile_bytes);
+
+                tma::init_barrier(vsmem_barrier[warpid], block.size());
+                tma::set_barrier_bytes(vsmem_barrier[warpid], tile_bytes);
+                
                 tile_idx = ((blockIdx.x) * NUM_WORKERS * kv_blocks) + warpid;
                 tma::load_async(k_smem[toc][warpid], tma_k, tile_idx, ksmem_barrier[warpid]);
                 tma::load_async(v_smem[toc][warpid], tma_v, tile_idx, vsmem_barrier[warpid]);
