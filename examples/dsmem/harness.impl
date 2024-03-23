@@ -75,35 +75,51 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_o, TOTAL_ELEMENTS * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    constexpr int TH = 128 / ATTN_D;
-    constexpr int TOTAL_BATCH = ATTN_B*ATTN_H;
-    attn_tma_descriptors<ATTN_D, TH, TOTAL_BATCH, ATTN_N> tma_desc(d_q, d_k, d_v, d_o);
-    CudaCheckError();
+    CUtensorMap tma_desc_q = {}; 
+    CUtensorMap tma_desc_k = {};
+    CUtensorMap tma_desc_v = {};
+    CUtensorMap tma_desc_o = {};
+
+    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_q, d_q); 
+    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf<2,4,layout_col>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+
+    CUtensorMap* tma_q_d; 
+    CUtensorMap* tma_k_d;
+    CUtensorMap* tma_v_d;
+    CUtensorMap* tma_o_d;
+
+    cudaMalloc(&tma_q_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_k_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_v_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_o_d, sizeof(CUtensorMap));
+
+    cudaMemcpy(tma_q_d, &tma_desc_q, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_k_d, &tma_desc_k, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_v_d, &tma_desc_v, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_o_d, &tma_desc_o, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     
-    unsigned long mem_size = 226000; // kinda ballparking it
+    unsigned long mem_size = 227000; // kinda ballparking it
 
     cudaFuncSetAttribute(
-        attend_ker<ATTN_D,TH,TOTAL_BATCH,ATTN_N>,
+        attend_ker,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
-    cudaFuncSetAttribute(attend_ker<ATTN_D,TH,TOTAL_BATCH,ATTN_N>, cudaFuncAttributeNonPortableClusterSizeAllowed, CLUSTER_SIZE); 
+    cudaFuncSetAttribute(attend_ker, cudaFuncAttributeNonPortableClusterSizeAllowed, CLUSTER_SIZE); 
 
-    const int ITER = 1;
+    const int ITER = 100;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     // TimingData tdata(dim3(ATTN_B*ATTN_H*CLUSTER_SIZE), dim3(BLOCK_SIZE));
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_D, TH, TOTAL_BATCH, ATTN_N><<<TOTAL_BATCH*CLUSTER_SIZE, BLOCK_SIZE, mem_size>>>(
-            tma_desc.q_desc,
-            tma_desc.k_desc,
-            tma_desc.v_desc,
-            tma_desc.o_desc
-        );
+        attend_ker<<<ATTN_B*ATTN_H*CLUSTER_SIZE, BLOCK_SIZE, mem_size>>>(ATTN_N, ATTN_D, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
