@@ -118,7 +118,7 @@ template<typename H, typename T>
 __global__
 void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* __k, const T* __v, T* __o) {
     
-    auto warpid = kittens::warp_id();
+    auto warpid = kittens::warpid();
     const int d = 64;
     const int window_size = 64;
     const int workers = 4;
@@ -143,7 +143,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     // Shared
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
+    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
     st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &w = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec>();
     __shared__ float _max[workers], _sum[workers];  
 
@@ -154,7 +154,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     if(warpid == 0) load(k, _k + start_idx, d); // One warp loads from global to shared
     if(warpid == 0) load(v, _v + start_idx, d);
     __syncthreads();
-    auto subtile = k.template subtile<1,4>(warpid, 0); // All the other warps load from shared to shared
+    auto subtile = subtile_inplace<1,4>(k, warpid, 0); // All the other warps load from shared to shared
     load(k_slice, subtile);
 
     // Option B
@@ -202,7 +202,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     vec_to_rvec(wv, w.data); // read the *whole* v here.
     
     // we want a column stripe of V
-    auto subtile_v = v.template subtile<4,1>(0, warpid);
+    auto subtile_v = subtile_inplace<4,1>(v, 0, warpid);
     // load(v_slice, subtile_v); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
     zero(os);
     gemv_two(os, wv, v_slice);
@@ -244,7 +244,7 @@ sliding_window(int j,
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
 
-    auto threads = workers * kittens::WARP_SIZE;
+    int threads = workers * kittens::WARP_SIZE;
 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
