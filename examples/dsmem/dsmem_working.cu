@@ -108,32 +108,32 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
             // tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
             // tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
 
-            __syncthreads(); 
-            if (threadIdx.x == 0 && q_itr == 0 && blockIdx.x == 0) {
-                // print out k and v
-                printf("k \n");
-                for (int w = 0; w < 8; w++) {
-                    for (int r = 0; r < k_smem[async][w].rows; r++) {
-                        for (int c = 0; c < k_smem[async][w].cols; c++) {
-                            printf("%f ", __bfloat162float(k_smem[async][w].data[r * k_smem[async][w].cols + c]));
-                        }
-                        printf("\n");
-                    }
-                    printf("\n");
-                }
-                printf("\n");
-                printf("v \n");
-                for (int w = 0; w < 8; w++) {
-                    for (int r = 0; r < v_smem[async][w].rows; r++) {
-                        for (int c = 0; c < v_smem[async][w].cols; c++) {
-                            printf("%f ", __bfloat162float(v_smem[async][w].data[r * v_smem[async][w].cols + c]));
-                        }
-                        printf("\n");
-                    }
-                    printf("\n");
-                }
-            }
-            __syncthreads(); 
+            // __syncthreads(); 
+            // if (threadIdx.x == 0 && q_itr == 0 && blockIdx.x == 0) {
+            //     // print out k and v
+            //     printf("k \n");
+            //     for (int w = 0; w < 8; w++) {
+            //         for (int r = 0; r < k_smem[async][w].rows; r++) {
+            //             for (int c = 0; c < k_smem[async][w].cols; c++) {
+            //                 printf("%f ", __bfloat162float(k_smem[async][w].data[r * k_smem[async][w].cols + c]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //     }
+            //     printf("\n");
+            //     printf("v \n");
+            //     for (int w = 0; w < 8; w++) {
+            //         for (int r = 0; r < v_smem[async][w].rows; r++) {
+            //             for (int c = 0; c < v_smem[async][w].cols; c++) {
+            //                 printf("%f ", __bfloat162float(v_smem[async][w].data[r * v_smem[async][w].cols + c]));
+            //             }
+            //             printf("\n");
+            //         }
+            //         printf("\n");
+            //     }
+            // }
+            // __syncthreads(); 
 
             swap(tic, async);
 
