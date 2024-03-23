@@ -6,7 +6,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N (4096 * 16)
+#define ATTN_N (4096)
 #define ATTN_D 64
 
 #define NUM_WORKERS 8
@@ -16,6 +16,8 @@
 #define CLUSTER_SIZE MIN(ATTN_N / (NUM_WORKERS * Q_ROWS), 16)
 
 using namespace kittens;
+
+template<typename T> __device__ inline void swap(T & a, T & b) { T tmp = a; a = b; b = tmp; }
 
 using layout_row = st_wgmma_row_0b_layout;
 using layout_col = st_wgmma_col_t_0b_layout;
@@ -57,44 +59,16 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
 
     //**// General set-up
-    int tic = 0, toc = 1;
+    int tic = 0, toc = 1, async = 2;
     int warp_idx  = (cluster_idx * cluster_size + block_idx) * NUM_WORKERS + warpid;
 
     //**// TMA set-up
     __shared__ uint64_t k_tma_barrier[NUM_WORKERS]; 
     __shared__ uint64_t v_tma_barrier[NUM_WORKERS];
 
-    constexpr int tma_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
-
-    constexpr int kPhaseBit_tma = 1;
-    constexpr int vPhaseBit_tma = 1;
-
-    tma::init_barrier(k_tma_barrier[warpid], block.size());
-    tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
-
-    tma::init_barrier(v_tma_barrier[warpid], block.size());
-    tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
-    block.sync(); 
-
     //**// DSMEM set-up
-    __shared__ uint64_t k_dsmem_barrier[2];
-    __shared__ uint64_t v_dsmem_barrier[2];
-    
-    constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
-
-    dsmem::init_barrier(k_dsmem_barrier[0], block.size());
-    dsmem::set_barrier_bytes(k_dsmem_barrier[0], size_bytes);
-
-    dsmem::init_barrier(v_dsmem_barrier[0], block.size());
-    dsmem::set_barrier_bytes(v_dsmem_barrier[0], size_bytes);
-
-    dsmem::init_barrier(k_dsmem_barrier[1], block.size());
-    dsmem::set_barrier_bytes(k_dsmem_barrier[1], size_bytes);
-
-    dsmem::init_barrier(v_dsmem_barrier[1], block.size());
-    dsmem::set_barrier_bytes(v_dsmem_barrier[1], size_bytes);
-
-    constexpr int kPhaseBit_dsmem_kv = 1;
+    __shared__ uint64_t k_dsmem_barrier[3];
+    __shared__ uint64_t v_dsmem_barrier[3];
 
     int qo_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size);
     int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size); 
@@ -116,26 +90,79 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         for (auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
 
             warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * (NUM_WORKERS * cluster_size)) + warpid;
-            // load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-            // load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
-            tma::load_async(k_smem[tic][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
-            tma::load_async(v_smem[tic][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
-            tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
-            tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
+            load(k_smem[async][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
+            load(v_smem[async][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
+
+            // constexpr int tma_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
+            // constexpr int kPhaseBit_tma = 1;
+            // constexpr int vPhaseBit_tma = 1;
+
+            // tma::init_barrier(k_tma_barrier[warpid], 32);
+            // tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
+
+            // tma::init_barrier(v_tma_barrier[warpid], 32);
+            // tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
+
+            // tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
+            // tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+            // tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
+            // tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
+
+            __syncthreads(); 
+            if (threadIdx.x == 0 && q_itr == 0 && blockIdx.x == 0) {
+                // print out k and v
+                printf("k \n");
+                for (int w = 0; w < 8; w++) {
+                    for (int r = 0; r < k_smem[async][w].rows; r++) {
+                        for (int c = 0; c < k_smem[async][w].cols; c++) {
+                            printf("%f ", __bfloat162float(k_smem[async][w].data[r * k_smem[async][w].cols + c]));
+                        }
+                        printf("\n");
+                    }
+                    printf("\n");
+                }
+                printf("\n");
+                printf("v \n");
+                for (int w = 0; w < 8; w++) {
+                    for (int r = 0; r < v_smem[async][w].rows; r++) {
+                        for (int c = 0; c < v_smem[async][w].cols; c++) {
+                            printf("%f ", __bfloat162float(v_smem[async][w].data[r * v_smem[async][w].cols + c]));
+                        }
+                        printf("\n");
+                    }
+                    printf("\n");
+                }
+            }
+            __syncthreads(); 
+
+            swap(tic, async);
 
             cluster.sync(); // make sure all the memory has arrived! 
 
             for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
-                
+
+                constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
+                constexpr int kPhaseBit_dsmem_kv = 0;
+
                 if(kv_block > 0) {
-                    dsmem::distribution_wait(k_dsmem_barrier[1], kPhaseBit_dsmem_kv);
-                    dsmem::distribution_wait(v_dsmem_barrier[1], kPhaseBit_dsmem_kv);
+                    if (threadIdx.x == 0) {
+                        dsmem::distribution_wait(k_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
+                        dsmem::distribution_wait(v_dsmem_barrier[tic], kPhaseBit_dsmem_kv);
+                    }
                 }
+                cluster.sync(); 
         
                 if(kv_block+1 < cluster_size) {
+                    
+                    dsmem::init_barrier(k_dsmem_barrier[toc], 1);
+                    dsmem::init_barrier(v_dsmem_barrier[toc], 1);
+
+                    dsmem::set_barrier_bytes(k_dsmem_barrier[toc], size_bytes);
+                    dsmem::set_barrier_bytes(v_dsmem_barrier[toc], size_bytes);
+
                     int neighbor_idx = (block_idx + 1) % cluster_size; // pass down by 1
-                    dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[0]);
-                    dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[0]);
+                    dsmem::tile_distribute_smem(k_smem[toc][0], k_smem[tic][0], cluster_size, neighbor_idx, size_bytes, k_dsmem_barrier[toc]);
+                    dsmem::tile_distribute_smem(v_smem[toc][0], v_smem[tic][0], cluster_size, neighbor_idx, size_bytes, v_dsmem_barrier[toc]);
                 }
 
                 for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
@@ -173,8 +200,7 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
                     warpgroup::mma_async_wait();
                 }
 
-                tic ^= 1;
-                toc ^= 1;
+                swap(tic, toc);
             }
         }
 
