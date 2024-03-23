@@ -92,7 +92,7 @@ int main(int argc, char **argv) {
     );
     cudaFuncSetAttribute(attend_ker<ATTN_D,TH,TOTAL_BATCH,ATTN_N>, cudaFuncAttributeNonPortableClusterSizeAllowed, CLUSTER_SIZE); 
 
-    const int ITER = 100;
+    const int ITER = 1;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     // TimingData tdata(dim3(ATTN_B*ATTN_H*CLUSTER_SIZE), dim3(BLOCK_SIZE));

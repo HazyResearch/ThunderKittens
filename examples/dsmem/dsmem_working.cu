@@ -6,13 +6,13 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N (4096)
-#define ATTN_D 64
+#define ATTN_N (4096 * 8)
+#define ATTN_D 128
 
 #define NUM_WORKERS 8
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
-#define Q_ROWS 32
+#define Q_ROWS 16
 #define CLUSTER_SIZE MIN(ATTN_N / (NUM_WORKERS * Q_ROWS), 16)
 
 using namespace kittens;
@@ -22,9 +22,15 @@ template<typename T> __device__ inline void swap(T & a, T & b) { T tmp = a; a = 
 using layout_row = st_wgmma_row_0b_layout;
 using layout_col = st_wgmma_col_t_0b_layout;
 
+// head dim 64 to 128
+// tma only (no wgmma) with swizzling
+// tma stores
+// tma threadblock level
+// sweep seqlens
+
 __global__ void __cluster_dims__(CLUSTER_SIZE, 1, 1) 
 attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__,
-            CUtensorMap *q_desc, CUtensorMap *k_desc, CUtensorMap *v_desc, CUtensorMap *o_desc)
+    CUtensorMap *q_desc, CUtensorMap *k_desc, CUtensorMap *v_desc, CUtensorMap *o_desc)
 {
     auto warpid        = threadIdx.x / 32;
     
@@ -47,16 +53,17 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     // layout:
     // index 0: which part of the cache is this? (0,1) are used as a tic-toc for message passing, 2 is async load.
     // index 1: which worker is responsible
-    st_bf_2x4<layout_row> (&k_smem)[3][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_row>, 3, NUM_WORKERS>();
-    st_bf_2x4<layout_col> (&v_smem)[3][NUM_WORKERS] = al.allocate<st_bf_2x4<layout_col>, 3, NUM_WORKERS>();
+    st_bf_1x8<layout_row> (&k_smem)[3][NUM_WORKERS] = al.allocate<st_bf_1x8<layout_row>, 3, NUM_WORKERS>();
+    st_bf_1x8<layout_col> (&v_smem)[3][NUM_WORKERS] = al.allocate<st_bf_1x8<layout_col>, 3, NUM_WORKERS>();
+    st_bf_1x8<layout_row> (&o_smem)[NUM_WORKERS]    = al.allocate<st_bf_1x8<layout_row>, NUM_WORKERS>();
 
-    rt_bf_2x4<> q_reg;
+    rt_bf_1x8<> q_reg;
     static_assert(Q_ROWS == q_reg.rows);
-    rt_fl_2x2<> att_block;
-    rt_bf_2x2<> att_block_mma;
-    rt_fl_2x4<> o_prev;
-    rt_fl_2x2<>::col_vec max_vec_last, max_vec;
-    rt_fl_2x2<>::col_vec norm_vec_last, norm_vec;
+    rt_fl_1x1<> att_block;
+    rt_bf_1x1<> att_block_mma;
+    rt_fl_1x8<> o_prev;
+    rt_fl_1x1<>::col_vec max_vec_last, max_vec;
+    rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
 
     //**// General set-up
     int tic = 0, toc = 1, async = 2;
@@ -66,14 +73,32 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     __shared__ uint64_t k_tma_barrier[NUM_WORKERS]; 
     __shared__ uint64_t v_tma_barrier[NUM_WORKERS];
 
+    constexpr int tma_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
+    constexpr int kPhaseBit_tma = 1;
+    constexpr int vPhaseBit_tma = 1;
+
     //**// DSMEM set-up
     __shared__ uint64_t k_dsmem_barrier[3];
     __shared__ uint64_t v_dsmem_barrier[3];
+
+    constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
+    constexpr int kPhaseBit_dsmem_kv = 0;
 
     int qo_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size);
     int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size); 
 
     for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
+        warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (0 * (NUM_WORKERS * cluster_size)) + warpid;
+
+        tma::init_barrier(k_tma_barrier[warpid], block.size());
+        tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
+
+        tma::init_barrier(v_tma_barrier[warpid], block.size());
+        tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
+
+        tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
+        tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+
         warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
         if constexpr (ATTN_D == 64) {
@@ -88,61 +113,27 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         zero(o_prev);
 
         for (auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
-
-            warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * (NUM_WORKERS * cluster_size)) + warpid;
-            load(k_smem[async][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-            load(v_smem[async][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
-
-            // constexpr int tma_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
-            // constexpr int kPhaseBit_tma = 1;
-            // constexpr int vPhaseBit_tma = 1;
-
-            // tma::init_barrier(k_tma_barrier[warpid], 32);
-            // tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
-
-            // tma::init_barrier(v_tma_barrier[warpid], 32);
-            // tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
-
-            // tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
-            // tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
-            // tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
-            // tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
-
-            // __syncthreads(); 
-            // if (threadIdx.x == 0 && q_itr == 0 && blockIdx.x == 0) {
-            //     // print out k and v
-            //     printf("k \n");
-            //     for (int w = 0; w < 8; w++) {
-            //         for (int r = 0; r < k_smem[async][w].rows; r++) {
-            //             for (int c = 0; c < k_smem[async][w].cols; c++) {
-            //                 printf("%f ", __bfloat162float(k_smem[async][w].data[r * k_smem[async][w].cols + c]));
-            //             }
-            //             printf("\n");
-            //         }
-            //         printf("\n");
-            //     }
-            //     printf("\n");
-            //     printf("v \n");
-            //     for (int w = 0; w < 8; w++) {
-            //         for (int r = 0; r < v_smem[async][w].rows; r++) {
-            //             for (int c = 0; c < v_smem[async][w].cols; c++) {
-            //                 printf("%f ", __bfloat162float(v_smem[async][w].data[r * v_smem[async][w].cols + c]));
-            //             }
-            //             printf("\n");
-            //         }
-            //         printf("\n");
-            //     }
-            // }
-            // __syncthreads(); 
+            tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
+            tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
 
             swap(tic, async);
 
             cluster.sync(); // make sure all the memory has arrived! 
 
-            for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
+            if (kv_itr + 1 < kv_blocks) {
+                warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + ((kv_itr + 1) * (NUM_WORKERS * cluster_size)) + warpid;
 
-                constexpr int size_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
-                constexpr int kPhaseBit_dsmem_kv = 0;
+                tma::init_barrier(k_tma_barrier[warpid], block.size());
+                tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
+
+                tma::init_barrier(v_tma_barrier[warpid], block.size());
+                tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
+
+                tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
+                tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+            }
+
+            for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
 
                 if(kv_block > 0) {
                     if (threadIdx.x == 0) {
@@ -199,7 +190,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
                     warpgroup::commit_group();
                     warpgroup::mma_async_wait();
                 }
-
                 swap(tic, toc);
             }
         }

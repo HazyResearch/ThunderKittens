@@ -173,6 +173,33 @@ attend_ker(CUtensorMap *q_desc, CUtensorMap *k_desc, CUtensorMap *v_desc, CUtens
     tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma_k);
     tma::arrive_wait(v_tma_barrier[warpid], kPhaseBit_tma_v);
 
+    __syncthreads(); 
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // print out k and v
+        printf("k \n");
+        for (int w = 0; w < 8; w++) {
+            for (int r = 0; r < k_smem[tic][w].rows; r++) {
+                for (int c = 0; c < k_smem[tic][w].cols; c++) {
+                    printf("%f ", __bfloat162float(k_smem[tic][w].data[r * k_smem[tic][w].cols + c]));
+                }
+                printf("\n");
+            }
+            printf("\n");
+        }
+        printf("\n");
+        printf("v \n");
+        for (int w = 0; w < 8; w++) {
+            for (int r = 0; r < v_smem[tic][w].rows; r++) {
+                for (int c = 0; c < v_smem[tic][w].cols; c++) {
+                    printf("%f ", __bfloat162float(v_smem[tic][w].data[r * v_smem[tic][w].cols + c]));
+                }
+                printf("\n");
+            }
+            printf("\n");
+        }
+    }
+    __syncthreads(); 
+
 
     cluster.sync(); // make sure all the memory has arrived!
 

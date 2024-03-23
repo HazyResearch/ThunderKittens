@@ -24,8 +24,7 @@ using layout_row = st_wgmma_row_0b_layout;
 using layout_col = st_wgmma_col_t_0b_layout;
 
 __global__ void __cluster_dims__(CLUSTER_SIZE, 1, 1) 
-attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__, 
-            CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o)
+attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o)
 {
     auto warpid        = threadIdx.x / 32;
     

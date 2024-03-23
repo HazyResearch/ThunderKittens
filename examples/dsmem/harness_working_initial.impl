@@ -84,10 +84,10 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
-    tma::create_tensor_map<st_bf<2,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<2,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<2,8,layout_col>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<2,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+    tma::create_tensor_map<st_bf<1,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_q, d_q); 
+    tma::create_tensor_map<st_bf<1,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf<1,8,layout_col>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<1,8,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
