@@ -29,7 +29,7 @@ __global__
 void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out, T* __denom) { 
 
     auto block_start = blockIdx.x;
-    auto warpid = kittens::warp_id();
+    auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
     const int workers  = 8; 
     const int nThreads = workers*kittens::WARP_SIZE;
@@ -216,7 +216,7 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     CHECK_INPUT(k_state);
     CHECK_INPUT(out);
 
-    auto batch = q.size(0);
+    int batch = q.size(0);
     TORCH_CHECK(batch == k.size(0) && batch == v.size(0) && batch == kv_state.size(0) && k_state.size(0) == batch && out.size(0) == batch, "Differing batch sizes?");
     TORCH_CHECK(q.size(1) == d_state, "Q is d_state?");
     TORCH_CHECK(k.size(1) == d_state, "K is d_state?");
@@ -228,7 +228,7 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     const int workers = 8;
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
-    auto threads = workers * kittens::WARP_SIZE;
+    int threads = workers * kittens::WARP_SIZE;
     printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
