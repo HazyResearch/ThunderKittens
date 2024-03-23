@@ -60,6 +60,22 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     int tic = 0, toc = 1;
     int warp_idx  = (cluster_idx * cluster_size + block_idx) * NUM_WORKERS + warpid;
 
+    //**// TMA set-up
+    __shared__ uint64_t k_tma_barrier[NUM_WORKERS]; 
+    __shared__ uint64_t v_tma_barrier[NUM_WORKERS];
+
+    constexpr int tma_bytes = sizeof(bf16) * k_smem[0][0].num_elements;
+
+    constexpr int kPhaseBit_tma = 1;
+    constexpr int vPhaseBit_tma = 1;
+
+    tma::init_barrier(k_tma_barrier[warpid], block.size());
+    tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
+
+    tma::init_barrier(v_tma_barrier[warpid], block.size());
+    tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
+    block.sync(); 
+
     //**// DSMEM set-up
     __shared__ uint64_t k_dsmem_barrier[2];
     __shared__ uint64_t v_dsmem_barrier[2];
@@ -84,7 +100,6 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size); 
 
     for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
-
         warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
         if constexpr (ATTN_D == 64) {
@@ -101,10 +116,14 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
         for (auto kv_itr = 0; kv_itr < kv_blocks; kv_itr++) {
 
             warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (kv_itr * (NUM_WORKERS * cluster_size)) + warpid;
-            load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
-            load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
+            // load(k_smem[tic][warpid], __k__ + warp_idx*q_reg.num_elements, ATTN_D);
+            // load(v_smem[tic][warpid], __v__ + warp_idx*q_reg.num_elements, ATTN_D);
+            tma::load_async(k_smem[tic][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
+            tma::load_async(v_smem[tic][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+            tma::arrive_wait(k_tma_barrier[warpid], kPhaseBit_tma);
+            tma::arrive_wait(v_tma_barrier[warpid], vPhaseBit_tma);
 
-            cluster.sync(); // make sure all the memory has arrived!
+            cluster.sync(); // make sure all the memory has arrived! 
 
             for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {
                 
