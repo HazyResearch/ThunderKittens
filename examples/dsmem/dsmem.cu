@@ -87,16 +87,21 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
     int kv_blocks = ATTN_N / (Q_ROWS * NUM_WORKERS * cluster_size); 
 
     for (auto q_itr = 0; q_itr < qo_blocks; q_itr++) {
-        warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (0 * (NUM_WORKERS * cluster_size)) + warpid;
 
-        tma::init_barrier(k_tma_barrier[warpid], block.size());
-        tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
+        if (threadIdx.x == 0) {
+            for (int w = 0; w < NUM_WORKERS; w++) {
+                warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (0 * (NUM_WORKERS * cluster_size)) + warpid + w; 
 
-        tma::init_barrier(v_tma_barrier[warpid], block.size());
-        tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
+                tma::init_barrier(k_tma_barrier[w], block.size());
+                tma::set_barrier_bytes(k_tma_barrier[w], tma_bytes);
 
-        tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
-        tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+                tma::init_barrier(v_tma_barrier[w], block.size());
+                tma::set_barrier_bytes(v_tma_barrier[w], tma_bytes);
+
+                tma::load_async(k_smem[async][w], k_desc, warp_idx, k_tma_barrier[w]);
+                tma::load_async(v_smem[async][w], v_desc, warp_idx, v_tma_barrier[w]);
+            }
+        }
 
         warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + (q_itr * (NUM_WORKERS * cluster_size)) + warpid;
         load(q_reg, __q__ + warp_idx*q_reg.num_elements, ATTN_D);
@@ -120,16 +125,20 @@ attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict_
             // cluster.sync(); // maybe we don't need this? 
 
             if (kv_itr + 1 < kv_blocks) {
-                warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + ((kv_itr + 1) * (NUM_WORKERS * cluster_size)) + warpid;
-
-                tma::init_barrier(k_tma_barrier[warpid], block.size());
-                tma::set_barrier_bytes(k_tma_barrier[warpid], tma_bytes);
-
-                tma::init_barrier(v_tma_barrier[warpid], block.size());
-                tma::set_barrier_bytes(v_tma_barrier[warpid], tma_bytes);
-
-                tma::load_async(k_smem[async][warpid], k_desc, warp_idx, k_tma_barrier[warpid]);
-                tma::load_async(v_smem[async][warpid], v_desc, warp_idx, v_tma_barrier[warpid]);
+                if (threadIdx.x == 0) {
+                    for (int w = 0; w < NUM_WORKERS; w++) {
+                        warp_idx = (cluster_idx * cluster_size * NUM_WORKERS) + (block_idx * NUM_WORKERS) + ((kv_itr + 1) * (NUM_WORKERS * cluster_size)) + warpid + w;
+    
+                        tma::init_barrier(k_tma_barrier[w], block.size());
+                        tma::set_barrier_bytes(k_tma_barrier[w], tma_bytes);
+    
+                        tma::init_barrier(v_tma_barrier[w], block.size());
+                        tma::set_barrier_bytes(v_tma_barrier[w], tma_bytes);
+    
+                        tma::load_async(k_smem[async][w], k_desc, warp_idx, k_tma_barrier[w]);
+                        tma::load_async(v_smem[async][w], v_desc, warp_idx, v_tma_barrier[w]);
+                    }
+                }
             }
 
             for (auto kv_block = 0; kv_block < cluster_size; kv_block++) {

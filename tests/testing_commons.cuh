@@ -16,7 +16,8 @@ template<> std::string layout_name<kittens::st_xor_row_layout       >() { return
 template<> std::string layout_name<kittens::st_wgmma_row_0b_layout  >() { return "st_wgmma_row_0b_layout";   }
 template<> std::string layout_name<kittens::st_wgmma_row_32b_layout >() { return "st_wgmma_row_32b_layout";  }
 template<> std::string layout_name<kittens::st_wgmma_col_t_0b_layout>() { return "st_wgmma_col_t_0b_layout";   }
-// template<> std::string layout_name<kittens::st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
+template<> std::string layout_name<kittens::st_wgmma_col_t_32b_layout>() { return "st_wgmma_col_t_32b_layout";  }
+template<> std::string layout_name<kittens::st_tma_row_layout       >() { return "st_tma_row_layout";        }
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {

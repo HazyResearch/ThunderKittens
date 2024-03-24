@@ -461,7 +461,7 @@ __device__ static inline void load_async(st<bf16, height, width, wgmma_row_layou
         int32_t crd1 = 0; 
         int32_t crd2 = 0;
         int32_t crd3 = tile_idx * (dst.rows/8);
-        int32_t crd4 = 0;
+        int32_t crd4 = 0; 
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"

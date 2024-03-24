@@ -29,7 +29,7 @@ struct wgmma_base {
 #include "4x4.cuh"
 
 // can add bigger ones later
-// #include "4x5.impl"
-// #include "4x6.impl"
-// #include "4x7.impl"
-// #include "4x8.impl"
+// #include "4x5.cuh"
+// #include "4x6.cuh"
+// #include "4x7.cuh"
+#include "4x8.cuh"
