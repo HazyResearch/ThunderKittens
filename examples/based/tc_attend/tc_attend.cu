@@ -13,43 +13,16 @@ using namespace nvcuda;
 
 using namespace kittens;
 
-__device__
-void thread_block_load(st_bf_4x4<ducks::st_layout::xor_swizzle> &_dst, const typename st_bf_4x4<ducks::st_layout::xor_swizzle>::dtype *_src, const int nThreads=256) {
-    float4* dst = (float4*) _dst.data;
-    float4* src = (float4*) _src; 
-    using H     = st_bf_4x4<ducks::st_layout::xor_swizzle>;
-    using T     = typename H::dtype;
+/*
+This function seems to broadcast a single value per worker into shared memory,
+then use a single worker to do a reduction on them, and then have
+all of the workers take back down that single reduced value.
 
-    const int _row_stride  = H::cols; 
-    auto bytes_per_row     = H::cols * sizeof(T); // non-padded
-    auto f4_stride         = (_row_stride*sizeof(T))/sizeof(float4);
-    auto reads_per_row     = bytes_per_row / sizeof(float4);
-    auto rows_per_block    = nThreads / reads_per_row; 
-    auto row_skipping_only = (nThreads % reads_per_row) == 0; // if we read complete rows.
-    auto f4_elements       = (H::num_elements * sizeof(T)) / sizeof(float4);
-    
-    if( row_skipping_only ) {
-        auto col      = threadIdx.x % reads_per_row; // this will be fixed
-        auto row_base = threadIdx.x / reads_per_row; 
-        auto _stride  = f4_stride*rows_per_block; // we we will just skip!
-        __syncthreads();
-        auto idx = row_base*f4_stride + col;
-        for(auto i = threadIdx.x; i < f4_elements; i+=nThreads, idx += _stride) {
-            dst[idx] = src[i];
-        }
-    } else {
-        __syncthreads();
-        for(auto i = threadIdx.x; i < f4_elements; i+=nThreads) {
-            auto col = i % reads_per_row;
-            auto row = i / reads_per_row;
-            dst[row*_row_stride + col] = src[i];
-        }
-    }
-}
-
+The way it's written right now looks like a bug due to `shm[warpid] = f;`
+^ that looks like a race condition, and only lane 0 should write that.
+*/
 template<typename op>
-__device__ 
-void shm_broadcast(float &f, float *shm, const int workers = 4) {
+__device__ void shm_broadcast(float &f, float *shm, const int workers = 4) {
     auto warpid = threadIdx.x / 32;
     auto lane   = threadIdx.x % 32;
     shm[warpid] = f;
@@ -65,19 +38,26 @@ void shm_broadcast(float &f, float *shm, const int workers = 4) {
     f = shm[warpid];
 }
 
+/*
+This function takes in a tile and a row vec and returns a col vec.
+First, we multiply every column value by the row vector.
+Then, we sum across that axis (and o) and store the result in o.
+
+This could be refactored to be slightly more functional but that's alright.
+*/
 // GEMV
-__device__
-void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { 
+__device__ void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x4<> &a) { 
     rt_fl_1x4<> t;
-    copy(t, a);
     // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
     mul_col(t, a, x); // multiply vv in place with aa: a * v.unsqueeze(1) // row, row, col
     row_sum(o, t, o); // aa.sum(0) sum across all the rows 
 }
 
+/*
+This function seems to be the transpose of the above function.
+*/
 // GEMV
-__device__
-void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
+__device__void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
     rt_fl_4x1<> t;
     copy(t, a);
     // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
@@ -86,10 +66,14 @@ void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a)
 }
 
 
-static
-void __device__
-vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
-    using T = __nv_bfloat16;
+/*
+This is either global to reg or shared to reg, can't quite tell yet.
+
+Either way I'm going to find a way to rename it to "load".
+*/
+static void __device__
+vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const bf16 *src) {
+    using T = bf16;
     using U = float;
     auto row = kittens::laneid() / 4;
     __syncwarp();    
@@ -99,9 +83,12 @@ vec_to_rvec(rt_fl_4x1<>::col_vec &dst, const __nv_bfloat16 *src) {
     }
 }
 
+/*
+This is the equivalent "store" of above.
+*/
 static void __device__
-rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
-    using U = __nv_bfloat16;
+rvec_to_vec(bf16 *dst, rt_fl_1x4<>::col_vec &src) {
+    using U = bf16;
     using T = float;
     auto row = kittens::laneid() / 4;
     __syncwarp();
@@ -114,6 +101,9 @@ rvec_to_vec(__nv_bfloat16 *dst, rt_fl_1x4<>::col_vec &src) {
 }
 
 
+/*
+Main kernel.
+*/
 template<typename H, typename T>
 __global__
 void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* __k, const T* __v, T* __o) {
@@ -121,9 +111,10 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     auto warpid = kittens::warpid();
     const int d = 64;
     const int window_size = 64;
-    const int workers = 4;
+    constexpr int workers = 4;
     const int threads = workers * kittens::WARP_SIZE;
     auto head_offset  = blockIdx.x * n * d;
+    using block = kittens::block<workers>;
     
     const H* _q = device_cast(__q) + blockIdx.x*d;
     const H* _k = device_cast(__k) + head_offset;
@@ -151,19 +142,11 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     const auto start_idx = 0;
     st_bf_4x4<ducks::st_layout::xor_swizzle> &k = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>(); // We use 4x4 since 4x16 is 64 window size
     st_bf_4x4<ducks::st_layout::xor_swizzle> &v = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>();
-    if(warpid == 0) load(k, _k + start_idx, d); // One warp loads from global to shared
-    if(warpid == 0) load(v, _v + start_idx, d);
+    block::load(k, _k + start_idx, d); // One warp loads from global to shared
+    block::load(v, _v + start_idx, d);
     __syncthreads();
     auto subtile = subtile_inplace<1,4>(k, warpid, 0); // All the other warps load from shared to shared
     load(k_slice, subtile);
-
-    // Option B
-    // st_bf_4x4<ducks::st_layout::xor_swizzle> k = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>(); // We use 4x4 since 4x16 is 64 window size
-    // st_bf_4x4<ducks::st_layout::xor_swizzle> v = al.allocate<st_bf_4x4<ducks::st_layout::xor_swizzle>>();
-    // thread_block_load(k, _k + start_idx, threads); 
-    // thread_block_load(v, _v + start_idx, threads);   
-    // auto subtile = k.template subtile<1,4>(warpid, 0); 
-    // load(k_slice, subtile); // SA: Uncommenting this leads to static asserts in the output (even if i uncomment the thread_block_loads)
     __syncthreads();
 
 
@@ -241,7 +224,7 @@ sliding_window(int j,
     TORCH_CHECK(v_same, "X and V_out should be same size");
     
     const int workers = 4;
-    using H = __nv_bfloat16;
+    using H = bf16;
     using T = c10::BFloat16;
 
     int threads = workers * kittens::WARP_SIZE;
