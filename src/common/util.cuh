@@ -12,8 +12,6 @@ namespace kittens {
 constexpr int TILE_DIM{16};
 constexpr int TILE_SIZE{TILE_DIM*TILE_DIM};
 constexpr int WARP_SIZE{32};
-constexpr int N_WARPS{8}; // default
-constexpr int THREADS_PER_BLOCK{N_WARPS*WARP_SIZE};
 __device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 
@@ -100,20 +98,6 @@ struct shared_allocator {
         template<typename A, size_t... dims> 
         __device__ inline variadic_array_t<A, dims...>& allocate() {
             using at = variadic_array_t<A, dims...>;
-            at*p = reinterpret_cast<at*>(ptr);
-            ptr += sizeof(at)/sizeof(int);
-            return *p;
-        }
-        template<typename A, size_t N, size_t M, size_t L> 
-        __device__ inline A (&allocate())[N][M][L] {
-            using at = A[N][M][L];
-            at*p = reinterpret_cast<at*>(ptr);
-            ptr += sizeof(at)/sizeof(int);
-            return *p;
-        }
-        template<typename A, size_t N, size_t M, size_t L, size_t K> 
-        __device__ inline A (&allocate())[N][M][L][K] {
-            using at = A[N][M][L][K];
             at*p = reinterpret_cast<at*>(ptr);
             ptr += sizeof(at)/sizeof(int);
             return *p;
