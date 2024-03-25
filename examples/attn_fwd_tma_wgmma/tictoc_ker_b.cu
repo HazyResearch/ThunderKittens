@@ -3,7 +3,7 @@
 
 #include "../../src/kittens.cuh"
 
-#define NUM_WORKERS 8
+#define NUM_WORKERS 4
 #define NUM_WARPGROUPS (NUM_WORKERS/4)
 
 #define ATTN_B 16
