@@ -6,10 +6,11 @@ test_nextneighbor_ker(const bf16 *input, bf16 *output) {
     auto warpid        = kittens::warpid();
     auto lane          = kittens::laneid(); 
 
-    const int workers  = DSMEM_TEST_WORKERS;
+    constexpr int workers  = DSMEM_TEST_WORKERS;
+    using dsmem = kittens::block<workers>::dsmem;
 
     extern __shared__ int __shm[];
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     using layout = ducks::st_layout::xor_swizzle;
     st_bf_1x4<layout> (&input_tile)[workers]  = al.allocate<st_bf_1x4<layout>, workers>();

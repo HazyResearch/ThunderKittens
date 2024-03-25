@@ -43,9 +43,9 @@ bool should_write_outputs = true;
 
 using namespace kittens;
 
-#define ROWS (HEIGHT*16)
-#define COLS (WIDTH*16)
-#define SIZE (WIDTH*HEIGHT*256)
+#define DEFAULT_ROWS (HEIGHT*16)
+#define DEFAULT_COLS (WIDTH*16)
+#define DEFAULT_SIZE (WIDTH*HEIGHT*256)
 #define SEED 42
 
 template<bool autofill=true>
@@ -72,7 +72,7 @@ void initialize(bf16 **d_i, bf16 **d_o, std::vector<float> &i_ref, std::vector<f
     cudaMemcpy(*d_i, i_bf.data(), input_size * sizeof(bf16), cudaMemcpyHostToDevice);
     CudaCheckError();
 }
-bool validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols=COLS, float eps=1e-4) {
+bool validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols=DEFAULT_COLS, float eps=1e-4) {
     const int input_size  = i_ref.size();
     const int output_size = o_ref.size();
     // copy back

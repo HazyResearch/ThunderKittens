@@ -2,32 +2,32 @@ __global__ void test_row_broadcast_row_ker(const bf16 *input, bf16 *output) {
     
     rt_fl<HEIGHT, WIDTH> reg_tile;
 
-    load(reg_tile, input, COLS);
+    load(reg_tile, input, DEFAULT_COLS);
     __syncthreads();
     
     rt_fl<HEIGHT, WIDTH>::col_vec rowsums;
     row_sum(rowsums, reg_tile);
     broadcast_row(reg_tile, rowsums);
 
-    store(output, reg_tile, COLS);
+    store(output, reg_tile, DEFAULT_COLS);
 }
 bool test_row_broadcast_row() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(SIZE);
-    std::vector<float> o_ref(SIZE);
+    std::vector<float> i_ref(DEFAULT_SIZE);
+    std::vector<float> o_ref(DEFAULT_SIZE);
     initialize(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_row_broadcast_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
     test_row_broadcast_row_ker<<<1, 32, 100000>>>(d_i, d_o);
     // fill in correct results on cpu
-    for(int i = 0; i < ROWS; i++) {
+    for(int i = 0; i < DEFAULT_ROWS; i++) {
         float row_sum = 0;
-        for(int j = 0; j < COLS; j++) {
-            o_ref[i*COLS+j]  = i_ref[i*COLS+j];
-            row_sum         += i_ref[i*COLS+j];
+        for(int j = 0; j < DEFAULT_COLS; j++) {
+            o_ref[i*DEFAULT_COLS+j]  = i_ref[i*DEFAULT_COLS+j];
+            row_sum         += i_ref[i*DEFAULT_COLS+j];
         }
-        for(int j = 0; j < COLS; j++) o_ref[i*COLS+j] = row_sum;
+        for(int j = 0; j < DEFAULT_COLS; j++) o_ref[i*DEFAULT_COLS+j] = row_sum;
     }
     // check and cleanup
     bool passed = validate(d_i, d_o, i_ref, o_ref, "row_broadcast_row_tile");
@@ -38,32 +38,32 @@ __global__ void test_row_broadcast_col_ker(const bf16 *input, bf16 *output) {
     
     rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
 
-    load(reg_tile, input, COLS);
+    load(reg_tile, input, DEFAULT_COLS);
     __syncthreads();
     
     rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::col_vec rowsums;
     row_sum(rowsums, reg_tile);
     broadcast_row(reg_tile, rowsums);
 
-    store(output, reg_tile, COLS);
+    store(output, reg_tile, DEFAULT_COLS);
 }
 bool test_row_broadcast_col() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(SIZE);
-    std::vector<float> o_ref(SIZE);
+    std::vector<float> i_ref(DEFAULT_SIZE);
+    std::vector<float> o_ref(DEFAULT_SIZE);
     initialize(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_row_broadcast_col_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
     test_row_broadcast_col_ker<<<1, 32, 100000>>>(d_i, d_o);
     // fill in correct results on cpu
-    for(int i = 0; i < ROWS; i++) {
+    for(int i = 0; i < DEFAULT_ROWS; i++) {
         float row_sum = 0;
-        for(int j = 0; j < COLS; j++) {
-            o_ref[i*COLS+j]  = i_ref[i*COLS+j];
-            row_sum         += i_ref[i*COLS+j];
+        for(int j = 0; j < DEFAULT_COLS; j++) {
+            o_ref[i*DEFAULT_COLS+j]  = i_ref[i*DEFAULT_COLS+j];
+            row_sum         += i_ref[i*DEFAULT_COLS+j];
         }
-        for(int j = 0; j < COLS; j++) o_ref[i*COLS+j] = row_sum;
+        for(int j = 0; j < DEFAULT_COLS; j++) o_ref[i*DEFAULT_COLS+j] = row_sum;
     }
     // check and cleanup
     bool passed = validate(d_i, d_o, i_ref, o_ref, "row_broadcast_col_tile");
@@ -74,32 +74,32 @@ __global__ void test_col_broadcast_row_ker(const bf16 *input, bf16 *output) {
     
     rt_fl<HEIGHT, WIDTH> reg_tile;
 
-    load(reg_tile, input, COLS);
+    load(reg_tile, input, DEFAULT_COLS);
     __syncthreads();
     
     rt_fl<HEIGHT, WIDTH>::row_vec colsums;
     col_sum(colsums, reg_tile);
     broadcast_col(reg_tile, colsums);
 
-    store(output, reg_tile, COLS);
+    store(output, reg_tile, DEFAULT_COLS);
 }
 bool test_col_broadcast_row() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(SIZE);
-    std::vector<float> o_ref(SIZE);
+    std::vector<float> i_ref(DEFAULT_SIZE);
+    std::vector<float> o_ref(DEFAULT_SIZE);
     initialize(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_col_broadcast_row_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
     test_col_broadcast_row_ker<<<1, 32, 100000>>>(d_i, d_o);
     // fill in correct results on cpu
-    for(int i = 0; i < COLS; i++) {
+    for(int i = 0; i < DEFAULT_COLS; i++) {
         float col_sum = 0;
-        for(int j = 0; j < ROWS; j++) {
-            o_ref[i+j*COLS]  = i_ref[i+j*COLS];
-            col_sum         += i_ref[i+j*COLS];
+        for(int j = 0; j < DEFAULT_ROWS; j++) {
+            o_ref[i+j*DEFAULT_COLS]  = i_ref[i+j*DEFAULT_COLS];
+            col_sum         += i_ref[i+j*DEFAULT_COLS];
         }
-        for(int j = 0; j < ROWS; j++) o_ref[i+j*COLS] = col_sum;
+        for(int j = 0; j < DEFAULT_ROWS; j++) o_ref[i+j*DEFAULT_COLS] = col_sum;
     }
     // check and cleanup
     bool passed = validate(d_i, d_o, i_ref, o_ref, "col_broadcast_row_tile");
@@ -110,32 +110,32 @@ __global__ void test_col_broadcast_col_ker(const bf16 *input, bf16 *output) {
     
     rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col> reg_tile;
 
-    load(reg_tile, input, COLS);
+    load(reg_tile, input, DEFAULT_COLS);
     __syncthreads();
     
     rt_fl<HEIGHT, WIDTH, ducks::rt_layout::col>::row_vec colsums;
     col_sum(colsums, reg_tile);
     broadcast_col(reg_tile, colsums);
 
-    store(output, reg_tile, COLS);
+    store(output, reg_tile, DEFAULT_COLS);
 }
 bool test_col_broadcast_col() {
     // initailize
     bf16 *d_i, *d_o;
-    std::vector<float> i_ref(SIZE);
-    std::vector<float> o_ref(SIZE);
+    std::vector<float> i_ref(DEFAULT_SIZE);
+    std::vector<float> o_ref(DEFAULT_SIZE);
     initialize(&d_i, &d_o, i_ref, o_ref);
     // run kernel
     cudaFuncSetAttribute(test_col_broadcast_col_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
     test_col_broadcast_col_ker<<<1, 32, 100000>>>(d_i, d_o);
     // fill in correct results on cpu
-    for(int i = 0; i < COLS; i++) {
+    for(int i = 0; i < DEFAULT_COLS; i++) {
         float col_sum = 0;
-        for(int j = 0; j < ROWS; j++) {
-            o_ref[i+j*COLS]  = i_ref[i+j*COLS];
-            col_sum      += i_ref[i+j*COLS];
+        for(int j = 0; j < DEFAULT_ROWS; j++) {
+            o_ref[i+j*DEFAULT_COLS]  = i_ref[i+j*DEFAULT_COLS];
+            col_sum      += i_ref[i+j*DEFAULT_COLS];
         }
-        for(int j = 0; j < ROWS; j++) o_ref[i+j*COLS] = col_sum;
+        for(int j = 0; j < DEFAULT_ROWS; j++) o_ref[i+j*DEFAULT_COLS] = col_sum;
     }
     // check and cleanup
     bool passed = validate(d_i, d_o, i_ref, o_ref, "col_broadcast_col_tile");

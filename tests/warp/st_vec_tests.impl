@@ -3,7 +3,7 @@
 __global__ void test_ones_st_vec_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     const int _HEIGHT = 1;
     const int _WIDTH = 4;
@@ -39,7 +39,7 @@ bool test_ones_st_vec() {
 
 __global__ void test_copy_st_vec_ker(const bf16 *input, bf16 *output) {
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     const int _HEIGHT = 1;
     const int _WIDTH = 4;
@@ -70,7 +70,7 @@ bool test_copy_st_vec() {
 }
 __global__ void test_copy_st_vec_offset_ker(const bf16 *input, bf16 *output) {
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     const int _HEIGHT = 1;
     const int _WIDTH = 3;

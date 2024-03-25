@@ -2,7 +2,7 @@ template<ducks::st_layout::all layout, int LAYOUT_H=4, int LAYOUT_W=4>
 __global__ void test_st_layout_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     rt_bf<LAYOUT_H, LAYOUT_W> reg_tile;
 
@@ -45,7 +45,7 @@ template<ducks::st_layout::all L1, ducks::st_layout::all L2, int LAYOUT_H=4, int
 __global__ void test_st_layout_conversion_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
     
     st_bf<LAYOUT_H, LAYOUT_W, L1> &tile1 = al.allocate<st_bf<LAYOUT_H, LAYOUT_W, L1>>();
     st_bf<LAYOUT_H, LAYOUT_W, L2> &tile2 = al.allocate<st_bf<LAYOUT_H, LAYOUT_W, L2>>();

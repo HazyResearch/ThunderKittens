@@ -7,7 +7,7 @@ __global__ void test_wgmma_tall_dot_ker(const bf16 *input, bf16 *output) {
     int warpid = kittens::warpid(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
+    tma_allocator al = tma_allocator((int*)&__shm22[0]); 
 
     rt_fl<WGMMA_NDIV4, WGMMA_M> result;
     rt_bf<WGMMA_NDIV4, WGMMA_K> a_reg;
@@ -70,7 +70,7 @@ __global__ void test_wgmma_tall_mma_ker(const bf16 *input, bf16 *output) {
     int warpid = kittens::warpid(); 
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
+    tma_allocator al = tma_allocator((int*)&__shm22[0]); 
 
     rt_fl<WGMMA_NDIV4, WGMMA_M> result;
     rt_bf<WGMMA_NDIV4, WGMMA_K> a_reg;

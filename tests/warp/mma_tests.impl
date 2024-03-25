@@ -4,7 +4,7 @@
 __global__ void test_dot_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     rt_bf<MMA_TEST_DOT_N, MMA_TEST_DOT_K> a_reg;
     rt_bf<MMA_TEST_DOT_M, MMA_TEST_DOT_K> b_reg;
@@ -66,7 +66,7 @@ bool test_dot() {
 __global__ void test_mma_ker(const bf16 *input, bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     rt_bf<MMA_TEST_MMA_N, MMA_TEST_MMA_K> a_reg;
     rt_bf<MMA_TEST_MMA_K, MMA_TEST_MMA_M> b_reg;

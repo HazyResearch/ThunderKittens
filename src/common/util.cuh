@@ -64,12 +64,11 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
 struct alignas(256) alignment_dummy { int dummy; };
+template<int alignment=-1>
 struct shared_allocator {
     int *ptr;
 
     private:
-        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
-
         // Recursive template to generate N-dimensional array type
         template<typename A, size_t... dims>
         struct variadic_array;
@@ -83,25 +82,24 @@ struct shared_allocator {
         };
         template<typename A, size_t... dims> using variadic_array_t = typename variadic_array<A, dims...>::type;
 
+        __device__ inline void align_ptr() {
+            if constexpr (alignment > 0) {
+                uint64_t p = reinterpret_cast<uint64_t>(ptr);
+                ptr = (int*)(p + (alignment-(p%alignment)));
+            }
+        }
+
     public:
-        __device__ inline static shared_allocator create_allocator(int *_ptr) {
-            shared_allocator sa(_ptr); 
-            return sa;
-        }
-        template<int alignment=128>
-        __device__ inline static shared_allocator create_allocator_tma(int *_ptr) {
-            shared_allocator sa(_ptr); 
-            uint64_t p = reinterpret_cast<uint64_t>(sa.ptr);
-            sa.ptr = (int*)(p + (alignment-(p%alignment)));
-            return sa;
-        }
+        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
         template<typename A, size_t... dims> 
         __device__ inline variadic_array_t<A, dims...>& allocate() {
+            align_ptr();
             using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);
             ptr += sizeof(at)/sizeof(int);
             return *p;
         }
 };
+using tma_allocator = shared_allocator<128>;
 
 }

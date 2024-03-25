@@ -12,7 +12,7 @@ namespace warpgroup {
 
 template<int height, int width, ducks::st_layout::row layout>
 __device__ static inline void load(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride) {
-    // each thread needs to do 1 call per width*height
+    // each thread needs to do 1 call per width*height/4
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 
@@ -61,7 +61,7 @@ __device__ static inline void store(bf16 *dst, const st<bf16, height, width, lay
 
 template<int height, int width, ducks::st_layout::row layout>
 __device__ static inline void load_async(st<bf16, height, width, layout> &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    // each thread needs to do 1 call per width*height
+    // each thread needs to do 1 call per width*height/4
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 
@@ -91,7 +91,7 @@ __device__ static inline void load_async(st<bf16, height, width, layout> &dst, c
 }
 template<int height, int width, ducks::st_layout::row layout>
 __device__ static inline void store_async(bf16 *dst, const st<bf16, height, width, layout> &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    // each thread needs to do 1 call per width*height
+    // each thread needs to do 1 call per width*height/4
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 

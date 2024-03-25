@@ -9,7 +9,7 @@ __global__ void test_st_subtile_row_ker(const bf16 *input, bf16 *output) {
     int warpid = threadIdx.x / 32;
 
     extern __shared__ alignment_dummy __shm_subtile_row[]; // this is the CUDA shared memory
-    shared_allocator alloc = shared_allocator::create_allocator((int*)&__shm_subtile_row[0]);
+    shared_allocator alloc((int*)&__shm_subtile_row[0]);
 
     rt_fl<1, SUBTILE_N> reg_tile;
     st_bf<SUBTILE_N, SUBTILE_N, layout> &smem_tile = alloc.allocate<st_bf<SUBTILE_N, SUBTILE_N, layout>>();
@@ -56,7 +56,7 @@ __global__ void test_st_subtile_col_ker(const bf16 *input, bf16 *output) {
     int warpid = threadIdx.x / 32;
 
     extern __shared__ alignment_dummy __shm_subtile_row[]; // this is the CUDA shared memory
-    shared_allocator alloc = shared_allocator::create_allocator((int*)&__shm_subtile_row[0]);
+    shared_allocator alloc((int*)&__shm_subtile_row[0]);
 
     rt_fl<SUBTILE_N, 1> reg_tile;
     st_bf<SUBTILE_N, SUBTILE_N, layout> &smem_tile = alloc.allocate<st_bf<SUBTILE_N, SUBTILE_N, layout>>();

@@ -13,6 +13,7 @@
 #include "warp/reduction_tests.impl"
 #include "warp/broadcast_tests.impl"
 #include "warp/mma_tests.impl"
+#include "block/global_to_shared.impl"
 
 #ifdef KITTENS_HOPPER
 #include "warp/tma_tests.impl"
@@ -43,12 +44,19 @@ int main(int argc, char **argv) {
     failures += mma_tests();
 #ifdef KITTENS_HOPPER
     failures += tma_tests();
+#endif
     std::cout << " ---------------  BEGINNING WARPGROUP TESTS  ---------------\n";
+#ifdef KITTENS_HOPPER
     failures += wgmma_tests();
     failures += tall_wgmma_tests();
+#endif
     std::cout << " ---------------  BEGINNING BLOCK TESTS  ---------------\n";
+    failures += block_mem_tests();
+#ifdef KITTENS_HOPPER
     failures += dsmem_tests();
+#endif
     std::cout << " ---------------  BEGINNING INTEGRATION TESTS  ---------------\n";
+#ifdef KITTENS_HOPPER
     failures += wgmma_tma_tests();
 #endif
 
