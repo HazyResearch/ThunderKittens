@@ -20,7 +20,7 @@ const int M = 14336;
 
 template <typename H, typename T>
 __global__
-void batch_gemv_ker(const T* __input, const T* __weight, float* __output) {
+void batch_gemv_ker(const T* __input, const T* __weight, T* __output) {
     auto block_start = blockIdx.x;
     auto warpid = threadIdx.x / 32;
 
@@ -31,21 +31,22 @@ void batch_gemv_ker(const T* __input, const T* __weight, float* __output) {
     rt_bf_1x4<> i_reg, w_reg;
     rt_fl_1x1<> o_reg;
 
-    const H *weight_g = device_cast(__weight) + block_start * w_reg.rows * K * NUM_WORKERS;
+    const H *weight_g = device_cast(__weight) + (block_start * NUM_WORKERS + warpid) * w_reg.rows * K;
     const H *input_g = device_cast(__input);
-    float *output_g = device_cast(__output) + block_start * w_reg.rows * NUM_WORKERS;
+    H *output_g = device_cast(__output) + (block_start * NUM_WORKERS + warpid) * o_reg.cols;
 
     zero(o_reg);
-    for (int i_id = 0; i_id < K / (i_reg.cols * NUM_WORKERS); i_id++) {
-        load(i_smem[warpid], input_g + (i_id * NUM_WORKERS + warpid) * i_reg.cols, K);
+    for (int k_id = 0; k_id < K / i_reg.cols; k_id += NUM_WORKERS) {
+        load(i_smem[warpid], input_g + (k_id + warpid) * i_reg.cols, K);
         __syncthreads();
         for (int subtile = 0; subtile < NUM_WORKERS; subtile++) {
             load(i_reg, i_smem[subtile]);
-            load(w_reg, weight_g + (i_id * NUM_WORKERS + subtile) * w_reg.cols, K);
+            load(w_reg, weight_g + (k_id + subtile) * w_reg.cols, K);
             dot(o_reg, i_reg, w_reg, o_reg);
+            __syncthreads();
         }
     }
-    store(output_g + warpid * w_reg.rows, o_reg, M);   
+    store(output_g, o_reg, M);   
 }
 
 torch::Tensor 
@@ -69,7 +70,7 @@ batch_gemv(torch::Tensor input, torch::Tensor weight) {
     batch_gemv_ker<H, T><<<M / NUM_WORKERS / kittens::TILE_DIM, threads, mem_size, stream>>>(
         input.data_ptr<T>(),
         weight.data_ptr<T>(),
-        output.data_ptr<float>()
+        output.data_ptr<T>()
     );
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     return output;
