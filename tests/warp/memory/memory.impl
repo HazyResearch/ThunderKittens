@@ -1,0 +1,20 @@
+namespace memory {
+
+#include "global_to_register.impl"
+#include "global_to_shared.impl"
+#include "shared_to_register.impl"
+#ifdef KITTENS_HOPPER
+#include "tma.impl"
+#endif
+
+void tests(test_data &results) {
+    std::cout << "\n ---------- Starting ops/warp/memory tests! ----------\n" << std::endl;
+    global_to_register::tests(results);
+    global_to_shared::tests(results);
+    shared_to_register::tests(results);
+#ifdef KITTENS_HOPPER
+    tma::tests(results);
+#endif
+}
+
+}

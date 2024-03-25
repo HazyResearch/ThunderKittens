@@ -1,0 +1,233 @@
+namespace tma {
+template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+__global__ void
+test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
+    auto warpid = kittens::warpid(); 
+    auto lane   = kittens::laneid(); 
+
+    CUtensorMap* input_tma_descriptor  = tma_desc_input;
+
+    extern __shared__ int __shm[];
+    shared_allocator<1024> al((int*)&__shm[0]); 
+
+    using worker_type = st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
+    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ uint64_t smem_barrier[workers]; 
+    constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
+
+    tma::prefetch(input_tile[warpid], input_tma_descriptor, 0);
+    tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
+
+    block.sync();
+
+    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
+        tma::load_async(input_tile[warpid], input_tma_descriptor, tile_idx, smem_barrier[warpid]);
+        // load(input_tile, input, TMA_WIDTH * 16);
+
+        int kPhaseBit = 0; 
+        tma::arrive_and_wait(smem_barrier[warpid], kPhaseBit);
+
+        store(output + (input_tile[warpid].num_elements * tile_idx), input_tile[warpid], TMA_WIDTH * 16); 
+        // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
+    }
+}
+
+template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+__global__ void
+test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
+    auto warpid = kittens::warpid();
+    auto lane   = kittens::laneid();
+
+    CUtensorMap* output_tma_descriptor = tma_desc_output;
+
+    extern __shared__ int __shm[];
+    shared_allocator<1024> al((int*)&__shm[0]); 
+    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers] = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
+
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ uint64_t smem_barrier; 
+    constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
+
+    block.sync();
+
+    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
+        // tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
+        load(input_tile[warpid], input + (input_tile[warpid].num_elements * tile_idx), TMA_WIDTH * 16); 
+
+        // store(output, input_tile, TMA_WIDTH * 16);
+        tma::store_async(output_tma_descriptor, input_tile[warpid], tile_idx);
+    
+        tma::store_commit_group();
+
+        tma::store_async_wait<0>();
+    }
+}
+
+template<ducks::st_layout::all layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
+void test_tma(test_data &results) {
+    // initailize
+    bf16 *d_i, *d_o;
+    std::vector<float> i_ref(TMA_HEIGHT * TMA_WIDTH * 1024);
+    for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) i_ref[i] = float(i);
+    std::vector<float> o_ref(TMA_HEIGHT * TMA_WIDTH * 1024); 
+    initialize<true>(&d_i, &d_o, i_ref, o_ref);
+
+    CUtensorMap tma_desc_input = {};
+    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
+
+    CUtensorMap tma_desc_output = {};
+    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_output, d_o);
+
+    CUtensorMap* tma_desc_input_d;
+    CUtensorMap* tma_desc_output_d;
+
+    cudaMalloc(&tma_desc_input_d,                     sizeof(CUtensorMap));
+    cudaMalloc(&tma_desc_output_d,                    sizeof(CUtensorMap));
+    cudaMemcpy(tma_desc_input_d,    &tma_desc_input,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_desc_output_d,   &tma_desc_output, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+
+    unsigned long mem_size = 100000; 
+
+    // run kernel
+    bool passed; 
+    if constexpr (!store_test) {
+        cudaFuncSetAttribute(test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        CudaCheckError();
+
+        test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers><<<1, workers * 32, mem_size>>>(d_i, d_o, tma_desc_input_d);
+        CudaCheckError();
+    }
+    else {
+        cudaFuncSetAttribute(test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        CudaCheckError();
+
+        test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers><<<1, workers * 32, mem_size>>>(d_i, d_o, tma_desc_output_d);
+        CudaCheckError();
+    }
+
+    // output identical to input
+    for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) o_ref[i] = i_ref[i];
+    std::string load_str = "tma_["+layout_name<layout>()+(store_test ? "]_[store]" : "]_[load]");
+    load_str += "_["+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH); 
+    load_str += "]_[]"+std::to_string(workers)+"]";
+
+    passed = validate(d_i, d_o, i_ref, o_ref, load_str, 16 * TMA_WIDTH); 
+
+    test_info info;
+    info.result = passed ? test_result::PASSED : test_result::FAILED;
+    info.label = load_str;
+
+    results.push_back(info);
+}
+
+template<ducks::st_layout::all layout, bool store_test, bool swizzled=false>
+int tma_dim_test(test_data &results) {
+    int failures = 0; 
+
+    
+    test_tma<layout, store_test, 1, 1>(results);
+    test_tma<layout, store_test, 1, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3>(results);
+    test_tma<layout, store_test, 1, 4>(results);
+
+    test_tma<layout, store_test, 1, 1, 2>(results); 
+    test_tma<layout, store_test, 1, 2, 2>(results); 
+    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 2>(results); 
+    test_tma<layout, store_test, 1, 4, 2>(results); 
+
+    test_tma<layout, store_test, 1, 1, 3>(results);
+    test_tma<layout, store_test, 1, 2, 3>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 3>(results);
+    test_tma<layout, store_test, 1, 4, 3>(results);
+
+    test_tma<layout, store_test, 1, 1, 4>(results);
+    test_tma<layout, store_test, 1, 2, 4>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 4>(results);
+    test_tma<layout, store_test, 1, 4, 4>(results);
+
+    test_tma<layout, store_test, 2, 1>(results);
+    test_tma<layout, store_test, 2, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3>(results);
+    test_tma<layout, store_test, 2, 4>(results);
+
+    test_tma<layout, store_test, 2, 1, 2>(results);
+    test_tma<layout, store_test, 2, 2, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 2>(results);
+    test_tma<layout, store_test, 2, 4, 2>(results);
+
+    test_tma<layout, store_test, 2, 1, 3>(results);
+    test_tma<layout, store_test, 2, 2, 3>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 3>(results);
+    test_tma<layout, store_test, 2, 4, 3>(results);
+
+    test_tma<layout, store_test, 2, 1, 4>(results);
+    test_tma<layout, store_test, 2, 2, 4>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 4>(results);
+    test_tma<layout, store_test, 2, 4, 4>(results);
+
+    test_tma<layout, store_test, 3, 1>(results);
+    test_tma<layout, store_test, 3, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3>(results);
+    test_tma<layout, store_test, 3, 4>(results);
+
+    test_tma<layout, store_test, 3, 1, 2>(results);
+    test_tma<layout, store_test, 3, 2, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 2>(results);
+    test_tma<layout, store_test, 3, 4, 2>(results);
+
+    test_tma<layout, store_test, 3, 1, 3>(results);
+    test_tma<layout, store_test, 3, 2, 3>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 3>(results);
+    test_tma<layout, store_test, 3, 4, 3>(results);
+
+    test_tma<layout, store_test, 3, 1, 4>(results);
+    test_tma<layout, store_test, 3, 2, 4>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 4>(results);
+    test_tma<layout, store_test, 3, 4, 4>(results);
+
+    test_tma<layout, store_test, 4, 1>(results);
+    test_tma<layout, store_test, 4, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3>(results);
+    test_tma<layout, store_test, 4, 4>(results);
+
+    test_tma<layout, store_test, 4, 1, 2>(results);
+    test_tma<layout, store_test, 4, 2, 2>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 2>(results);
+    test_tma<layout, store_test, 4, 4, 2>(results);
+
+    test_tma<layout, store_test, 4, 1, 3>(results);
+    test_tma<layout, store_test, 4, 2, 3>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 3>(results);
+    test_tma<layout, store_test, 4, 4, 3>(results);
+
+    test_tma<layout, store_test, 4, 1, 4>(results);
+    test_tma<layout, store_test, 4, 2, 4>(results);
+    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 4>(results);
+    test_tma<layout, store_test, 4, 4, 4>(results);
+    
+    return failures;
+}
+
+void tests(test_data &results) {
+    std::cout << " ----- Starting tma tests! -----" << std::endl;
+    tma_dim_test<ducks::st_layout::naive, false>(results);
+    tma_dim_test<ducks::st_layout::naive, true>(results);
+
+    tma_dim_test<ducks::st_layout::tma_swizzle, false, true>(results);
+    tma_dim_test<ducks::st_layout::tma_swizzle, true, true>(results);
+
+    tma_dim_test<ducks::st_layout::wgmma_row_0b, false>(results);
+    tma_dim_test<ducks::st_layout::wgmma_row_0b, true>(results);
+    // not supported with 32B swizzling modes
+    // tma_dim_test<ducks::st_layout::wgmma_row_32b, false>(results);
+    // tma_dim_test<ducks::st_layout::wgmma_row_32b, true>(results);
+
+    tma_dim_test<ducks::st_layout::wgmma_col_t_0b, false>(results);
+    tma_dim_test<ducks::st_layout::wgmma_col_t_0b, true>(results);
+    // not supported with 32B swizzling modes
+    // tma_dim_test<wgmma_col_t_32b, false>(results);
+    // tma_dim_test<wgmma_col_t_32b, true>(results);
+}
+}

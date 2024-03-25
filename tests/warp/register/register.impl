@@ -1,0 +1,16 @@
+namespace reg { // register is a reserved word
+
+#include "maps.impl"
+#include "reductions.impl"
+#include "mma.impl"
+// #include "conversions.impl"
+
+void tests(test_data &results) {
+    std::cout << "\n ---------- Starting ops/warp/register tests! ----------\n" << std::endl;
+    maps::tests(results);
+    reductions::tests(results);
+    mma::tests(results);
+    // conversions::tests(results);
+}
+
+}
