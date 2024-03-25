@@ -4,3 +4,8 @@
 *.ptx
 *.cubin
 *.fatbin
+*egg-info
+build
+*.so
+__pycache__
+dist
