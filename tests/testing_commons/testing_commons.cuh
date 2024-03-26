@@ -40,6 +40,23 @@ using test_data = std::vector<test_info>;
 
 template<kittens::ducks::st_layout::all layout> std::string layout_name();
 
+// 1D test names
+template<int S, int NW> std::string generate_test_name(std::string test_id) {
+    std::string label = test_id+"_["+std::to_string(S)+"]";
+    if constexpr (NW > 1) {
+        label += "_["+std::to_string(NW)+"warps]";
+    }
+    return label;
+}
+template<int S, int NW, ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<S,NW>(test_id);
+    if constexpr (std::is_same_v<L, ducks::rt_layout::row>) label += "_[rt_row_layout]";
+    else label += "_[rt_col_layout]";
+    return label;
+}
+
+// 2D test names
+
 template<int H, int W, int NW> std::string generate_test_name(std::string test_id) {
     std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"]";
     if constexpr (NW > 1) {
@@ -138,6 +155,62 @@ extern int should_write_outputs;
 test_result validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-4);
 
 /* ---------- TEST WRAPPERS ---------- */
+
+// 1D Wrappers
+
+template<typename Ker, int S, int NW, typename... args>
+static __global__ void global_wrapper_1d(const bf16 *input, bf16 *output) {
+    Ker::template device_func<S, NW, args...>(input, output);
+}
+template<typename test, int S, int NUM_WORKERS, typename... args>
+struct wrapper_1d {
+    static void run(test_data& results) {
+        test_info this_result;
+        this_result.label = generate_test_name<S,NUM_WORKERS,args...>(test::test_identifier);
+        if constexpr (test::template valid<S, NUM_WORKERS, args...>::value) {
+            constexpr int SIZE = S*16;
+            // initialize
+            bf16 *d_i, *d_o;
+            std::vector<float> i_ref(SIZE);
+            std::vector<float> o_ref(SIZE);
+            initialize(&d_i, &d_o, i_ref, o_ref);
+            // run kernel
+            cudaFuncSetAttribute(
+                global_wrapper_1d<test, S, NUM_WORKERS, args...>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                kittens::MAX_SHARED_MEMORY
+            );
+            global_wrapper_1d<test, S, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            // fill in correct results on cpu
+            test::template host_func<S, NUM_WORKERS, args...>(i_ref, o_ref);
+            // check and cleanup
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
+        }
+        else {
+            this_result.result = test_result::INVALID;
+        }
+        results.push_back(this_result);
+    }
+};
+template<typename test, int S, typename... args> using wrapper_1d_warp      = wrapper_1d<test, S, 1, args...>;
+template<typename test, int S, typename... args> using wrapper_1d_warpgroup = wrapper_1d<test, S, 4, args...>;
+
+template<template<typename,int,int,typename...> typename base, typename test, int MAX_S, int NUM_WORKERS, int S, typename... args>
+struct loop_s {
+    static void run(test_data& results) {
+        base<test, S, NUM_WORKERS, args...>::run(results);
+        if constexpr (S > 1) {
+            loop_s<base, test, MAX_S, NUM_WORKERS, S-1, args...>::run(results);
+        }
+    }
+};
+template<typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args> using sweep_size_1d = loop_s<wrapper_1d, test, MAX_S, NUM_WORKERS, MAX_S, args...>;
+template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warp      = sweep_size_1d<test, MAX_S, 1, args...>;
+template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warpgroup = sweep_size_1d<test, MAX_S, 4, args...>;
+
+
+// 2D Wrappers
+
 template<typename Ker, int H, int W, int NW, typename... args>
 static __global__ void global_wrapper_2d(const bf16 *input, bf16 *output) {
     Ker::template device_func<H, W, NW, args...>(input, output);

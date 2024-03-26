@@ -50,6 +50,21 @@ struct load_store_async {
     }
 };
 
+struct vec_load_store {
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>;
+    static inline const std::string test_identifier = "shared_vec_loadstore";
+    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        o_ref = i_ref; // overwrite the whole thing
+    }
+    template<int S, int NW> __device__ static void device_func(const bf16 *input, bf16 *output) {
+        extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
+        shared_allocator<16> al((int*)&__shm[0]); 
+        col_vec<st_bf<S, S>> &shared_vec = al.allocate<col_vec<st_bf<S, S>>>();
+        load(shared_vec, input);
+        store(output, shared_vec);
+    }
+};
+
 void tests(test_data &results);
 
 }

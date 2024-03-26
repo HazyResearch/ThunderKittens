@@ -55,34 +55,6 @@ __device__ static inline void store(bf16 *dst, const ST &src, const int row_stri
     }
 }
 
-
-template<ducks::sv::all ST, typename U>
-__device__ inline static void load(ST &dst, const U *src) {
-
-    int laneid = threadIdx.x % 32;
-    int total_calls = (dst.length+31)/32; // allowing it to round up
-
-    #pragma unroll
-    for(int i = 0; i < total_calls; i++) {
-        int idx = i * 32 + laneid;
-        if (idx < dst.length) { dst[idx] = src[idx]; }
-    }
-}
-
-template<ducks::sv::all ST, typename U>
-__device__ inline static void store(U *dst, const ST &src) {
-
-    int laneid = threadIdx.x % 32;
-    int total_calls = (src.length+31)/32; // allowing it to round up
-
-    #pragma unroll
-    for(int i = 0; i < total_calls; i++) { 
-        int idx = i * 32 + laneid;     
-        if (idx < src.length) { dst[idx] = src[idx]; }
-    }
-}
-
-
 template<ducks::st::row_layout ST>
 __device__ static inline void load_async(ST &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
@@ -185,6 +157,30 @@ __device__ static inline void store(bf16 *dst, const ST &src, const int row_stri
         int col = (idx*elem_per_memcpy) % src.cols;
 
         dst[row*row_stride + col] = src[{row, col}];
+    }
+}
+
+// ----------  VECTORS ----------
+template<ducks::sv::all SV>
+__device__ static inline void load(SV &dst, const typename SV::dtype *src) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
+    #pragma unroll
+    for(int i = laneid(); i < total_calls; i+=WARP_SIZE) {
+        if(i * elem_per_transfer < dst.length)
+            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer];
+    }
+}
+template<ducks::sv::all SV>
+__device__ static inline void store(typename SV::dtype *dst, const SV &src) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
+    #pragma unroll
+    for(int i = laneid(); i < total_calls; i+=WARP_SIZE) {
+        if(i * elem_per_transfer < src.length)
+            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer]; // lmao it's identical
     }
 }
 

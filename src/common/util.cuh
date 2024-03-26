@@ -39,7 +39,7 @@ struct default_type {};
 static constexpr uint32_t MASK_ALL = 0xFFFFFFFF;
 
 template<typename T>
-__device__ static inline float2 packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
+__device__ static inline T packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
     return __shfl_down_sync(mask, f, delta);
 }
 template<>
@@ -50,7 +50,7 @@ __device__ inline float2 packed_shfl_down_sync<float2>(uint32_t mask, const floa
     return r;
 }
 template<typename T>
-__device__ static inline float2 packed_shfl_sync(uint32_t mask, const T &f, int src) {
+__device__ static inline T packed_shfl_sync(uint32_t mask, const T &f, int src) {
     return __shfl_sync(mask, f, src);
 }
 template<>

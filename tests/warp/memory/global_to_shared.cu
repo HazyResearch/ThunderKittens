@@ -10,6 +10,8 @@ void warp::memory::global_to_shared::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
     sweep_st_layout_size_2d_warp<warp::memory::global_to_shared::load_store, SIZE, SIZE>::run(results);
     sweep_st_layout_size_2d_warp<warp::memory::global_to_shared::load_store_async, SIZE, SIZE>::run(results);
+
+    sweep_size_1d_warp<warp::memory::global_to_shared::vec_load_store, SIZE>::run(results);
 }
 
 #endif
