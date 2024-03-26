@@ -25,7 +25,7 @@ template<typename op>
 __device__ void shm_broadcast(float &f, float *shm, const int workers = 4) {
     auto warpid = threadIdx.x / 32;
     auto lane   = threadIdx.x % 32;
-    shm[warpid] = f;
+    if(lane == 0) shm[warpid] = f;
     __syncthreads();
     if(warpid == 0) {
         if(lane == 0) {
@@ -57,7 +57,7 @@ __device__ void gemv(rt_fl_1x4<>::col_vec  &o, rt_fl_1x4<>::row_vec &x, rt_fl_1x
 This function seems to be the transpose of the above function.
 */
 // GEMV
-__device__void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
+__device__ void gemv_two(rt_fl_4x1<>::row_vec  &o, rt_fl_4x1<>::col_vec &x, rt_fl_4x1<> &a) { 
     rt_fl_4x1<> t;
     copy(t, a);
     // The accumulator is row x column; row multiply means that each row is multiplied by a column matrix. 
@@ -134,7 +134,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
 
     // Shared
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
+    shared_allocator al((int*)&__shm[0]);
     st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &w = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec>();
     __shared__ float _max[workers], _sum[workers];  
 

@@ -1,26 +1,9 @@
+#include "testing_flags.cuh"
 #include "testing_commons.cuh"
 
-#include "warp/warp.impl"
-// #include "warp/st_vec_tests.impl"
-// #include "warp/rt_layout_tests.impl"
-// #include "warp/st_layout_tests.impl"
-// #include "warp/st_subtile_tests.impl"
-// #include "warp/map_tests.impl"
-// #include "warp/reduction_tests.impl"
-// #include "warp/broadcast_tests.impl"
-// #include "warp/mma_tests.impl"
-// #include "block/global_to_shared.impl"
-
-// #ifdef KITTENS_HOPPER
-// #include "warp/tma_tests.impl"
-
-// #include "warpgroup/wgmma_tests.impl"
-// #include "warpgroup/tall_wgmma_tests.impl"
-
-// #include "block/dsmem.impl"
-
-// #include "integration/wgmma_tma_tests.impl"
-// #endif
+#ifdef TEST_WARP
+#include "warp/warp.cuh"
+#endif
 
 int main(int argc, char **argv) {
 
@@ -28,7 +11,9 @@ int main(int argc, char **argv) {
 
     test_data data;
 
+#ifdef TEST_WARP
     warp::tests(data);
+#endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
 
@@ -44,9 +29,9 @@ int main(int argc, char **argv) {
     }
     if(fails == 0) std::cout << "ALL TESTS PASSED!\n";
 
+    std::cout << invalids << " tests skipped (this is normal, and refers to tests that cannot be compiled due to invalid template parameters.)\n";
     std::cout << passes   << " tests passed\n";
     std::cout << fails    << " tests failed\n";
-    std::cout << invalids << " tests skipped (this is normal)\n";
 
     return 0;
 }
