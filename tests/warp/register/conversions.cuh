@@ -14,10 +14,10 @@ struct swap_layout {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
-        rt_bf<H, W, L> reg_tile;
-        load(reg_tile, input, W*16);
-        auto reg_tile_other_layout = swap_layout_inplace(reg_tile);
-        store(output, reg_tile_other_layout, W*16);
+        kittens::rt_bf<H, W, L> reg_tile;
+        kittens::load(reg_tile, input, W*16);
+        auto reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
+        kittens::store(output, reg_tile_other_layout, W*16);
     }
 };
 struct transpose {
@@ -43,11 +43,11 @@ struct type_convert {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, typename T2, typename U2> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
-        rt<U2, H, W> reg_tile_U2;
-        rt<T2, H, W> reg_tile_T2;
-        load(reg_tile_U2, input, W*16);
-        copy(reg_tile_T2, reg_tile_U2);
-        store(output, reg_tile_T2, W*16);
+        kittens::rt<U2, H, W> reg_tile_U2;
+        kittens::rt<T2, H, W> reg_tile_T2;
+        kittens::load(reg_tile_U2, input, W*16);
+        kittens::copy(reg_tile_T2, reg_tile_U2);
+        kittens::store(output, reg_tile_T2, W*16);
     }
 };
 struct subtile {

@@ -16,11 +16,11 @@ struct load_store {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
-        extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-        shared_allocator<16> al((int*)&__shm[0]); 
-        st_bf<H, W, L> &shared_tile = al.allocate<st_bf<H, W, L>>();
-        load(shared_tile, input, W*16);
-        store(output, shared_tile, W*16);
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::shared_allocator<16> al((int*)&__shm[0]); 
+        kittens::st_bf<H, W, L> &shared_tile = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::load(shared_tile, input, W*16);
+        kittens::store(output, shared_tile, W*16);
     }
 };
 struct load_store_async {

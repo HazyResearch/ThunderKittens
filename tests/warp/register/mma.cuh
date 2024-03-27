@@ -66,6 +66,7 @@ struct dot {
 template<typename test, int H, int W, int NUM_WORKERS, typename _K, typename... args>
 struct mma_wrapper_2d {
     static void run(test_data& results) {
+        using namespace kittens;
         constexpr int K = _K::value;
         test_info this_result;
         this_result.label = generate_test_name<H,W,NUM_WORKERS,_K,args...>(test::test_identifier);

@@ -4,7 +4,7 @@
 
 void warpgroup::memory::shared_to_register::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warpgroup/memory/shared_to_register tests! -----\n" << std::endl;
-    
+
     constexpr int H_SIZE = INTENSITY_1 ? 4  :
                            INTENSITY_2 ? 8  : 
                            INTENSITY_3 ? 12  :
