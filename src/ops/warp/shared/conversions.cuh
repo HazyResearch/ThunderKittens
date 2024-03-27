@@ -37,4 +37,11 @@ __device__ inline typename ST::subtile<subtile_height, subtile_width> subtile_in
     );
 }
 
+/* ----------  SUBVEC  ---------- */
+
+template<int subvec_length, ducks::sv::all SV>
+__device__ inline typename SV::subvec<subvec_length> &subvec_inplace(SV &src, int vec_offset) {
+    return *(typename SV::subvec<subvec_length>*)(&src[vec_offset*16*subvec_length]);
+}
+
 }

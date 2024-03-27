@@ -2,7 +2,8 @@
 #define DSMEM_TEST_CLUSTER_SIZE 16
 
 __global__ void __cluster_dims__(DSMEM_TEST_CLUSTER_SIZE, 1, 1) 
-test_nextneighbor_ker(const bf16 *input, bf16 *output) {
+test_nextneighbor_ker(const kittens::bf16 *input, kittens::bf16 *output) {
+    using namespace kittens;
     auto warpid        = kittens::warpid();
     auto lane          = kittens::laneid(); 
 

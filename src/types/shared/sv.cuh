@@ -28,6 +28,8 @@ struct sv {
 
     __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
     __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
+
+    template<size_t sub_tiles> using subvec = sv<dtype, sub_tiles>; // simple layout means simple subvec!
 };
 
 /* ----------  CONCEPTS  ---------- */

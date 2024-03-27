@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_REGISTER_MMA
 
 void warp::reg::mma::tests(test_data &results) {
-    std::cout << " ----- Starting ops/warp/register/mma tests! -----" << std::endl;
+    std::cout << "\n ----- Starting ops/warp/register/mma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :

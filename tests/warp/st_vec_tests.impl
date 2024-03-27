@@ -1,6 +1,6 @@
 /* Shared vector tests */
 
-__global__ void test_ones_st_vec_ker(const bf16 *input, bf16 *output) {
+__global__ void test_ones_st_vec_ker(const kittens::bf16 *input, kittens::bf16 *output) {
 
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]); 
@@ -37,7 +37,7 @@ bool test_ones_st_vec() {
     return passed;
 }
 
-__global__ void test_copy_st_vec_ker(const bf16 *input, bf16 *output) {
+__global__ void test_copy_st_vec_ker(const kittens::bf16 *input, kittens::bf16 *output) {
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]); 
 
@@ -68,7 +68,7 @@ bool test_copy_st_vec() {
     bool passed = validate(d_i, d_o, i_ref, o_ref, "copy_st_vec");
     return passed;
 }
-__global__ void test_copy_st_vec_offset_ker(const bf16 *input, bf16 *output) {
+__global__ void test_copy_st_vec_offset_ker(const kittens::bf16 *input, kittens::bf16 *output) {
     extern __shared__ __align__(16) int __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]); 
 

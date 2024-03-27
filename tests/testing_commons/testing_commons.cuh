@@ -12,8 +12,6 @@
 #include "utils.cuh"
 #include "kittens.cuh"
 
-using namespace kittens;
-
 /* ---------- STRUCTS ---------- */
 
 /*
@@ -22,7 +20,7 @@ struct test {
     template<typename... args> using valid = true; // Set this invalid if you don't want the test to be compiled and run.
     static inline const std::string test_identifier; ("block::load" as an example.)
     template<typename... args> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref);
-    template<typename... args> __global__ static void device_func(const bf16 *input, bf16 *output);
+    template<typename... args> __global__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output);
 };
 */
 enum test_result {
@@ -48,9 +46,9 @@ template<int S, int NW> std::string generate_test_name(std::string test_id) {
     }
     return label;
 }
-template<int S, int NW, ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
+template<int S, int NW, kittens::ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<S,NW>(test_id);
-    if constexpr (std::is_same_v<L, ducks::rt_layout::row>) label += "_[rt_row_layout]";
+    if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
     else label += "_[rt_col_layout]";
     return label;
 }
@@ -73,21 +71,21 @@ template<int H, int W, int NW, integral_wrapper _K> std::string generate_test_na
     }
     return label;
 }
-template<int H, int W, int NW, ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id);
-    if constexpr (std::is_same_v<L, ducks::rt_layout::row>) label += "_[rt_row_layout]";
+    if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
     else label += "_[rt_col_layout]";
     return label;
 }
-template<int H, int W, int NW, ducks::st_layout::all L> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::st_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id)+"_["+layout_name<L>()+"]";
     return label;
 }
-template<int H, int W, int NW, ducks::st_layout::all L1, ducks::st_layout::all L2> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id) + "_["+layout_name<L2>()+"->"+layout_name<L1>()+"]";
     return label;
 }
-template<int H, int W, int NW, ducks::st_layout::all L, integral_wrapper _J, integral_wrapper _K> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::st_layout::all L, integral_wrapper _J, integral_wrapper _K> std::string generate_test_name(std::string test_id) {
     constexpr int J = _J::value, K = _K::value;
     std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"_"+std::to_string(J)+"x"+std::to_string(K)+"]_["+layout_name<L>()+"]";
     if constexpr (NW > 1) {
@@ -95,13 +93,13 @@ template<int H, int W, int NW, ducks::st_layout::all L, integral_wrapper _J, int
     }
     return label;
 }
-template<int H, int W, int NW, ducks::st_layout::all L, ducks::rt_layout::all RL> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::st_layout::all L, kittens::ducks::rt_layout::all RL> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW,L>(test_id);
-    if constexpr (std::is_same_v<L, ducks::rt_layout::row>) label += "_[rt_row_layout]";
+    if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
     else label += "_[rt_col_layout]";
     return label;
 }
-template<int H, int W, int NW, ducks::base_types::T2 T2, ducks::base_types::T2 U2> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::base_types::T2 T2, kittens::ducks::base_types::T2 U2> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id);
     if constexpr (std::is_same_v<U2, float2>) label += "_[float2->";
     else label += "_[bf16_2->";
@@ -119,7 +117,8 @@ enum initializers {
     NONE   = 2
 };
 template<initializers initializer=initializers::RANDOM, int SEED=42>
-void initialize(bf16 **d_i, bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {
+void initialize(kittens::bf16 **d_i, kittens::bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    using namespace kittens;
 
     const int input_size  = i_ref.size();
     const int output_size = o_ref.size();
@@ -152,14 +151,14 @@ void initialize(bf16 **d_i, bf16 **d_o, std::vector<float> &i_ref, std::vector<f
     CudaCheckError();
 }
 extern int should_write_outputs;
-test_result validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-4);
+test_result validate(kittens::bf16 *d_i, kittens::bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-4);
 
 /* ---------- TEST WRAPPERS ---------- */
 
 // 1D Wrappers
 
 template<typename Ker, int S, int NW, typename... args>
-static __global__ void global_wrapper_1d(const bf16 *input, bf16 *output) {
+static __global__ void global_wrapper_1d(const kittens::bf16 *input, kittens::bf16 *output) {
     Ker::template device_func<S, NW, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
@@ -170,7 +169,7 @@ struct wrapper_1d {
         if constexpr (test::template valid<S, NUM_WORKERS, args...>::value) {
             constexpr int SIZE = S*16;
             // initialize
-            bf16 *d_i, *d_o;
+            kittens::bf16 *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
@@ -212,7 +211,7 @@ template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warpg
 // 2D Wrappers
 
 template<typename Ker, int H, int W, int NW, typename... args>
-static __global__ void global_wrapper_2d(const bf16 *input, bf16 *output) {
+static __global__ void global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output) {
     Ker::template device_func<H, W, NW, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
@@ -223,7 +222,7 @@ struct wrapper_2d {
         if constexpr (test::template valid<H, W, NUM_WORKERS, args...>::value) {
             constexpr int SIZE = H*W*256;
             // initialize
-            bf16 *d_i, *d_o;
+            kittens::bf16 *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
@@ -280,13 +279,13 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
 struct sweep_st_layout_size_2d {
     static void run(test_data &results) {
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::naive, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::tma_swizzle, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::xor_swizzle, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::wgmma_row_0b, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::wgmma_row_32b, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::wgmma_col_t_0b, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, ducks::st_layout::wgmma_col_t_32b, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::tma_swizzle, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::xor_swizzle, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_row_0b, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_row_32b, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_0b, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_32b, args...>::run(results);
     }
 };
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warp      = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;

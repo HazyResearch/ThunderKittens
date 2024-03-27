@@ -11,7 +11,8 @@ template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_0b >()
 template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_32b>() { return "wgmma_col_t_32b"; }
 
 int should_write_outputs;
-test_result validate(bf16 *d_i, bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps) {
+test_result validate(kittens::bf16 *d_i, kittens::bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps) {
+    using namespace kittens;
     const int input_size  = i_ref.size();
     const int output_size = o_ref.size();
     // copy back

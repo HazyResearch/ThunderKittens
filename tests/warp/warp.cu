@@ -5,7 +5,7 @@
 using namespace warp;
 
 void warp::tests(test_data &results) {
-    std::cout << "\n\n --------------- Starting ops/warp tests! ---------------\n\n" << std::endl;
+    std::cout << "\n ------------------------------     Starting ops/warp tests!     ------------------------------\n"  << std::endl;
 #ifdef TEST_WARP_MEMORY
     memory::tests(results);
 #endif

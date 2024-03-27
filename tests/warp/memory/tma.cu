@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_MEMORY_TMA
 
 void warp::memory::tma::tests(test_data &results) {
-    std::cout << " ----- Starting tma tests! -----" << std::endl;
+    std::cout << "\n ----- Starting tma tests! -----\n" << std::endl;
     tma_dim_test<ducks::st_layout::naive, false>(results);
     tma_dim_test<ducks::st_layout::naive, true>(results);
 

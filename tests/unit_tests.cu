@@ -4,6 +4,9 @@
 #ifdef TEST_WARP
 #include "warp/warp.cuh"
 #endif
+#ifdef TEST_WARPGROUP
+#include "warpgroup/warpgroup.cuh"
+#endif
 
 int main(int argc, char **argv) {
 
@@ -13,6 +16,9 @@ int main(int argc, char **argv) {
 
 #ifdef TEST_WARP
     warp::tests(data);
+#endif
+#ifdef TEST_WARPGROUP
+    warpgroup::tests(data);
 #endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";

@@ -89,5 +89,33 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
     }
 }
 
+// ----------  VECTORS ----------
+
+template<ducks::rv::all RV, ducks::sv::all SV>
+__device__ inline static void load(RV &dst, const SV &_src) {
+    using T2 = RV::dtype;
+    using U = SV::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+    using T = base_types::packing<T2>::unpacked_type;
+
+    static_assert(_src.tiles == dst.outer_dim*4);// confirm size correct
+    auto &src = subvec_inplace<dst.outer_dim>(_src, kittens::warpid()%4); // pretend it's smaller and do warp-level load
+
+    kittens::load(dst, src); // warp-level
+}
+
+template<ducks::sv::all SV, ducks::rv::all RV>
+__device__ inline static void store(SV &_dst, const RV &src) {
+    using T2 = RV::dtype;
+    using U = SV::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+    using T = base_types::packing<T2>::unpacked_type;
+
+    static_assert(_dst.tiles == src.outer_dim*4);// confirm size correct
+    auto &dst = subvec_inplace<src.outer_dim>(_dst, kittens::warpid()%4); // pretend it's smaller and do warp-level load
+
+    kittens::store(dst, src); // warp-level
+}
+
 }
 }

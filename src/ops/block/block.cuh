@@ -6,7 +6,7 @@ This is meant to be used with a `using block = kittens::block<NUM_WORKERS>;` at 
 */
 template<int N_WARPS>
 struct block {
-static constexpr int N_THREADS = N_WARPS * 32;
+static constexpr int BLOCK_SIZE = N_WARPS * 32; // This alias produces nice parallelism.
 
 #include "memory/memory.cuh"
 

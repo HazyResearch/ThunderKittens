@@ -10,7 +10,7 @@ namespace tma {
 
 template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
-test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
+test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input) {
     auto warpid = kittens::warpid(); 
     auto lane   = kittens::laneid(); 
 
@@ -19,41 +19,41 @@ test_tmaload_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_input) {
     extern __shared__ int __shm[];
     shared_allocator<1024> al((int*)&__shm[0]); 
 
-    using worker_type = st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
-    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
+    using worker_type = kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
+    kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ uint64_t smem_barrier[workers]; 
     constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
 
-    tma::prefetch(input_tile[warpid], input_tma_descriptor, 0);
-    tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
+    kittens::tma::prefetch(input_tile[warpid], input_tma_descriptor, 0);
+    kittens::tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
 
     block.sync();
 
     for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
-        tma::load_async(input_tile[warpid], input_tma_descriptor, tile_idx, smem_barrier[warpid]);
+        kittens::tma::load_async(input_tile[warpid], input_tma_descriptor, tile_idx, smem_barrier[warpid]);
         // load(input_tile, input, TMA_WIDTH * 16);
 
         int kPhaseBit = 0; 
-        tma::arrive_and_wait(smem_barrier[warpid], kPhaseBit);
+        kittens::tma::arrive_and_wait(smem_barrier[warpid], kPhaseBit);
 
-        store(output + (input_tile[warpid].num_elements * tile_idx), input_tile[warpid], TMA_WIDTH * 16); 
+        kittens::store(output + (input_tile[warpid].num_elements * tile_idx), input_tile[warpid], TMA_WIDTH * 16); 
         // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
     }
 }
 
 template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
-test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output) {
+test_tmastore_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_output) {
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
     CUtensorMap* output_tma_descriptor = tma_desc_output;
 
     extern __shared__ int __shm[];
-    shared_allocator<1024> al((int*)&__shm[0]); 
-    st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers] = al.allocate<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
+    kittens::shared_allocator<1024> al((int*)&__shm[0]); 
+    kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers] = al.allocate<kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ uint64_t smem_barrier; 
@@ -63,14 +63,14 @@ test_tmastore_ker(const bf16 *input, bf16 *output, CUtensorMap* tma_desc_output)
 
     for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
         // tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
-        load(input_tile[warpid], input + (input_tile[warpid].num_elements * tile_idx), TMA_WIDTH * 16); 
+        kittens::load(input_tile[warpid], input + (input_tile[warpid].num_elements * tile_idx), TMA_WIDTH * 16); 
 
         // store(output, input_tile, TMA_WIDTH * 16);
-        tma::store_async(output_tma_descriptor, input_tile[warpid], tile_idx);
+        kittens::tma::store_async(output_tma_descriptor, input_tile[warpid], tile_idx);
     
-        tma::store_commit_group();
+        kittens::tma::store_commit_group();
 
-        tma::store_async_wait<0>();
+        kittens::tma::store_async_wait<0>();
     }
 }
 
@@ -84,10 +84,10 @@ void test_tma(test_data &results) {
     initialize<true>(&d_i, &d_o, i_ref, o_ref);
 
     CUtensorMap tma_desc_input = {};
-    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
+    kittens::tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
 
     CUtensorMap tma_desc_output = {};
-    tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_output, d_o);
+    kittens::tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_output, d_o);
 
     CUtensorMap* tma_desc_input_d;
     CUtensorMap* tma_desc_output_d;

@@ -22,16 +22,16 @@ struct mma {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const bf16 *input, bf16 *output) {
+    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
-        rt_bf<H, K> a;
-        rt_bf<K, W, ducks::rt_layout::col> b;
-        rt_fl<H, W> c;
-        load(a, input, K*16);
-        load(b, input+a.num_elements, W*16);
-        zero(c);
+        kittens::rt_bf<H, K> a;
+        kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<H, W> c;
+        kittens::load(a, input, K*16);
+        kittens::load(b, input+a.num_elements, W*16);
+        kittens::zero(c);
         kittens::mma(c, a, b, c);
-        store(output, c, W*16);
+        kittens::store(output, c, W*16);
     }
 };
 struct dot {
@@ -49,16 +49,16 @@ struct dot {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const bf16 *input, bf16 *output) {
+    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
-        rt_bf<H, K> a;
-        rt_bf<W, K> b;
-        rt_fl<H, W> c;
-        load(a, input, K*16);
-        load(b, input+a.num_elements, K*16);
-        zero(c);
+        kittens::rt_bf<H, K> a;
+        kittens::rt_bf<W, K> b;
+        kittens::rt_fl<H, W> c;
+        kittens::load(a, input, K*16);
+        kittens::load(b, input+a.num_elements, K*16);
+        kittens::zero(c);
         kittens::dot(c, a, b, c);
-        store(output, c, W*16);
+        kittens::store(output, c, W*16);
     }
 };
 

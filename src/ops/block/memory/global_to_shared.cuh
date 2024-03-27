@@ -24,7 +24,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * N_THREADS + laneid;
+        int idx = i * BLOCK_SIZE + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
@@ -46,7 +46,7 @@ __device__ static inline void store(typename ST::dtype *dst, const ST &src, cons
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * N_THREADS + laneid;
+        int idx = i * BLOCK_SIZE + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
@@ -72,7 +72,7 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * N_THREADS + laneid;
+        int idx = i * BLOCK_SIZE + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
@@ -102,7 +102,7 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * N_THREADS + laneid;
+        int idx = i * BLOCK_SIZE + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;

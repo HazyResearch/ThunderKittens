@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_MEMORY
 
 void warp::memory::tests(test_data &results) {
-    std::cout << "\n ---------- Starting ops/warp/memory tests! ----------\n" << std::endl;
+    std::cout << "\n -------------------- Starting ops/warp/memory tests! --------------------\n" << std::endl;
 #ifdef TEST_WARP_MEMORY_GLOBAL_TO_REGISTER
     warp::memory::global_to_register::tests(results);
 #endif

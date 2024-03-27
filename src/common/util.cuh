@@ -12,6 +12,7 @@ namespace kittens {
 constexpr int TILE_DIM{16};
 constexpr int TILE_SIZE{TILE_DIM*TILE_DIM};
 constexpr int WARP_SIZE{32};
+constexpr int WARPGROUP_SIZE{128};
 __device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 

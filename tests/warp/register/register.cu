@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_REGISTER
 
 void warp::reg::tests(test_data &results) {
-    std::cout << "\n ---------- Starting ops/warp/register tests! ----------\n" << std::endl;
+    std::cout << "\n -------------------- Starting ops/warp/register tests! --------------------\n" << std::endl;
 #ifdef TEST_WARP_REGISTER_MAPS
     warp::reg::maps::tests(results);
 #endif

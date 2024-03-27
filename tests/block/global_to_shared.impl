@@ -1,5 +1,5 @@
 template<int H, int W, ducks::st_layout::all L, int WORKERS=8>
-__global__ void test_block_copy_ker(const bf16 *input, bf16 *output) {
+__global__ void test_block_copy_ker(const kittens::bf16 *input, kittens::bf16 *output) {
     using block = kittens::block<WORKERS>;
     constexpr int COLS = W*16;
 

@@ -123,5 +123,34 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
     }
 }
 
+
+// ----------  VECTORS ----------
+
+template<ducks::rv::all RV, typename U>
+__device__ inline static void load(RV &dst, const U *_src) {
+    using T2 = RV::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+    using T = base_types::packing<T2>::unpacked_type;
+    
+    int laneid = kittens::laneid();
+    const U *src = &_src[(kittens::warpid()%4) * dst.outer_dim*16]; // pretend smaller, do single warp load.
+    
+    // Call warp level store
+    kittens::load(dst, src);
+}
+
+template<ducks::rv::all RV, typename U>
+__device__ inline static void store(U *_dst, const RV &src) {
+    using T2 = RV::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+    using T = base_types::packing<T2>::unpacked_type;
+    
+    int laneid = kittens::laneid();
+    U *dst = &_dst[(kittens::warpid()%4) * src.outer_dim*16]; // pretend smaller, do single warp store.
+
+    // Call warp level store
+    kittens::store(dst, src);
+}
+
 }
 }

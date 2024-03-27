@@ -1,6 +1,6 @@
 #define DEFAULT_WGMMA_N 4 // must be 4 due to WGMMA
 template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_row L2, bool use_reg, int WGMMA_K, int WGMMA_M>
-__global__ void test_wgmma_dot_ker(const bf16 *input, bf16 *output) {
+__global__ void test_wgmma_dot_ker(const kittens::bf16 *input, kittens::bf16 *output) {
 
     int warpid = kittens::warpid(); 
 
@@ -75,7 +75,7 @@ bool test_wgmma_dot() {
 }
 
 template<ducks::st_layout::wgmma_row L1, ducks::st_layout::wgmma_col L2, bool use_reg, int WGMMA_K, int WGMMA_M>
-__global__ void test_wgmma_mma_ker(const bf16 *input, bf16 *output) {
+__global__ void test_wgmma_mma_ker(const kittens::bf16 *input, kittens::bf16 *output) {
 
     int warpid = kittens::warpid();
 
