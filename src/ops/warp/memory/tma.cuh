@@ -144,12 +144,12 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
         (global_tile_height/8),
         (global_tile_width/16)
     };
-    
+
     constexpr uint64_t gmem_stride[tma_dim] = {
-        sizeof(bf16), 
+        sizeof(bf16),
         global_tile_width * sizeof(bf16),
-        8 * sizeof(bf16), 
-        8 * global_tile_width * sizeof(bf16),
+        (itl == 32 ? 8 * 4 : 8) * sizeof(bf16),
+        (itl == 32 ? 1 : 8) * global_tile_width * sizeof(bf16),
         16 * sizeof(bf16)
     };
 
@@ -163,6 +163,10 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
+
+    if constexpr (itl == 32) {
+        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
+    }
 
     static_assert(gmem_stride[1] % 16 == 0, "gmem_stride[1] elements must be a multiple of 16B");
     static_assert(gmem_stride[2] % 16 == 0, "gmem_stride[2] elements must be a multiple of 16B");
@@ -251,11 +255,11 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
     };
 
     constexpr uint64_t gmem_stride[tma_dim] = {
-        sizeof(bf16), 
-        global_tile_width * sizeof(bf16), 
-        8 * global_tile_width * sizeof(bf16),
-        8 * sizeof(bf16),
-        8 * 2 * global_tile_width * sizeof(bf16),
+        sizeof(bf16),
+        global_tile_width * sizeof(bf16),
+        (itl == 32 ? 1 : 8) * global_tile_width * sizeof(bf16),
+        (itl == 32 ? 16 : 8) * sizeof(bf16),
+        (itl == 32 ? 1 : 8 * 2) * global_tile_width * sizeof(bf16),
     };
 
     constexpr uint32_t smem_shape[tma_dim]  = {
@@ -274,6 +278,9 @@ __host__ static inline void create_tensor_map(CUtensorMap* tma_map, bf16 *src) {
 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
     // ensure that the global address is always 16-byte aligned 
+    if constexpr (itl == 32) {
+        assert((reinterpret_cast<uint64_t>(global_addr) & 0b11111) == 0);
+    }
 
     static_assert(gmem_stride[1] % 16 == 0, "gmem_stride[1] elements must be a multiple of 16B");
     static_assert(gmem_stride[2] % 16 == 0, "gmem_stride[2] elements must be a multiple of 16B");

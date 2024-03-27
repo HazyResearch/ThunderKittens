@@ -47,17 +47,29 @@ void createAndPrintTensorMaps(bf16* d_q, bf16* d_k, bf16* d_v, std::ostream& out
     CUtensorMap tma_desc_q = {}, tma_desc_k = {}, tma_desc_v = {};
     CUtensorMapBitfield bitfield_q = {}, bitfield_k = {}, bitfield_v = {};
 
-    tma::create_tensor_map<st_bf<2, 1, st_tma_row_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_q, d_q);
-    tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
+    if constexpr (itl_mode == 0) {
+        tma::create_tensor_map<st_bf<2, 1, st_tma_row_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_q, d_q);
+        tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
+        tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
 
-    bitfield_q.tensorMap = tma_desc_q;
-    bitfield_k.tensorMap = tma_desc_k;
-    bitfield_v.tensorMap = tma_desc_v;
+        bitfield_q.tensorMap = tma_desc_q;
+        bitfield_k.tensorMap = tma_desc_k;
+        bitfield_v.tensorMap = tma_desc_v;
 
-    printBitfield(bitfield_q, "tma_row (2d)", itl_mode, swizzle_mode, out); 
-    printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
-    printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
+        printBitfield(bitfield_q, "tma_row (2d)", itl_mode, swizzle_mode, out); 
+        printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
+        printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
+    }
+    else {
+        tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
+        tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
+
+        bitfield_k.tensorMap = tma_desc_k;
+        bitfield_v.tensorMap = tma_desc_v;
+
+        printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
+        printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
+    }
 }
 
 int main(int argc, char **argv) {
@@ -152,7 +164,7 @@ int main(int argc, char **argv) {
     createAndPrintTensorMaps<16, 64>(d_q, d_k, d_v, outfile);
     createAndPrintTensorMaps<16, 128>(d_q, d_k, d_v, outfile);
 
-    createAndPrintTensorMaps<32, 32>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<32, 32>(d_q, d_k, d_v, outfile);
 
     cudaFree(d_q);
     cudaFree(d_k);
