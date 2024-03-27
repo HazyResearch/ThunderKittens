@@ -1,6 +1,9 @@
 #include <iostream>
 #include <string>
 #include <fstream>
+#include <vector>
+#include <utility>
+#include <functional>
 
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
@@ -19,42 +22,42 @@
 #define CLUSTER_SIZE 1
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
+using namespace kittens;
+
 union CUtensorMapBitfield {
     CUtensorMap tensorMap;
     uint64_t bits[16]; // 16 * 64 = 1024 bits
 };
 
-void printBitfield(const CUtensorMapBitfield& bitfield) {
-    std::cout << "{";
+void printBitfield(const CUtensorMapBitfield& bitfield, const std::string& name, const int itl_mode, const int swizzle_mode, std::ostream& out) {
+    out << name << " - Interleave Mode: " << itl_mode << ", Swizzle Mode: " << swizzle_mode << "\n{";
     for (int i = 0; i < 16; ++i) {
-        std::cout << bitfield.bits[i];
+        out << bitfield.bits[i];
         if (i < 15) {
-            std::cout << ", ";
+            out << ", ";
         }
     }
-    std::cout << "}" << std::endl;
+    out << "}\n" << std::endl;
 }
 
-using namespace kittens;
+template<int itl_mode, int swizzle_mode>
+void createAndPrintTensorMaps(bf16* d_q, bf16* d_k, bf16* d_v, std::ostream& out) {
+    constexpr int blks = ATTN_B * ATTN_H * ATTN_N / (2 * 16);
 
-#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
-inline void __cudaCheckError( const char *file, const int line ) {
-    cudaError err = cudaGetLastError();
-    if ( cudaSuccess != err )
-    {
-        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
-                 file, line, cudaGetErrorString( err ) );
-        exit( -1 );
-    }
-    // More careful checking. However, this will affect performance.
-    // Comment away if needed.
-    err = cudaDeviceSynchronize();
-    if( cudaSuccess != err )
-    {
-        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
-                 file, line, cudaGetErrorString( err ) );
-        exit( -1 );
-    }
+    CUtensorMap tma_desc_q = {}, tma_desc_k = {}, tma_desc_v = {};
+    CUtensorMapBitfield bitfield_q = {}, bitfield_k = {}, bitfield_v = {};
+
+    tma::create_tensor_map<st_bf<2, 1, st_tma_row_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_q, d_q);
+    tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
+
+    bitfield_q.tensorMap = tma_desc_q;
+    bitfield_k.tensorMap = tma_desc_k;
+    bitfield_v.tensorMap = tma_desc_v;
+
+    printBitfield(bitfield_q, "tma_row (2d)", itl_mode, swizzle_mode, out); 
+    printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
+    printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
 }
 
 int main(int argc, char **argv) {
@@ -127,10 +130,6 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    
-    using layout_row = st_wgmma_row_0b_layout; 
-    using layout_col = st_wgmma_col_t_0b_layout;
-
     CUtensorMapBitfield bitfield_q = {}; 
     CUtensorMapBitfield bitfield_k = {};
     CUtensorMapBitfield bitfield_v = {};
@@ -141,28 +140,28 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<2,4,layout_col>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+    std::ofstream outfile("tensor_maps.txt");
 
-    bitfield_q.tensorMap = tma_desc_q; 
-    bitfield_k.tensorMap = tma_desc_k;
-    bitfield_v.tensorMap = tma_desc_v;
-    bitfield_o.tensorMap = tma_desc_o;
+    createAndPrintTensorMaps<0, 0>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<0, 32>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<0, 64>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<0, 128>(d_q, d_k, d_v, outfile);
 
-    printBitfield(bitfield_q);
-    printBitfield(bitfield_k);
-    printBitfield(bitfield_v);
-    printBitfield(bitfield_o);
+    createAndPrintTensorMaps<16, 0>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<16, 32>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<16, 64>(d_q, d_k, d_v, outfile);
+    createAndPrintTensorMaps<16, 128>(d_q, d_k, d_v, outfile);
+
+    createAndPrintTensorMaps<32, 32>(d_q, d_k, d_v, outfile);
 
     cudaFree(d_q);
     cudaFree(d_k);
     cudaFree(d_v);
-    cudaFree(d_o);
 
-    delete[] q, k, v, o, o_ref;
+    delete[] q, k, v, o_ref;
     delete[] q_bf, k_bf, v_bf, o_bf;
+
+    outfile.close();
 
     return 0;
 }
