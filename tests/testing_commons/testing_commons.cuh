@@ -71,6 +71,11 @@ template<int H, int W, int NW, integral_wrapper _K> std::string generate_test_na
     }
     return label;
 }
+template<int H, int W, int NW, integral_wrapper _K, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2>
+std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<H, W, NW, _K>(test_id)+"_["+layout_name<L1>()+"]_["+layout_name<L2>()+"]";
+    return label;
+}
 template<int H, int W, int NW, kittens::ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id);
     if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";

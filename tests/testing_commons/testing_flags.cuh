@@ -22,7 +22,7 @@
 #ifdef TEST_ALL_WARPGROUP
 #define TEST_ALL_WARPGROUP_MEMORY
 #ifdef KITTENS_HOPPER  // only compile on H100
-#define TEST_WARPGROUP_WGMMA // leaf
+#define TEST_ALL_WARPGROUP_WGMMA // leaf
 #endif
 #endif
 
@@ -65,6 +65,11 @@
 #define TEST_WARPGROUP_MEMORY_SHARED_TO_REGISTER
 #endif
 
+#ifdef TEST_ALL_WARPGROUP_WGMMA
+#define TEST_WARPGROUP_WGMMA_MMA
+#endif
+
+
 // Block macros
 
 #ifdef TEST_ALL_BLOCK_MEMORY
@@ -102,6 +107,10 @@
     defined(TEST_WARPGROUP_MEMORY_SHARED_TO_REGISTER)
 #define TEST_WARPGROUP_MEMORY
 #endif
+#ifdef TEST_WARPGROUP_WGMMA_MMA
+#define TEST_WARPGROUP_WGMMA
+#endif
+
 
 // Block macros
 #if defined(TEST_BLOCK_MEMORY_GLOBAL_TO_REGISTER) || defined(TEST_BLOCK_MEMORY_GLOBAL_TO_SHARED) || \
