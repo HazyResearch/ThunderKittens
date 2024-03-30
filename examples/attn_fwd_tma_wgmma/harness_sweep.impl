@@ -99,10 +99,10 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_v = {};
     CUtensorMap tma_desc_o = {};
 
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<2,4,layout_col>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<2,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
+    tma::create_tensor_map<st_bf<2,4,layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_q, d_q); 
+    tma::create_tensor_map<st_bf<2,4,layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf<2,4,layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<2,4,layout>, ATTN_B*ATTN_H*ATTN_N/(2 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -132,7 +132,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, ATTN_D, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -160,8 +160,7 @@ int main(int argc, char **argv) {
     }
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
-    if(good) std::cout << "Correct :)\n";
-    else std::cout << "Incorrect :(\n";
+    std::cout << "Done\n";
 
     cudaFree(d_q);
     cudaFree(d_k);

@@ -32,7 +32,11 @@ union CUtensorMapBitfield {
 void printBitfield(const CUtensorMapBitfield& bitfield, const std::string& name, const int itl_mode, const int swizzle_mode, std::ostream& out) {
     out << name << " - Interleave Mode: " << itl_mode << ", Swizzle Mode: " << swizzle_mode << "\n{";
     for (int i = 0; i < 16; ++i) {
-        out << bitfield.bits[i];
+        uint64_t value = bitfield.bits[i];
+        for (int j = 63; j >= 0; --j) {
+            out << ((value >> j) & 1);
+            if (j % 8 == 0 && j != 0) out << "_"; // Optional: add an underscore every 8 bits for readability
+        }
         if (i < 15) {
             out << ", ";
         }
@@ -48,26 +52,26 @@ void createAndPrintTensorMaps(bf16* d_q, bf16* d_k, bf16* d_v, std::ostream& out
     CUtensorMapBitfield bitfield_q = {}, bitfield_k = {}, bitfield_v = {};
 
     if constexpr (itl_mode == 0) {
-        tma::create_tensor_map<st_bf<2, 1, st_tma_row_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_q, d_q);
-        tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
+        // tma::create_tensor_map<st_bf<2, 1, st_tma_row_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_q, d_q);
+        // tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
         tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
 
-        bitfield_q.tensorMap = tma_desc_q;
-        bitfield_k.tensorMap = tma_desc_k;
+        // bitfield_q.tensorMap = tma_desc_q;
+        // bitfield_k.tensorMap = tma_desc_k;
         bitfield_v.tensorMap = tma_desc_v;
 
-        printBitfield(bitfield_q, "tma_row (2d)", itl_mode, swizzle_mode, out); 
-        printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
+        // printBitfield(bitfield_q, "tma_row (2d)", itl_mode, swizzle_mode, out); 
+        // printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
         printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
     }
     else {
-        tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
+        // tma::create_tensor_map<st_bf<2, 1, st_wgmma_row_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_k, d_k);
         tma::create_tensor_map<st_bf<2, 1, st_wgmma_col_t_0b_layout>, blks, itl_mode, swizzle_mode>(&tma_desc_v, d_v);
 
-        bitfield_k.tensorMap = tma_desc_k;
+        // bitfield_k.tensorMap = tma_desc_k;
         bitfield_v.tensorMap = tma_desc_v;
 
-        printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
+        // printBitfield(bitfield_k, "wgmma_row (5d)", itl_mode, swizzle_mode, out); 
         printBitfield(bitfield_v, "wgmma_col (5d)", itl_mode, swizzle_mode, out); 
     }
 }
@@ -154,15 +158,15 @@ int main(int argc, char **argv) {
 
     std::ofstream outfile("tensor_maps.txt");
 
-    createAndPrintTensorMaps<0, 0>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<0, 0>(d_q, d_k, d_v, outfile);
     createAndPrintTensorMaps<0, 32>(d_q, d_k, d_v, outfile);
-    createAndPrintTensorMaps<0, 64>(d_q, d_k, d_v, outfile);
-    createAndPrintTensorMaps<0, 128>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<0, 64>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<0, 128>(d_q, d_k, d_v, outfile);
 
-    createAndPrintTensorMaps<16, 0>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<16, 0>(d_q, d_k, d_v, outfile);
     createAndPrintTensorMaps<16, 32>(d_q, d_k, d_v, outfile);
-    createAndPrintTensorMaps<16, 64>(d_q, d_k, d_v, outfile);
-    createAndPrintTensorMaps<16, 128>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<16, 64>(d_q, d_k, d_v, outfile);
+    // createAndPrintTensorMaps<16, 128>(d_q, d_k, d_v, outfile);
 
     createAndPrintTensorMaps<32, 32>(d_q, d_k, d_v, outfile);
 
