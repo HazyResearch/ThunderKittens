@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     tma::create_tensor_map<st_bf<4,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(4 * 16)>(&tma_desc_q, d_q); 
     tma::create_tensor_map<st_bf<1,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_k, d_k);
     tma::create_tensor_map<st_bf<1,4,layout_col>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<1,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(1 * 16)>(&tma_desc_o, d_o);
+    tma::create_tensor_map<st_bf<4,4,layout_row>, ATTN_B*ATTN_H*ATTN_N/(4 * 16)>(&tma_desc_o, d_o);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -111,19 +111,19 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    const int ITER = 1;
+    const int ITER = 100;
     dim3 grid(ATTN_N/(QO_BLOCKS*NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (QO_BLOCKS*NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    // std::cout << "Starting warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(64, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
-    // }
-    // cudaDeviceSynchronize();
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(64, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+    }
+    cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(64, d_q, d_k, d_v, d_o, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(64, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
