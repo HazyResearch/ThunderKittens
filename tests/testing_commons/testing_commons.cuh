@@ -1,42 +1,32 @@
 #pragma once
 
-#include <iostream>
-#include <fstream>
-#include <random>
-#include <vector>
-#include <type_traits>
+/* testing_commons.cuh
+ * 
+ * This file contains a bunch of moderately test-specific utils.
+ * For example, test_name constructors and __device__ kernel wrappers.
+ * This file is distinguished from testing_utils.cuh in that you
+ * might need to add to this file in order to add more tests,
+ * but you shouldn't need to modify that testing_utils at all.
+ */
 
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
-#include "utils.cuh"
 #include "kittens.cuh"
 
-/* ---------- STRUCTS ---------- */
+#include "testing_utils.cuh"
 
-/*
-General Unit Test Struct
-struct test {
-    template<typename... args> using valid = true; // Set this invalid if you don't want the test to be compiled and run.
-    static inline const std::string test_identifier; ("block::load" as an example.)
-    template<typename... args> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref);
-    template<typename... args> __global__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output);
-};
-*/
-enum test_result {
-    PASSED = 0,
-    FAILED = 1,
-    INVALID = 2 // This is a useful one for tests that are only defined for certain template specializations, but we still want to sweep.
-};
-struct test_info {
-    std::string label;
-    test_result result;
-};
-using test_data = std::vector<test_info>;
+/* ---------- LABELS ---------- */
 
-/* ---------- LABELS AND TEST NAMES ---------- */
-
+// map an st_layout to a string representing it.
 template<kittens::ducks::st_layout::all layout> std::string layout_name();
+
+/* ---------- TEST NAMES ---------- */
+
+// This how we generate parameterized names for tests.
+// test_id is defined by the test, like "reg_mma" --
+// then these templates build the rest of the test name.
+// Note use of concepts to prevent template arg collisions!
 
 // 1D test names
 template<int S, int NW> std::string generate_test_name(std::string test_id) {
@@ -114,53 +104,19 @@ template<int H, int W, int NW, kittens::ducks::base_types::T2 T2, kittens::ducks
 }
 
 
-/* ---------- BASE HELPERS ---------- */
-
-enum initializers {
-    RANDOM = 0,
-    ARANGE = 1,
-    NONE   = 2
-};
-template<initializers initializer=initializers::RANDOM, int SEED=42>
-void initialize(kittens::bf16 **d_i, kittens::bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {
-    using namespace kittens;
-
-    const int input_size  = i_ref.size();
-    const int output_size = o_ref.size();
-
-    // Initialize matrices
-    std::vector<bf16> i_bf(input_size);
-
-    std::mt19937 gen(SEED); // Standard mersenne_twister_engine
-    std::uniform_real_distribution<float> dis(-1.0, 1.0);
-    for(int idx = 0; idx < input_size; idx++) {
-        float f;
-        if constexpr (initializer == initializers::RANDOM) {
-            f = dis(gen);
-        }
-        else if constexpr (initializer == initializers::ARANGE) {
-            f = float(idx);
-        }
-        else {
-            f = i_ref[idx];
-        }
-        i_bf[idx] = __float2bfloat16(f); // fill in for transfer to device
-        i_ref[idx] = __bfloat162float(i_bf[idx]); // ensure lossiness of fp16 is captured on cpu
-    }
-
-    cudaMalloc(d_i, input_size  * sizeof(bf16));
-    cudaMalloc(d_o, output_size * sizeof(bf16));
-    CudaCheckError();
-
-    cudaMemcpy(*d_i, i_bf.data(), input_size * sizeof(bf16), cudaMemcpyHostToDevice);
-    CudaCheckError();
-}
-extern int should_write_outputs;
-test_result validate(kittens::bf16 *d_i, kittens::bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-4);
-
 /* ---------- TEST WRAPPERS ---------- */
 
-// 1D Wrappers
+// These are wrappers to make it really easy to call and run tests.
+// The basic wrappers:
+// - Check if the test is valid and not compile it otherwise (the if constexpr)
+// - Initialize input and output memory on both host and device
+// - Call test functions on host and device
+// - Validate outputs, append the result to test_data& results
+// - Cleanup
+// Additionally, the templated wrappers:
+// - Loop through lots of template args in a grid to check validity.
+
+// ----- 1D Wrappers -----
 
 template<typename Ker, int S, int NW, typename... args>
 static __global__ void global_wrapper_1d(const kittens::bf16 *input, kittens::bf16 *output) {
@@ -199,21 +155,12 @@ struct wrapper_1d {
 template<typename test, int S, typename... args> using wrapper_1d_warp      = wrapper_1d<test, S, 1, args...>;
 template<typename test, int S, typename... args> using wrapper_1d_warpgroup = wrapper_1d<test, S, 4, args...>;
 
-template<template<typename,int,int,typename...> typename base, typename test, int MAX_S, int NUM_WORKERS, int S, typename... args>
-struct loop_s {
-    static void run(test_data& results) {
-        base<test, S, NUM_WORKERS, args...>::run(results);
-        if constexpr (S > 1) {
-            loop_s<base, test, MAX_S, NUM_WORKERS, S-1, args...>::run(results);
-        }
-    }
-};
 template<typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args> using sweep_size_1d = loop_s<wrapper_1d, test, MAX_S, NUM_WORKERS, MAX_S, args...>;
 template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warp      = sweep_size_1d<test, MAX_S, 1, args...>;
 template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warpgroup = sweep_size_1d<test, MAX_S, 4, args...>;
 
 
-// 2D Wrappers
+// ----- 2D Wrappers -----
 
 template<typename Ker, int H, int W, int NW, typename... args>
 static __global__ void global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output) {
@@ -251,36 +198,11 @@ struct wrapper_2d {
 };
 template<typename test, int H, int W, typename... args> using wrapper_2d_warp      = wrapper_2d<test, H, W, 1, args...>;
 template<typename test, int H, int W, typename... args> using wrapper_2d_warpgroup = wrapper_2d<test, H, W, 4, args...>;
-
-template<template<typename,int,int,int,typename...> typename base, typename test, int MAX_H, int MAX_W, int NUM_WORKERS, int H, int W, typename... args>
-struct loop_w {
-    static void run(test_data& results) {
-        base<test, H, W, NUM_WORKERS, args...>::run(results);
-        if constexpr (W > 1) {
-            loop_w<base, test, MAX_H, MAX_W, NUM_WORKERS, H, W-1, args...>::run(results);
-        }
-    }
-};
-template<template<typename,int,int,int,typename...> typename base, typename test, int MAX_H, int MAX_W, int NUM_WORKERS, int H, typename... args>
-struct loop_h {
-    static void run(test_data& results) {
-        loop_w<base, test, MAX_H, MAX_W, NUM_WORKERS, H, MAX_W, args...>::run(results);
-        if constexpr (H > 1) {
-            loop_h<base, test, MAX_H, MAX_W, NUM_WORKERS, H-1, args...>::run(results);
-        }
-    }
-};
-// template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
-// struct sweep_size_2d {
-//     static void run(test_data &results) {
-//         loop_h<wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>::run(results);
-//     }
-// };
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using sweep_size_2d = loop_h<wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warp      = sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warpgroup = sweep_size_2d<test, MAX_H, MAX_W, 4, args...>;
 
-
+// Loop over st_layouts too, since this is needed by a bunch of tests.
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
 struct sweep_st_layout_size_2d {
     static void run(test_data &results) {
