@@ -8,9 +8,10 @@ namespace warp {
 namespace memory {
 namespace tma {
 
-template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+template<kittens::ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
 test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input) {
+    using namespace kittens;
     auto warpid = kittens::warpid(); 
     auto lane   = kittens::laneid(); 
 
@@ -43,9 +44,10 @@ test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap*
     }
 }
 
-template<ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
+template<kittens::ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
 __global__ void
 test_tmastore_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_output) {
+    using namespace kittens;
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
@@ -74,14 +76,15 @@ test_tmastore_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap
     }
 }
 
-template<ducks::st_layout::all layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
+template<kittens::ducks::st_layout::all layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
 void test_tma(test_data &results) {
+    using namespace kittens;
     // initailize
     bf16 *d_i, *d_o;
     std::vector<float> i_ref(TMA_HEIGHT * TMA_WIDTH * 1024);
     for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) i_ref[i] = float(i);
     std::vector<float> o_ref(TMA_HEIGHT * TMA_WIDTH * 1024); 
-    initialize<true>(&d_i, &d_o, i_ref, o_ref);
+    initialize(&d_i, &d_o, i_ref, o_ref);
 
     CUtensorMap tma_desc_input = {};
     kittens::tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
@@ -120,7 +123,7 @@ void test_tma(test_data &results) {
     for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) o_ref[i] = i_ref[i];
     std::string load_str = "tma_["+layout_name<layout>()+(store_test ? "]_[store]" : "]_[load]");
     load_str += "_["+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH); 
-    load_str += "]_[]"+std::to_string(workers)+"]";
+    load_str += "]_["+std::to_string(workers)+"]";
 
     passed = validate(d_i, d_o, i_ref, o_ref, load_str, 16 * TMA_WIDTH); 
 
@@ -131,8 +134,9 @@ void test_tma(test_data &results) {
     results.push_back(info);
 }
 
-template<ducks::st_layout::all layout, bool store_test, bool swizzled=false>
+template<kittens::ducks::st_layout::all layout, bool store_test, bool swizzled=false>
 int tma_dim_test(test_data &results) {
+    using namespace kittens;
     int failures = 0; 
 
     
