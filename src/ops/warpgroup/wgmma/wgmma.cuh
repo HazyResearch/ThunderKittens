@@ -36,13 +36,13 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
 template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col L_B>
 __device__ static inline void mma_accum(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                                   const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<K, M, L_B>                         &b) {
+                                  const st_bf<K, M, L_B>           &b) {
     mma<1, N_DIV_4, K, M, L_B>(d, a, b);
 }
 template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col L_B>
 __device__ static inline void mma_reset(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                                   const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<K, M, L_B>                         &b) {
+                                  const st_bf<K, M, L_B>           &b) {
     mma<0, N_DIV_4, K, M, L_B>(d, a, b);
 }
 // [(shared, shared) -> register] edition
