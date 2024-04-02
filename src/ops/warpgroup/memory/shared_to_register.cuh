@@ -130,9 +130,9 @@ __device__ inline static void load(RV &dst, const SV &_src) {
     using T = base_types::packing<T2>::unpacked_type;
 
     static_assert(_src.tiles == dst.outer_dim*4);// confirm size correct
-    auto &src = subvec_inplace<dst.outer_dim>(_src, kittens::warpid()%4); // pretend it's smaller and do warp-level load
+    auto &src = subvec_inplace<dst.outer_dim>(_src, ::kittens::warpid()%4); // pretend it's smaller and do warp-level load
 
-    kittens::load(dst, src); // warp-level
+    ::kittens::load(dst, src); // warp-level
 }
 
 /**
@@ -151,9 +151,9 @@ __device__ inline static void store(SV &_dst, const RV &src) {
     using T = base_types::packing<T2>::unpacked_type;
 
     static_assert(_dst.tiles == src.outer_dim*4);// confirm size correct
-    auto &dst = subvec_inplace<src.outer_dim>(_dst, kittens::warpid()%4); // pretend it's smaller and do warp-level load
+    auto &dst = subvec_inplace<src.outer_dim>(_dst, ::kittens::warpid()%4); // pretend it's smaller and do warp-level load
 
-    kittens::store(dst, src); // warp-level
+    ::kittens::store(dst, src); // warp-level
 }
 
 }

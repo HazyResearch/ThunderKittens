@@ -241,7 +241,7 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
  */
 template<detail::st_type_tma_layout ST>
 __device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_idx) {
-    if (kittens::laneid() == 0) {
+    if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
@@ -290,7 +290,7 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
  */
 template<detail::st_type_tma_layout ST>
 __device__ static inline void load_async(ST &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
-    if (kittens::laneid() == 0) {
+    if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -340,7 +340,7 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
 * @param bytes The number of bytes expected at the barrier.
 */
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
-    if (kittens::laneid() == 0) {
+    if (::kittens::laneid() == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -362,7 +362,7 @@ __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t byte
 template<typename T=ducks::default_type>
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     static_assert(detail::st_type_tma_layout<T> || std::is_same_v<T, ducks::default_type>);
-    if (kittens::laneid() == 0) {
+    if (::kittens::laneid() == 0) {
         void const* const ptr = &barrier;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -410,7 +410,7 @@ __device__ static inline void arrive_and_wait(uint64_t& barrier, int kPhaseBit) 
  * @brief Commits previous asynchronous TMA stores to a group and performs them.
 */
 __device__ static inline void store_commit_group() {
-    if (kittens::laneid() == 0) {
+    if (::kittens::laneid() == 0) {
         asm volatile("cp.async.bulk.commit_group;");
     } 
 }

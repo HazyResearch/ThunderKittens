@@ -138,7 +138,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
 
     static_assert(src.tiles == dst.outer_dim);
     
-    int laneid = kittens::laneid();
+    int laneid = ::kittens::laneid();
     
     __syncwarp();
     if constexpr (dst.inner_dim == 2) {
@@ -156,8 +156,8 @@ __device__ inline static void load(RV &dst, const SV &src) {
         #pragma unroll
         for(auto w = 0; w < dst.outer_dim; w++) {
             int leader = 8*(w%4) + (laneid%4); // repeats every 64 columns
-            dst[w][0] = packed_shfl_sync(kittens::MASK_ALL, dst[w][0], leader);
-            dst[w][1] = packed_shfl_sync(kittens::MASK_ALL, dst[w][1], leader+4);
+            dst[w][0] = packed_shfl_sync(MASK_ALL, dst[w][0], leader);
+            dst[w][1] = packed_shfl_sync(MASK_ALL, dst[w][1], leader+4);
         }
     }
     else {
@@ -179,8 +179,8 @@ __device__ inline static void load(RV &dst, const SV &src) {
         #pragma unroll
         for(auto w = 0; w < dst.outer_dim; w++) {
             int leader = (laneid/4)*4 + 2*(w%2); // repeats every 64 columns
-            dst[w][0].x = __shfl_sync(kittens::MASK_ALL, dst[w][0].x, leader);
-            dst[w][0].y = __shfl_sync(kittens::MASK_ALL, dst[w][0].y, leader+1);
+            dst[w][0].x = __shfl_sync(MASK_ALL, dst[w][0].x, leader);
+            dst[w][0].y = __shfl_sync(MASK_ALL, dst[w][0].y, leader+1);
         }
     }
 }
@@ -202,7 +202,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
 
     static_assert(dst.tiles == src.outer_dim);
     
-    int laneid = kittens::laneid();
+    int laneid = ::kittens::laneid();
     
     __syncwarp();
     if constexpr (src.inner_dim == 2) {

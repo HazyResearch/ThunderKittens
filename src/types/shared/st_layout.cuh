@@ -70,11 +70,12 @@ concept wgmma_col = (
  */
 template<typename T>
 concept row = (
-    wgmma_row<T>  ||
-    wgmma_col<T>  || // wgmma col_t layouts are actually row layouts in terms of local contiguity.
-    tma_2d<T>     ||
-    std::is_same_v<T, xor_swizzle>  ||
-    std::is_same_v<T, wgmma_col_t_32b>   // temporary, until it merges into wgmma_col
+    wgmma_row<T>                         ||
+    wgmma_col<T>                         || // wgmma col_t layouts are actually row layouts in terms of local contiguity.
+    std::is_same_v<T, naive>             ||
+    std::is_same_v<T, tma_swizzle>       ||
+    std::is_same_v<T, xor_swizzle>       ||
+    std::is_same_v<T, wgmma_col_t_32b>      // temporary, until it merges into wgmma_col
 );
 /**
  * @brief Concept to check if a type is a col-contiguous layout.

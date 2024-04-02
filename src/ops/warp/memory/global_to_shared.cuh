@@ -172,7 +172,7 @@ __device__ static inline void load(SV &dst, const typename SV::dtype *src) {
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
     __syncwarp();
     #pragma unroll
-    for(int i = laneid(); i < total_calls; i+=WARP_THREADS) {
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
         if(i * elem_per_transfer < dst.length)
             *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer];
     }
@@ -190,7 +190,7 @@ __device__ static inline void store(typename SV::dtype *dst, const SV &src) {
     constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
     __syncwarp();
     #pragma unroll
-    for(int i = laneid(); i < total_calls; i+=WARP_THREADS) {
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
         if(i * elem_per_transfer < src.length)
             *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer]; // lmao it's identical
     }

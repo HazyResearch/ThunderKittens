@@ -181,11 +181,11 @@ __device__ inline static void load(RV &dst, const U *_src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    int laneid = kittens::laneid();
-    const U *src = &_src[(kittens::warpid()%4) * dst.outer_dim*16]; // pretend smaller, do single warp load.
+    int laneid = ::kittens::laneid();
+    const U *src = &_src[(::kittens::warpid()%4) * dst.outer_dim*16]; // pretend smaller, do single warp load.
     
     // Call warp level store
-    kittens::load(dst, src);
+    ::kittens::load(dst, src);
 }
 /**
  * @brief Collaboratively stores data from register vectors to a destination array in global memory.
@@ -201,11 +201,11 @@ __device__ inline static void store(U *_dst, const RV &src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    int laneid = kittens::laneid();
-    U *dst = &_dst[(kittens::warpid()%4) * src.outer_dim*16]; // pretend smaller, do single warp store.
+    int laneid = ::kittens::laneid();
+    U *dst = &_dst[(::kittens::warpid()%4) * src.outer_dim*16]; // pretend smaller, do single warp store.
 
     // Call warp level store
-    kittens::store(dst, src);
+    ::kittens::store(dst, src);
 }
 
 }

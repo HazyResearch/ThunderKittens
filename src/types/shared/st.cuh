@@ -36,7 +36,8 @@ namespace detail {
 // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
 __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
 
-template<ducks::st_layout::wgmma layout>
+template<typename T> concept wgmma_layout = ducks::st_layout::wgmma_row<T> || ducks::st_layout::wgmma_col<T>;
+template<wgmma_layout layout>
 __device__ inline uint64_t matrix_descriptor(uint64_t start_addr) {
     uint64_t desc = 0x0000000000000000;
     desc |= matrix_descriptor_encode(start_addr);
