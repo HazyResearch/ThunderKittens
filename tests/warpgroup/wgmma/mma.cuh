@@ -32,9 +32,13 @@ struct mma {
         kittens::st_bf<H, K, L1> &a = al.allocate<kittens::st_bf<H, K, L1>>();
         kittens::st_bf<K, W, L2> &b = al.allocate<kittens::st_bf<K, W, L2>>();
         kittens::rt_fl<1, W> c;
-        kittens::warpgroup::load(a, input, K*16);
-        kittens::warpgroup::load(b, input+a.num_elements, K*16);
-        kittens::warpgroup::mma_reset<K, W, L1, L2>(c, a, b);
+        __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_SIZE);}
+        __syncthreads();
+        kittens::warpgroup::load_async(a, input, K*16, barrier);
+        kittens::warpgroup::load_async(b, input+a.num_elements, W*16, barrier);
+        barrier.arrive_and_wait();
+        kittens::warpgroup::mma_reset(c, a, b);
         kittens::warpgroup::mma_commit_group();
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(output, c, W*16);
@@ -64,9 +68,13 @@ struct dot {
         kittens::shared_allocator<1024> al((int*)&__shm[0]); 
         kittens::st_bf<H, K, L1> &a = al.allocate<kittens::st_bf<H, K, L1>>();
         kittens::st_bf<W, K, L2> &b = al.allocate<kittens::st_bf<W, K, L2>>();
-        kittens::rt_fl<H, W> c;
-        kittens::warpgroup::load(a, input, K*16);
-        kittens::warpgroup::load(b, input+a.num_elements, K*16);
+        kittens::rt_fl<1, W> c;
+        __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
+        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_SIZE);}
+        __syncthreads();
+        kittens::warpgroup::load_async(a, input, K*16, barrier);
+        kittens::warpgroup::load_async(b, input+a.num_elements, K*16, barrier);
+        barrier.arrive_and_wait();
         kittens::warpgroup::dot_reset(c, a, b);
         kittens::warpgroup::mma_commit_group();
         kittens::warpgroup::mma_async_wait();
