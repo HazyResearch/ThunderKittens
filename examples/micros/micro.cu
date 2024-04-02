@@ -137,7 +137,7 @@ micro( torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o_small 
 
     TORCH_CHECK(n % (workers*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
     
-    auto threads = workers * kittens::WARP_SIZE;
+    auto threads = workers * kittens::WARP_THREADS;
     printf("[simple_compute_ker] Requesting %lu bytes of memory for %d (%d) workers\n", mem_size, workers, threads);
     CHECK_CUDA_ERROR(cudaFuncSetAttribute(
              micro_ker<H, T>,

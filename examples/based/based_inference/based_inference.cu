@@ -32,7 +32,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
     const int workers  = 8; 
-    const int nThreads = workers*kittens::WARP_SIZE;
+    const int nThreads = workers*kittens::WARP_THREADS;
 
     // Data size information
     const int kv_state_size = d_model * d_state;
@@ -110,11 +110,11 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
     // Store v across threads for the next phase; 
     // Assumes d_model fits in register and is a multiple of 32
-    register H v_vals[d_model / kittens::WARP_SIZE]; // 64 / 32 = 2
-    register H num_vals[d_model / kittens::WARP_SIZE];
+    register H v_vals[d_model / kittens::WARP_THREADS]; // 64 / 32 = 2
+    register H num_vals[d_model / kittens::WARP_THREADS];
 
     auto j0 = 0;
-    for(auto j = lane; j < d_model; j+=kittens::WARP_SIZE, ++j0) {
+    for(auto j = lane; j < d_model; j+=kittens::WARP_THREADS, ++j0) {
         v_vals[j0]   = v[j];
         num_vals[j0] = __typeconvert<float,H>(0.f);
     }
@@ -165,7 +165,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
             H q_val = q[ob*buffer_rows + i];
             auto p_kvs = kv_state[tic] + i*d_model; // pointer to the row
             auto j0 = 0;
-            for(auto j = lane; j < d_model; j += kittens::WARP_SIZE, j0++) { 
+            for(auto j = lane; j < d_model; j += kittens::WARP_THREADS, j0++) { 
                 p_kvs[j]     += k_val*v_vals[j0];
                 num_vals[j0] += q_val*p_kvs[j];    
             }
@@ -188,7 +188,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     // We need to aggregate across the warps.
     __syncwarp();
     j0 = 0;
-    for(auto j = lane; j < d_model; j+= kittens::WARP_SIZE, ++j0) {
+    for(auto j = lane; j < d_model; j+= kittens::WARP_THREADS, ++j0) {
         num_help[warpid][j] = num_vals[j0];
     }
 
@@ -228,7 +228,7 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     const int workers = 8;
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
-    int threads = workers * kittens::WARP_SIZE;
+    int threads = workers * kittens::WARP_THREADS;
     printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
