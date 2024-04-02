@@ -57,15 +57,6 @@ test_nextneighbor_ker(const kittens::bf16 *input, kittens::bf16 *output) {
 
     cluster.sync();
 
-    // PRINT Statement to see what tile distribute smem did
-    // if (threadIdx.x == 0 && cluster_idx == 15) {
-    //     // print out output_tile
-    //     for (int i = 0; i < output_tile[0].num_elements * workers; i++) {
-    //         printf("output_tile[%d]: %f\n", i, __bfloat162float(output_tile[0].data[i]));
-    //     }
-    // }
-    // __syncthreads();
-
     // write out the results from output_tile to global memory
     bf16* output_block_start = output + (cluster_idx * output_tile[0].num_elements * workers);
     store_async(output_block_start + (warpid * output_tile[0].num_elements), output_tile[warpid], output_tile[0].cols, input_barrier);
