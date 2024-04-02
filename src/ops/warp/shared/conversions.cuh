@@ -14,13 +14,13 @@ __device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, 
     int lane = threadIdx.x % 32;
     if constexpr (std::is_same_v<L1, L2>) { // if same layout can just do a simple copy
         #pragma unroll
-        for(int i = lane; i < dst.rows*dst.cols; i+=WARP_SIZE) {
+        for(int i = lane; i < dst.rows*dst.cols; i+=WARP_THREADS) {
             dst[i] = base_types::convertor<T, U>::convert(src[i]);
         }
     }
     else { // otherwise we need to actually do indexing calculations :(
         #pragma unroll
-        for(int i = lane; i < dst.rows*dst.cols; i+=WARP_SIZE) {
+        for(int i = lane; i < dst.rows*dst.cols; i+=WARP_THREADS) {
             int row = i/dst.cols;
             int col = i%dst.cols;
             dst[{row, col}] = base_types::convertor<T, U>::convert(src[{row, col}]);

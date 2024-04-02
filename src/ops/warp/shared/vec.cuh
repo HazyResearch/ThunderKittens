@@ -11,7 +11,7 @@ template<typename op, ducks::sv::all T>
 __device__ static inline void unary_op(T &dst, const T &src) {
     __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_SIZE) {
+    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(src[cur]);
     }
 }
@@ -19,7 +19,7 @@ template<typename op, ducks::sv::all T>
 __device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
     __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_SIZE) {
+    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(lhs[cur], rhs[cur]);
     }
 }
@@ -28,7 +28,7 @@ template<typename op, ducks::sv::all T>
 __device__ static inline void bin_op(T &dst, const T &src, const typename T::dtype &param) {
     __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_SIZE) {
+    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(src[cur], param);
     }
 }

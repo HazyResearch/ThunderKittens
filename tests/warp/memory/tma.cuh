@@ -103,7 +103,6 @@ void test_tma(test_data &results) {
     unsigned long mem_size = 100000; 
 
     // run kernel
-    bool passed; 
     if constexpr (!store_test) {
         cudaFuncSetAttribute(test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
         CudaCheckError();
@@ -125,10 +124,8 @@ void test_tma(test_data &results) {
     load_str += "_["+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH); 
     load_str += "]_["+std::to_string(workers)+"]";
 
-    passed = validate(d_i, d_o, i_ref, o_ref, load_str, 16 * TMA_WIDTH); 
-
     test_info info;
-    info.result = passed ? test_result::PASSED : test_result::FAILED;
+    info.result = validate(d_i, d_o, i_ref, o_ref, load_str, 16 * TMA_WIDTH);
     info.label = load_str;
 
     results.push_back(info);

@@ -33,7 +33,7 @@ struct mma {
         kittens::st_bf<K, W, L2> &b = al.allocate<kittens::st_bf<K, W, L2>>();
         kittens::rt_fl<1, W> c;
         __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
-        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_SIZE);}
+        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_THREADS);}
         __syncthreads();
         kittens::warpgroup::load_async(a, input, K*16, barrier);
         kittens::warpgroup::load_async(b, input+a.num_elements, W*16, barrier);
@@ -70,7 +70,7 @@ struct dot {
         kittens::st_bf<W, K, L2> &b = al.allocate<kittens::st_bf<W, K, L2>>();
         kittens::rt_fl<1, W> c;
         __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
-        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_SIZE);}
+        if (threadIdx.x == 0) {init(&barrier, kittens::WARPGROUP_THREADS);}
         __syncthreads();
         kittens::warpgroup::load_async(a, input, K*16, barrier);
         kittens::warpgroup::load_async(b, input+a.num_elements, K*16, barrier);

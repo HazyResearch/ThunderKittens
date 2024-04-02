@@ -479,7 +479,7 @@ a012_compute(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o)
                   mem_size += 2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>); // a0 and a1y
 
     TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of NUM_WORKERS times stored fragments");
-    auto threads = NUM_WORKERS * kittens::WARP_SIZE;
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
     CHECK_CUDA_ERROR(cudaFuncSetAttribute(
              a012_compute_ker<H, T, _debug_build>,
              cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size));

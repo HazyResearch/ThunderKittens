@@ -112,7 +112,7 @@ void sliding_window_ker_hack(int n, int j, bool just_q, const T* __q, const T* _
     const int d = 64;
     const int window_size = 64;
     constexpr int workers = 4;
-    const int threads = workers * kittens::WARP_SIZE;
+    const int threads = workers * kittens::WARP_THREADS;
     auto head_offset  = blockIdx.x * n * d;
     using block = kittens::block<workers>;
     
@@ -227,7 +227,7 @@ sliding_window(int j,
     using H = bf16;
     using T = c10::BFloat16;
 
-    int threads = workers * kittens::WARP_SIZE;
+    int threads = workers * kittens::WARP_THREADS;
 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
