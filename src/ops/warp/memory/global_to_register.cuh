@@ -163,7 +163,7 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
 // ----------  VECTORS ----------
 
 /**
- * @brief Load data into a register vector from a source array in global memory with a column-major layout.
+ * @brief Load data into a register vector from a source array in global memory.
  *
  * @tparam RV The register vector type.
  * @tparam U The data type of the source array.
@@ -224,7 +224,7 @@ __device__ inline static void load(RV &dst, const U *src) {
 }
 
 /**
- * @brief Store data from a register vector to a destination array in global memory with a column-major layout.
+ * @brief Store data from a register vector to a destination array in global memory.
  *
  * @tparam RV The register vector type.
  * @tparam U The data type of the destination array.

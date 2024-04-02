@@ -20,7 +20,7 @@ namespace kittens {
  * @param dst[out] Destination tile where the result is stored.
  * @param src[in] Source tile to apply the operation on.
  */
-template<typename op, ducks::rt::all T> // T2, w, h can be inferred from dst as long as op is specialized
+template<typename op, ducks::rt::all T>
 __device__ static inline void unary_map(T &dst, const T &src) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
