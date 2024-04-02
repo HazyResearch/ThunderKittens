@@ -93,7 +93,7 @@ template<typename T> concept all = requires {
 *
 * Requires:
 * - T is a register tile.
-* - T has a nested type layout that is ducks::rt_layout::row.
+* - T has an internal type layout that is ducks::rt_layout::row.
 */
 template<typename T>
 concept row_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::row>;
@@ -103,7 +103,7 @@ concept row_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 *
 * Requires:
 * - T is a register tile.
-* - T has a nested type layout that is ducks::rt_layout::col.
+* - T has an internal type layout that is ducks::rt_layout::col.
 */
 template<typename T>
 concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::col>;

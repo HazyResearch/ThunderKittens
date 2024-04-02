@@ -33,7 +33,7 @@ struct identifier {};
 }
 }
 /**
- * @brief Main tile structure for matrix tiles handling.
+ * @brief Register vector structure.
  *
  * @tparam _T The packed data type used for the vector elements.
  * @tparam _outer_dim The size of the tile, in units of TILE_DIM (16).
@@ -70,7 +70,7 @@ namespace rv {
 * @tparam T The type to check against the concept requirements.
 *
 * Requires:
-* - T has a nested type identifier that is the same as rt::identifier.
+* - T has a nested type identifier that is the same as rv::identifier.
 */
 template<typename T>
 concept all = requires {
