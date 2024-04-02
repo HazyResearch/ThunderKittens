@@ -7,5 +7,6 @@
 
 #ifdef KITTENS_HOPPER
 #include "wgmma/wgmma.cuh"
+#include "shared/shared.cuh"
 #endif
 #include "memory/memory.cuh"
