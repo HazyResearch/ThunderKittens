@@ -7,6 +7,9 @@
 #ifdef TEST_WARPGROUP
 #include "warpgroup/warpgroup.cuh"
 #endif
+#ifdef TEST_BLOCK
+#include "block/block.cuh"
+#endif
 
 int main(int argc, char **argv) {
 
@@ -19,6 +22,9 @@ int main(int argc, char **argv) {
 #endif
 #ifdef TEST_WARPGROUP
     warpgroup::tests(data);
+#endif
+#ifdef TEST_BLOCK
+    block::tests(data);
 #endif
 
     std::cout << " ---------------  SUMMARY  ---------------\n";
