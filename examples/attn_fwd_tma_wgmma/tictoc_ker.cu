@@ -9,11 +9,18 @@
 
 #define QO_BLOCKS 1 // CANNOT change rn
 
+// shared tile
+#define qo_height 4
+#define kv_height 4
+#define NUM_WORKERS_KV (NUM_WORKERS/kv_height)
+
+// register tile
+#define width  (ATTN_D/16)
+
 #define ATTN_B 16
 #define ATTN_H 16
 #define ATTN_N 4096
 #define ATTN_D 64 // hardcoded into this kernel
-
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define KITTENS_HOPPER
@@ -29,30 +36,30 @@ __global__ void attend_ker(int d, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtens
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
 
-    st_bf_4x4<layout_row> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf_4x4<layout_row>, NUM_WARPGROUPS>();
-    st_bf_1x4<layout_row> (&k_smem)[2][NUM_WORKERS] = al.allocate<st_bf_1x4<layout_row>, NUM_WORKERS, 2>();
-    st_bf_1x4<layout_col> (&v_smem)[2][NUM_WORKERS] = al.allocate<st_bf_1x4<layout_col>, NUM_WORKERS, 2>();
+    st_bf<qo_height, width, layout_row> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, width, layout_row>, NUM_WARPGROUPS>();
+    st_bf<kv_height, width, layout_row> (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, width, layout_row>, NUM_WORKERS_KV, 2>();
+    st_bf<kv_height, width, layout_col> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, width, layout_col>, NUM_WORKERS_KV, 2>();
 
     int tic = 0; 
     int toc = 1; 
  
-    rt_fl_1x1<> att_block;
-    rt_bf_1x1<> att_block_mma;
-    rt_fl_1x4<> o_prev;
-    rt_fl_1x1<>::col_vec max_vec_last, max_vec;
-    rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
+    rt_fl<1, kv_height> att_block;
+    rt_bf<1, kv_height> att_block_mma;
+    rt_fl<1, width> o_prev;
+    rt_fl<1, kv_height>::col_vec max_vec_last, max_vec;
+    rt_fl<1, kv_height>::col_vec norm_vec_last, norm_vec;
 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/WARPGROUP_SIZE; 
 
-    constexpr int kv_blocks = N / (NUM_WORKERS*k_smem[0][0].rows);
+    constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
     auto block = cooperative_groups::this_thread_block();
 
     __shared__ uint64_t qsmem_barrier[1]; 
     __shared__ uint64_t ksmem_barrier[1];
     __shared__ uint64_t vsmem_barrier[1];
 
-    constexpr int tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS;
+    constexpr int tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS_KV;
     int tile_idx;
 
     if (warpid == 0) {
@@ -78,8 +85,8 @@ __global__ void attend_ker(int d, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtens
             tma::load_async(q_smem[wg], tma_q, tile_idx, qsmem_barrier[0]); 
         }
         
-        for (int w = 0; w < NUM_WORKERS; w++) {        
-            tile_idx = (blockIdx.y * NUM_WORKERS * kv_blocks) + (0 * NUM_WORKERS) + warpid + w; 
+        for (int w = 0; w < NUM_WORKERS_KV; w++) {        
+            tile_idx = (blockIdx.y * NUM_WORKERS_KV * kv_blocks) + (0 * NUM_WORKERS_KV) + warpid + w; 
             tma::load_async(k_smem[tic][w], tma_k, tile_idx, ksmem_barrier[0]); 
             tma::load_async(v_smem[tic][w], tma_v, tile_idx, vsmem_barrier[0]); 
         }
@@ -108,14 +115,14 @@ __global__ void attend_ker(int d, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtens
         __syncthreads(); 
 
         if ((kv_idx + 1 < kv_blocks) && (warpid == 0)) {
-            for (int w = 0; w < NUM_WORKERS; w++) {        
-                tile_idx = (blockIdx.y * NUM_WORKERS * kv_blocks) + ((kv_idx + 1) * NUM_WORKERS) + warpid + w; 
+            for (int w = 0; w < NUM_WORKERS_KV; w++) {        
+                tile_idx = (blockIdx.y * NUM_WORKERS_KV * kv_blocks) + ((kv_idx + 1) * NUM_WORKERS_KV) + warpid + w; 
                 tma::load_async(k_smem[toc][w], tma_k, tile_idx, ksmem_barrier[0]); 
                 tma::load_async(v_smem[toc][w], tma_v, tile_idx, vsmem_barrier[0]); 
             }
         }
 
-        for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
+        for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
             warpgroup::fence(att_block);
             warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
             warpgroup::mma_commit_group();
