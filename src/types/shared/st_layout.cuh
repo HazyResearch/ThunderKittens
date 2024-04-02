@@ -13,6 +13,8 @@ struct xor_swizzle {}; // generic, non-tma swizzling mode
 
 struct wgmma_row_0b { static constexpr int swizzling_mode=0; };
 struct wgmma_row_32b { static constexpr int swizzling_mode=3; };
+struct wgmma_row_64b { static constexpr int swizzling_mode=2; };
+struct wgmma_row_128b { static constexpr int swizzling_mode=1; };
 // however, we do need a few column layouts for wgmma mma's.
 struct wgmma_col_t_0b{ static constexpr int swizzling_mode=0; };
 struct wgmma_col_t_32b{ static constexpr int swizzling_mode=3; }; // Swizzled transposed layout not yet working
@@ -25,20 +27,22 @@ concept tma_2d = (
 template<typename T>
 concept wgmma_row = (
     std::is_same_v<T, wgmma_row_0b>   ||
-    std::is_same_v<T, wgmma_row_32b> 
+    std::is_same_v<T, wgmma_row_32b>  ||
+    std::is_same_v<T, wgmma_row_64b>  ||
+    std::is_same_v<T, wgmma_row_128b>
 );
 template<typename T>
 concept wgmma_col = (
-    std::is_same_v<T, wgmma_col_t_0b>   // ||
-    // std::is_same_v<T, wgmma_col_t_32b> 
+    std::is_same_v<T, wgmma_col_t_0b>  ||
+    std::is_same_v<T, wgmma_col_t_32b> 
 );
 template<typename T>
 concept row = (
     wgmma_row<T>  ||
     wgmma_col<T>  || // wgmma col_t layouts are actually row layouts in terms of local contiguity.
     tma_2d<T>     ||
-    std::is_same_v<T, xor_swizzle>  ||
-    std::is_same_v<T, wgmma_col_t_32b>   // temporary, until it merges into wgmma_col
+    std::is_same_v<T, xor_swizzle>
+    //||std::is_same_v<T, wgmma_col_t_32b>   // temporary, until it merges into wgmma_col
 );
 template<typename T>
 concept col = false; // There are actually no column layouts right now. Which is good because they're slow!
@@ -129,6 +133,28 @@ struct shared_indexer<height, width, ducks::st_layout::wgmma_row_32b> {
         ) ^ (idx3*8);
     }
 };
+// template<int height, int width>
+// struct shared_indexer<height, width, ducks::st_layout::wgmma_row_128b> {
+//     static constexpr int rows = height*16;
+//     static constexpr int cols = width*16;
+//     static constexpr int rows_per_core_matrix = 8;
+//     static constexpr int cols_per_core_matrix = 8;
+//     static constexpr int cols_per_idx1 = cols_per_core_matrix*2; // 16
+//     __device__ static inline int idx(int r, int c) { // naive row-major index default
+//         int idx1 = (c/cols_per_idx1);
+//         int idx2 = (r/32)*4 + (r%rows_per_core_matrix)/2;
+//         int idx3 = r%2;
+//         int idx4 = ((r%32)/8)*2 + (c%cols_per_idx1)/8;
+//         int idx5 = (c%cols_per_core_matrix);
+//         return (
+//             (((idx1 * (2*height) // height is in units of 16, but we want units of 8
+//              + idx2) * 2 // * 2 tensormaps across
+//              + idx3) * 8 // * 8 rows per tensormap
+//              + idx4) * 8 // * 8 columns per row
+//              + idx5
+//         ) ^ (((r%8)/2)*16 + idx3*8);
+//     }
+// };
 // column layouts for wgmma
 template<int height, int width>
 struct shared_indexer<height, width, ducks::st_layout::wgmma_col_t_0b> {

@@ -2,6 +2,8 @@
 
 #ifdef TEST_WARPGROUP_WGMMA_MMA
 
+#include <cstdlib>
+#include <iomanip>
 #include "testing_commons.cuh"
 
 namespace warpgroup {
@@ -14,7 +16,7 @@ struct mma {
     template<int H, int W, int NW, typename _K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_col L2>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
-        for(int i = 0; i < H*16; i++) {
+        for(int i = 0; i < 16*H; i++) {
             for(int j = 0; j < W*16; j++) {
                 float sum = 0;
                 for(int k = 0; k < K*16; k++) {
@@ -33,8 +35,9 @@ struct mma {
         kittens::st_bf<K, W, L2> &b = al.allocate<kittens::st_bf<K, W, L2>>();
         kittens::rt_fl<1, W> c;
         kittens::warpgroup::load(a, input, K*16);
-        kittens::warpgroup::load(b, input+a.num_elements, K*16);
-        kittens::warpgroup::mma_reset<K, W, L1, L2>(c, a, b);
+        kittens::warpgroup::load(b, input+a.num_elements, W*16);
+        kittens::warpgroup::fence(c);
+        kittens::warpgroup::mma_reset(c, a, b);
         kittens::warpgroup::mma_commit_group();
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(output, c, W*16);
@@ -42,18 +45,21 @@ struct mma {
 };
 struct dot {
     template<int H, int W, int NW, typename K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_row L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    using valid = std::bool_constant<NW == 4 && H==4 && (W*H*4+W*K::value+H*K::value)<=64 &&
+                  (!std::is_same_v<L2, kittens::ducks::st_layout::wgmma_row_128b> || W%2==0)>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_dot";
     template<int H, int W, int NW, typename _K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_row L2>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
-        for(int i = 0; i < H*16; i++) {
-            for(int j = 0; j < W*16; j++) {
-                float sum = 0;
-                for(int k = 0; k < K*16; k++) {
-                    sum += i_ref[i*K*16+k]*i_ref[256*K*H + j*K*16+k];
+        for(int h = 0; h < 4; h++) {
+            for(int i = 0; i < 16; i++) {
+                for(int j = 0; j < W*16; j++) {
+                    float sum = 0;
+                    for(int k = 0; k < K*16; k++) {
+                        sum += i_ref[h*K*1024+i*K*16+k]*i_ref[4096 + j*K*16+k];
+                    }
+                    o_ref[h*W*256+i*W*16+j] = sum;
                 }
-                o_ref[i*W*16+j] = sum;
             }
         }
     }
@@ -62,12 +68,15 @@ struct dot {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<1024> al((int*)&__shm[0]); 
-        kittens::st_bf<H, K, L1> &a = al.allocate<kittens::st_bf<H, K, L1>>();
-        kittens::st_bf<W, K, L2> &b = al.allocate<kittens::st_bf<W, K, L2>>();
-        kittens::rt_fl<H, W> c;
-        kittens::warpgroup::load(a, input, K*16);
-        kittens::warpgroup::load(b, input+a.num_elements, K*16);
-        kittens::warpgroup::dot_reset(c, a, b);
+        kittens::st_bf<H, K, L1> (&a)[8] = al.allocate<kittens::st_bf<H, K, L1>, 8>();
+        kittens::st_bf<W, K, L2> &b      = al.allocate<kittens::st_bf<W, K, L2>>();
+        kittens::rt_fl<1, W> c;
+        for(int i = 0; i < 4; i++) {
+            kittens::warpgroup::load(a[i], input+a[0].num_elements*i, K*16);
+        }
+        kittens::warpgroup::load(b, input+a[0].num_elements*H*4/H, K*16);
+        kittens::warpgroup::fence(c);
+        kittens::warpgroup::dot_reset(c, a[0], b);
         kittens::warpgroup::mma_commit_group();
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(output, c, W*16);
@@ -85,9 +94,19 @@ struct mma_wrapper_2d {
         if constexpr (test::template valid<H, W, NUM_WORKERS, _K, args...>::value) {
             // initialize
             bf16 *d_i, *d_o;
-            std::vector<float> i_ref((H+W)*K*256);
+            std::vector<float> i_ref(((H*4)+W)*K*256);
+            int c = 0;
+            // for(int i = 0; i < 4; i++) for(int j = 0; j < 4; j++) for(int k = 0; k < K*256; k++) {
+            //     i_ref[(i*4+j)*K*256 + k] = (j == 0 ? float(i*K*256 + k) : 0);
+            // }
+            for(int i = 0; i < 4096; i++) {
+                i_ref[i] = float(i);
+            }
+            for(int i = 0; i < 16; i++) for(int j = 0; j < 16; j++) {
+                i_ref[4096+i*16+j] = float(i==j);
+            }
             std::vector<float> o_ref(H*W*256);
-            initialize(&d_i, &d_o, i_ref, o_ref);
+            initialize<initializers::NONE>(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
                 global_wrapper_2d<test, H, W, NUM_WORKERS, _K, args...>,

@@ -23,26 +23,50 @@ template<ducks::st_layout::wgmma layout>
 __device__ inline uint64_t matrix_descriptor(uint64_t start_addr) {
     uint64_t desc = 0x0000000000000000;
     desc |= matrix_descriptor_encode(start_addr);
-    desc |= matrix_descriptor_encode((uint64_t)128) << 16;
-    desc |= matrix_descriptor_encode((uint64_t)256) << 32;
     uint64_t base_offset = 0;
-    if constexpr (layout::swizzling_mode == 3) {
+    if constexpr (layout::swizzling_mode == 0) { // Unswizzled
+        if constexpr (std::is_same_v<layout, ducks::st_layout::wgmma_row_0b>) {
+            desc |= matrix_descriptor_encode((uint64_t)128) << 16;
+        }
+        if constexpr (std::is_same_v<layout, ducks::st_layout::wgmma_col_t_0b>) {
+            desc |= matrix_descriptor_encode((uint64_t)128) << 16;
+        }
+        desc |= matrix_descriptor_encode((uint64_t)256) << 32;
+    }
+    else if constexpr (layout::swizzling_mode == 3) { // 32B
+        if constexpr (std::is_same_v<layout, ducks::st_layout::wgmma_row_32b>) {
+            desc |= matrix_descriptor_encode((uint64_t)128) << 16;
+        }
+        if constexpr (std::is_same_v<layout, ducks::st_layout::wgmma_col_t_32b>) {
+            // desc |= matrix_descriptor_encode((uint64_t)16) << 16;
+        }
+        desc |= matrix_descriptor_encode((uint64_t)256) << 32;
         if((uint64_t)(start_addr) % 256 != 0) {
             base_offset = (start_addr >> 0x7) & 0x7;
         }
     }
-    if constexpr (layout::swizzling_mode == 2) {
+    else if constexpr (layout::swizzling_mode == 2) { // 64B
+        desc |= matrix_descriptor_encode((uint64_t)0) << 16; // lead (lower offset)
+        desc |= matrix_descriptor_encode((uint64_t)512) << 32;// stride (upper offset)
         if((uint64_t)(start_addr) % 512 != 0) {
             base_offset = (start_addr >> 0x7) & 0x7;
         }
     }
-    if constexpr (layout::swizzling_mode == 1) {
-        if((uint64_t)(start_addr) % 1024 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
+    else if constexpr (layout::swizzling_mode == 1) { // 128B
+        desc |= matrix_descriptor_encode((uint64_t)128) << 16;  // lead (lower offset)
+        desc |= matrix_descriptor_encode((uint64_t)1024) << 32; // stride (upper offset)
+        // if((uint64_t)(start_addr) % 1024 != 0) {
+        //     base_offset = (start_addr >> 0x7) & 0x7;
+        //     if(threadIdx.x == 0) printf("Base offset not zero!!\n");
+        // }
+        // else {
+        //     if(threadIdx.x == 0) printf("Base offset was zero!!\n");
+        // }
+        // base_offset = (512 >> 0x7) & 0x7;
     }
     desc |= ((uint64_t)base_offset) << 49;
     desc |= ((uint64_t)layout::swizzling_mode) << 62;
+    if(threadIdx.x == 0) printf("Descriptor: %llu\n", desc);
     return desc;
 }
 }
@@ -77,6 +101,14 @@ struct st {
         !std::is_same_v<layout, ducks::st_layout::tma_swizzle> || width == 1 || width == 2 || width == 4,
         "For TMA swizzled modes, shared tile width must be 1, 2, or 4."
     ); // TMA swizzling only appears to work with a few particular layout dimensions.
+    static_assert(
+        !(std::is_same_v<layout, ducks::st_layout::wgmma_row_128b>) || height%2==0,
+        "For 128B WGMMA row swizzled mode, shared tile height must be a multiple of 2."
+    ); // 128B swizzling repeats every 8 core matrices
+    // static_assert(
+    //     !(std::is_same_v<layout, ducks::st_layout::wgmma_col_t_128b>) || width%2==0,
+    //     "For 128B WGMMA col swizzled modes, shared tile width must be a multiple of 2."
+    // ); // 128B swizzling repeats every 8 core matrices
 
     // wgmma layout with swizzling
     dtype data[rows*cols];

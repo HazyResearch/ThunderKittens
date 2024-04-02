@@ -7,6 +7,8 @@ template<> std::string layout_name<kittens::ducks::st_layout::tma_swizzle    >()
 template<> std::string layout_name<kittens::ducks::st_layout::xor_swizzle    >() { return "xor_swizzle";     }
 template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_0b   >() { return "wgmma_row_0b";    }
 template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_32b  >() { return "wgmma_row_32b";   }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_64b  >() { return "wgmma_row_64b";   }
+template<> std::string layout_name<kittens::ducks::st_layout::wgmma_row_128b >() { return "wgmma_row_128b";  }
 template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_0b >() { return "wgmma_col_t_0b";  }
 template<> std::string layout_name<kittens::ducks::st_layout::wgmma_col_t_32b>() { return "wgmma_col_t_32b"; }
 
@@ -37,7 +39,7 @@ test_result validate(kittens::bf16 *d_i, kittens::bf16 *d_o, const std::vector<f
     }
     if(good) std::cout << " -- PASSED" << std::endl;
     else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
-    if(should_write_outputs && !good) {
+    if(should_write_outputs) {//} && !good) {
         std::ofstream reffile("outputs/"+test_name+"_ref.txt");
         std::ofstream outfile("outputs/"+test_name+"_out.txt");
         for(int i = 0; i < output_size; i++) {
