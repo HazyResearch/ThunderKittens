@@ -64,7 +64,8 @@ constexpr int MAX_SHARED_MEMORY = 101000;
 /**
  * @namespace ducks
  *
- * @brief ThunderKittens' namespace for template metaprogramming.
+ * @brief ThunderKittens' namespace for template metaprogramming..
+ * 
  * This includes primarily dummy types and concept wrappers, along
  * with a few additional utilities.
  */
