@@ -231,5 +231,4 @@ __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::div, T>(dst, lhs, rhs);
 }
 
-
 }

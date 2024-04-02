@@ -7,6 +7,9 @@
 #include <iostream>
 
 namespace kittens {
+/**
+ * @brief A namespace for all of ThunderKittens' TMA functionality.
+*/
 namespace tma {
 
 namespace detail {
@@ -32,6 +35,18 @@ template<typename T> concept st_type_tma_layout = (
 
 /* ----------   Create tensor map descriptor (HOST)  ---------- */
 
+/**
+* @brief Creates a tensor map for the given source tensor.
+*
+* This function creates a tensor map (CUtensorMap) for the specified source shared tile  type. The tensor map
+* is used to describe the shape and layout of the tensor in memory. The function sets up the tensor
+* map based on the provided source tensor pointer and the layout specified by the ST template parameter.
+*
+* @tparam ST The source tensor type, which must be TMA-compatible.
+* @tparam num_blocks The number of tiles present in global memory.
+* @param tma_map Pointer to the CUtensorMap object to be initialized.
+* @param src Pointer to the source tensor data in global memory.
+*/
 template<detail::st_type_tma_layout ST, int num_blocks>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     
@@ -167,6 +182,14 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
 
 /* ----------   Prefetch Tensor Map  ---------- */
 
+/**
+ * @brief Prefetches data from global memory into a shared memory tile, along with the tensormap.
+ *
+ * @tparam ST A shared tile type with a TMA-compatible layout
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src_tma_map The source tensormap address in global memory
+ * @param[in] tile_idx The index of the requested tile.
+ */
 template<detail::st_type_tma_layout ST>
 __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_idx) {
     if (threadIdx.x == 0) {
@@ -206,6 +229,16 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
 
+/**
+ * @brief Asynchronously stores data into global memory from a shared memory tile.
+ *
+ * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
+ *
+ * @tparam ST A shared tile type with a TMA-compatible layout
+ * @param[out] dst The destination tensormap address in global memory
+ * @param[in] src_tma_map The source shared memory tile.
+ * @param[in] tile_idx The index of the tile destination.
+ */
 template<detail::st_type_tma_layout ST>
 __device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_idx) {
     if (kittens::laneid() == 0) {
@@ -243,6 +276,18 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
         }
     }
 }
+
+/**
+ * @brief Asynchronously loads data from global memory into a shared memory tile.
+ *
+ * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
+ *
+ * @tparam ST A shared tile type with a TMA-compatible layout
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src_tma_map The source tensormap address in global memory
+ * @param[in] tile_idx The index of the requested tile.
+ * @param[in,out] barrier The barrier used for synchronization of the asynchronous copy.
+ */
 template<detail::st_type_tma_layout ST>
 __device__ static inline void load_async(ST &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
     if (kittens::laneid() == 0) {
@@ -284,6 +329,16 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
 
 /* ----------   Barrier functions for async load  ---------- */
 
+/**
+* @brief Sets the number of bytes expected at the barrier.
+*
+* This function sets the number of bytes expected at the barrier for the first thread in the warp.
+* It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
+* instruction to set the expected number of bytes.
+*
+* @param barrier Reference to the barrier variable.
+* @param bytes The number of bytes expected at the barrier.
+*/
 __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
     if (kittens::laneid() == 0) {
         void const* const ptr = &barrier;
@@ -293,6 +348,17 @@ __device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t byte
             :: "r"(bar_ptr), "r"(bytes));
     }
 }
+/**
+ * @brief Initializes a synchronization barrier with a transaction count and sets the expected number of bytes.
+ *
+ * This function sets up a barrier that is used to synchronize threads within a block during asynchronous operations.
+ * It initializes the barrier with a thread count barrier.
+ *
+ * Additionally, if it is given a shared tile type, it will also call `set_barrier_bytes` to prepare for the memory transaction.
+ *
+ * @param[out] barrier The barrier variable to initialize.
+ * @param[in] tc The thread counter for the barrier.
+ */
 template<typename T=ducks::default_type>
 __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     static_assert(detail::st_type_tma_layout<T> || std::is_same_v<T, ducks::default_type>);
@@ -309,6 +375,16 @@ __device__ static inline void init_barrier(uint64_t& barrier, int tc) {
     }
 }
 
+/**
+* @brief Arrives at the barrier and waits for all threads to arrive.
+*
+* This function is used to synchronize threads at a barrier. Each thread arrives at the barrier
+* and waits until all threads have arrived. The function uses inline assembly to perform the
+* barrier wait operation.
+*
+* @param barrier Reference to the barrier variable.
+* @param kPhaseBit The phase bit used for the barrier.
+*/
 __device__ static inline void arrive_and_wait(uint64_t& barrier, int kPhaseBit) {
     void const* const ptr = &barrier;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -330,11 +406,19 @@ __device__ static inline void arrive_and_wait(uint64_t& barrier, int kPhaseBit) 
 
 /* ----------   Synchronization functions for async store  ---------- */
 
+/**
+ * @brief Commits previous asynchronous TMA stores to a group and performs them.
+*/
 __device__ static inline void store_commit_group() {
     if (kittens::laneid() == 0) {
         asm volatile("cp.async.bulk.commit_group;");
     } 
 }
+/**
+ * @brief Waits for previous committed TMA store groups to complete.
+ *
+ * @tparam N The maximum number of remaining TMA store groups. Defaults to 0.
+*/
 template <int N=0>
 __device__ static inline void store_async_wait() {
     asm volatile (
