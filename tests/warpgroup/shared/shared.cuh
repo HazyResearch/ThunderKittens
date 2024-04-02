@@ -1,17 +1,17 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_WARPGROUP
+#ifdef TEST_WARPGROUP_SHARED
 
 #include "testing_commons.cuh"
 
-#include "memory/memory.cuh"
-#include "wgmma/wgmma.cuh"
-#include "shared/shared.cuh"
+#include "maps.cuh"
 
 namespace warpgroup {
+namespace shared {
 
 void tests(test_data &results);
 
+}
 }
 
 #endif

@@ -11,10 +11,9 @@ namespace warpgroup {
 // Uniform unary map on tile
 template<typename op, ducks::st::all T> // T2, w, h can be inferred from dst as long as op is specialized
 __device__ static inline void unary_map(T &dst, const T &src) {
-
-    int lane = threadIdx.x % (WARP_SIZE * 4); 
+    int lane = threadIdx.x % (WARP_THREADS * 4); 
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_SIZE * 4)) {
+    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_THREADS * 4)) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols); 
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(src.data[col + (row * dst.cols)]);
@@ -25,9 +24,9 @@ __device__ static inline void unary_map(T &dst, const T &src) {
 template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
 
-    int lane = threadIdx.x % (WARP_SIZE * 4); 
+    int lane = threadIdx.x % (WARP_THREADS * 4); 
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_SIZE * 4)) {
+    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_THREADS * 4)) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols);  
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(src.data[col + (row * dst.cols)], param);
@@ -43,9 +42,9 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename base_
 template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
 
-    int lane = threadIdx.x % (WARP_SIZE * 4);
+    int lane = threadIdx.x % (WARP_THREADS * 4);
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_SIZE * 4)) {
+    for(int i = lane; i < dst.rows*dst.cols; i += (WARP_THREADS * 4)) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols); 
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(lhs.data[col + (row * dst.cols)], rhs.data[col + (row * dst.cols)]);

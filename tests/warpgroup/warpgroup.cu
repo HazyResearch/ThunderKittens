@@ -12,6 +12,9 @@ void warpgroup::tests(test_data &results) {
 #ifdef TEST_WARPGROUP_WGMMA
     wgmma::tests(results); // register is a reserved word, hence reg
 #endif
+#ifdef TEST_WARPGROUP_SHARED
+    shared::tests(results);
+#endif
 }
 
 #endif

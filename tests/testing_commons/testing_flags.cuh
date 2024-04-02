@@ -69,6 +69,9 @@
 #define TEST_WARPGROUP_WGMMA_MMA
 #endif
 
+#ifdef TEST_ALL_WARPGROUP_SHARED
+#define TEST_WARPGROUP_SHARED_MAPS
+#endif
 
 // Block macros
 
@@ -110,7 +113,9 @@
 #ifdef TEST_WARPGROUP_WGMMA_MMA
 #define TEST_WARPGROUP_WGMMA
 #endif
-
+#ifdef TEST_WARPGROUP_SHARED_MAPS
+#define TEST_WARPGROUP_SHARED
+#endif
 
 // Block macros
 #if defined(TEST_BLOCK_MEMORY_GLOBAL_TO_REGISTER) || defined(TEST_BLOCK_MEMORY_GLOBAL_TO_SHARED) || \
@@ -124,7 +129,7 @@
 #define TEST_WARP
 #endif
 
-#if defined(TEST_WARPGROUP_MEMORY) || defined(TEST_WARPGROUP_WGMMA)
+#if defined(TEST_WARPGROUP_MEMORY) || defined(TEST_WARPGROUP_WGMMA) || defined(TEST_WARPGROUP_SHARED)
 #define TEST_WARPGROUP
 #endif
 
