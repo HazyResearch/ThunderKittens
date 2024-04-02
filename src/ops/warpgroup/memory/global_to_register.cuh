@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Functions for a warpgroup to collaboratively transfer  data directly between global memory and registers and back.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"
@@ -6,6 +11,15 @@
 namespace kittens {
 namespace warpgroup {
 
+/**
+ * @brief Collaboratively loads data from a source array into row-major layout tiles.
+ *
+ * @tparam RT The row-major layout tile type.
+ * @tparam U The data type of the source array.
+ * @param dst[out] The destination tile to load data into.
+ * @param src[in] The source array to load data from.
+ * @param row_stride[in] The stride in elements between rows in the source array.
+ */
 template<ducks::rt::row_layout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
     using T2 = RT::dtype;
@@ -29,6 +43,15 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         }
     }
 }
+/**
+ * @brief Collaboratively loads data from a source array into column-major layout tiles.
+ *
+ * @tparam RT The column-major layout tile type.
+ * @tparam U The data type of the source array.
+ * @param dst[out] The destination tile to load data into.
+ * @param src[in] The source array to load data from.
+ * @param row_stride[in] The stride in elements between rows in the source array.
+ */
 template<ducks::rt::col_layout RT, typename U>
 __device__ inline static void load(RT &dst, const U *src, const int row_stride) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
@@ -65,6 +88,15 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
 }
 
 
+/**
+ * @brief Collaboratively stores data from register tiles to a destination array in global memory with a row-major layout.
+ *
+ * @tparam RT The register tile type with a row-major layout.
+ * @tparam U The data type of the destination array.
+ * @param[out] dst The destination array in global memory to store data into.
+ * @param[in] src The source register tile to store data from.
+ * @param row_stride[in] The stride in elements between rows in the destination array.
+ */
 template<ducks::rt::row_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T2 = RT::dtype;
@@ -88,6 +120,15 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         }
     }
 }
+/**
+ * @brief Collaborateively stores data from register tiles to a destination array in global memory with a column-major layout.
+ *
+ * @tparam RT The register tile type with a column-major layout.
+ * @tparam U The data type of the destination array.
+ * @param[out] dst The destination array in global memory to store data into.
+ * @param[in] src The source register tile to store data from.
+ * @param row_stride[in] The stride in elements between rows in the destination array.
+ */
 template<ducks::rt::col_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
@@ -126,6 +167,14 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
 
 // ----------  VECTORS ----------
 
+/**
+ * @brief Collaboratively loads data into register vectors from a source array in global memory.
+ *
+ * @tparam RV The register vector type.
+ * @tparam U The data type of the source array.
+ * @param[out] dst The destination register vector to load data into.
+ * @param[in] src The source array in global memory to load data from.
+ */
 template<ducks::rv::all RV, typename U>
 __device__ inline static void load(RV &dst, const U *_src) {
     using T2 = RV::dtype;
@@ -138,7 +187,14 @@ __device__ inline static void load(RV &dst, const U *_src) {
     // Call warp level store
     kittens::load(dst, src);
 }
-
+/**
+ * @brief Collaboratively stores data from register vectors to a destination array in global memory.
+ *
+ * @tparam RV The register vector type.
+ * @tparam U The data type of the destination array.
+ * @param[out] dst The destination array in global memory to store data into.
+ * @param[in] src The source register vector to store data from.
+ */
 template<ducks::rv::all RV, typename U>
 __device__ inline static void store(U *_dst, const RV &src) {
     using T2 = RV::dtype;

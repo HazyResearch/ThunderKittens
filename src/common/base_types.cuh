@@ -109,7 +109,7 @@ template<> struct constants<bf16_2> {
  */
 template<typename T> struct packing {
     /**
-     * @brief Returns the number of elements packed together.
+     * @brief The number of elements packed together.
      *
      * @return constexpr int representing number of elements within the type.
      */
