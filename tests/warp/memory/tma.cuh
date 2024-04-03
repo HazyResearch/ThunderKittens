@@ -20,7 +20,7 @@ test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap*
     extern __shared__ int __shm[];
     shared_allocator<1024> al((int*)&__shm[0]); 
 
-    using worker_type = kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
+    // using worker_type = kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
     kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
 
     auto block = cooperative_groups::this_thread_block();
@@ -39,6 +39,7 @@ test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap*
         int kPhaseBit = 0; 
         kittens::tma::arrive_and_wait(smem_barrier[warpid], kPhaseBit);
 
+        kittens::tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
         kittens::store(output + (input_tile[warpid].num_elements * tile_idx), input_tile[warpid], TMA_WIDTH * 16); 
         // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
     }
