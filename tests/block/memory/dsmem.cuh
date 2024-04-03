@@ -31,6 +31,9 @@ struct nextneighbor {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
 
+        auto warpid        = kittens::warpid();
+        auto lane          = kittens::laneid(); 
+
         kittens::st_bf<H, W, L> (&input_tile)[NW] = al.allocate<kittens::st_bf<H, W, L>, NW>();
         kittens::st_bf<H, W, L> (&output_tile)[NW] = al.allocate<kittens::st_bf<H, W, L>, NW>();
 
@@ -42,30 +45,30 @@ struct nextneighbor {
         const bf16* block_start = input + (cluster_idx * (input_tile[0].num_elements * NW));
 
         auto block = cooperative_groups::this_thread_block();
-        auto warpid = kittens::warpid(); 
         
-        kittens::block<NW>::load(input_tile[warpid], block_start + (warpid * input_tile[0].num_elements), input_tile[0].cols);
+        kittens::load(input_tile[warpid], block_start + (warpid * input_tile[0].num_elements), input_tile[0].cols);
 
         __shared__ uint64_t smem_barrier[1];
         constexpr int size_bytes = sizeof(bf16) * input_tile[0].num_elements * NW; 
         kittens::block<NW>::dsmem::init_barrier(smem_barrier[0], 1); 
         kittens::block<NW>::dsmem::set_barrier_bytes(smem_barrier[0], size_bytes);
+        block.sync(); 
 
-        block.sync();
         cluster.sync();
 
         int neighbor_idx = (cluster_idx + 1) % cs;
-        
+
         kittens::block<NW>::dsmem::tile_distribute_smem(output_tile[warpid], input_tile[warpid], cs, neighbor_idx, size_bytes, smem_barrier[0]);
 
         constexpr int kPhaseBit = 0;
         kittens::block<NW>::dsmem::distribution_wait(smem_barrier[0], kPhaseBit);
+        __syncthreads(); 
 
         cluster.sync();
 
         // write out the results from output_tile to global memory
         bf16* output_block_start = output + (cluster_idx * output_tile[0].num_elements * NW);
-        kittens::block<NW>::store(output_block_start + (warpid * output_tile[0].num_elements), output_tile[warpid], output_tile[0].cols);
+        kittens::store(output_block_start + (warpid * output_tile[0].num_elements), output_tile[warpid], output_tile[0].cols);
     }
 };
 
