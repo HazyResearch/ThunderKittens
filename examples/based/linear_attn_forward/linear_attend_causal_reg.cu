@@ -19,6 +19,15 @@ typedef rt_fl<1, 4> _rtd_v_accum;
 typedef rt_bf<1, 1, ducks::rt_layout::col> _rtd_qk_col;
 typedef rt_bf<1, 4, ducks::rt_layout::col> _rtd_v_col;
 
+#define N_WARPS 8
+
+/*
+
+int row = ???;
+for(int i = 0; i < cols; i+=kittens::WARP_SIZE) tile[{row, i}] = 0;
+
+*/
+
 // Compute A0.
 // We are computing V.cumsum(dim=0) in this example (Across the sequence)
 // We first compute the local cumulative sum.
@@ -28,9 +37,9 @@ typedef rt_bf<1, 4, ducks::rt_layout::col> _rtd_v_col;
 // To handle 1, we add in total_a0 to a0
 __device__
 void tb_cumsum(
-    st_bf_1x4<ducks::st_layout::xor_swizzle> (&dst)[kittens::N_WARPS], 
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&dst)[N_WARPS], 
     st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &total, // tile should have same width as the tile and same type.
-    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[kittens::N_WARPS],  
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS],  
     const int nThreads = 256
 ) {
     using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
@@ -47,7 +56,7 @@ void tb_cumsum(
     for(auto col = threadIdx.x; col < kittens::TILE_DIM*width; col+= nThreads) {
         // this is resonsible for this column value.
         H v = total.data[col];
-        for(auto w = 0; w < kittens::N_WARPS; w++) {
+        for(auto w = 0; w < N_WARPS; w++) {
             H *_dst = dst[w].data;
             const H *_src = src[w].data;
             auto idx = col;
@@ -66,7 +75,7 @@ void tb_cumsum(
 // // Then a1 has the "preceding" a1 for each warp; total_a1 is the next stage of what we need to build.
 __device__
 void tb_cumsum_delay_tiles_inplace(
-    st_bf_1x4<ducks::st_layout::xor_swizzle> (&x)[kittens::N_WARPS], 
+    st_bf_1x4<ducks::st_layout::xor_swizzle> (&x)[N_WARPS], 
     st_bf_1x4<ducks::st_layout::xor_swizzle> &total, 
     const int nThreads = 256
 ) {
@@ -97,7 +106,7 @@ void tb_cumsum_delay_tiles_inplace(
 
             v += v1;
 
-            for(int wrp = 1; wrp < kittens::N_WARPS; wrp++) {
+            for(int wrp = 1; wrp < N_WARPS; wrp++) {
                 TT *src1 = x[wrp].data + _idx;
                 TT _v1 = src1[idx];       // Getting x[wrp].tile_start(h,0)[idx];
 
@@ -115,7 +124,7 @@ void tb_cumsum_delay_tiles_inplace(
 __device__
 void reduce_tile_tiles(
     st_bf_1x4<ducks::st_layout::xor_swizzle> &dst, 
-    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[kittens::N_WARPS], 
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS], 
     const int nThreads = 256
 ) {
     using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
@@ -135,7 +144,7 @@ void reduce_tile_tiles(
             T t = src[0];   // TODO: SA confirm this rewrite
             TT *src0 = t.data + _idx;
             TT v = src0[idx];
-            for(int wrp = 1; wrp < kittens::N_WARPS; wrp++) {
+            for(int wrp = 1; wrp < N_WARPS; wrp++) {
                 T t1 = src[wrp];
                 TT *src1 = t1.data + _idx;
                 v += src1[idx];
@@ -241,7 +250,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
-    constexpr int NUM_WORKERS = kittens::N_WARPS;
+    constexpr int NUM_WORKERS = N_WARPS;
 
     const H *_q   = reinterpret_cast<const H*>(__q)+blockIdx.x*(n*d);
     const H *_k   = reinterpret_cast<const H*>(__k)+blockIdx.x*(n*d);
@@ -255,7 +264,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
     
     // this is the CUDA shared memory
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
+    shared_allocator al((int*)&__shm[0]);
     st_bf_1x1<ducks::st_layout::xor_swizzle> (&q)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
     st_bf_1x1<ducks::st_layout::xor_swizzle> (&k)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
     st_bf_1x4<ducks::st_layout::xor_swizzle> (&v)[2][NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
