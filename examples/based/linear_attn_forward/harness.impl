@@ -64,7 +64,10 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading K" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) infile >> v[i];
         std::cout << "Finished loading V" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) infile >> o_ref[i];
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) {
+            infile >> o_ref[i];
+            // if(i < 300) std::cout << o_ref[i] << std::endl;
+        }
         std::cout << "Finished loading O_REF" << std::endl;
 
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
@@ -113,7 +116,7 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
 
@@ -123,7 +126,8 @@ int main(int argc, char **argv) {
     std::ofstream diff_file("printouts/diff.txt");
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
+        if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
+        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << '\n';
         o_file << o[i] << ' ';
         diff_file << diff << ' ';
         if(abs(diff) > 0.01 || isnan(diff)) {
@@ -145,3 +149,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+

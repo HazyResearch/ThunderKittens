@@ -47,20 +47,16 @@ void tb_cumsum(
     const int height = T::height;
     const int rows = T::rows;
     const int row_stride = T::cols;
-    auto col = threadIdx.x % (kittens::TILE_DIM*width);
     
     // Threads are assigned to cols, and then go sequentially through the all rows in the warps
     __syncthreads();
-    for(auto col = threadIdx.x; col < kittens::TILE_DIM*width; col+= N_THREADS) {
+    for(int col = threadIdx.x; col < kittens::TILE_DIM*width; col+= N_THREADS) {
         // this is resonsible for this column value.
         H v = total.data[col];
         for(auto w = 0; w < N_WARPS; w++) {
-            H *_dst = dst[w].data;
-            const H *_src = src[w].data;
-            auto idx = col;
-            for(auto r = 0; r < rows; r++, idx += row_stride) {
-                v += _src[idx];
-                _dst[idx] = v;
+            for(int r = 0; r < rows; r++) {
+                v += src[w][int2{r,col}];
+                dst[w][int2{r,col}] = v;
             }
         }
         total.data[col] = v;
@@ -309,9 +305,9 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
     assert(n_tiles % NUM_WORKERS == 0);
 
     // Load in initial batches of QKV along the sequence dimension
-    kittens::load_async(q[tic][warpid], _q + warpid*qk_tile_elements, d,  qkv_barrier);
-    kittens::load_async(k[tic][warpid], _k + warpid*qk_tile_elements, d,  qkv_barrier);
-    kittens::load_async(v[tic][warpid], _v + warpid*v_tile_elements , dv, qkv_barrier);
+    // kittens::load_async(q[tic][warpid], _q + warpid*qk_tile_elements, d,  qkv_barrier);
+    // kittens::load_async(k[tic][warpid], _k + warpid*qk_tile_elements, d,  qkv_barrier);
+    // kittens::load_async(v[tic][warpid], _v + warpid*v_tile_elements , dv, qkv_barrier);
                 
     // // Set the tiles and accumulators to 0.
     zero(A2j0);
@@ -326,14 +322,17 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
     // for (auto i = 0; i < total_a1::)
     // __syncthreads();
 
-    for(auto cur_block = 0; cur_block < n_blocks; cur_block++, tic ^= 1, toc ^= 1) {
-        qkv_barrier.arrive_and_wait(); 
-        if(cur_block < n_blocks - 1) { // Kick off the next block load.
-            auto next_idx = (cur_block + 1)*NUM_WORKERS + warpid; 
-            kittens::load_async(q[toc][warpid], _q + next_idx * qk_tile_elements, d, qkv_barrier);
-            kittens::load_async(k[toc][warpid], _k + next_idx * qk_tile_elements, d, qkv_barrier);
-            kittens::load_async(v[toc][warpid], _v + next_idx * v_tile_elements, dv, qkv_barrier);
-        } 
+    for(auto cur_block = 0; cur_block < n_blocks; cur_block++) {
+    // for(auto cur_block = 0; cur_block < n_blocks; cur_block++, tic ^= 1, toc ^= 1) {
+        // qkv_barrier.arrive_and_wait(); 
+        // if(cur_block < n_blocks - 1) { // Kick off the next block load.
+        //     auto next_idx = (cur_block + 1)*NUM_WORKERS + warpid; 
+        //     kittens::load_async(q[toc][warpid], _q + next_idx * qk_tile_elements, d, qkv_barrier);
+        //     kittens::load_async(k[toc][warpid], _k + next_idx * qk_tile_elements, d, qkv_barrier);
+        //     kittens::load_async(v[toc][warpid], _v + next_idx * v_tile_elements, dv, qkv_barrier);
+        // } 
+        kittens::load(v[tic][warpid], _v + cur_block * v_tile_elements, dv);
+        __syncthreads();
         
         // We first handle the causal portion, the diagonal elements.
         // 1. We multiply (QK.T) on the diagonal tiles.
@@ -345,14 +344,14 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // load(kfrag, k[tic][warpid]);
         // transpose_inplace(kfrag); 
         
-        zero(temp_accum);
-        mma(temp_accum, qfrag, kfrag, temp_accum);
-        make_causal(temp_accum);
-        copy(qk_a1, temp_accum); 
-        mul(temp_accum, temp_accum, temp_accum); // square it, since this is the A2 term.
+        // zero(temp_accum);
+        // mma(temp_accum, qfrag, kfrag, temp_accum);
+        // make_causal(temp_accum);
+        // copy(qk_a1, temp_accum); 
+        // mul(temp_accum, temp_accum, temp_accum); // square it, since this is the A2 term.
         
-        load(vfrag, v[tic][warpid]);
-        zero(o_accum);
+        // load(vfrag, v[tic][warpid]);
+        // zero(o_accum);
 
         // Compute the a0 portion: V.cumsum(dim=0) in this example (Across the sequence)
         tb_cumsum(a0, total_a0, v[tic]);
@@ -366,26 +365,26 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // This is updating our local slice.
         // This is the update for A1 "after" our slice, i.e., containing everything it has seen.
         // A1 += Kt[:,whole_slice]@V[whole_slice]
-        zero(a1_accum);
-        _rtd_qk rkfrag;
-        swap_layout(rkfrag, kfrag);
-        mma(a1_accum, rkfrag, vfrag, a1_accum);
+        // zero(a1_accum);
+        // _rtd_qk rkfrag;
+        // swap_layout(rkfrag, kfrag);
+        // mma(a1_accum, rkfrag, vfrag, a1_accum);
 
         // We write the local copy, and we want to compute a cumulative sum:
         // 1. we need to add in the A0 that we computed in the last loop
         // 2. we need the A1 fragments computed from the preceding war.
         // To handle both, we do a cumulative sum. 1 is handled by warp  adding
         // to its copy and letting the cumulative sum take care of it.
-        store(a1[warpid], a1_accum);
+        // store(a1[warpid], a1_accum);
 
         // // Now, a1 has the "preceding" a1 for each warp; Total_a1 is the next stage of what we need to build.
-        cumsum_inplace<N_WARPS>(a1, total_a1); 
-        __syncthreads(); // need the writes to a1 to finish.
+        // tb_cumsum_delay_tiles_inplace<N_WARPS>(a1, total_a1); 
+        // __syncthreads(); // need the writes to a1 to finish.
 
-    //     // Now, each warp loads a1[warpid] into a1_col_frag for the multiplication 
-    //     // This captures all the history add it to accum, Then accum contains the whole part of a1y
-    //     load(a1_col_frag, a1[warpid]);
-    //     mma(o_accum, qfrag, a1_col_frag, o_accum);
+        // // Now, each warp loads a1[warpid] into a1_col_frag for the multiplication 
+        // // This captures all the history add it to accum, Then accum contains the whole part of a1y
+        // load(a1_col_frag, a1[warpid]);
+        // mma(o_accum, qfrag, a1_col_frag, o_accum);
         
         // // From above o_accum holds + causal(QK)@V + Q@A1.
         // // Computes += causal(QK)**2@V/2 
@@ -411,45 +410,45 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // __syncthreads();
         // for(auto blk = 0; blk < NUM_WORKERS; blk++) { 
             
-    //         // This computes the "history": Q[j]@A2[j] for j=0,dots,15.
-    //         load(qj0, q[tic][warpid]);
-    //         copy(qj1, qj0); // faster than reloading?
+        //     // This computes the "history": Q[j]@A2[j] for j=0,dots,15.
+        //     load(qj0, q[tic][warpid]);
+        //     copy(qj1, qj0); // faster than reloading?
 
-    //         // We store Q_j <- Q[:,j]*Q
-    //         // mul_col_slice(qj0[0][0], 2*warpid);
-    //         // mul_col_slice(qj1[0][0], 2*warpid+1);
+        //     // We store Q_j <- Q[:,j]*Q
+        //     // mul_col_slice(qj0[0][0], 2*warpid);
+        //     // mul_col_slice(qj1[0][0], 2*warpid+1);
 
-    //         // Compute qj, a2j portion
-    //         zero(qA2_accum);
-    //         mma(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
-    //         mma(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
-    //         mul(qA2_accum,  qA2_accum, 0.5f);
-    //         store(ty[warpid], qA2_accum);
+        //     // Compute qj, a2j portion
+        //     zero(qA2_accum);
+        //     mma(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
+        //     mma(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
+        //     mul(qA2_accum,  qA2_accum, 0.5f);
+        //     store(ty[warpid], qA2_accum);
             
-    //         // reduce_tile_tiles(y[blk], ty);   # SA: WARNING -- TAKING SO LONG TO COMPILE
-    //         __syncthreads();
+        //     // reduce_tile_tiles(y[blk], ty);   # SA: WARNING -- TAKING SO LONG TO COMPILE
+        //     __syncthreads();
 
-    //         // Update state for next round only needed if there is more work.
-    //         load(kj0, k[tic][blk]);
-    //         transpose_inplace(kj0); 
-    //         copy(kj1, kj0); 
-    //         // mul_row_slice(kj0[0][0], 2*warpid); 
-    //         // mul_row_slice(kj1[0][0], 2*warpid+1);
+        //     // Update state for next round only needed if there is more work.
+        //     load(kj0, k[tic][blk]);
+        //     transpose_inplace(kj0); 
+        //     copy(kj1, kj0); 
+        //     // mul_row_slice(kj0[0][0], 2*warpid); 
+        //     // mul_row_slice(kj1[0][0], 2*warpid+1);
 
-    //         // Compute the A2[j] update and put it back in the register
-    //         load(vfrag, v[tic][blk]);
-    //         mma(A2j0_accum, kj0, vfrag, A2j0_accum);
+        //     // Compute the A2[j] update and put it back in the register
+        //     load(vfrag, v[tic][blk]);
+        //     mma(A2j0_accum, kj0, vfrag, A2j0_accum);
 
-    //         _rtd_v copy_bf_A2j0;
-    //         copy(copy_bf_A2j0, A2j0_accum);
-    //         swap_layout(A2j0, copy_bf_A2j0);            
+        //     _rtd_v copy_bf_A2j0;
+        //     copy(copy_bf_A2j0, A2j0_accum);
+        //     swap_layout(A2j0, copy_bf_A2j0);            
 
-    //         mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
-    //         _rtd_v copy_bf_A2j1;
-    //         copy(copy_bf_A2j1, A2j1_accum);
-    //         swap_layout(A2j1, copy_bf_A2j1); 
-    //     }
-    //     __syncthreads();
+        //     mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
+        //     _rtd_v copy_bf_A2j1;
+        //     copy(copy_bf_A2j1, A2j1_accum);
+        //     swap_layout(A2j1, copy_bf_A2j1); 
+        // }
+        // __syncthreads();
         store(_y + (cur_block * NUM_WORKERS + warpid)*v_tile_elements, y[warpid], dv);
     }
 }

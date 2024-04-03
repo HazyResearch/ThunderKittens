@@ -262,9 +262,15 @@ def linear_attn_correct(dt):
     # fast_transformer_test_result = fast_transformer_test(dt, Q, K, V, d)
     based_kernel_test_result = based_kernel_test(dt, Q, K, V, d)
 
+    print(f"{V[0][0][0:16]}")
+    print(f"{pytorch_test_result[0][0][0][0:16]}")
+    print(f"{based_kernel_test_result[0][0][0][0:16]}")
+
     # __eq("PyTorch Test v1 - PyTorch Test v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
     # __eq("PyTorch Test v1 - Fast Transformer Test", pytorch_test_result[0], fast_transformer_test_result[0], debug=False)  # fp. accum. error
     __eq("PyTorch Test v1 - Based Kernel Test", pytorch_test_result[0], based_kernel_test_result[0], debug=False)
+
+    breakpoint()
 
 print("Benchmarking the kernels...")
 # linear_attn_forward_benchmark(torch.bfloat16, verbose=False)
