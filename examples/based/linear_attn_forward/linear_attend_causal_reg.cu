@@ -20,9 +20,9 @@ typedef rt_bf<1, 1, ducks::rt_layout::col> _rtd_qk_col;
 typedef rt_bf<1, 4, ducks::rt_layout::col> _rtd_v_col;
 
 #define N_WARPS 8
+#define N_THREADS 256
 
 /*
-
 int row = ???;
 for(int i = 0; i < cols; i+=kittens::WARP_SIZE) tile[{row, i}] = 0;
 
@@ -39,8 +39,7 @@ __device__
 void tb_cumsum(
     st_bf_1x4<ducks::st_layout::xor_swizzle> (&dst)[N_WARPS], 
     st_bf_1x4<ducks::st_layout::xor_swizzle>::row_vec &total, // tile should have same width as the tile and same type.
-    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS],  
-    const int nThreads = 256
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS]
 ) {
     using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using H = T::dtype;
@@ -53,7 +52,7 @@ void tb_cumsum(
     
     // Threads are assigned to cols, and then go sequentially through the all rows in the warps
     __syncthreads();
-    for(auto col = threadIdx.x; col < kittens::TILE_DIM*width; col+= nThreads) {
+    for(auto col = threadIdx.x; col < kittens::TILE_DIM*width; col+= N_THREADS) {
         // this is resonsible for this column value.
         H v = total.data[col];
         for(auto w = 0; w < N_WARPS; w++) {
@@ -76,8 +75,7 @@ void tb_cumsum(
 __device__
 void tb_cumsum_delay_tiles_inplace(
     st_bf_1x4<ducks::st_layout::xor_swizzle> (&x)[N_WARPS], 
-    st_bf_1x4<ducks::st_layout::xor_swizzle> &total, 
-    const int nThreads = 256
+    st_bf_1x4<ducks::st_layout::xor_swizzle> &total
 ) {
     using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using TT = T::dtype;
@@ -85,16 +83,19 @@ void tb_cumsum_delay_tiles_inplace(
     auto col = threadIdx.x % (kittens::TILE_DIM*T::width);
     auto row = threadIdx.x / (kittens::TILE_DIM*T::width); 
     __syncthreads(); 
-    const int _row_stride = T::cols; // SA TODO: double check
+
+    const int _row_stride = T::cols; 
     auto idx = row*_row_stride+col;
-    assert(nThreads % (kittens::TILE_DIM * T::width) == 0);
-    auto rows_per_block = nThreads / (kittens::TILE_DIM*T::width);
+    assert(N_THREADS % (kittens::TILE_DIM * T::width) == 0);
+
+    auto rows_per_block = N_THREADS / (kittens::TILE_DIM*T::width);
     auto row_skip       = rows_per_block * _row_stride;
 
     for(auto h = 0; h < T::height; h++) {
         for(auto rows = 0; rows < rows_per_block; rows ++, idx += row_skip) {
+
             const int _idx = h*_row_stride*kittens::TILE_DIM + 0*kittens::TILE_DIM;
-            TT *src0 = x[0].data + _idx; // TODO: SA confirm this rewrite // typename T::T t = x[0].tile_start(h,0)[idx];
+            TT *src0 = x[0].data + _idx; 
             TT v = src0[idx];
         
             // The "delay" happens here. We store the history in the first warp, total.
@@ -105,7 +106,6 @@ void tb_cumsum_delay_tiles_inplace(
             dst0[idx] = v1;
 
             v += v1;
-
             for(int wrp = 1; wrp < N_WARPS; wrp++) {
                 TT *src1 = x[wrp].data + _idx;
                 TT _v1 = src1[idx];       // Getting x[wrp].tile_start(h,0)[idx];
@@ -117,6 +117,7 @@ void tb_cumsum_delay_tiles_inplace(
 
             TT *out = total.data + _idx;  // Getting total.tile_start(h,0)[idx];
             out[idx] = v;                 // Store the full count in Y
+
         } 
     }
 }
@@ -124,8 +125,7 @@ void tb_cumsum_delay_tiles_inplace(
 __device__
 void reduce_tile_tiles(
     st_bf_1x4<ducks::st_layout::xor_swizzle> &dst, 
-    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS], 
-    const int nThreads = 256
+    const st_bf_1x4<ducks::st_layout::xor_swizzle> (&src)[N_WARPS] 
 ) {
     using T = st_bf_1x4<ducks::st_layout::xor_swizzle>;
     using TT = T::dtype;
@@ -134,8 +134,8 @@ void reduce_tile_tiles(
     __syncthreads(); 
     const int _row_stride = T::cols; // SA TODO: double check
     auto idx = row*_row_stride+col;
-    assert(nThreads % (kittens::TILE_DIM * T::width) == 0);
-    auto rows_per_block = nThreads / (kittens::TILE_DIM*T::width);
+    assert(N_THREADS % (kittens::TILE_DIM * T::width) == 0);
+    auto rows_per_block = N_THREADS / (kittens::TILE_DIM*T::width);
     auto row_skip       = rows_per_block * _row_stride;
     for(auto h = 0; h < T::height; h++) {
         for(auto rows = 0; rows < rows_per_block; rows ++, idx += row_skip) {
@@ -323,7 +323,8 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // zero(total_a1); 
         zero(total_a0);
     }
-    __syncthreads();
+    // for (auto i = 0; i < total_a1::)
+    // __syncthreads();
 
     for(auto cur_block = 0; cur_block < n_blocks; cur_block++, tic ^= 1, toc ^= 1) {
         qkv_barrier.arrive_and_wait(); 
@@ -339,10 +340,10 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // 2. Entry-wise square this
         // 3. Multiply by V.
         // Do the multiplication (qk)^2@V and store the result in y[warpid]
-        load(qfrag, q[tic][warpid]);
         // Note we want an outer product here of Q and K, so we load K transposed from ocl.
-        load(kfrag, k[tic][warpid]);
-        transpose_inplace(kfrag); 
+        // load(qfrag, q[tic][warpid]);
+        // load(kfrag, k[tic][warpid]);
+        // transpose_inplace(kfrag); 
         
         // zero(temp_accum);
         // mma(temp_accum, qfrag, kfrag, temp_accum);
@@ -350,14 +351,14 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // copy(qk_a1, temp_accum); 
         // mul(temp_accum, temp_accum, temp_accum); // square it, since this is the A2 term.
         
-        // load(vfrag, v[tic][warpid]);
-        // zero(o_accum);
+        load(vfrag, v[tic][warpid]);
+        zero(o_accum);
 
-        // // Compute the a0 portion: V.cumsum(dim=0) in this example (Across the sequence)
-        // tb_cumsum(a0, total_a0, v[tic]);
-        // __syncthreads();
+        // Compute the a0 portion: V.cumsum(dim=0) in this example (Across the sequence)
+        tb_cumsum(a0, total_a0, v[tic]);
+        __syncthreads();
         
-        // // Compute the a1 output portion: Qc@A1 + make_causal(Qc@Ktc)@Vc
+        // Compute the a1 output portion: Qc@A1 + make_causal(Qc@Ktc)@Vc
         // zero(a1_out);
         // copy(qk_a1_f, qk_a1);
         // mma(o_accum, qk_a1_f, vfrag, o_accum);
@@ -392,9 +393,12 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // copy(qkfrag, temp_accum);
         // mma(o_accum, qkfrag, vfrag, o_accum);
 
-        // Copy in the the a0 portion; the a1 and a2 portions are in o_accum
+        // Copy in the the a0 portion into the output
         copy(y[warpid], a0[warpid]); 
-        store(y[warpid], o_accum);
+
+        // Copy the a1 and a2 portions from o_accum
+        // store(y[warpid], o_accum);
+
 
         // ** This is the A2 non-diag case and handles the update **
         // This is the in-shared-mem portion We keep A2 in register spread across the warps. 
