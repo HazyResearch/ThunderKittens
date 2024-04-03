@@ -7,7 +7,6 @@
 using namespace nvcuda;
 
 # include "src/kittens.cuh"
-# include "src/common/pyutils/torch_helpers.cuh"
 
 using namespace kittens;
 
@@ -24,7 +23,7 @@ typedef rt_bf<1, 4, ducks::rt_layout::col> _rtd_v_col;
 
 /*
 int row = ???;
-for(int i = 0; i < cols; i+=kittens::WARP_SIZE) tile[{row, i}] = 0;
+for(int i = 0; i < cols; i+=kittens::WARP_THREADS) tile[{row, i}] = 0;
 
 */
 
@@ -120,6 +119,7 @@ void tb_cumsum_delay_tiles_inplace(
 
         } 
     }
+    __syncthreads();
 }
 
 __device__
@@ -313,7 +313,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
     kittens::load_async(k[tic][warpid], _k + warpid*qk_tile_elements, d,  qkv_barrier);
     kittens::load_async(v[tic][warpid], _v + warpid*v_tile_elements , dv, qkv_barrier);
                 
-    // Set the tiles and accumulators to 0.
+    // // Set the tiles and accumulators to 0.
     zero(A2j0);
     zero(A2j1);
     zero(A2j0_accum);
@@ -345,11 +345,11 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // load(kfrag, k[tic][warpid]);
         // transpose_inplace(kfrag); 
         
-        // zero(temp_accum);
-        // mma(temp_accum, qfrag, kfrag, temp_accum);
-        // make_causal(temp_accum);
-        // copy(qk_a1, temp_accum); 
-        // mul(temp_accum, temp_accum, temp_accum); // square it, since this is the A2 term.
+        zero(temp_accum);
+        mma(temp_accum, qfrag, kfrag, temp_accum);
+        make_causal(temp_accum);
+        copy(qk_a1, temp_accum); 
+        mul(temp_accum, temp_accum, temp_accum); // square it, since this is the A2 term.
         
         load(vfrag, v[tic][warpid]);
         zero(o_accum);
@@ -363,29 +363,29 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // copy(qk_a1_f, qk_a1);
         // mma(o_accum, qk_a1_f, vfrag, o_accum);
         
-        // // This is updating our local slice.
-        // // This is the update for A1 "after" our slice, i.e., containing everything it has seen.
-        // // A1 += Kt[:,whole_slice]@V[whole_slice]
-        // zero(a1_accum);
-        // _rtd_qk rkfrag;
-        // swap_layout(rkfrag, kfrag);
-        // mma(a1_accum, rkfrag, vfrag, a1_accum);
+        // This is updating our local slice.
+        // This is the update for A1 "after" our slice, i.e., containing everything it has seen.
+        // A1 += Kt[:,whole_slice]@V[whole_slice]
+        zero(a1_accum);
+        _rtd_qk rkfrag;
+        swap_layout(rkfrag, kfrag);
+        mma(a1_accum, rkfrag, vfrag, a1_accum);
 
-        // // We write the local copy, and we want to compute a cumulative sum:
-        // // 1. we need to add in the A0 that we computed in the last loop
-        // // 2. we need the A1 fragments computed from the preceding war.
-        // // To handle both, we do a cumulative sum. 1 is handled by warp  adding
-        // // to its copy and letting the cumulative sum take care of it.
-        // store(a1[warpid], a1_accum);
+        // We write the local copy, and we want to compute a cumulative sum:
+        // 1. we need to add in the A0 that we computed in the last loop
+        // 2. we need the A1 fragments computed from the preceding war.
+        // To handle both, we do a cumulative sum. 1 is handled by warp  adding
+        // to its copy and letting the cumulative sum take care of it.
+        store(a1[warpid], a1_accum);
 
         // // Now, a1 has the "preceding" a1 for each warp; Total_a1 is the next stage of what we need to build.
-        // tb_cumsum_delay_tiles_inplace(a1, total_a1); 
-        // __syncthreads(); // need the writes to a1 to finish.
+        cumsum_inplace<N_WARPS>(a1, total_a1); 
+        __syncthreads(); // need the writes to a1 to finish.
 
-        // // Now, each warp loads a1[warpid] into a1_col_frag for the multiplication 
-        // // This captures all the history add it to accum, Then accum contains the whole part of a1y
-        // load(a1_col_frag, a1[warpid]);
-        // mma(o_accum, qfrag, a1_col_frag, o_accum);
+    //     // Now, each warp loads a1[warpid] into a1_col_frag for the multiplication 
+    //     // This captures all the history add it to accum, Then accum contains the whole part of a1y
+    //     load(a1_col_frag, a1[warpid]);
+    //     mma(o_accum, qfrag, a1_col_frag, o_accum);
         
         // // From above o_accum holds + causal(QK)@V + Q@A1.
         // // Computes += causal(QK)**2@V/2 
@@ -411,94 +411,47 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         // __syncthreads();
         // for(auto blk = 0; blk < NUM_WORKERS; blk++) { 
             
-        //     // This computes the "history": Q[j]@A2[j] for j=0,dots,15.
-        //     load(qj0, q[tic][warpid]);
-        //     copy(qj1, qj0); // faster than reloading?
+    //         // This computes the "history": Q[j]@A2[j] for j=0,dots,15.
+    //         load(qj0, q[tic][warpid]);
+    //         copy(qj1, qj0); // faster than reloading?
 
-        //     // We store Q_j <- Q[:,j]*Q
-        //     mul_col_slice(qj0[0][0], 2*warpid);
-        //     mul_col_slice(qj1[0][0], 2*warpid+1);
+    //         // We store Q_j <- Q[:,j]*Q
+    //         // mul_col_slice(qj0[0][0], 2*warpid);
+    //         // mul_col_slice(qj1[0][0], 2*warpid+1);
 
-        //     // Compute qj, a2j portion
-        //     zero(qA2_accum);
-        //     mma(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
-        //     mma(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
-        //     mul(qA2_accum,  qA2_accum, 0.5f);
-        //     store(ty[warpid], qA2_accum);
+    //         // Compute qj, a2j portion
+    //         zero(qA2_accum);
+    //         mma(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
+    //         mma(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
+    //         mul(qA2_accum,  qA2_accum, 0.5f);
+    //         store(ty[warpid], qA2_accum);
             
-        //     // reduce_tile_tiles(y[blk], ty);   # SA: WARNING -- TAKING SO LONG TO COMPILE
-        //     __syncthreads();
+    //         // reduce_tile_tiles(y[blk], ty);   # SA: WARNING -- TAKING SO LONG TO COMPILE
+    //         __syncthreads();
 
-        //     // Update state for next round only needed if there is more work.
-        //     load(kj0, k[tic][blk]);
-        //     transpose_inplace(kj0); 
-        //     copy(kj1, kj0); 
-        //     mul_row_slice(kj0[0][0], 2*warpid); 
-        //     mul_row_slice(kj1[0][0], 2*warpid+1);
+    //         // Update state for next round only needed if there is more work.
+    //         load(kj0, k[tic][blk]);
+    //         transpose_inplace(kj0); 
+    //         copy(kj1, kj0); 
+    //         // mul_row_slice(kj0[0][0], 2*warpid); 
+    //         // mul_row_slice(kj1[0][0], 2*warpid+1);
 
-        //     // Compute the A2[j] update and put it back in the register
-        //     load(vfrag, v[tic][blk]);
-        //     mma(A2j0_accum, kj0, vfrag, A2j0_accum);
+    //         // Compute the A2[j] update and put it back in the register
+    //         load(vfrag, v[tic][blk]);
+    //         mma(A2j0_accum, kj0, vfrag, A2j0_accum);
 
-        //     _rtd_v copy_bf_A2j0;
-        //     copy(copy_bf_A2j0, A2j0_accum);
-        //     swap_layout(A2j0, copy_bf_A2j0);            
+    //         _rtd_v copy_bf_A2j0;
+    //         copy(copy_bf_A2j0, A2j0_accum);
+    //         swap_layout(A2j0, copy_bf_A2j0);            
 
-        //     mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
-        //     _rtd_v copy_bf_A2j1;
-        //     copy(copy_bf_A2j1, A2j1_accum);
-        //     swap_layout(A2j1, copy_bf_A2j1); 
-        // }
-        __syncthreads();
+    //         mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
+    //         _rtd_v copy_bf_A2j1;
+    //         copy(copy_bf_A2j1, A2j1_accum);
+    //         swap_layout(A2j1, copy_bf_A2j1); 
+    //     }
+    //     __syncthreads();
         store(_y + (cur_block * NUM_WORKERS + warpid)*v_tile_elements, y[warpid], dv);
     }
 }
 
-void
-a012_compute(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
-    CHECK_INPUT(q);
-    CHECK_INPUT(k);
-    CHECK_INPUT(v);
-    CHECK_INPUT(o);
-    
-    auto batch = q.size(0);
-    auto head  = q.size(1);
-    auto n     = q.size(2);
-    auto d     = q.size(3);
-    auto dv    = v.size(3);
-    bool k_same = true, o_same = true;
-    for(auto i = 0; i < 4; i++) { 
-        k_same &= q.size(i) == k.size(i);
-        o_same &= v.size(i) == o.size(i);
-    }
-    // This is just a restriction of what we're doing now...
-    TORCH_CHECK(k_same, "Q and K should be same size");
-    TORCH_CHECK(o_same, "V and O should be same size");
-
-    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
-    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
-    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
-    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
-
-    using H = __nv_bfloat16;
-    using T = c10::BFloat16;
-    constexpr bool _debug_build = false;
-    const int NUM_WORKERS = 8;
-
-    // q,k,v, and o are all double buffered
-    unsigned long mem_size  =  2*2*NUM_WORKERS*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>); // q, k and v are double buffered.
-                  mem_size +=    2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
-                  mem_size += (NUM_WORKERS+NUM_WORKERS)*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
-                  mem_size += 2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>); // a0 and a1y
-
-    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of NUM_WORKERS times stored fragments");
-    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-    CHECK_CUDA_ERROR(cudaFuncSetAttribute(
-             a012_compute_ker<H, T, _debug_build>,
-             cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size));
-    
-    a012_compute_ker<H,T,false><<<batch*head,threads,mem_size>>>(n, d, dv, q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(),
-          o.data_ptr<T>(), NULL, NULL, NULL);
-
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-}
+#include "harness.impl"
