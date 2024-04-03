@@ -65,13 +65,10 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     for i in trange(B*H*N*D):
         f.write(repr(kf[i]))
         f.write(' ')
-    for i in trange(B*H*N*D):
+    for i in trange(B*H*N*DV):
         f.write(repr(vf[i]))
         f.write(' ')
-    for i in trange(B*H*N*D):
+    for i in trange(B*H*N*DV):
         f.write(repr(of[i]))
         f.write(' ')
-
-print(f'Run the harness like `cat {TESTNAME}.txt | ./harness`')
-
 
