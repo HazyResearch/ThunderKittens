@@ -66,7 +66,7 @@ template<ducks::rt::row_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T2 = RT::dtype;
     using U2 = base_types::packing<U>::packed_type;
-    int laneid = threadIdx.x % 32;
+    int laneid = threadIdx.x % 32; 
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         int row = i*src.tile_size + (laneid / 4);
@@ -84,6 +84,39 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         }
     }
 }
+// template<ducks::rt::row_layout RT, typename U>
+// __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
+//     using T2 = RT::dtype;
+//     using U2 = base_types::packing<U>::packed_type;
+//     int laneid = kittens::laneid();
+//     int warphalf = (laneid & 16) > 0;
+//     int warphalflaneid = laneid % 16;
+//     #pragma unroll
+//     for(int i = 0; i < src.height; i++) {
+//         int row_0to3 = i*src.tile_size + (warphalflaneid / 4);
+//         int row = i*src.tile_size + (laneid / 4);
+//         #pragma unroll
+//         for(int j = 0; j < src.width; j++) {
+//             int col = j*src.tile_size + warphalf*8 + 2*(laneid % 4);
+//             U2 transfers[2];
+//             transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+//             transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+//             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
+//             *(U2*)(&dst[(row_0to3+0)*row_stride + col]) = transfers[0];
+//             *(U2*)(&dst[(row_0to3+4)*row_stride + col]) = transfers[1];
+//         }
+//         #pragma unroll
+//         for(int j = 0; j < src.width; j++) {
+//             int col = j*src.tile_size + warphalf*8 + 2*(laneid % 4);
+//             U2 transfers[2];
+//             transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+//             transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+//             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
+//             *(U2*)(&dst[(row_0to3+ 8)*row_stride + col]) = transfers[0];
+//             *(U2*)(&dst[(row_0to3+12)*row_stride + col]) = transfers[1];
+//         }
+//     }
+// }
 template<ducks::rt::col_layout RT, typename U>
 __device__ inline static void store(U *dst, const RT &src, const int row_stride) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;

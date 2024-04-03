@@ -205,7 +205,12 @@ __global__ void attend_ker(int d, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtens
 
         if constexpr (QO_BLOCKS == 1) {
             store(__o__ + (blockIdx.y*N*d) + ((blockIdx.x)*NUM_WORKERS + warpid) * (q_smem[0][0].num_elements/WARPGROUP_SIZE), o_prev, d);
+            
             // warpgroup::store(__o__ + (blockIdx.y*N*d) + ((blockIdx.x)*NUM_WARPGROUPS + warpgroupid) * q_smem[0][0].num_elements, o_prev, d);
+
+            // warpgroup::store(q_smem[sic][warpgroupid], o_prev); 
+            // __syncthreads(); 
+            // warpgroup::store(__o__ + (blockIdx.y*N*d) + ((blockIdx.x)*NUM_WARPGROUPS + warpgroupid) * q_smem[0][0].num_elements, q_smem[sic][warpgroupid], d); 
         }
         else {
             tma::store_async_wait();
