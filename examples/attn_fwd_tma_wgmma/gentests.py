@@ -54,4 +54,4 @@ with open(fn, 'w') as f:
         f.write(repr(of[i]))
         f.write(' ')
 
-print(f'Run the harness like `./harness {fn}`')
+print(f'Run the harness like `./attn_fwd {fn}`')

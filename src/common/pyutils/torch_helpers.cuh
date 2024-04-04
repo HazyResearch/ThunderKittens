@@ -64,10 +64,8 @@ void check(T err, char const* const func, char const* const file,
 }
 
 bool is_tile(torch::Tensor t) {return t.size(0) == kittens::TILE_DIM && t.size(1) == kittens::TILE_DIM;}
-bool is_warp_tile(torch::Tensor t) {return t.size(0) == kittens::N_WARPS && t.size(1) == kittens::TILE_DIM && t.size(2) == kittens::TILE_DIM;}
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 #define CHECK_TILE(x) CHECK_INPUT(x); TORCH_CHECK(is_tile(x), #x " must be a 16x16 tile")
-#define CHECK_WARP_TILE_BATCH(x) CHECK_INPUT(x); TORCH_CHECK(is_warp_tile(x), #x " must be a warp tile: a batch of 8x16x16")

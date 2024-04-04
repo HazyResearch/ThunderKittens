@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Reduction operations mapping tiles to vectors.
+ */
+
 #pragma once
 
 #include "../../../common/common.cuh"
@@ -5,8 +10,20 @@
 
 namespace kittens {
 
-// Row reduction. Written to give (hopefully) better ILP than before.
-// row-major layout
+/**
+ * @brief Perform a row-wise reduction on a matrix in row-major layout.
+ *
+ * This function template performs a parallel reduction across the rows of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type with row layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
 template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
@@ -48,7 +65,20 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
         }
     }
 }
-// col-major layout
+/**
+ * @brief Perform a row-wise reduction on a matrix in column-major layout.
+ *
+ * This function template performs a parallel reduction across the rows of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for column-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type with column layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
 template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
@@ -97,7 +127,20 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 }
 
 // Col reduction.
-// row-major layout
+/**
+ * @brief Perform a column-wise reduction on a matrix in row-major layout.
+ *
+ * This function template performs a parallel reduction across the columns of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for row-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the column accumulator.
+ * @tparam T The matrix type with row layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
 template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
@@ -144,7 +187,20 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
         }
     }
 }
-// col-major layout
+/**
+ * @brief Perform a column-wise reduction on a matrix in column-major layout.
+ *
+ * This function template performs a parallel reduction across the columns of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for column-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the column accumulator.
+ * @tparam T The matrix type with column layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
 template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     // I actually like these static asserts because they give more verbose errors when things go wrong.
@@ -190,70 +246,207 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // two-operand row reductions. (Accumulate and REPLACE.)
+/**
+ * @brief Store the maximum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_max(V &row_accum, const T &src)  {
     row_reduce<base_ops::max, V, T, true>(row_accum, src, row_accum);
 }
+/**
+ * @brief Store the minimum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_min(V &row_accum, const T &src)  {
     row_reduce<base_ops::min, V, T, true>(row_accum, src, row_accum);
 }
+/**
+ * @brief Store the sum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_sum(V &row_accum, const T &src)  {
     row_reduce<base_ops::sum, V, T, true>(row_accum, src, row_accum);
 }
+/**
+ * @brief Store the product of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_prod(V &row_accum, const T &src) {
     row_reduce<base_ops::mul, V, T, true>(row_accum, src, row_accum);
 }
 // three-operand row reductions. (Accumulate ONTO.)
+/**
+ * @brief Store the maximum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_max(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::max, V, T, false>(row_accum, src, src_accum);
 }
+/**
+ * @brief Store the minimum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_min(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::min, V, T, false>(row_accum, src, src_accum);
 }
+/**
+ * @brief Store the sum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_sum(V &row_accum, const T &src, const V &src_accum)  {
     row_reduce<base_ops::sum, V, T, false>(row_accum, src, src_accum);
 }
+/**
+ * @brief Store the product of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void row_prod(V &row_accum, const T &src, const V &src_accum) {
     row_reduce<base_ops::mul, V, T, false>(row_accum, src, src_accum);
 }
 
 // two-operand col reductions. (Accumulate and REPLACE.)
+
+/**
+ * @brief Store the maximum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_max(V &col_accum, const T &src)  {
     col_reduce<base_ops::max, V, T, true>(col_accum, src, col_accum);
 }
+/**
+ * @brief Store the minimum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_min(V &col_accum, const T &src)  {
     col_reduce<base_ops::min, V, T, true>(col_accum, src, col_accum);
 }
+/**
+ * @brief Store the sum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_sum(V &col_accum, const T &src)  {
     col_reduce<base_ops::sum, V, T, true>(col_accum, src, col_accum);
 }
+/**
+ * @brief Store the product of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_prod(V &col_accum, const T &src) {
     col_reduce<base_ops::mul, V, T, true>(col_accum, src, col_accum);
 }
 // three-operand col reductions. (Accumulate ONTO.)
+/**
+ * @brief Store the maximum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_max(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::max, V, T, false>(col_accum, src, src_accum);
 }
+/**
+ * @brief Store the minimum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_min(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::min, V, T, false>(col_accum, src, src_accum);
 }
+/**
+ * @brief Store the sum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_sum(V &col_accum, const T &src, const V &src_accum)  {
     col_reduce<base_ops::sum, V, T, false>(col_accum, src, src_accum);
 }
+/**
+ * @brief Store the product of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
 template<ducks::rv::all V, ducks::rt::all T>
 __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_accum) {
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);

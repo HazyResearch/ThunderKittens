@@ -6,6 +6,7 @@
 namespace kittens {
 namespace warpgroup {
 
+// templated wrapper for PTX
 template<int width, int trans_b>
 struct wgmma_base {
     __device__ static inline void rt_st(

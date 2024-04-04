@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief General utilities for ThunderKittens.
+ */
+
 #pragma once
 
 #include <stdint.h>
@@ -5,16 +10,49 @@
 #include <concepts>
 #include <memory>
 
+/**
+ * @namespace kittens
+ *
+ * @brief The main namespace of ThunderKittens.
+ */
 namespace kittens {
 
 /* ----------  GENERAL CONSTANTS FOR KITTENS  ---------- */
 
+/**
+ * @brief Tile dimension constant.
+ */
 constexpr int TILE_DIM{16};
-constexpr int TILE_SIZE{TILE_DIM*TILE_DIM};
-constexpr int WARP_SIZE{32};
-constexpr int N_WARPS{8}; // default
-constexpr int THREADS_PER_BLOCK{N_WARPS*WARP_SIZE};
+/**
+ * @brief Tile num elements constant calculated as TILE_DIM squared.
+ */
+constexpr int TILE_ELEMENTS{TILE_DIM*TILE_DIM};
+/**
+ * @brief Constant representing number of threads in a warp.
+ */
+constexpr int WARP_THREADS{32};
+/**
+ * @brief Constant representing number of threads in a warpgroup of four warps.
+ */
+constexpr int WARPGROUP_THREADS{128};
+/**
+ * @brief Constant representing number of warps in a warpgroup of four warps.
+ */
+constexpr int WARPGROUP_WARPS{4};
+/**
+ * @brief Get the warp ID of the current thread.
+ * @return The warp ID.
+ */
 __device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
+/**
+ * @brief Get the warpgroup ID of the current thread.
+ * @return The warpgroup ID.
+ */
+__device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; } 
+/**
+ * @brief Get the lane ID of the current thread within its warp.
+ * @return The lane ID.
+ */
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 
 #ifdef KITTENS_HOPPER
@@ -27,21 +65,43 @@ constexpr int MAX_SHARED_MEMORY = 101000;
 
 /* ----------  TYPE HELPERS  ---------- */
 
+/**
+ * @namespace ducks
+ *
+ * @brief ThunderKittens' namespace for template metaprogramming..
+ * 
+ * This includes primarily dummy types and concept wrappers, along
+ * with a few additional utilities.
+ */
 namespace ducks {
 
-// a type representing an empty default for a template.
+/**
+ * @brief A type representing an empty default for a template.
+ */
 struct default_type {};
 
+// This macro can't be done as a template, so it doesn't really have a location in kittens.
 #define typeof(A) typename std::remove_const<typename std::remove_reference<decltype(A)>::type>::type
 
 }
 
 /* ----------  SHUFFLE UTILS  ---------- */
 
+/**
+ * @brief Mask constant for all active threads in a warp.
+ */
 static constexpr uint32_t MASK_ALL = 0xFFFFFFFF;
 
+/**
+ * @brief Perform a shuffle down operation on a packed type synchronously across a warp.
+ * @tparam T The type of the value to be shuffled.
+ * @param mask[in] The mask of active threads.
+ * @param f[in] The value to be shuffled.
+ * @param delta[in] The number of positions to shuffle down.
+ * @return The result of the shuffle operation.
+ */
 template<typename T>
-__device__ static inline float2 packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
+__device__ static inline T packed_shfl_down_sync(uint32_t mask, const T &f, int delta) {
     return __shfl_down_sync(mask, f, delta);
 }
 template<>
@@ -51,6 +111,14 @@ __device__ inline float2 packed_shfl_down_sync<float2>(uint32_t mask, const floa
     r.y = __shfl_down_sync(mask, f.y, delta);
     return r;
 }
+/**
+ * @brief Perform a packed shuffle operation synchronously across a warp.
+ * @tparam T The type of the value to be shuffled.
+ * @param mask[in] The mask of active threads.
+ * @param f[in] The value to be shuffled.
+ * @param src[in] The source lane from which to shuffle.
+ * @return The result of the shuffle operation.
+ */
 template<typename T>
 __device__ static inline T packed_shfl_sync(uint32_t mask, const T &f, int src) {
     return __shfl_sync(mask, f, src);
@@ -65,19 +133,25 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
+/**
+ * @brief Dummy structure for alignment purposes. Needed for WGMMA and TMA calls.
+ */
 struct alignas(256) alignment_dummy { int dummy; };
+/**
+ * @brief Very simple allocator for dynamic shared memory. Advances pointer and tracks alignments.
+ * @tparam default_alignment The default alignment this allocator will enforce. If <=0 (default -1) it will not align.
+ */
+template<int default_alignment=-1> // 
 struct shared_allocator {
     int *ptr;
 
     private:
-        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
-
         // Recursive template to generate N-dimensional array type
         template<typename A, size_t... dims>
         struct variadic_array;
         template<typename A, size_t first_dim, size_t... rest_dims>
         struct variadic_array<A, first_dim, rest_dims...> {
-            using type = typename variadic_array<A[first_dim], rest_dims...>::type;
+            using type = typename variadic_array<A, rest_dims...>::type[first_dim];
         };
         template<typename A>
         struct variadic_array<A> {
@@ -85,39 +159,55 @@ struct shared_allocator {
         };
         template<typename A, size_t... dims> using variadic_array_t = typename variadic_array<A, dims...>::type;
 
+        template<int alignment>
+        __device__ inline void align_ptr() {
+            if constexpr (alignment > 0) {
+                uint64_t p = reinterpret_cast<uint64_t>(ptr);
+                ptr = (int*)(p + (alignment-(p%alignment)));
+            }
+        }
+
     public:
-        __device__ inline static shared_allocator create_allocator(int *_ptr) {
-            shared_allocator sa(_ptr); 
-            return sa;
-        }
-        template<int alignment=128>
-        __device__ inline static shared_allocator create_allocator_tma(int *_ptr) {
-            shared_allocator sa(_ptr); 
-            uint64_t p = reinterpret_cast<uint64_t>(sa.ptr);
-            sa.ptr = (int*)(p + (alignment-(p%alignment)));
-            return sa;
-        }
+        /**
+        * @brief Construct a new shared allocator using a pointer to extern shared memory.
+        * @param[in] _ptr Pointer to the start of the extern shared memory.
+        */
+        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
+        /**
+        * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
+        * @tparam A The type of the object to allocate.
+        * @tparam dims... A list of dimensions for the N-dimensional array.
+        * @return Reference to the allocated object.
+        */
         template<typename A, size_t... dims> 
         __device__ inline variadic_array_t<A, dims...>& allocate() {
+            align_ptr<default_alignment>();
             using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);
             ptr += sizeof(at)/sizeof(int);
             return *p;
         }
-        template<typename A, size_t N, size_t M, size_t L> 
-        __device__ inline A (&allocate())[N][M][L] {
-            using at = A[N][M][L];
-            at*p = reinterpret_cast<at*>(ptr);
-            ptr += sizeof(at)/sizeof(int);
-            return *p;
-        }
-        template<typename A, size_t N, size_t M, size_t L, size_t K> 
-        __device__ inline A (&allocate())[N][M][L][K] {
-            using at = A[N][M][L][K];
+        /**
+        * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
+        * @tparam alignment An alignment to enforce for this particular object.
+        * @tparam A The type of the object to allocate.
+        * @tparam dims... A list of dimensions for the N-dimensional array.
+        * @return Reference to the allocated object.
+        */
+        template<int alignment, typename A, size_t... dims> 
+        __device__ inline variadic_array_t<A, dims...>& allocate() {
+            align_ptr<alignment>();
+            using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);
             ptr += sizeof(at)/sizeof(int);
             return *p;
         }
 };
+#ifdef KITTENS_HOPPER
+/**
+ * @brief A wrapper for an allocator that enforces sufficient alignment to be used for TMA loads and stores.
+ */
+using tma_allocator = shared_allocator<128>;
+#endif
 
 }

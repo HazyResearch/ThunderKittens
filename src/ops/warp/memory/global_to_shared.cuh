@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Functions for transferring data directly between global and shared memory and back.
+ */
+
 #pragma once
 
 #include <cuda/pipeline>
@@ -9,6 +14,14 @@ namespace kittens {
 
 // ----------- ROW LAYOUTS ----------
 
+/**
+ * @brief Loads bf16 data from global memory into a shared memory tile with a row layout.
+ *
+ * @tparam ST The type of the shared tile.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param row_stride[in] The stride between rows in the source array.
+ */
 template<ducks::st::row_layout ST>
 __device__ static inline void load(ST &dst, const bf16 *src, const int row_stride) {
     // each thread needs to do 1 call per width*height
@@ -33,6 +46,14 @@ __device__ static inline void load(ST &dst, const bf16 *src, const int row_strid
         *(float4*)(&dst[{row, col}]) = *(float4*)(&src[row*row_stride + col]);
     }
 }
+/**
+ * @brief Stores bf16 data from a shared memory tile with a row layout into global memory.
+ *
+ * @tparam ST The type of the shared tile.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param row_stride[in] The stride between rows in the destination array.
+ */
 template<ducks::st::row_layout ST>
 __device__ static inline void store(bf16 *dst, const ST &src, const int row_stride) {
 
@@ -55,34 +76,17 @@ __device__ static inline void store(bf16 *dst, const ST &src, const int row_stri
     }
 }
 
-
-template<ducks::sv::all ST, typename U>
-__device__ inline static void load(ST &dst, const U *src) {
-
-    int laneid = threadIdx.x % 32;
-    int total_calls = (dst.length+31)/32; // allowing it to round up
-
-    #pragma unroll
-    for(int i = 0; i < total_calls; i++) {
-        int idx = i * 32 + laneid;
-        if (idx < dst.length) { dst[idx] = src[idx]; }
-    }
-}
-
-template<ducks::sv::all ST, typename U>
-__device__ inline static void store(U *dst, const ST &src) {
-
-    int laneid = threadIdx.x % 32;
-    int total_calls = (src.length+31)/32; // allowing it to round up
-
-    #pragma unroll
-    for(int i = 0; i < total_calls; i++) { 
-        int idx = i * 32 + laneid;     
-        if (idx < src.length) { dst[idx] = src[idx]; }
-    }
-}
-
-
+/**
+ * @brief Asynchronously loads bf16 data from global memory into a shared memory tile with a row layout using CUDA barriers.
+ *
+ * @tparam ST The type of the shared tile.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param row_stride[in] The stride between rows in the source array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ *
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
 template<ducks::st::row_layout ST>
 __device__ static inline void load_async(ST &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
@@ -112,6 +116,17 @@ __device__ static inline void load_async(ST &dst, const bf16 *src, const int row
         );
     }
 }
+/**
+ * @brief Asynchronously stores bf16 data from a shared memory tile with a row layout into global memory using CUDA barriers.
+ *
+ * @tparam ST The type of the shared tile
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param row_stride[in] The stride between rows in the destination array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ *
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
 template<ducks::st::row_layout ST>
 __device__ static inline void store_async(bf16 *dst, const ST &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
@@ -142,49 +157,42 @@ __device__ static inline void store_async(bf16 *dst, const ST &src, const int ro
     }
 }
 
+// ----------  VECTORS ----------
 
-// ----------- COL LAYOUTS ----------
-
-template<ducks::st::col_layout ST>
-__device__ static inline void load(ST &dst, const bf16 *src, const int row_stride) {
-    
-    int laneid = threadIdx.x % 32;
-
-    // in column mode we unfortunately can only transfer one element at at time.
-    int elem_per_memcpy = 1;
-    int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = dst.height * dst.width * 8;
-
+/**
+ * @brief Loads data from global memory into a shared memory vector.
+ *
+ * @tparam ST The shared memory vector type.
+ * @param[out] dst The destination shared memory vector.
+ * @param[in] src The source global memory array.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void load(SV &dst, const typename SV::dtype *src) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
     #pragma unroll
-    for(int i = 0; i < total_calls; i++) {
-
-        int idx = i * 32 + laneid;
-        
-        int row = idx / memcpy_per_row;
-        int col = (idx*elem_per_memcpy) % dst.cols;
-
-        dst[{row, col}] = src[row*row_stride + col];
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
+        if(i * elem_per_transfer < dst.length)
+            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer];
     }
 }
-template<ducks::st::col_layout ST>
-__device__ static inline void store(bf16 *dst, const ST &src, const int row_stride) {
-
-    int laneid = threadIdx.x % 32;
-
-    // in column mode we unfortunately can only transfer one element at at time.
-    int elem_per_memcpy = 1;
-    int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = src.height * src.width * 8;
-
+/**
+ * @brief Stores data from a shared memory vector into global memory.
+ *
+ * @tparam ST The shared memory vector type.
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory vector.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void store(typename SV::dtype *dst, const SV &src) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
     #pragma unroll
-    for(int i = 0; i < total_calls; i++) {
-
-        int idx = i * 32 + laneid;
-        
-        int row = idx / memcpy_per_row;
-        int col = (idx*elem_per_memcpy) % src.cols;
-
-        dst[row*row_stride + col] = src[{row, col}];
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
+        if(i * elem_per_transfer < src.length)
+            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer]; // lmao it's identical
     }
 }
 
