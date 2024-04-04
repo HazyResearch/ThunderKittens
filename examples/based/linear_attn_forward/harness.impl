@@ -124,11 +124,14 @@ int main(int argc, char **argv) {
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
+
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
-        if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
+        float diff = o[i % TOTAL_UNIQUE_ELEMENTS_VO] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
+        // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
         o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << '\n';
-        o_file << o[i] << ' ';
+        o_file << o[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
         diff_file << diff << ' ';
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;

@@ -57,7 +57,7 @@ def pytorch_test(dt, Q, K, V, d, verbose=True):
         T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
         T1 = torch.einsum("bhnm,bhme->bhne", T1a, V)  
         T0  = V.cumsum(dim=2)
-        y  = T0 #+ T1 + T2/2
+        y  = T0 # + T1 # + T2/2
 
         torch.cuda.synchronize()
         t1 = time.time()
@@ -262,9 +262,10 @@ def linear_attn_correct(dt):
     # fast_transformer_test_result = fast_transformer_test(dt, Q, K, V, d)
     based_kernel_test_result = based_kernel_test(dt, Q, K, V, d)
 
-    print(f"{V[0][0][0:16]}")
-    print(f"{pytorch_test_result[0][0][0][0:16]}")
-    print(f"{based_kernel_test_result[0][0][0][0:16]}")
+    lb, ub = 512, 528
+    print(f"{V[0][0][lb:ub]=}")
+    print(f"{pytorch_test_result[0][0][0][lb:ub]=}")
+    print(f"{based_kernel_test_result[0][0][0][lb:ub]=}")
 
     # __eq("PyTorch Test v1 - PyTorch Test v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
     # __eq("PyTorch Test v1 - Fast Transformer Test", pytorch_test_result[0], fast_transformer_test_result[0], debug=False)  # fp. accum. error
