@@ -8,7 +8,8 @@ from torch.utils.cpp_extension import load
 debug=False
 from test_build_utils import jit_build, __eq, print_tiles
 
-
+import sys
+sys.path.append('build/lib.linux-x86_64-cpython-311')
 import tc_attend as mod
 # dtypes = [torch.bfloat16, torch.float16, torch.float]
 dtypes = [torch.bfloat16]

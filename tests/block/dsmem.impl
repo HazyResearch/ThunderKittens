@@ -2,14 +2,16 @@
 #define DSMEM_TEST_CLUSTER_SIZE 16
 
 __global__ void __cluster_dims__(DSMEM_TEST_CLUSTER_SIZE, 1, 1) 
-test_nextneighbor_ker(const bf16 *input, bf16 *output) {
+test_nextneighbor_ker(const kittens::bf16 *input, kittens::bf16 *output) {
+    using namespace kittens;
     auto warpid        = kittens::warpid();
     auto lane          = kittens::laneid(); 
 
-    const int workers  = DSMEM_TEST_WORKERS;
+    constexpr int workers  = DSMEM_TEST_WORKERS;
+    using dsmem = kittens::block<workers>::dsmem;
 
     extern __shared__ int __shm[];
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]); 
+    shared_allocator al((int*)&__shm[0]); 
 
     using layout = ducks::st_layout::xor_swizzle;
     st_bf_1x4<layout> (&input_tile)[workers]  = al.allocate<st_bf_1x4<layout>, workers>();
@@ -54,15 +56,6 @@ test_nextneighbor_ker(const bf16 *input, bf16 *output) {
     dsmem::distribution_wait(smem_barrier[0], kPhaseBit);
 
     cluster.sync();
-
-    // PRINT Statement to see what tile distribute smem did
-    // if (threadIdx.x == 0 && cluster_idx == 15) {
-    //     // print out output_tile
-    //     for (int i = 0; i < output_tile[0].num_elements * workers; i++) {
-    //         printf("output_tile[%d]: %f\n", i, __bfloat162float(output_tile[0].data[i]));
-    //     }
-    // }
-    // __syncthreads();
 
     // write out the results from output_tile to global memory
     bf16* output_block_start = output + (cluster_idx * output_tile[0].num_elements * workers);

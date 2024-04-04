@@ -1,4 +1,6 @@
 import torch
+import sys
+sys.path.append('build/lib.linux-x86_64-cpython-311')
 import based_inference as mod
 
 

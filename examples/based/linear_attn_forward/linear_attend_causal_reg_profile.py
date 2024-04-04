@@ -6,6 +6,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
 sys.path.insert(0, project_root)
 from src.common.pyutils.test_build_utils import __eq
+sys.path.append('build/lib.linux-x86_64-cpython-311')
 import linear_attend_causal_reg as mod
 
 from collections import defaultdict
@@ -56,7 +57,7 @@ def pytorch_test(dt, Q, K, V, d, verbose=True):
         T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
         T1 = torch.einsum("bhnm,bhme->bhne", T1a, V)  
         T0  = V.cumsum(dim=2)
-        y  = T0 #+ T1 + T2/2
+        y  = T0 # + T1 # + T2/2
 
         torch.cuda.synchronize()
         t1 = time.time()
@@ -261,9 +262,16 @@ def linear_attn_correct(dt):
     # fast_transformer_test_result = fast_transformer_test(dt, Q, K, V, d)
     based_kernel_test_result = based_kernel_test(dt, Q, K, V, d)
 
+    lb, ub = 512, 528
+    print(f"{V[0][0][lb:ub]=}")
+    print(f"{pytorch_test_result[0][0][0][lb:ub]=}")
+    print(f"{based_kernel_test_result[0][0][0][lb:ub]=}")
+
     # __eq("PyTorch Test v1 - PyTorch Test v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
     # __eq("PyTorch Test v1 - Fast Transformer Test", pytorch_test_result[0], fast_transformer_test_result[0], debug=False)  # fp. accum. error
     __eq("PyTorch Test v1 - Based Kernel Test", pytorch_test_result[0], based_kernel_test_result[0], debug=False)
+
+    breakpoint()
 
 print("Benchmarking the kernels...")
 # linear_attn_forward_benchmark(torch.bfloat16, verbose=False)
