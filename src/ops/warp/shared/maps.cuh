@@ -13,7 +13,7 @@ __device__ static inline void unary_map(T &dst, const T &src) {
 
     int lane = threadIdx.x % 32; 
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += WARP_SIZE) {
+    for(int i = lane; i < dst.rows*dst.cols; i += WARP_THREADS) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols); 
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(src.data[col + (row * dst.cols)]);
@@ -26,7 +26,7 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename T::dt
 
     int lane = threadIdx.x % 32; 
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += WARP_SIZE) {
+    for(int i = lane; i < dst.rows*dst.cols; i += WARP_THREADS) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols);  
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(src.data[col + (row * dst.cols)], param);
@@ -44,7 +44,7 @@ __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
 
     int lane = threadIdx.x % 32; 
     #pragma unroll
-    for(int i = lane; i < dst.rows*dst.cols; i += WARP_SIZE) {
+    for(int i = lane; i < dst.rows*dst.cols; i += WARP_THREADS) {
         int row = (i/dst.cols); 
         int col = (i%dst.cols); 
         dst.data[col + (row * dst.cols)] = op::template op<typename T::dtype>(lhs.data[col + (row * dst.cols)], rhs.data[col + (row * dst.cols)]);
