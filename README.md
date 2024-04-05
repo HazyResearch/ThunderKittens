@@ -27,7 +27,8 @@ ThunderKittens solves a few key problems that enable high utilization on modern 
 
 Here’s an example of what flash attention for an RTX 4090 looks like written in ThunderKittens.
 
-```#include "kittens.cuh"
+```Cuda
+#include "kittens.cuh"
 
 #define NUM_WORKERS 16
 using namespace kittens;

@@ -333,7 +333,6 @@ __device__ static inline void dot_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
  */
 template<int height, int width>
 __device__ inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
-    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory"); // still not really sure if we need this
     #pragma unroll
     for(int i = 0; i < height; i++) {
         #pragma unroll
@@ -345,7 +344,7 @@ __device__ inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
             }
         }
     }
-    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory"); 
+    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory");
 }
 
 /**

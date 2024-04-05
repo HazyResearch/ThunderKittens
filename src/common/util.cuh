@@ -36,6 +36,12 @@ constexpr int WARP_THREADS{32};
  */
 constexpr int WARPGROUP_THREADS{128};
 /**
+
+ * @brief Constant representing number of warps in a warpgroup of four warps.
+ */
+constexpr int WARPGROUP_WARPS{4};
+/**
+
  * @brief Get the warp ID of the current thread.
  * @return The warp ID.
  */
