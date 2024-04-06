@@ -1,251 +1,74 @@
-import torch
-import torch.nn as nn
-from typing import List, Tuple, Dict, Any, Union, Optional
-import copy
-from einops import rearrange
+import torch 
+import triton 
+import triton.language as tl 
+from torch.cuda.amp import custom_bwd, custom_fwd
 
+@triton.jit
+@triton.jit
+def parallel_based_fwd_kernel_hedgehog(
+    q,  # query [B, H, L, D_head_K]
+    k,  # key [B, H, L, D_head_V]
+    v,  # value [B, H, L, D_head_V]
+    o,  # output [B, H, L, D_head_V]
+    z,  # normalizer [B, H, L]
+    w_q,  # weights for the linear map of q [D_head_K, D_head_K]
+    w_k,  # weights for the linear map of k [D_head_K, D_head_K]
+    s_qk_h,  # stride size: L * D_head_K
+    s_qk_t,  # stride size: D_head_K
+    s_qk_d,  # stride size: 1
+    s_vo_h,  # stride size: L * D_head_V
+    s_vo_t,  # stride size: D_head_V
+    s_vo_d,  # stride size: 1
+    B,  # batch size
+    H,  # n_heads
+    T,  # seq_len
+    scale,  # D_head_K ** -0.5
+    BTL: tl.constexpr,  # BLOCK SIZE along the sequence dimension for Q
+    BTS: tl.constexpr,  # BLOCK SIZE along the sequence dimension for K/V
+    BK: tl.constexpr,  # BLOCK SIZE along the K dimension
+    BV: tl.constexpr,  # BLOCK SIZE along the V dimension
+    DK: tl.constexpr,  # D_head_K
+    DV: tl.constexpr,  # D_head_V
+):
+    # i_c: chunk index. used for sequence parallelism
+    i_kv, i_c, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    NV = tl.cdiv(DV, BV)
+    i_k = i_kv // (NV)
+    i_v = i_kv % (NV)
 
-class TiedHeadMLP(nn.Module):
-    """
-    Use same linear weights applied to all attention heads
-    """
-    def __init__(self, 
-                 num_heads: int,
-                 head_dim: int,     # input dim
-                 feature_dim: int,  # output dim
-                 dtype: torch.dtype,
-                 device: torch.device,
-                 skip_connection: bool = True,
-                 bias: bool = False,
-                 zero_init: bool = True):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.feature_dim = feature_dim
-        self.dtype = dtype
-        self.device = device
-        self.skip_connection = skip_connection
-        self.zero_init = zero_init
-        self.init_weights_()
-        
-        if self.zero_init: 
-            self.zero_init_with_skip_() if self.skip_connection else self.zero_init_()
+    p_q = tl.make_block_ptr(q + i_bh * s_qk_h, (T, DK),
+                            (s_qk_t, s_qk_d), (i_c * BTL, i_k * BK), (BTL, BK), (1, 0))
+    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, T),
+                            (s_qk_d, s_qk_t), (i_k * BK, 0), (BK, BTS), (0, 1))
+    p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (T, DV),
+                            (s_vo_t, s_vo_d), (0, i_v * BV), (BTS, BV), (1, 0))
 
-        if self.skip_connection:
-            assertion_fail = f'If self.skip_connection we need self.head_dim == self.feature_dim but self.head_dim is {self.head_dim} != self.feature_dim is {self.feature_dim}'
-            assert self.head_dim == self.feature_dim, assertion_fail
+    # [BQ, BD] block Q, in the shared memory throughout the whole kernel
+    b_q = tl.load(p_q, boundary_check=(0, 1))
+    b_q = (b_q * scale).to(b_q.dtype)
+    b_q = tl.dot(b_q, w_q, allow_tf32=False)  # Apply the linear map to q
+    b_o = tl.zeros([BTL, BV], dtype=tl.float32)
+    b_z = tl.zeros([BTL], dtype=tl.float32)
 
-    def zero_init_with_skip_(self):
-        with torch.no_grad():
-            nn.init.zeros_(self.layer.weight)
+    for _ in range(0, T, BTS):
+        # [BK, BTS]
+        b_k = tl.load(p_k, boundary_check=(0, 1))
+        b_k = tl.dot(b_k, w_k, allow_tf32=False)  # Apply the linear map to k
 
-    def zero_init_(self_):
-        with torch.no_grad():
-            nn.init.eye_(self.layer.weight)
+        # [BTS, BV]
+        b_v = tl.load(p_v, boundary_check=(0, 1))
+        # [BTL, BTS]
+        b_s = tl.dot(b_q, (b_k), allow_tf32=False)
+        b_z += tl.sum(b_s, axis=1)
 
-    def init_weights_(self):
-        self.layer = nn.Linear(self.head_dim, self.feature_dim, bias=False,
-                               dtype=self.dtype, device=self.device)
+        # [BQ, BD]
+        b_o = b_o + tl.dot(b_s.to(b_v.dtype), b_v, allow_tf32=False)
+        p_k = tl.advance(p_k, (0, BTS))
+        p_v = tl.advance(p_v, (BTS, 0))
 
-    def forward(self, x: torch.Tensor):
-        """Assume x.shape is b h l d"""
-        return x + self.layer(x) if self.skip_connection else self.layer(x)
-
-class UntiedHeadMLP(TiedHeadMLP):
-    """
-    Use different weights per head
-    """
-    def init_weights_(self):
-        self.layer = nn.Conv1d(in_channels=self.head_dim * self.num_heads,
-                               out_channels=self.feature_dim * self.num_heads,
-                               kernel_size=1, groups=self.num_heads,
-                               bias=False, dtype=self.dtype, device=self.device)
-
-    def zero_init_(self):
-        with torch.no_grad():
-            nn.init.eye_(self.layer.weight[..., 0])
-
-    def _forward(self, x: torch.Tensor):
-        b, h, l, d = x.shape
-        x = rearrange(x, 'b h l d -> b (h d) l', h=self.num_heads)
-        x = self.layer(x)
-        x = rearrange(x, 'b (h d) l -> b h l d', h=self.num_heads)
-        return x
-
-    def forward(self, x: torch.Tensor):
-        """Assume x.shape is b h l d"""
-        return x + self._forward(x) if self.skip_connection else self._forward(x)
-
-class UntiedHeadEinsumMLP(UntiedHeadMLP):
-    """
-    Alternate implementation with untied heads that uses einsum
-    """
-    def __init__(self, 
-                 normal_init: bool = False, 
-                 *args: any, **kwargs: any):
-        if normal_init:
-            self.nn_init_ = self.normal_init_
-        else:
-            self.nn_init_ = nn.init.kaiming_uniform_
-        super().__init__(*args, **kwargs)
-    
-    def init_weights_(self):
-        self.layer = nn.Parameter(torch.zeros(
-            (self.num_heads, self.head_dim, self.feature_dim),
-            dtype=self.dtype, device=self.device,
-        ))
-        self.nn_init_(self.layer)
-
-    def normal_init_(self, layer: torch.Tensor):
-        with torch.no_grad():
-            for i in range(layer.shape[0]):
-                nn.init.normal_(layer[i])
-
-    def zero_init_with_skip_(self):
-        with torch.no_grad():
-            nn.init.zeros_(self.layer)
-
-    def zero_init_(self):
-        with torch.no_grad():
-            for i in range(self.layer.shape[0]):
-                nn.init.eye_(self.layer[i])
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Assume x.shape is b h l d"""
-        if self.skip_connection:
-            return x + torch.einsum('hdf,bhld->bhlf', self.layer, x)  
-        return torch.einsum('hdf,bhld->bhlf', self.layer, x)
-
-
-class FeatureMap(nn.Module):
-    """
-    Parent feature map; default is identity function
-    """
-    def __init__(self, 
-                 input_dim: int,                 
-                 temp: int = None,
-                 head_dim_idx: int = -1, 
-                 eps: float = 1e-12, 
-                 mlp: nn.Module = None,
-                 **kwargs: any):
-        super().__init__()
-        self.input_dim = input_dim
-        self.head_dim_idx = head_dim_idx     
-        self.temp = 1. if temp is None else temp
-        self.eps = eps
-        self.mlp = mlp if mlp is not None else nn.Identity()
-        
-    def forward(self, x: torch.Tensor):
-        """
-        Assume x.shape is (batch_size, n_heads, seq_len, head_dim)
-        """
-        return self.mlp(x)
-
-class FullSpaceMap(nn.Module):
-    """
-    Project positive features to upper and lower "halfspaces"
-    """
-    def __init__(self, 
-                 head_dim_idx: int = -1, 
-                 eps: float = 1e-12,
-                 **kwargs: any):
-        super().__init__()
-        self.head_dim_idx = head_dim_idx
-        self.eps = eps
-        
-    def forward(self, x: torch.Tensor, fmap = None):
-        return torch.cat([x, -x], dim=self.head_dim_idx).clamp(min=self.eps)
-
-class ExpDim(FeatureMap):
-    """
-    Feature maps based on applying exp() element- or dimension-wise
-    """
-    def __init__(self, 
-                 fullspace: bool = True,
-                 **kwargs):
-        super().__init__(**kwargs)
-        self.fs_map = FullSpaceMap(**kwargs)
-
-    def forward(self, x: torch.Tensor):
-        x = self.mlp(x)
-        return torch.exp(self.fs_map(x * self.temp))
-
-class SoftmaxDim(ExpDim):
-    """
-    Compute softmax across fullspace
-    """
-    def __init__(self, *args: any, **kwargs: any):
-        super().__init__(*args, **kwargs)
-        self.fs_map = None
-
-    def forward(self, x: torch.Tensor):
-        x = self.mlp(x)
-        x = x * self.temp
-        return torch.cat([
-            torch.softmax( x, dim=self.head_dim_idx),
-            torch.softmax(-x, dim=self.head_dim_idx)
-        ], dim=self.head_dim_idx).clamp(min=self.eps)
-
-class HedgehogBased(nn.Module):
-    def __init__(self, 
-                 num_heads: int, 
-                 head_dim: int, 
-                 feature_dim: int, 
-                 input_dim: int, 
-                 skip_connection: bool = False, 
-                 zero_init: bool = False, 
-                 bias: bool = False, 
-                 dtype: torch.dtype = torch.float32):
-        super().__init__()
-        
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.feature_dim = feature_dim
-        self.input_dim = input_dim
-        
-        self.skip_connection = skip_connection
-        self.zero_init = zero_init
-        self.bias = bias
-        self.dtype = dtype 
-        
-        self.eps = torch.tensor(1e-12, dtype=self.dtype, device='cuda')
-
-        layer_kwargs = {
-            'num_heads': self.num_heads,
-            'head_dim': self.head_dim,
-            'dtype': self.dtype,
-            'device': 'cuda',
-        }
-        kernel_kwargs = {
-            'feature_dim': self.feature_dim,
-            'skip_connection': self.skip_connection,
-            'zero_init': self.zero_init,
-            'bias': self.bias,
-        }
-        feature_map_kwargs = {
-            'input_dim': self.input_dim,
-            'eps': self.eps,
-            'fullspace': True,
-        }
-
-        learned_kernel = UntiedHeadEinsumMLP(**layer_kwargs, **kernel_kwargs)
-        self.feature_map_q = SoftmaxDim(mlp=learned_kernel, **feature_map_kwargs)
-        self.feature_map_k = copy.deepcopy(self.feature_map_q)
-    
-
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool):    
-        if use_scale:
-            q = q * (q.shape[-1] ** -0.5)
-
-        # apply feature map
-        q, k = self.feature_map_q(q), self.feature_map_k(k)  
-
-        # compute linear attention
-        q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
-        o = (q * (k * v).cumsum(dim=2)).sum(dim=-1)
-        
-        # apply normalization
-        if use_norm:
-            z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
-            return o / z
-        return o
+    p_o = tl.make_block_ptr(o + (i_bh + B * H * i_k) * s_vo_h, (T, DV),
+                            (s_vo_t, s_vo_d), (i_c*BTL, i_v*BV), (BTL, BV), (1, 0))
+    p_z = z + (i_bh + B * H * i_k) * T + i_c * BTL + tl.arange(0, BTL)
+    tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
+    tl.store(p_z, b_z.to(p_z.dtype.element_ty),
+             mask=((i_c * BTL + tl.arange(0, BTL)) < T))
