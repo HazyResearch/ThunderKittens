@@ -206,7 +206,7 @@ class HedgehogBased(nn.Module):
         self.skip_connection = skip_connection
         self.zero_init = zero_init
         self.bias = bias
-        self.dtype = dtype
+        self.dtype = dtype 
         
         self.eps = torch.tensor(1e-12, dtype=self.dtype, device='cuda')
 
