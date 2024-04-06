@@ -22,11 +22,12 @@ def main():
         for dtype in dtypes:
             
             torch.manual_seed(42)
+            
             q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype)).requires_grad_(True)
             k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype)).requires_grad_(True)
             v = torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(dtype).requires_grad_(True)
                         
-            model = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype)
+            model = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False)
             ref = model(q, k, v, False, False)
             
             assert q.shape == (batch_size, n_heads, seq_len, 16)
