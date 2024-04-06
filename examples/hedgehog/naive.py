@@ -193,7 +193,7 @@ class HedgehogBased(nn.Module):
                  feature_dim: int, 
                  input_dim: int, 
                  skip_connection: bool = False, 
-                 zero_init: bool = True, 
+                 zero_init: bool = False, 
                  bias: bool = False, 
                  dtype: torch.dtype = torch.float32):
         super().__init__()

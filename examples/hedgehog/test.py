@@ -33,7 +33,12 @@ def main():
                 assert v.shape == (batch_size, n_heads, seq_len, 128)
                 assert ref.shape == (batch_size, n_heads, seq_len, 128)
                 
-                print(f"Test passed for seq_len={seq_len}, hidden_size={hidden_size}, dtype={dtype}")
+                # save q, k, v and output in a single .txt file in a folder named outputs
+                with open(f"outputs/naive_{seq_len}_{hidden_size}_{dtype}.txt", "w") as f:
+                    f.write(f"q: {q}\n\nk: {k}\n\nv: {v}\n\nref: {ref}")
+                
+                print(f"Test completed for seq_len={seq_len}, hidden_size={hidden_size}, dtype={dtype}")
+                print("Shapes:")
                 print(q.shape, k.shape, v.shape, ref.shape)
 
 
