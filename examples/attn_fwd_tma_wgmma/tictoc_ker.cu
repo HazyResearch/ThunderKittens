@@ -1,5 +1,6 @@
 #define KITTENS_HOPPER // we are on an H100
 #include "../../src/kittens.cuh"
+#include <cooperative_groups.h>
 
 constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
@@ -15,6 +16,8 @@ using layout_k = ducks::st_layout::wgmma_row_0b;
 using layout_v = ducks::st_layout::wgmma_col_t_0b;
 using layout_o = ducks::st_layout::naive; // tma_swizzle seems unreliable right now.
 
+using barrier = cuda::barrier<cuda::thread_scope_block>;
+
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
@@ -25,6 +28,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     st_bf<kv_height, tile_width, layout_v> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2, NUM_WORKERS_KV>();
 
     int tic = 0, toc = 1;
+    int ready = 0, done = 1; 
  
     rt_fl<1, kv_height> att_block;
     rt_bf<1, kv_height> att_block_mma;
@@ -35,8 +39,17 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS; 
 
+    auto block = cooperative_groups::this_thread_block();
+
     constexpr int qo_tiles  = N / q_smem[0].rows; 
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
+
+    // tic/toc (dim 0), ready/complete (dim 1)
+    __shared__ barrier bar[8];
+
+    if (threadIdx.x < 8) {
+        init(bar + threadIdx.x, block.size()); 
+    }
 
     __shared__ uint64_t qsmem_barrier; 
     __shared__ uint64_t ksmem_barrier; 
