@@ -47,7 +47,9 @@ def parallel_based_fwd_kernel_hedgehog(
     b_q = tl.load(p_q, boundary_check=(0, 1))
     b_q = (b_q * scale).to(b_q.dtype)
     b_q = tl.dot(b_q, w_q, allow_tf32=False)  # Apply the linear map to q
+    
     b_o = tl.zeros([BTL, BV], dtype=tl.float32)
+    
     b_z = tl.zeros([BTL], dtype=tl.float32)
 
     for _ in range(0, T, BTS):
@@ -68,7 +70,9 @@ def parallel_based_fwd_kernel_hedgehog(
 
     p_o = tl.make_block_ptr(o + (i_bh + B * H * i_k) * s_vo_h, (T, DV),
                             (s_vo_t, s_vo_d), (i_c*BTL, i_v*BV), (BTL, BV), (1, 0))
+    
     p_z = z + (i_bh + B * H * i_k) * T + i_c * BTL + tl.arange(0, BTL)
+    
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_z, b_z.to(p_z.dtype.element_ty),
              mask=((i_c * BTL + tl.arange(0, BTL)) < T))
