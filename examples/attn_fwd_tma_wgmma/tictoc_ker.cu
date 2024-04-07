@@ -5,6 +5,8 @@
 constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
+constexpr int NUM_PRODUCERS = 1; 
+
 constexpr int qo_height = 4, kv_height = 4;
 constexpr int NUM_WORKERS_KV = 4;
 constexpr int tile_width = 64/16;
@@ -18,7 +20,7 @@ using layout_o = ducks::st_layout::naive; // tma_swizzle seems unreliable right 
 
 using barrier = cuda::barrier<cuda::thread_scope_block>;
 
-template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
+template<int N> __global__  __launch_bounds__((NUM_WORKERS + NUM_PRODUCERS)*kittens::WARP_THREADS, 1)
 void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
@@ -38,6 +40,10 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS; 
+
+    if (warpid == NUM_WORKERS) {
+        return; 
+    }
 
     auto block = cooperative_groups::this_thread_block();
 

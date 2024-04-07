@@ -6,7 +6,7 @@ constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 4096;
 constexpr int ATTN_D     = 64;
-constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int BLOCK_SIZE = (32*(NUM_WORKERS + NUM_PRODUCERS));
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -117,14 +117,14 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    const int ITER = 1;
+    const int ITER = 100;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
-    // cudaDeviceSynchronize();
-    // std::cout << "Starting warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
-    // }
+    cudaDeviceSynchronize();
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+    }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
