@@ -248,8 +248,8 @@ class HedgehogBased(nn.Module):
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool):    
         if self.use_triton:
-            w_q = self.feature_map_q.mlp.layer
-            w_k = self.feature_map_k.mlp.layer
+            w_q = self.feature_map_q.mlp.layer # q.shape[1], q.shape[-1], v.shape[-1] = h, d_head_qk, d_head_v
+            w_k = self.feature_map_k.mlp.layer # k.shape[1], k.shape[-1], v.shape[-1] = h, d_head_qk, d_head_v
             
             o = torch.empty_like(v)
             z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
@@ -261,11 +261,12 @@ class HedgehogBased(nn.Module):
             bv = min(128, triton.next_power_of_2(v.shape[-1]))
             bk, bv = max(bk, 16), max(bv, 16)
             
-            d_head_qk = q.shape[-1]
-            d_head_v = v.shape[-1]
+            d_head_qk = q.shape[-1] # head_dim
+            d_head_v = v.shape[-1]  # feature_dim
             
             NK = triton.cdiv(d_head_qk, bk)
             NV = triton.cdiv(d_head_v, bv)
+            
             grid = (NK * NV, triton.cdiv(q.size(2), btl), q.size(0) * q.size(1))
             
             parallel_based_fwd_kernel_hedgehog[grid](
@@ -286,10 +287,11 @@ class HedgehogBased(nn.Module):
                 q = q * (q.shape[-1] ** -0.5)
 
             # apply feature map
-            q, k = self.feature_map_q(q), self.feature_map_k(k)  
+            q, k = self.feature_map_q(q), self.feature_map_k(k)
 
             # compute linear attention
             q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
+            
             o = (q * (k * v).cumsum(dim=2)).sum(dim=-1)
             
             # apply normalization

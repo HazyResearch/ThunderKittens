@@ -10,9 +10,9 @@ from examples.hedgehog.hedgehog import HedgehogBased
 
 
 def main():
-    batch_size = 1
-    n_heads = 1
-    seq_lens = [512]
+    batch_size = 2
+    n_heads = 4
+    seq_lens = [1024]
     dtypes = [torch.float16, torch.bfloat16, torch.float32]
     
     output_dir = "outputs"
