@@ -26,9 +26,16 @@ def main():
             q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype)).requires_grad_(True)
             k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype)).requires_grad_(True)
             v = torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(dtype).requires_grad_(True)
+            
+            q_tri = q.clone().detach().requires_grad_(True)
+            k_tri = k.clone().detach().requires_grad_(True)
+            v_tri = v.clone().detach().requires_grad_(True)
                         
-            model = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False)
-            ref = model(q, k, v, False, False)
+            model_ref = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False, use_triton=False)
+            ref = model_ref(q, k, v, False, False)
+            
+            # model_tri = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False, use_triton=True)
+            # tri = model_tri(q_tri, k_tri, v_tri, False, False)
             
             assert q.shape == (batch_size, n_heads, seq_len, 16)
             assert k.shape == (batch_size, n_heads, seq_len, 16)

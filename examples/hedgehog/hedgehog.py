@@ -4,6 +4,11 @@ from typing import List, Tuple, Dict, Any, Union, Optional
 import copy
 from einops import rearrange
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from examples.hedgehog.fwd_tri import parallel_based_fwd_kernel_hedgehog
 
 class TiedHeadMLP(nn.Module):
     """
@@ -195,6 +200,7 @@ class HedgehogBased(nn.Module):
                  skip_connection: bool = False, 
                  zero_init: bool = False, 
                  bias: bool = False, 
+                 use_triton: bool = False,
                  dtype: torch.dtype = torch.float32):
         super().__init__()
         
@@ -209,6 +215,8 @@ class HedgehogBased(nn.Module):
         self.dtype = dtype
         
         self.eps = torch.tensor(1e-12, dtype=self.dtype, device='cuda')
+        
+        self.use_triton = use_triton
 
         layer_kwargs = {
             'num_heads': self.num_heads,
@@ -228,24 +236,41 @@ class HedgehogBased(nn.Module):
             'fullspace': True,
         }
 
-        learned_kernel = UntiedHeadEinsumMLP(**layer_kwargs, **kernel_kwargs)
-        self.feature_map_q = SoftmaxDim(mlp=learned_kernel, **feature_map_kwargs)
+        self.learned_kernel = UntiedHeadEinsumMLP(**layer_kwargs, **kernel_kwargs)
+        self.feature_map_q = SoftmaxDim(mlp=self.learned_kernel, **feature_map_kwargs)
         self.feature_map_k = copy.deepcopy(self.feature_map_q)
     
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool):    
-        if use_scale:
-            q = q * (q.shape[-1] ** -0.5)
+        if self.use_triton:
+            w_q = self.feature_map_q.mlp.layer.weight
+            w_k = self.feature_map_k.mlp.layer.weight
+            
+            o = torch.empty_like(v)
+            z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
+            
+            parallel_based_fwd_kernel_hedgehog(
+                q, k, v, o, z, w_q, w_k,
+                q.stride(-2), q.stride(-1), 1,
+                v.stride(-2), v.stride(-1), 1,
+                q.size(0), q.size(1), q.size(2),
+                self.head_dim ** -0.5,
+                self.BTL, self.BTS, self.BK, self.BV, self.DK, self.DV
+            )
+        else:
+            if use_scale:
+                q = q * (q.shape[-1] ** -0.5)
 
-        # apply feature map
-        q, k = self.feature_map_q(q), self.feature_map_k(k)  
+            # apply feature map
+            q, k = self.feature_map_q(q), self.feature_map_k(k)  
 
-        # compute linear attention
-        q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
-        o = (q * (k * v).cumsum(dim=2)).sum(dim=-1)
+            # compute linear attention
+            q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
+            o = (q * (k * v).cumsum(dim=2)).sum(dim=-1)
+            
+            # apply normalization
+            if use_norm:
+                z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
+                return o / z
         
-        # apply normalization
-        if use_norm:
-            z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
-            return o / z
         return o
