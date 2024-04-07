@@ -4,6 +4,9 @@ from typing import List, Tuple, Dict, Any, Union, Optional
 import copy
 from einops import rearrange
 
+import triton
+import triton.language as tl
+
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -239,24 +242,45 @@ class HedgehogBased(nn.Module):
         self.learned_kernel = UntiedHeadEinsumMLP(**layer_kwargs, **kernel_kwargs)
         self.feature_map_q = SoftmaxDim(mlp=self.learned_kernel, **feature_map_kwargs)
         self.feature_map_k = copy.deepcopy(self.feature_map_q)
+        
+        self.BK = min(128, triton.next_power_of_2(self.head_dim))
     
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool):    
         if self.use_triton:
-            w_q = self.feature_map_q.mlp.layer.weight
-            w_k = self.feature_map_k.mlp.layer.weight
+            w_q = self.feature_map_q.mlp.layer
+            w_k = self.feature_map_k.mlp.layer
             
             o = torch.empty_like(v)
             z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
             
-            parallel_based_fwd_kernel_hedgehog(
+            btl = 128
+            bts = 32
+            
+            bk = min(128, triton.next_power_of_2(k.shape[-1]))
+            bv = min(128, triton.next_power_of_2(v.shape[-1]))
+            bk, bv = max(bk, 16), max(bv, 16)
+            
+            d_head_qk = q.shape[-1]
+            d_head_v = v.shape[-1]
+            
+            NK = triton.cdiv(d_head_qk, bk)
+            NV = triton.cdiv(d_head_v, bv)
+            grid = (NK * NV, triton.cdiv(q.size(2), btl), q.size(0) * q.size(1))
+            
+            parallel_based_fwd_kernel_hedgehog[grid](
                 q, k, v, o, z, w_q, w_k,
-                q.stride(-2), q.stride(-1), 1,
-                v.stride(-2), v.stride(-1), 1,
+                q.stride(1), q.stride(2), q.stride(3),
+                v.stride(1), v.stride(2), v.stride(3),
                 q.size(0), q.size(1), q.size(2),
                 self.head_dim ** -0.5,
-                self.BTL, self.BTS, self.BK, self.BV, self.DK, self.DV
+                BTL=btl, BTS=bts, 
+                BK=bk, 
+                BV=bv, 
+                DK=d_head_qk, 
+                DV=d_head_v
             )
+            
         else:
             if use_scale:
                 q = q * (q.shape[-1] ** -0.5)

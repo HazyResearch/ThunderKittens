@@ -42,6 +42,12 @@ def parallel_based_fwd_kernel_hedgehog(
                             (s_qk_d, s_qk_t), (i_k * BK, 0), (BK, BTS), (0, 1))
     p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (T, DV),
                             (s_vo_t, s_vo_d), (0, i_v * BV), (BTS, BV), (1, 0))
+    
+    p_w_q = tl.make_block_ptr(w_q, (DK, DK),
+                          (1, DK), (i_k * BK, 0), (BK, BK), (0, 1))
+    p_w_k = tl.make_block_ptr(w_k, (DK, DK),
+                            (1, DK), (i_k * BK, 0), (BK, BK), (0, 1))
+
 
     # [BQ, BD] block Q, in the shared memory throughout the whole kernel
     b_q = tl.load(p_q, boundary_check=(0, 1))
