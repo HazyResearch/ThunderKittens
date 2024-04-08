@@ -94,22 +94,22 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     zero(norm_vec);
     zero(o_prev);
 
-    // tma::arrive_and_wait(qsmem_barrier, kPhaseBit); 
+    tma::arrive_and_wait(qsmem_barrier, kPhaseBit);
     __syncthreads();
     warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f));
 
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
-        // tma::arrive_and_wait(ksmem_barrier, kPhaseBit); 
-        // tma::arrive_and_wait(vsmem_barrier, kPhaseBit); 
+        tma::arrive_and_wait(ksmem_barrier, kPhaseBit); 
+        tma::arrive_and_wait(vsmem_barrier, kPhaseBit); 
 
-        // if ((threadIdx.x == 0)) {
-        //     tma::init_barrier(ksmem_barrier, WARP_THREADS); 
-        //     tma::set_barrier_bytes(ksmem_barrier, kv_tile_bytes);
+        if ((threadIdx.x == 0)) {
+            tma::init_barrier(ksmem_barrier, WARP_THREADS); 
+            tma::set_barrier_bytes(ksmem_barrier, kv_tile_bytes);
 
-        //     tma::init_barrier(vsmem_barrier, WARP_THREADS); 
-        //     tma::set_barrier_bytes(vsmem_barrier, kv_tile_bytes); 
-        // }
+            tma::init_barrier(vsmem_barrier, WARP_THREADS); 
+            tma::set_barrier_bytes(vsmem_barrier, kv_tile_bytes); 
+        }
 
         __syncthreads();
         if ((kv_idx + 1 < kv_blocks) && (warpid == 0)) {
@@ -119,7 +119,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
                 tma::load_async((v_smem[toc][w]), tma_v, tile_idx, vsmem_barrier); 
             }
         }
-
+        
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
             warpgroup::fence(att_block);
             warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
