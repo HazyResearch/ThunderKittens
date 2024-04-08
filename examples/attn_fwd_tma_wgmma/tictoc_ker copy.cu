@@ -2,10 +2,10 @@
 #include "../../src/kittens.cuh"
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 20;
+constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
-constexpr int NUM_PRODUCERS = 0; 
+constexpr int NUM_PRODUCERS = 1; 
 
 constexpr int qo_height = 4, kv_height = 4;
 constexpr int NUM_WORKERS_KV = 4;
@@ -41,20 +41,27 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    if (warpid >= NUM_WORKERS) {
-        return; 
-    }
-
     auto block = cooperative_groups::this_thread_block();
 
     constexpr int qo_tiles  = N / q_smem[0].rows; 
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     // tic/toc (dim 0), ready/complete (dim 1)
-    __shared__ barrier bar[8];
+    __shared__ barrier k_bar[2][2];
+    __shared__ barrier v_bar[2][2];
 
-    if (threadIdx.x < 8) {
-        init(bar + threadIdx.x, block.size()); 
+    if (threadIdx.x < 1) {
+        init(k_bar[tic][ready], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS); 
+        init(k_bar[tic][done], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS);
+        
+        init(k_bar[toc][ready], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS); 
+        init(k_bar[toc][done], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS);
+
+        init(v_bar[tic][ready], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS); 
+        init(v_bar[tic][done], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS);
+    v
+        init(v_bar[toc][ready], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS); 
+        init(v_bar[toc][done], kittens::WARP_THREADS * kittens::WARPGROUP_WARPS);
     }
 
     __shared__ uint64_t qsmem_barrier; 
@@ -98,58 +105,66 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     __syncthreads();
     warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f));
 
-    for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
+    // producer warp
+    if (warpid == NUM_WORKERS) {
+        for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
+            k_bar[toc][ready].arrive_and_wait(); 
+            v_bar[toc][ready].arrive_and_wait(); 
 
-        // tma::arrive_and_wait(ksmem_barrier, kPhaseBit); 
-        // tma::arrive_and_wait(vsmem_barrier, kPhaseBit); 
-
-        // if ((threadIdx.x == 0)) {
-        //     tma::init_barrier(ksmem_barrier, WARP_THREADS); 
-        //     tma::set_barrier_bytes(ksmem_barrier, kv_tile_bytes);
-
-        //     tma::init_barrier(vsmem_barrier, WARP_THREADS); 
-        //     tma::set_barrier_bytes(vsmem_barrier, kv_tile_bytes); 
-        // }
-
-        __syncthreads();
-        if ((kv_idx + 1 < kv_blocks) && (warpid == 0)) {
             for (int w = 0; w < NUM_WORKERS_KV; w++) {        
                 int tile_idx = (blockIdx.y * NUM_WORKERS_KV * kv_blocks) + ((kv_idx + 1) * NUM_WORKERS_KV) + w; 
                 tma::load_async((k_smem[toc][w]), tma_k, tile_idx, ksmem_barrier); 
                 tma::load_async((v_smem[toc][w]), tma_v, tile_idx, vsmem_barrier); 
             }
+
+            tma::arrive_and_wait(ksmem_barrier, kPhaseBit); 
+            tma::arrive_and_wait(vsmem_barrier, kPhaseBit);
+            
+            k_bar[toc][done].arrive(); 
+            v_bar[toc][done].arrive(); 
         }
+    }
+    // consumer warps
+    else {
+        for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
+            
+            if (kv_idx + 1 < kv_blocks) {
+                barrier::arrival_token k = k_bar[toc][ready].arrive(); 
+                barrier::arrival_token v = v_bar[toc][ready].arrive(); 
+            }
 
-        for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
-            warpgroup::fence(att_block);
-            warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
-            warpgroup::mma_commit_group();
-
-            copy(norm_vec_last, norm_vec);
-            copy(max_vec_last,  max_vec);
-
-            warpgroup::mma_async_wait();
-
-            row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
-            sub_row(att_block, att_block, max_vec);
-            exp(att_block, att_block);
-
-            sub(max_vec_last, max_vec_last, max_vec);
-            exp(max_vec_last, max_vec_last);
-            mul(norm_vec, norm_vec, max_vec_last);
-
-            row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
-            div_row(att_block, att_block, norm_vec);
-
-            mul(norm_vec_last, norm_vec_last, max_vec_last);
-            div(norm_vec_last, norm_vec_last, norm_vec);
-
-            copy(att_block_mma, att_block); // convert to bf16 for mma
-            mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-
-            warpgroup::fence(o_prev);
-            warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
-            warpgroup::mma_commit_group();
+            for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
+                warpgroup::fence(att_block);
+                warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
+                warpgroup::mma_commit_group();
+    
+                copy(norm_vec_last, norm_vec);
+                copy(max_vec_last,  max_vec);
+    
+                warpgroup::mma_async_wait();
+    
+                row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
+                sub_row(att_block, att_block, max_vec);
+                exp(att_block, att_block);
+    
+                sub(max_vec_last, max_vec_last, max_vec);
+                exp(max_vec_last, max_vec_last);
+                mul(norm_vec, norm_vec, max_vec_last);
+    
+                row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
+                div_row(att_block, att_block, norm_vec);
+    
+                mul(norm_vec_last, norm_vec_last, max_vec_last);
+                div(norm_vec_last, norm_vec_last, norm_vec);
+    
+                copy(att_block_mma, att_block); // convert to bf16 for mma
+                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
+    
+                warpgroup::fence(o_prev);
+                warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
+                warpgroup::mma_commit_group();
+            }
+            
         }
     }
 
