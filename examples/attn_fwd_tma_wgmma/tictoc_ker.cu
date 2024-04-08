@@ -2,10 +2,10 @@
 #include "../../src/kittens.cuh"
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 20;
+constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
-constexpr int NUM_PRODUCERS = 0; 
+constexpr int NUM_PRODUCERS = 1; 
 
 constexpr int qo_height = 4, kv_height = 4;
 constexpr int NUM_WORKERS_KV = 4;
@@ -41,7 +41,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    if (warpid >= NUM_WORKERS) {
+    if (warpid == NUM_WORKERS) {
         return; 
     }
 
