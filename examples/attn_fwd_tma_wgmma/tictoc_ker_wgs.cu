@@ -2,7 +2,7 @@
 #include "../../src/kittens.cuh"
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 20;
+constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
 constexpr int NUM_PRODUCERS = 4; 
@@ -30,7 +30,6 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     st_bf<kv_height, tile_width, layout_v> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2, NUM_WORKERS_KV>();
 
     int tic = 0, toc = 1;
-    int ready = 0, done = 1; 
 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -41,9 +40,9 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     // tic/toc (dim 0), ready/complete (dim 1)
-    __shared__ barrier bar[6];
+    __shared__ barrier bar[7];
 
-    if (threadIdx.x < 6) {
+    if (threadIdx.x < 7) {
         init(bar + threadIdx.x, block.size()); 
     }
     block.sync(); 
@@ -84,20 +83,17 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
         }
 
         tma::arrive_and_wait(qsmem_barrier, kPhaseBit);
-        bar[0].arrive(); 
+        barrier::arrival_token q_done = bar[0].arrive(); 
 
         tma::arrive_and_wait(ksmem_barrier, kPhaseBit); 
-        bar[1].arrive(); 
+        barrier::arrival_token k_done = bar[1].arrive(); 
 
         tma::arrive_and_wait(vsmem_barrier, kPhaseBit);
-        bar[2].arrive(); 
+        barrier::arrival_token v_done = bar[2].arrive(); 
 
         for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
             if (warpid == NUM_WORKERS) {
-                tma::init_barrier(qsmem_barrier, WARP_THREADS * kittens::WARPGROUP_WARPS); 
-                tma::set_barrier_bytes(qsmem_barrier, qo_tile_bytes);
-
                 tma::init_barrier(ksmem_barrier, WARP_THREADS * kittens::WARPGROUP_WARPS);
                 tma::set_barrier_bytes(ksmem_barrier, kv_tile_bytes);
             

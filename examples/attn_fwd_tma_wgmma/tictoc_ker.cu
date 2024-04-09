@@ -5,7 +5,7 @@
 constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
-constexpr int NUM_PRODUCERS = 1; 
+constexpr int NUM_PRODUCERS = 0; 
 
 constexpr int qo_height = 4, kv_height = 4;
 constexpr int NUM_WORKERS_KV = 4;
