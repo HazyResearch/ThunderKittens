@@ -30,7 +30,6 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     st_bf<kv_height, tile_width, layout_v> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2, NUM_WORKERS_KV>();
 
     int tic = 0, toc = 1;
-    int ready = 0, done = 1; 
  
     rt_fl<1, kv_height> att_block;
     rt_bf<1, kv_height> att_block_mma;
@@ -41,9 +40,9 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    if (warpid == NUM_WORKERS) {
-        return; 
-    }
+    // if (warpid == NUM_WORKERS) {
+    //     return; 
+    // }
 
     auto block = cooperative_groups::this_thread_block();
 
@@ -51,11 +50,11 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     // tic/toc (dim 0), ready/complete (dim 1)
-    __shared__ barrier bar[8];
+    // __shared__ barrier bar[8];
 
-    if (threadIdx.x < 8) {
-        init(bar + threadIdx.x, block.size()); 
-    }
+    // if (threadIdx.x < 8) {
+    //     init(bar + threadIdx.x, block.size()); 
+    // }
 
     __shared__ uint64_t qsmem_barrier; 
     __shared__ uint64_t ksmem_barrier; 
