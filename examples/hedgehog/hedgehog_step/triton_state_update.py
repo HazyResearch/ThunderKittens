@@ -1,13 +1,10 @@
 import torch
-import time
-import einops
-
 import triton
 import triton.language as tl
 
 def hedgehog_step(kv_state, k_state, q, k, v, den_out, denom: bool=False):
     """
-    Borrows heavily from Tri's Mamba implementation
+    Borrows from Mamba implementation
     Argument:
         kv_state: (batch, d_model, dstate)
         k_state: (batch, d_state)
