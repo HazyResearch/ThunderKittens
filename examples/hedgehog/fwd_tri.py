@@ -12,8 +12,6 @@ def parallel_based_fwd_kernel_hedgehog(
     v,  # value [B, H, L, D_head_V]
     o,  # output [B, H, L, D_head_V]
     z,  # normalizer [B, H, L]
-    w_q,  # weights for the linear map of q [D_head_K, D_head_K]
-    w_k,  # weights for the linear map of k [D_head_K, D_head_K]
     s_qk_h,  # stride size: L * D_head_K
     s_qk_t,  # stride size: D_head_K
     s_qk_d,  # stride size: 1
@@ -39,17 +37,15 @@ def parallel_based_fwd_kernel_hedgehog(
 
     p_q = tl.make_block_ptr(q + i_bh * s_qk_h, (T, DK),
                             (s_qk_t, s_qk_d), (i_c * BTL, i_k * BK), (BTL, BK), (1, 0))
-    
-    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (T, DK),
+    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, T),
                             (s_qk_d, s_qk_t), (i_k * BK, 0), (BK, BTS), (0, 1))
-    p_w_k = tl.make_block_ptr(w_k, (DK, DV), (DV, 1), (0, 0), (DK, DV), (1, 0))
-    
     p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (T, DV),
                             (s_vo_t, s_vo_d), (0, i_v * BV), (BTS, BV), (1, 0))
 
     # [BQ, BD] block Q, in the shared memory throughout the whole kernel
     b_q = tl.load(p_q, boundary_check=(0, 1))
     b_q = (b_q * scale).to(b_q.dtype)
+    
     b_o = tl.zeros([BTL, BV], dtype=tl.float32)
     b_z = tl.zeros([BTL], dtype=tl.float32)
 
@@ -63,7 +59,7 @@ def parallel_based_fwd_kernel_hedgehog(
         b_v = tl.load(p_v, boundary_check=(0, 1))
         # [BTL, BTS]
         b_s = tl.dot(b_q, (b_k), allow_tf32=False)
-        b_s = 1 + b_s + 0.5 * b_s * b_s
+        # b_s = 1 + b_s + 0.5 * b_s * b_s
         b_z += tl.sum(b_s, axis=1)
 
         # [BQ, BD]
@@ -91,7 +87,7 @@ def parallel_based_fwd_kernel_hedgehog(
         # [BTL, BTS]
         m_s = o_q[:, None] >= o_k[None, :]
         b_s = tl.dot(b_q, b_k, allow_tf32=False)
-        b_s = 1 + b_s + 0.5 * b_s * b_s
+        # b_s = 1 + b_s + 0.5 * b_s * b_s
         b_s = tl.where(m_s, b_s, 0)
         b_z += tl.sum(b_s, axis=1)
         # [BTL, BV]

@@ -246,13 +246,28 @@ class HedgehogBased(nn.Module):
         self.BK = min(128, triton.next_power_of_2(self.head_dim))
     
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool):    
-        if self.use_triton:
-            w_q = self.feature_map_q.mlp.layer # q.shape[1], q.shape[-1], v.shape[-1] = h, d_head_qk, d_head_v
-            w_k = self.feature_map_k.mlp.layer # k.shape[1], k.shape[-1], v.shape[-1] = h, d_head_qk, d_head_v
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool): 
+        q, k = self.feature_map_q(q), self.feature_map_k(k)
             
-            o = torch.empty_like(v)
-            z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
+        o = torch.empty_like(v)
+        z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
+               
+        if self.use_triton:
+            print("Using Triton")
+            
+            # if use_scale:
+            #     q = q * (q.shape[-1] ** -0.5)
+
+            # # compute linear attention
+            # cumsum_matrix = torch.tril(torch.ones((q.size(2), q.size(2)), device=q.device, dtype=q.dtype))
+            # A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) * cumsum_matrix
+            # o = torch.einsum("bhnm,bhme->bhne", A_qk, v)
+            
+            # # apply normalization
+            # if use_norm:
+            #     q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
+            #     z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
+            #     return o / z
             
             btl = 128
             bts = 32
@@ -267,27 +282,40 @@ class HedgehogBased(nn.Module):
             NK = triton.cdiv(d_head_qk, bk)
             NV = triton.cdiv(d_head_v, bv)
             
+            num_stages = 2
+            num_warps = 4
+            
             grid = (NK * NV, triton.cdiv(q.size(2), btl), q.size(0) * q.size(1))
             
+            scale = 1.0
+            if use_scale:
+                scale = d_head_qk ** -0.5
+            
             parallel_based_fwd_kernel_hedgehog[grid](
-                q, k, v, o, z, w_q, w_k,
+                q, k, v, o, z,
                 q.stride(1), q.stride(2), q.stride(3),
                 v.stride(1), v.stride(2), v.stride(3),
                 q.size(0), q.size(1), q.size(2),
-                self.head_dim ** -0.5,
+                scale,
                 BTL=btl, BTS=bts, 
                 BK=bk, 
                 BV=bv, 
                 DK=d_head_qk, 
-                DV=d_head_v
+                DV=d_head_v,
+                num_warps=num_warps,
+                num_stages=num_stages
             )
             
+            o, z = o.sum(0).to(q.dtype), z.sum(0).to(q.dtype)
+            
+            if use_norm:
+                o = o / (z[..., None] + self.eps)
+                return o
+            
         else:
+            print("Using PyTorch")
             if use_scale:
                 q = q * (q.shape[-1] ** -0.5)
-
-            # apply feature map
-            q, k = self.feature_map_q(q), self.feature_map_k(k)
 
             # compute linear attention
             q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
