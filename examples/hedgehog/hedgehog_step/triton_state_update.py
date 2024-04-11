@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
-def hedgehog_step(kv_state, k_state, q, k, v, den_out, denom: bool=False):
+def hedgehog_step(kv_state, k_state, q, k, v, denom: bool=False):
     """
     Borrows from Mamba implementation
     Argument:
@@ -20,7 +20,6 @@ def hedgehog_step(kv_state, k_state, q, k, v, den_out, denom: bool=False):
     assert q.shape == (batch, d_state)
     assert k.shape == q.shape
     out = torch.empty_like(v)
-    den_out = torch.empty_like(den_out)
    
     # This is currently not blocking along the d_state dimension which 
     # is okay for small d_state (e.g. 16 in Mamba), but an issue for the state sizes
@@ -111,7 +110,6 @@ def _hedgehog_step(
     tl.store(out_ptrs, out, mask=offs_m < dim)
 
 
-
 def hedgehog_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps: float=1e-6):
     """
     Argument:
@@ -128,7 +126,7 @@ def hedgehog_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps: float=1
     kv_state += torch.einsum("bf,bd->bdf", k, v)
     num = torch.einsum("bf,bdf->bd", q, kv_state)
     den = torch.einsum("bf,bf->b", q, k_state) + eps
-    return num / den.unsqueeze(-1), den
+    return num / den.unsqueeze(-1) #, den
 
 
 def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
@@ -157,8 +155,8 @@ def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     # check correctness against reference implementation
     kv_state_ref  = kv_state.detach().clone()
     k_state_ref   = k_state.detach().clone()
-    out_ref, den_out  = hedgehog_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q, denom=True)
-    out_triton    = hedgehog_step(kv_state=kv_state, k_state=k_state, v=v, k=k, q=q, den_out=den_out, denom=True)
+    out_ref       = hedgehog_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q, denom=True)
+    out_triton    = hedgehog_step(kv_state=kv_state, k_state=k_state, v=v, k=k, q=q, denom=True)
 
     for (out, name) in [(out_triton, "Triton")]:
         print(f"**** {name} dtype={dt} ****")
@@ -190,8 +188,10 @@ def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     #         print(f"diff at {i} is {diff.abs().max().item()}") # -- num_elements: {num_elements}")
     #         # breakpoint()
 
-hedgehog_test(torch.bfloat16, benchmark=False, ones=False)
-hedgehog_test(torch.float32, benchmark=False, ones=False)
-hedgehog_test(torch.bfloat16, benchmark=False, ones=True)
-hedgehog_test(torch.float32, benchmark=False, ones=True)
+
+if __name__ == "__main__":
+    hedgehog_test(torch.bfloat16, benchmark=False, ones=False)
+    hedgehog_test(torch.float32, benchmark=False, ones=False)
+    hedgehog_test(torch.bfloat16, benchmark=False, ones=True)
+    hedgehog_test(torch.float32, benchmark=False, ones=True)
 
