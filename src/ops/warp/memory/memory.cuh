@@ -5,10 +5,6 @@
 
 #pragma once
 
-#include "shared_to_register.cuh"
-#include "global_to_register.cuh"
-#include "global_to_shared.cuh"
-
-#ifdef KITTENS_HOPPER
-#include "tma.cuh"
-#endif
+#include "util/util.cuh"
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"
