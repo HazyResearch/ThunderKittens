@@ -1,13 +1,3 @@
-#pragma once
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-#include "base.cuh"
-
-namespace kittens {
-namespace warpgroup {
-
 template<int trans_b>
 struct wgmma_base<8, trans_b> {
     __device__ static inline void rt_st(
@@ -233,6 +223,3 @@ struct wgmma_base<8, trans_b> {
         }
     }
 };
-    
-}
-}

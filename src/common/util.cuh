@@ -62,7 +62,7 @@ constexpr int MAX_SHARED_MEMORY = 227000;
 #elif KITTENS_A100
 constexpr int MAX_SHARED_MEMORY = 164000;
 #elif KITTENS_4090
-constexpr int MAX_SHARED_MEMORY = 101000;
+constexpr int MAX_SHARED_MEMORY = 100000;
 #endif
 
 /* ----------  TYPE HELPERS  ---------- */

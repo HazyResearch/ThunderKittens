@@ -5,22 +5,6 @@
 
 #pragma once
 
-#include "../../../common/common.cuh"
-#include "../../../types/types.cuh"
-
-#include "base/base.cuh"
-
-namespace kittens {
-/**
- * @namespace warpgroup
- * 
- * @brief A namespace for operations undertaken collaboratively by a warpgroup.
- *
- * Warpgroup functions must be called together by a group of 4 warps, which complete it together.
- * Note that if this is not respected, behavior is undefined.
-*/
-namespace warpgroup {
-
 // [(register, shared) -> register] edition
 /**
  * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
@@ -40,6 +24,7 @@ template<int accumulate, int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col 
 __device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                             const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                             const st_bf<K, M, L_B>           &b) {
+    KITTENS_CHECK_WARPGROUP
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
@@ -116,6 +101,7 @@ template<int accumulate, int K, int M, ducks::st_layout::wgmma_row L_A, ducks::s
 __device__ static inline void mma(rt_fl<1, M, ducks::rt_layout::row> &d,
                             const st_bf<4, K, L_A>           &a,
                             const st_bf<K, M, L_B>           &b) {
+    KITTENS_CHECK_WARPGROUP
     wgmma_base<M, 1>::st_st(
         d,
         a.descriptor(0),
@@ -188,6 +174,7 @@ template<int accumulate, int N_DIV_4, int K, int M, ducks::st_layout::wgmma_row 
 __device__ static inline void dot(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                             const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                             const st_bf<M, K, L_B>           &b) {
+    KITTENS_CHECK_WARPGROUP
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
@@ -266,6 +253,7 @@ template<int accumulate, int K, int M, ducks::st_layout::wgmma_row L_A, ducks::s
 __device__ static inline void dot(rt_fl<1, M, ducks::rt_layout::row> &d,
                             const st_bf<4, K, L_A>           &a,
                             const st_bf<M, K, L_B>           &b) {
+    KITTENS_CHECK_WARPGROUP
     wgmma_base<M, 0>::st_st(
         d,
         a.descriptor(0),
@@ -332,7 +320,8 @@ __device__ static inline void dot_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param dst[in,out] The destination register-tile matrix to be synchronized.
  */
 template<int height, int width>
-__device__ inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
+__device__ static inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
+    KITTENS_CHECK_WARPGROUP
     #pragma unroll
     for(int i = 0; i < height; i++) {
         #pragma unroll
@@ -350,7 +339,9 @@ __device__ inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
 /**
  * @brief Commit the current set of warp group matrix multiply accumulate calls.
  */
-__device__ inline void mma_commit_group() {
+ template<typename T=kittens::ducks::default_type> // prevents static assert being instantiated unless called.
+__device__ static inline void mma_commit_group() {
+    KITTENS_CHECK_WARPGROUP
     asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
 }
 
@@ -362,9 +353,7 @@ __device__ inline void mma_commit_group() {
  * @tparam N The number of remaining active WGMMA committed groups allowed. This will stall until the number of active groups is less than or equal to N. Defaults to 0.
  */
 template<int N=0>
-__device__ inline void mma_async_wait() {
+__device__ static inline void mma_async_wait() {
+    KITTENS_CHECK_WARPGROUP
     asm volatile ("wgmma.wait_group.sync.aligned %0;" : : "n"(N) : "memory");
-}
-
-}
 }

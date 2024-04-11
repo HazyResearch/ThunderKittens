@@ -1,14 +1,7 @@
 /**
  * @file
- * @brief Warp-scope reductions on shared tiles.
+ * @brief Group reductions on shared tiles.
  */
-
-#pragma once
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-namespace kittens {
 
 /**
  * Performs row-wise reduction on a matrix using a specified operation.
@@ -24,7 +17,7 @@ namespace kittens {
 template<typename op, ducks::sv::all V, ducks::st::all T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     using dtype = typename V::dtype;
-    for (int row = kittens::laneid(); row < src.rows; row += kittens::WARP_THREADS) {
+    for (int row = laneid(); row < src.rows; row += GROUP_THREADS) {
         dtype accum = src[{row, 0}];
         #pragma unroll
         for (int col = 1; col < src.cols; col++) {
@@ -36,7 +29,6 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
             row_accum[row] = op::template op<dtype>(src_accum[row], accum);
         }
     }
-    __syncwarp();
 }
 
 /**
@@ -53,7 +45,7 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 template<typename op, ducks::sv::all V, ducks::st::all T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     using dtype = typename V::dtype;
-    for (int col = kittens::laneid(); col < src.cols; col += kittens::WARP_THREADS) {
+    for (int col = laneid(); col < src.cols; col += GROUP_THREADS) {
         dtype accum = src[{0, col}];
         #pragma unroll
         for (int row = 1; row < src.rows; row++) {
@@ -65,7 +57,6 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
             col_accum[col] = op::template op<dtype>(src_accum[col], accum);
         }
     }
-    __syncwarp();
 }
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
@@ -272,6 +263,4 @@ __device__ static inline void col_sum(V &col_accum, const T &src, const V &src_a
 template<ducks::sv::all V, ducks::st::all T>
 __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_accum) {
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
-}
-
 }

@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Declarations, manipuatlions, and wrappers for basic types.
+ * @brief Declarations, manipulations, and wrappers for basic types.
  * 
  * This file is a bunch of utilities for going back and forth between different types.
  * 

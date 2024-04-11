@@ -1,15 +1,7 @@
 /**
  * @file
- * @brief Warp-scope maps on shared vectors.
+ * @brief Group maps on shared vectors.
  */
-
-#pragma once
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-
-namespace kittens {
 
 /**
  * @brief Applies a unary operation to each element of a shared memory vector.
@@ -21,9 +13,8 @@ namespace kittens {
  */
 template<typename op, ducks::sv::all T>
 __device__ static inline void unary_op(T &dst, const T &src) {
-    __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
+    for(auto cur = laneid(); cur < T::length; cur+=GROUP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(src[cur]);
     }
 }
@@ -38,9 +29,8 @@ __device__ static inline void unary_op(T &dst, const T &src) {
  */
 template<typename op, ducks::sv::all T>
 __device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
-    __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
+    for(auto cur = laneid(); cur < T::length; cur+=GROUP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(lhs[cur], rhs[cur]);
     }
 }
@@ -55,9 +45,8 @@ __device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
  */
 template<typename op, ducks::sv::all T>
 __device__ static inline void bin_op(T &dst, const T &src, const typename T::dtype &param) {
-    __syncwarp();
     #pragma unroll
-    for(auto cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
+    for(auto cur = laneid(); cur < T::length; cur+=GROUP_THREADS) {
         dst[cur] = op::template op<typename T::dtype>(src[cur], param);
     }
 }
@@ -234,6 +223,4 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
 template<ducks::sv::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::div, T>(dst, lhs, rhs);
-}
-
 }

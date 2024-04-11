@@ -1,15 +1,7 @@
 /**
  * @file
- * @brief Warp-scope conversions on shared vectors.
+ * @brief Group conversions on shared vectors.
  */
-
-#pragma once
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-
-namespace kittens {
 
 /**
  * @brief Copies data from one shared vector to another, converting data types if necessary.
@@ -28,37 +20,16 @@ namespace kittens {
 template<ducks::sv::all SV1, ducks::sv::all SV2>
 __device__ static inline void copy(SV1 &dst, const SV2 &src) {
     static_assert(dst.length == src.length, "Source and destination vectors must have the same length.");
-    int lane = kittens::laneid();
     if constexpr (std::is_same_v<typename SV1::dtype, typename SV2::dtype>) { // just copy the memory over at wordsize.
         #pragma unroll
-        for(int i = lane; i < sizeof(dst)/sizeof(int); i+=WARP_THREADS) {
+        for(int i = laneid(); i < sizeof(dst)/sizeof(int); i+=GROUP_THREADS) {
             ((int*)(dst.data))[i] = ((int*)(src.data))[i];
         }
     }
     else { // convert
         #pragma unroll
-        for(int i = lane; i < dst.length; i+=WARP_THREADS) {
+        for(int i = laneid(); i < dst.length; i+=GROUP_THREADS) {
             dst[i] = base_types::convertor<typename SV1::dtype, typename SV2::dtype>::convert(src[i]);
         }
     }
-}
-
-/* ----------  SUBVEC  ---------- */
-
-/**
-* @brief Returns a reference to a subvec of a given shared vector
-*
-* @tparam subvec_tiles The length, in subtiles, of the subvec.
-* @tparam SV The type of the input vector, which must satisfy the ducks::sv::all concept.
-* @param src The input tile.
-* @param vec_idx The index of the subtile, in units of subvec_tiles*16 elements.
-* @return A reference to the subvec.
-*
-* @note The subvec length must evenly divide the vector length.
-*/
-template<int subvec_tiles, ducks::sv::all SV>
-__device__ inline typename SV::subvec<subvec_tiles> &subvec_inplace(SV &src, int vec_idx) {
-    return *(typename SV::subvec<subvec_tiles>*)(&src[vec_idx*kittens::TILE_DIM*subvec_tiles]);
-}
-
 }

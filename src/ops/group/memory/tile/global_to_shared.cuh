@@ -1,12 +1,7 @@
-#pragma once
-
-#include <cuda/pipeline>
-
-#include "../../../common/common.cuh"
-#include "../../../types/types.cuh"
-
-
-// ----------- ROW LAYOUTS ----------
+/**
+ * @file
+ * @brief Group (collaborative warp) ops for loading shared tiles from and storing to global memory. 
+ */
 
 template<ducks::st::row_layout ST>
 __device__ static inline void load(ST &dst, const typename ST::dtype *src, const int row_stride) {
@@ -14,7 +9,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 
-    int laneid = threadIdx.x;
+    int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
     int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
@@ -24,7 +19,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * BLOCK_SIZE + laneid;
+        int idx = i * GROUP_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
@@ -36,7 +31,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
 template<ducks::st::row_layout ST>
 __device__ static inline void store(typename ST::dtype *dst, const ST &src, const int row_stride) {
 
-    int laneid = threadIdx.x;
+    int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
     int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
@@ -46,7 +41,7 @@ __device__ static inline void store(typename ST::dtype *dst, const ST &src, cons
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * BLOCK_SIZE + laneid;
+        int idx = i * GROUP_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
@@ -62,7 +57,7 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 
-    int laneid = threadIdx.x;
+    int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
     int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
@@ -72,7 +67,7 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * BLOCK_SIZE + laneid;
+        int idx = i * GROUP_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
@@ -92,7 +87,7 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
 
-    int laneid = threadIdx.x;
+    int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
     int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
@@ -102,7 +97,7 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * BLOCK_SIZE + laneid;
+        int idx = i * GROUP_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
@@ -114,30 +109,5 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
                 cuda::aligned_size_t<16>(sizeof(float4)),
                 barrier
             );
-    }
-}
-
-// ----------  VECTORS ----------
-
-template<ducks::sv::all SV>
-__device__ static inline void load(SV &dst, const typename SV::dtype *src) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    __syncwarp();
-    #pragma unroll
-    for(int i = threadIdx.x; i < total_calls; i+=BLOCK_SIZE) {
-        if(i * elem_per_transfer < dst.length)
-            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer];
-    }
-}
-template<ducks::sv::all SV>
-__device__ static inline void store(typename SV::dtype *dst, const SV &src) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
-    __syncwarp();
-    #pragma unroll
-    for(int i = threadIdx.x; i < total_calls; i+=BLOCK_SIZE) {
-        if(i * elem_per_transfer < src.length)
-            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer]; // lmao it's identical
     }
 }

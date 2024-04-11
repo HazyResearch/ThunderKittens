@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Conversions between different shared memory tile types.
+ * @brief Conversions between shared tile types.
  */
 
 #pragma once

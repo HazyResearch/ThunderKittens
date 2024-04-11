@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Warp-scope reductions on shared vectors.
+ */
+
 #pragma once
 
 #include "../../../../common/common.cuh"

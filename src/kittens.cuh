@@ -1,5 +1,5 @@
 /**
- * @file kittens.cuh
+ * @file
  * @brief The master header file of ThunderKittens. This file includes everything you need!
  */
 
