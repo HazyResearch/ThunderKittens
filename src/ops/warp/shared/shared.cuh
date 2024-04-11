@@ -5,6 +5,5 @@
 
 #pragma once
 
-#include "vec.cuh"
-#include "conversions.cuh"
-#include "maps.cuh"
+#include "st/st.cuh"
+#include "sv/sv.cuh"

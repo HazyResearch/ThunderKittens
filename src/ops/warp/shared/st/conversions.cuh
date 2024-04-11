@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "../../../common/common.cuh"
-#include "../../../types/types.cuh"
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
 
 namespace kittens {
 
@@ -69,22 +69,4 @@ __device__ inline typename ST::subtile<subtile_height, subtile_width> subtile_in
     );
 }
 
-/* ----------  SUBVEC  ---------- */
-
-/**
-* @brief Returns a reference to a subvec of a given shared vector
-*
-* @tparam subvec_tiles The length, in subtiles, of the subvec.
-* @tparam SV The type of the input vector, which must satisfy the ducks::sv::all concept.
-* @param src The input tile.
-* @param vec_idx The index of the subtile, in units of subvec_tiles*16 elements.
-* @return A reference to the subvec.
-*
-* @note The subvec length must evenly divide the vector length.
-*/
-template<int subvec_tiles, ducks::sv::all SV>
-__device__ inline typename SV::subvec<subvec_tiles> &subvec_inplace(SV &src, int vec_idx) {
-    return *(typename SV::subvec<subvec_tiles>*)(&src[vec_idx*16*subvec_tiles]);
-}
-
-}
+} // namespace kittens
