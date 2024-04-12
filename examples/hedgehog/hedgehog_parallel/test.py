@@ -12,7 +12,7 @@ from hedgehog import HedgehogBased
 def main():
     batch_size = 2
     n_heads = 2
-    seq_lens = [256, 512, 1024, 2048]
+    seq_lens = [256, 512, 1024, 2048, 4096]
     dtypes = [torch.bfloat16]
     
     output_dir = "outputs"
@@ -53,14 +53,16 @@ def main():
             print(q.shape, k.shape, v.shape, ref.shape)
             
             print("Unacceptable Difference:")
-            print(torch.abs(ref - tri).max())
+            # print(torch.abs(ref - tri).max())
+            print(f"out max diff: {(tri - ref).abs().max().item()}")
         else:
             print(f"Test passed for seq_len={seq_len}, dtype={dtype}")
             print("Shapes:")
             print(q.shape, k.shape, v.shape, ref.shape)
             
             print("Acceptable Difference:")
-            print(torch.abs(ref - tri).max())
+            # print(torch.abs(ref - tri).max())
+            print(f"out max diff: {(tri - ref).abs().max().item()}")
         print("---------------------------------------------------")
             
         # print out q, k, v, ref in a file in outputs/

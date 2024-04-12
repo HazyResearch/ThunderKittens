@@ -251,10 +251,30 @@ class HedgehogBased(nn.Module):
             
         o = torch.empty_like(v)
         z = torch.empty(q.size(0), q.size(1), q.size(2), dtype=q.dtype, device=q.device)
+        
+        BS_q_n = 128
+        BS_kv_n = 32
+        
+        BS_k_d = min(128, triton.next_power_of_2(k.shape[-1]))
+        BS_v_dv = min(128, triton.next_power_of_2(v.shape[-1]))
+        BS_k_d, BS_v_dv = max(BS_k_d, 16), max(BS_v_dv, 16)
+        
+        D = q.shape[-1] # head_dim
+        DV = v.shape[-1]  # feature_dim
+        
+        NK = triton.cdiv(D, BS_k_d)
+        NV = triton.cdiv(DV, BS_v_dv)
+        
+        num_stages = 2
+        num_warps = 4
+        
+        grid = (NK * NV, triton.cdiv(q.size(2), BS_q_n), q.size(0) * q.size(1))
+        
+        scale = 1.0
+        if use_scale:
+            scale = D ** -0.5
                
-        if self.use_triton:
-            print("Using Triton")
-            
+        if self.use_triton:        
             # below is the pytorch equiv of the triton kernel
             # in terms of style of computation 
 
@@ -262,28 +282,6 @@ class HedgehogBased(nn.Module):
             # cumsum_matrix = torch.tril(torch.ones((q.size(2), q.size(2)), device=q.device, dtype=q.dtype))
             # A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) * cumsum_matrix
             # o = torch.einsum("bhnm,bhme->bhne", A_qk, v)
-            
-            BS_q_n = 128
-            BS_kv_n = 32
-            
-            BS_k_d = min(128, triton.next_power_of_2(k.shape[-1]))
-            BS_v_dv = min(128, triton.next_power_of_2(v.shape[-1]))
-            BS_k_d, BS_v_dv = max(BS_k_d, 16), max(BS_v_dv, 16)
-            
-            D = q.shape[-1] # head_dim
-            DV = v.shape[-1]  # feature_dim
-            
-            NK = triton.cdiv(D, BS_k_d)
-            NV = triton.cdiv(DV, BS_v_dv)
-            
-            num_stages = 2
-            num_warps = 4
-            
-            grid = (NK * NV, triton.cdiv(q.size(2), BS_q_n), q.size(0) * q.size(1))
-            
-            scale = 1.0
-            if use_scale:
-                scale = D ** -0.5
             
             parallel_based_fwd_kernel_hedgehog[grid](
                 q, k, v, o, z,
@@ -307,7 +305,6 @@ class HedgehogBased(nn.Module):
                 return o
             
         else:
-            print("Using PyTorch")
             if use_scale:
                 q = q * (q.shape[-1] ** -0.5)
 
