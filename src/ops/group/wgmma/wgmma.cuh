@@ -3,8 +3,6 @@
  * @brief Warpgroup matrix-multiply accumulate operations. These ops are necessary to achieve full utilization on H100 GPUs.
  */
 
-#pragma once
-
 // [(register, shared) -> register] edition
 /**
  * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
@@ -28,7 +26,7 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
-        wgmma_base<M, 1>::rt_st(
+        kittens::detail::wgmma_base<M, 1>::rt_st(
             d_ref,
             a.tiles[n][0],
             b.descriptor(0),
@@ -36,7 +34,7 @@ __device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
         );
         #pragma unroll
         for(int k = 1; k < K; k++) {
-            wgmma_base<M, 1>::rt_st(
+            kittens::detail::wgmma_base<M, 1>::rt_st(
                 d_ref,
                 a.tiles[n][k],
                 b.descriptor(k),
@@ -102,7 +100,7 @@ __device__ static inline void mma(rt_fl<1, M, ducks::rt_layout::row> &d,
                             const st_bf<4, K, L_A>           &a,
                             const st_bf<K, M, L_B>           &b) {
     KITTENS_CHECK_WARPGROUP
-    wgmma_base<M, 1>::st_st(
+    kittens::detail::wgmma_base<M, 1>::st_st(
         d,
         a.descriptor(0),
         b.descriptor(0),
@@ -110,7 +108,7 @@ __device__ static inline void mma(rt_fl<1, M, ducks::rt_layout::row> &d,
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M, 1>::st_st(
+        kittens::detail::wgmma_base<M, 1>::st_st(
             d,
             a.descriptor(k),
             b.descriptor(k),
@@ -178,7 +176,7 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
-        wgmma_base<M, 0>::rt_st(
+        kittens::detail::wgmma_base<M, 0>::rt_st(
             d_ref,
             a.tiles[n][0],
             b.descriptor(0),
@@ -186,7 +184,7 @@ __device__ static inline void dot(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
         );
         #pragma unroll
         for(int k = 1; k < K; k++) {
-            wgmma_base<M, 0>::rt_st(
+            kittens::detail::wgmma_base<M, 0>::rt_st(
                 d_ref,
                 a.tiles[n][k],
                 b.descriptor(k),
@@ -254,7 +252,7 @@ __device__ static inline void dot(rt_fl<1, M, ducks::rt_layout::row> &d,
                             const st_bf<4, K, L_A>           &a,
                             const st_bf<M, K, L_B>           &b) {
     KITTENS_CHECK_WARPGROUP
-    wgmma_base<M, 0>::st_st(
+    kittens::detail::wgmma_base<M, 0>::st_st(
         d,
         a.descriptor(0),
         b.descriptor(0),
@@ -262,7 +260,7 @@ __device__ static inline void dot(rt_fl<1, M, ducks::rt_layout::row> &d,
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        wgmma_base<M, 0>::st_st(
+        kittens::detail::wgmma_base<M, 0>::st_st(
             d,
             a.descriptor(k),
             b.descriptor(k),
@@ -320,7 +318,7 @@ __device__ static inline void dot_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param dst[in,out] The destination register-tile matrix to be synchronized.
  */
 template<int height, int width>
-__device__ static inline void fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
+__device__ static inline void mma_fence(rt_fl<height, width, ducks::rt_layout::row> &dst) {
     KITTENS_CHECK_WARPGROUP
     #pragma unroll
     for(int i = 0; i < height; i++) {

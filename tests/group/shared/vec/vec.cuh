@@ -1,17 +1,20 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_GROUP
+#ifdef TEST_GROUP_SHARED_VEC
 
 #include "testing_commons.cuh"
 
-#include "memory/memory.cuh"
-#include "shared/shared.cuh"
-#include "wgmma/wgmma.cuh"
+#include "maps.cuh"
+#include "conversions.cuh"
 
 namespace group {
+namespace shared {
+namespace vec {
 
 void tests(test_data &results);
 
+}
+}
 }
 
 #endif

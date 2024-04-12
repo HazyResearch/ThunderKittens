@@ -5,6 +5,6 @@
 
 #pragma once
 
-#include "util/util.cuh"
+// #include "util/util.cuh"
 #include "tile/tile.cuh"
 #include "vec/vec.cuh"

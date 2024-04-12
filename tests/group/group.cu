@@ -2,12 +2,16 @@
 
 #ifdef TEST_GROUP
 
-using namespace group;
-
 void group::tests(test_data &results) {
     std::cout << "\n ------------------------------     Starting ops/group tests!     ------------------------------\n" << std::endl;
 #ifdef TEST_GROUP_MEMORY
-    memory::tests(results);
+    group::memory::tests(results);
+#endif
+#ifdef TEST_GROUP_SHARED
+    group::shared::tests(results);
+#endif
+#ifdef TEST_GROUP_WGMMA
+    group::wgmma::tests(results);
 #endif
 }
 

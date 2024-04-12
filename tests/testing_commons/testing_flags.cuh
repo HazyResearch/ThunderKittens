@@ -5,7 +5,6 @@
 // Catchall macros
 #ifdef TEST_ALL
 #define TEST_ALL_WARP
-#define TEST_ALL_WARPGROUP
 #define TEST_ALL_GROUP
 #endif
 
@@ -23,7 +22,7 @@
 #define TEST_ALL_GROUP_MEMORY
 #define TEST_ALL_GROUP_SHARED
 #ifdef KITTENS_HOPPER  // only compile on H100
-#define TEST_ALL_WARPGROUP_WGMMA // leaf
+#define TEST_ALL_GROUP_WGMMA // leaf
 #endif
 #endif
 
@@ -56,6 +55,10 @@
 #ifdef TEST_ALL_GROUP_SHARED
 #define TEST_ALL_GROUP_SHARED_TILE
 #define TEST_ALL_GROUP_SHARED_VEC
+#endif
+
+#ifdef TEST_ALL_GROUP_WGMMA
+#define TEST_GROUP_WGMMA_MMA
 #endif
 
 /* -----  DEPTH 3 MACROS  ----- */
@@ -217,13 +220,17 @@
 #define TEST_GROUP_SHARED
 #endif
 
+#if defined(TEST_GROUP_WGMMA_MMA)
+#define TEST_GROUP_WGMMA
+#endif
+
 /* -----  DEPTH 1 MACROS  ----- */
 
 #if defined(TEST_WARP_MEMORY) || defined(TEST_WARP_REGISTER) || defined(TEST_WARP_SHARED)
 #define TEST_WARP
 #endif
 
-#if defined(TEST_GROUP_MEMORY) || defined(TEST_GROUP_SHARED)
+#if defined(TEST_GROUP_MEMORY) || defined(TEST_GROUP_SHARED) || defined(TEST_GROUP_WGMMA)
 #define TEST_GROUP
 #endif
 

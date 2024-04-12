@@ -7,4 +7,5 @@
 
 #ifdef KITTENS_HOPPER
 #include "tma.cuh"
+#include "dsmem.cuh"
 #endif
