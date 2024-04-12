@@ -16,7 +16,7 @@ using layout_v = ducks::st_layout::wgmma_col_t_0b;
 using layout_o = ducks::st_layout::naive; // tma_swizzle seems unreliable right now.
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
-void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
+void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_g, CUtensorMap* tma_q_grad, CUtensorMap* tma_k_grad, CUtensorMap* tma_v_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
 
@@ -134,7 +134,7 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     __syncthreads();
     if (warpid % 4 == 0) { // store o
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
-        tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
+        tma::store_async(tma_q_grad, (o_smem[warpgroupid]), tile_idx); 
         tma::store_commit_group(); 
     }
     tma::store_async_wait();
