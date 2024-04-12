@@ -20,16 +20,8 @@
 template<ducks::sv::all SV1, ducks::sv::all SV2>
 __device__ static inline void copy(SV1 &dst, const SV2 &src) {
     static_assert(dst.length == src.length, "Source and destination vectors must have the same length.");
-    if constexpr (std::is_same_v<typename SV1::dtype, typename SV2::dtype>) { // just copy the memory over at wordsize.
-        #pragma unroll
-        for(int i = laneid(); i < sizeof(dst)/sizeof(int); i+=GROUP_THREADS) {
-            ((int*)(dst.data))[i] = ((int*)(src.data))[i];
-        }
-    }
-    else { // convert
-        #pragma unroll
-        for(int i = laneid(); i < dst.length; i+=GROUP_THREADS) {
-            dst[i] = base_types::convertor<typename SV1::dtype, typename SV2::dtype>::convert(src[i]);
-        }
+    #pragma unroll
+    for(int i = laneid(); i < dst.length; i+=GROUP_THREADS) {
+        dst[i] = base_types::convertor<typename SV1::dtype, typename SV2::dtype>::convert(src[i]);
     }
 }

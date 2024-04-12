@@ -10,7 +10,7 @@ struct vec_norm {
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // turns out to get the numerics right in bf16 you have to actually simulate the reduction tree :/
         kittens::bf16 sum[32] = __float2bfloat16(0.f);
-        if(S > 1) {
+        if constexpr (S > 1) {
             for(int i = 0; i < 32; i++) sum[i] = __float2bfloat16(abs(i_ref[i]));
             for(int i = 32; i < o_ref.size(); i++) sum[i%32] += __float2bfloat16(abs(i_ref[i]));
             // now reduce first step
@@ -31,8 +31,10 @@ struct vec_norm {
     }
     template<int S, int NW>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
-        __shared__ kittens::col_vec<kittens::st_bf<S, S>> vec;
-        __shared__ kittens::col_vec<kittens::st_bf<S, S>> absvec;
+        extern __shared__ kittens::alignment_dummy __shm[];
+        kittens::shared_allocator al((int*)&__shm[0]); 
+        kittens::col_vec<kittens::st_bf<S, S>> &vec    = al.allocate<kittens::col_vec<kittens::st_bf<S, S>>>();
+        kittens::col_vec<kittens::st_bf<S, S>> &absvec = al.allocate<kittens::col_vec<kittens::st_bf<S, S>>>();
         kittens::load(vec, input);
         kittens::abs(absvec, vec);
         kittens::bf16 f = __float2bfloat16(1.f);

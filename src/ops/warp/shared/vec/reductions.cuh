@@ -31,11 +31,10 @@ __device__ static inline void reduce(typename SV::dtype &dst_accum, const SV &sr
     T accum;
     if(laneid < src.length) accum = src[laneid]; // initialize a register accumulator
     __syncwarp();
-    #pragma unroll
     for(int i = laneid+kittens::WARP_THREADS; i < src.length; i+=kittens::WARP_THREADS) {
         accum = op::template op<T>(accum, src[i]);
-        __syncwarp();
     }
+    __syncwarp();
     // We can now reduce within the warp.
     if constexpr (src.length > 16) {
         accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));

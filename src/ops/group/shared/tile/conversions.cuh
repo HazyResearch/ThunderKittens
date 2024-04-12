@@ -19,18 +19,9 @@
  */
 template<typename T, typename U, int _height, int _width, ducks::st_layout::all L1, ducks::st_layout::all L2>
 __device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, _height, _width, L2> &src) {
-    if constexpr (std::is_same_v<L1, L2>) { // if same layout can just do a simple copy
-        #pragma unroll
-        for(int i = laneid(); i < dst.num_elements; i+=GROUP_THREADS) {
-            dst[i] = base_types::convertor<T, U>::convert(src[i]);
-        }
-    }
-    else { // otherwise we need to actually do indexing calculations :(
-        #pragma unroll
-        for(int i = laneid(); i < dst.num_elements; i+=GROUP_THREADS) {
-            int row = i/dst.cols;
-            int col = i%dst.cols;
-            dst[{row, col}] = base_types::convertor<T, U>::convert(src[{row, col}]);
-        }
+    #pragma unroll
+    for(int i = laneid(); i < dst.num_elements; i+=GROUP_THREADS) {
+        int row = i/dst.cols, col = i%dst.cols;
+        dst[{row, col}] = base_types::convertor<T, U>::convert(src[{row, col}]);
     }
 }
