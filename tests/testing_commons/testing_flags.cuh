@@ -209,7 +209,7 @@
 
 // Group macros
 
-#if defined(TEST_ALL_GROUP_MEMORY_TILE) || defined(TEST_ALL_GROUP_MEMORY_VEC)
+#if defined(TEST_GROUP_MEMORY_TILE) || defined(TEST_GROUP_MEMORY_VEC)
 #define TEST_GROUP_MEMORY
 #endif
 

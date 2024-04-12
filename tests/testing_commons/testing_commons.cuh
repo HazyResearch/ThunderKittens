@@ -163,9 +163,7 @@ template<typename test, int S, typename... args> using wrapper_1d_warpgroup = wr
 template<typename test, int S, typename... args> using wrapper_1d_block     = wrapper_1d<test, S, 8, args...>;
 
 template<typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args> using sweep_size_1d = loop_s<wrapper_1d, test, MAX_S, NUM_WORKERS, MAX_S, args...>;
-template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warp      = sweep_size_1d<test, MAX_S, 1, args...>;
-template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warpgroup = sweep_size_1d<test, MAX_S, 4, args...>;
-template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_block     = sweep_size_1d<test, MAX_S, 8, args...>;
+template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warp = sweep_size_1d<test, MAX_S, 1, args...>;
 
 
 // ----- 2D Wrappers -----
@@ -209,9 +207,7 @@ template<typename test, int H, int W, typename... args> using wrapper_2d_warpgro
 template<typename test, int H, int W, typename... args> using wrapper_2d_block     = wrapper_2d<test, H, W, 8, args...>;
 
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using sweep_size_2d = loop_h<wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warp      = sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warpgroup = sweep_size_2d<test, MAX_H, MAX_W, 4, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_block     = sweep_size_2d<test, MAX_H, MAX_W, 8, args...>;
+template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warp = sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
 
 // Loop over st_layouts too, since this is needed by a bunch of tests.
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
