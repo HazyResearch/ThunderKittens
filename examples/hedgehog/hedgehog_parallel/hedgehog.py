@@ -11,7 +11,18 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
+# import triton kernel
 from fwd_tri import parallel_based_fwd_kernel_hedgehog
+
+# import fast transformers kernel
+try:
+    sys.path.append("/var/cr05_data/sim_data/code/release/based/train/")
+    from csrc.causal_dot_prod import causal_dot_product
+    print(f"Successfully imported the causal dot product kernel! ")
+except:
+    print(f"Could not import the causal dot product kernel... ")
+    causal_dot_product = None
+
 
 class TiedHeadMLP(nn.Module):
     """
@@ -194,6 +205,7 @@ class SoftmaxDim(ExpDim):
             torch.softmax(-x, dim=self.head_dim_idx)
         ], dim=self.head_dim_idx).clamp(min=self.eps)
 
+
 class HedgehogBased(nn.Module):
     def __init__(self, 
                  num_heads: int, 
@@ -204,6 +216,7 @@ class HedgehogBased(nn.Module):
                  zero_init: bool = False, 
                  bias: bool = False, 
                  use_triton: bool = False,
+                 use_fast_transformers: bool = False,
                  dtype: torch.dtype = torch.float32):
         super().__init__()
         
@@ -220,6 +233,9 @@ class HedgehogBased(nn.Module):
         self.eps = torch.tensor(1e-12, dtype=self.dtype, device='cuda')
         
         self.use_triton = use_triton
+        self.use_fast_transformers = use_fast_transformers
+        assert not (self.use_fast_transformers and self.use_triton), "Cannot use both triton and fast transformers"
+        if self.use_fast_transformers: assert causal_dot_product is not None, "Fast transformers kernel not imported"
 
         layer_kwargs = {
             'num_heads': self.num_heads,

@@ -11,7 +11,7 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
     
     method2timing = defaultdict(dict)
     method2mem = defaultdict(dict)
-    for i, seq_len in enumerate([256, 512, 1024]):
+    for i, seq_len in enumerate([256, 512, 1024, 8192]):
         batch_size = 1
         n_heads = 1
         
@@ -31,12 +31,20 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
         # initialize model
         scaling, norm = False, False
         
+        # manual model
         torch.manual_seed(1)
         model_ref = HedgehogBased(num_heads=n_heads, head_dim=d, feature_dim=dv, input_dim=d, dtype=torch.bfloat16, zero_init=False, use_triton=False)
         ref = model_ref(q, k, v, scaling, norm)
+
+        # triton model
         torch.manual_seed(1)
         model_tri = HedgehogBased(num_heads=n_heads, head_dim=d, feature_dim=dv, input_dim=d, dtype=torch.bfloat16, zero_init=False, use_triton=True)
         tri = model_tri(q, k, v, scaling, norm)
+
+        # fast transformers model
+        torch.manual_seed(1)
+        model_ft = HedgehogBased(num_heads=n_heads, head_dim=d, feature_dim=dv, input_dim=d, dtype=torch.bfloat16, zero_init=False, use_triton=False, use_fast_transformers=True)
+        ft = model_ft(q, k, v, scaling, norm)
 
         # ref model ---
         torch.cuda.synchronize()
@@ -69,6 +77,23 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
 
         if i != 0: # triton is slow on the first call
             method2timing['Triton Kernel'][seq_len] = _time * 1000
+
+        # fast transformers model ---
+        torch.cuda.synchronize()
+        t0 = time.time()
+
+        outs = [
+            model_ft(q, k, v, scaling, norm)
+            for _ in range(num_iters)
+        ]
+
+        torch.cuda.synchronize()
+        t1 = time.time()
+        _time = (t1 - t0) / num_iters
+
+        if i != 0: # triton is slow on the first call
+            method2timing['Fast Transformers'][seq_len] = _time * 1000
+
 
     # plot: time vs. sequence length
     fig, ax = plt.subplots()
