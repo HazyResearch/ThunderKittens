@@ -18,12 +18,17 @@ def main():
     output_dir = "outputs"
     os.makedirs(output_dir, exist_ok=True)
     
-    def run_test(scaling, norm):
+    def run_test(scaling, norm, rand):
         torch.manual_seed(0)
-            
-        q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-        k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-        v = (torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(dtype) / 128).requires_grad_(True)
+        
+        if rand:
+            q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
+            k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
+            v = (torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(dtype) / 128).requires_grad_(True)
+        else:
+            q = (torch.ones(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
+            k = (torch.ones(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
+            v = (torch.ones(batch_size, n_heads, seq_len, 128).cuda().to(dtype) / 128).requires_grad_(True)
         
         q_tri = q.clone().detach().requires_grad_(True)
         k_tri = k.clone().detach().requires_grad_(True)
@@ -59,20 +64,25 @@ def main():
         print("---------------------------------------------------")
             
         # print out q, k, v, ref in a file in outputs/
-        with open(f"{output_dir}/seq_len_{seq_len}_dtype_{dtype}_scaling_{scaling}_norm_{norm}.txt", "w") as f:
+        with open(f"{output_dir}/seq_len_{seq_len}_scaling_{scaling}_norm_{norm}_rand_{rand}.txt", "w") as f:
             f.write(f"ref: {ref}\n")
         
         # print out q_tri, k_tri, v_tri, ref in a file in outputs/
-        with open(f"{output_dir}/seq_len_{seq_len}_dtype_{dtype}_scaling_{scaling}_norm_{norm}_tri.txt", "w") as f:
+        with open(f"{output_dir}/seq_len_{seq_len}_scaling_{scaling}_norm_{norm}_rand_{rand}_tri.txt", "w") as f:
             f.write(f"tri: {tri}\n")
 
     for seq_len in seq_lens:
         for dtype in dtypes:
             
-            run_test(False, False)
-            run_test(True, False)
-            run_test(False, True)
-            run_test(True, True)
+            run_test(False, False, False)
+            run_test(True,  False, False)
+            run_test(False, True,  False)
+            run_test(True,  True,  False)
+            
+            run_test(False, False, True)
+            run_test(True,  False, True)
+            run_test(False, True,  True)
+            run_test(True,  True,  True)
 
 
 if __name__ == "__main__":
