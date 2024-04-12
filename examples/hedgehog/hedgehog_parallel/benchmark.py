@@ -7,16 +7,16 @@ from hedgehog import HedgehogBased
 
 
 def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
-    num_iters = 10
+    num_iters = 20
     
     method2timing = defaultdict(dict)
     method2mem = defaultdict(dict)
-    for i, seq_len in enumerate([256, 512, 1024, 8192]):
+    for i, seq_len in enumerate([256, 512, 1024, 2048]):
         batch_size = 1
         n_heads = 1
         
         d  = 16
-        dv = 128
+        dv = 64
         
         print(f"B={batch_size}, H={n_heads}, N={seq_len}, D={d}, DV={dv}")
         print("-----------------------------------")

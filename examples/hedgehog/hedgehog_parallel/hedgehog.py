@@ -319,7 +319,23 @@ class HedgehogBased(nn.Module):
             if use_norm:
                 o = o / (z[..., None] + self.eps)
                 return o
-            
+
+        elif self.use_fast_transformers:
+            v = causal_dot_product(
+                q.contiguous().to(dtype=torch.float32), 
+                k.contiguous().to(dtype=torch.float32),
+                v.contiguous().to(dtype=torch.float32),
+            )
+            z = 1 / (
+                torch.einsum(
+                    "bhld,bhld->bhl", 
+                    q.to(dtype=torch.float32), 
+                    k.to(dtype=torch.float32).cumsum(2)
+                ) + self.eps
+            )
+            y = v * z[..., None]
+            o = rearrange(y, 'b h l d -> b l (h d)')
+
         else:
             if use_scale:
                 q = q * (q.shape[-1] ** -0.5)
