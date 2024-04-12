@@ -5,5 +5,5 @@
 
 #pragma once
 
-#include "st/st.cuh"
-#include "sv/sv.cuh"
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"

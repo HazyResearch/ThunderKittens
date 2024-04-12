@@ -47,7 +47,7 @@ struct sv {
     using dtype = _T;
 
     static constexpr int tiles  = _tiles; ///< Length in subtiles.
-    static constexpr int length = tiles * 16; ///< Length in elements.
+    static constexpr int length = tiles * kittens::TILE_DIM; ///< Length in elements.
 
     dtype data[length]; ///< The actual shared vector data.
 

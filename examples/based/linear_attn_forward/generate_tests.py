@@ -19,8 +19,8 @@ if TESTNAME in ['ones_all', 'ones_t0', 'ones_t1', 'ones_t2']:
     v = torch.ones((B, H, N, DV), dtype=torch.bfloat16, device='cuda')/DV
 elif TESTNAME in ['randn_all', 'randn_t0', 'randn_t1', 'randn_t2']:
     torch.random.manual_seed(42)
-    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')/D
-    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')/D
+    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')/float(D)**.5
+    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')/float(D)**.5
     v = torch.randn((B, H, N, DV), dtype=torch.bfloat16, device='cuda')/DV
 else:
     print('Invalid test name')

@@ -4,10 +4,8 @@
 
 #include "testing_commons.cuh"
 
-#include "global_to_register.cuh"
-#include "global_to_shared.cuh"
-#include "shared_to_register.cuh"
-#include "tma.cuh"
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"
 
 namespace warp {
 namespace memory {

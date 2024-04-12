@@ -59,10 +59,10 @@ using test_data = std::vector<test_info>;
 template<template<typename,int,int,typename...> typename base, typename test, int MAX_S, int NUM_WORKERS, int S, typename... args>
 struct loop_s {
     static void run(test_data& results) {
-        base<test, S, NUM_WORKERS, args...>::run(results);
         if constexpr (S > 1) {
             loop_s<base, test, MAX_S, NUM_WORKERS, S-1, args...>::run(results);
         }
+        base<test, S, NUM_WORKERS, args...>::run(results);
     }
 };
 
@@ -70,19 +70,19 @@ struct loop_s {
 template<template<typename,int,int,int,typename...> typename base, typename test, int MAX_H, int MAX_W, int NUM_WORKERS, int H, int W, typename... args>
 struct loop_w {
     static void run(test_data& results) {
-        base<test, H, W, NUM_WORKERS, args...>::run(results);
         if constexpr (W > 1) {
             loop_w<base, test, MAX_H, MAX_W, NUM_WORKERS, H, W-1, args...>::run(results);
         }
+        base<test, H, W, NUM_WORKERS, args...>::run(results);
     }
 };
 template<template<typename,int,int,int,typename...> typename base, typename test, int MAX_H, int MAX_W, int NUM_WORKERS, int H, typename... args>
 struct loop_h {
     static void run(test_data& results) {
-        loop_w<base, test, MAX_H, MAX_W, NUM_WORKERS, H, MAX_W, args...>::run(results);
         if constexpr (H > 1) {
             loop_h<base, test, MAX_H, MAX_W, NUM_WORKERS, H-1, args...>::run(results);
         }
+        loop_w<base, test, MAX_H, MAX_W, NUM_WORKERS, H, MAX_W, args...>::run(results);
     }
 };
 
@@ -90,9 +90,9 @@ struct loop_h {
 /* --------------------  TEST INITIALIZE+VALIDATE FUNCS  -------------------- */
 
 enum initializers {
-    RANDOM = 0, // uniform random init
-    ARANGE = 1, // write an increasing sequence into i_ref and d_i arrays
-    NONE   = 2  // use whatever values were already in i_ref.
+    RANDOM = 0, // uniform random init. useful for confirming correctness.
+    ARANGE = 1, // write an increasing sequence into i_ref and d_i arrays. useful for debugging memory movement.
+    NONE   = 2  // use whatever values were already in i_ref. useful for detailed debugging.
 };
 template<initializers initializer=initializers::RANDOM, int SEED=42>
 void initialize(kittens::bf16 **d_i, kittens::bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {

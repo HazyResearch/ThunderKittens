@@ -42,6 +42,12 @@ template<int S, int NW, kittens::ducks::rt_layout::all L> std::string generate_t
     else label += "_[rt_col_layout]";
     return label;
 }
+template<int S, int NW, kittens::ducks::rt_layout::all L1, kittens::ducks::rt_layout::all L2> std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<S,NW,L1>(test_id);
+    if constexpr (std::is_same_v<L2, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
+    else label += "_[rt_col_layout]";
+    return label;
+}
 
 // 2D test names
 

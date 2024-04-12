@@ -10,7 +10,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
           bf16 *_o = __o__ + block_start;
 
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator((int*)&__shm[0]);
+    shared_allocator al((int*)&__shm[0]);
     
     st_bf_1x4<ducks::st_layout::xor_swizzle> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, NUM_WORKERS>();
     st_bf_1x4<ducks::st_layout::xor_swizzle> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, NUM_WORKERS>();

@@ -4,11 +4,8 @@
 
 #include "testing_commons.cuh"
 
-#include "maps.cuh"
-#include "reductions.cuh"
-#include "mma.cuh"
-#include "conversions.cuh"
-#include "vec.cuh"
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"
 
 namespace warp {
 namespace reg { // register is a reserved word

@@ -92,9 +92,9 @@ struct st {
 
     static constexpr int height              = _height; ///< Height of the tile in terms of 16-element subtiles.
     static constexpr int width               = _width; ///< Width of the tile in terms of 16-element subtiles.
-    static constexpr int rows                = height * 16; ///< Total number of rows in the tile.
-    static constexpr int cols                = width  * 16; ///< Total number of cols in the tile.
-    static constexpr int num_elements        = width  * height * 16*16; ///< Total number of elements in the tile.
+    static constexpr int rows                = height * kittens::TILE_DIM; ///< Total number of rows in the tile.
+    static constexpr int cols                = width  * kittens::TILE_DIM; ///< Total number of cols in the tile.
+    static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
@@ -171,14 +171,14 @@ struct st_subtile {
 
     static constexpr int underlying_height        = _underlying_height;
     static constexpr int underlying_width         = _underlying_width;
-    static constexpr int underlying_rows          = underlying_height * 16;
-    static constexpr int underlying_cols          = underlying_width  * 16;
+    static constexpr int underlying_rows          = underlying_height * kittens::TILE_DIM;
+    static constexpr int underlying_cols          = underlying_width  * kittens::TILE_DIM;
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int height              = _subtile_height;
     static constexpr int width               = _subtile_width;
-    static constexpr int rows                = height * 16;
-    static constexpr int cols                = width  * 16;
+    static constexpr int rows                = height * kittens::TILE_DIM;
+    static constexpr int cols                = width  * kittens::TILE_DIM;
     static constexpr int num_elements        = rows * cols;
 
     dtype *data;

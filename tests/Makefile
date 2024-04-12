@@ -1,5 +1,5 @@
 # GPU Selection: Set to either 4090 or H100
-GPU_TARGET=H100
+GPU_TARGET=4090
 COMP_LEVEL=fast
 
 # Compiler
@@ -9,11 +9,11 @@ NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../src
 # At what level to run tests?
 NVCCFLAGS+= -DTEST_INTENSITY=1 # this is still on the testing todo list
 # Which tests to run?
-NVCCFLAGS+= -DTEST_ALL # Run all tests. But be warned, this will take a year to link.
-# NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY_TMA # Or look in testing_commons/flags.cuh for specific tests to significantly reduce compilation time.
+# NVCCFLAGS+= -DTEST_ALL # Run all tests. But be warned, this will take a year to link.
+NVCCFLAGS+= -DTEST_ALL_WARP_SHARED_TILE # Or look in testing_commons/flags.cuh for specific tests to significantly reduce compilation time.
 
 ifeq ($(COMP_LEVEL),fast)
-NVCCFLAGS+= -O0 --threads=0
+NVCCFLAGS+= -O0 --threads=0 -diag-suppress 20054
 else ifeq ($(COMP_LEVEL),debug)
 NVCCFLAGS+= -g -G
 else ifeq ($(COMP_LEVEL),profile)

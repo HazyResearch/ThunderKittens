@@ -2,13 +2,11 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 4
-#define ATTN_H 16
+#define ATTN_B 1
+#define ATTN_H 1
 #define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
-
-#define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -91,8 +89,11 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    CudaCheckError();
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = 80000; //kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
     using H = kittens::bf16;
@@ -104,10 +105,11 @@ int main(int argc, char **argv) {
 
     const int ITER = 10;
     cudaDeviceSynchronize();
+    CudaCheckError();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        a012_compute_ker<H,T,false><<<ATTN_B*ATTN_H,N_WARPS*32,mem_size>>>(ATTN_N, ATTN_D_SMALL, ATTN_D, d_q, d_k, d_v, d_o, NULL, NULL, NULL);
+        a012_compute_ker<H,T,false><<<ATTN_B*ATTN_H,N_THREADS,mem_size>>>(ATTN_N, ATTN_D_SMALL, ATTN_D, d_q, d_k, d_v, d_o, NULL, NULL, NULL);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -130,7 +132,7 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i % TOTAL_UNIQUE_ELEMENTS_VO] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
         // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << '\n';
+        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
         o_file << o[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
         diff_file << diff << ' ';
         if(abs(diff) > 0.01 || isnan(diff)) {

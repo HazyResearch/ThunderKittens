@@ -4,11 +4,11 @@
 
 #include "testing_commons.cuh"
 
-#include "conversions.cuh"
-#include "vec.cuh"
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"
 
 namespace warp {
-namespace shared { // register is a reserved word
+namespace shared {
 
 void tests(test_data &results);
 
