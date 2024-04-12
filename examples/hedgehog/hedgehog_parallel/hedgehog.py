@@ -243,7 +243,7 @@ class HedgehogBased(nn.Module):
         self.feature_map_q = SoftmaxDim(mlp=self.learned_kernel, **feature_map_kwargs)
         self.feature_map_k = copy.deepcopy(self.feature_map_q)
         
-        self.BK = min(128, triton.next_power_of_2(self.head_dim))
+        self.BS_k_d = min(128, triton.next_power_of_2(self.head_dim))
     
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, use_scale: bool, use_norm: bool): 
@@ -255,41 +255,35 @@ class HedgehogBased(nn.Module):
         if self.use_triton:
             print("Using Triton")
             
-            # if use_scale:
-            #     q = q * (q.shape[-1] ** -0.5)
+            # below is the pytorch equiv of the triton kernel
+            # in terms of style of computation 
 
             # # compute linear attention
             # cumsum_matrix = torch.tril(torch.ones((q.size(2), q.size(2)), device=q.device, dtype=q.dtype))
             # A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) * cumsum_matrix
             # o = torch.einsum("bhnm,bhme->bhne", A_qk, v)
             
-            # # apply normalization
-            # if use_norm:
-            #     q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
-            #     z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
-            #     return o / z
+            BS_q_n = 128
+            BS_kv_n = 32
             
-            btl = 128
-            bts = 32
+            BS_k_d = min(128, triton.next_power_of_2(k.shape[-1]))
+            BS_v_dv = min(128, triton.next_power_of_2(v.shape[-1]))
+            BS_k_d, BS_v_dv = max(BS_k_d, 16), max(BS_v_dv, 16)
             
-            bk = min(128, triton.next_power_of_2(k.shape[-1]))
-            bv = min(128, triton.next_power_of_2(v.shape[-1]))
-            bk, bv = max(bk, 16), max(bv, 16)
+            D = q.shape[-1] # head_dim
+            DV = v.shape[-1]  # feature_dim
             
-            d_head_qk = q.shape[-1] # head_dim
-            d_head_v = v.shape[-1]  # feature_dim
-            
-            NK = triton.cdiv(d_head_qk, bk)
-            NV = triton.cdiv(d_head_v, bv)
+            NK = triton.cdiv(D, BS_k_d)
+            NV = triton.cdiv(DV, BS_v_dv)
             
             num_stages = 2
             num_warps = 4
             
-            grid = (NK * NV, triton.cdiv(q.size(2), btl), q.size(0) * q.size(1))
+            grid = (NK * NV, triton.cdiv(q.size(2), BS_q_n), q.size(0) * q.size(1))
             
             scale = 1.0
             if use_scale:
-                scale = d_head_qk ** -0.5
+                scale = D ** -0.5
             
             parallel_based_fwd_kernel_hedgehog[grid](
                 q, k, v, o, z,
@@ -297,11 +291,11 @@ class HedgehogBased(nn.Module):
                 v.stride(1), v.stride(2), v.stride(3),
                 q.size(0), q.size(1), q.size(2),
                 scale,
-                BTL=btl, BTS=bts, 
-                BK=bk, 
-                BV=bv, 
-                DK=d_head_qk, 
-                DV=d_head_v,
+                BS_q_n=BS_q_n, BS_kv_n=BS_kv_n, 
+                BS_k_d=BS_k_d, 
+                BS_v_dv=BS_v_dv, 
+                DK=D, 
+                DV=DV,
                 num_warps=num_warps,
                 num_stages=num_stages
             )

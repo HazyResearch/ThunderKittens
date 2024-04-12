@@ -6,98 +6,108 @@ from torch.cuda.amp import custom_bwd, custom_fwd
 
 @triton.jit
 def parallel_based_fwd_kernel_hedgehog(
-    # B: batch_size, H: n_heads, T: seq_len, D: d_head
-    q,  # query [B, H, L, D_head_K]
-    k,  # key [B, H, L, D_head_V]
-    v,  # value [B, H, L, D_head_V]
-    o,  # output [B, H, L, D_head_V]
-    z,  # normalizer [B, H, L]
-    s_qk_h,  # stride size: L * D_head_K
-    s_qk_t,  # stride size: D_head_K
+    q,  # query [B, H, N, D]
+    k,  # key [B, H, N, DV]
+    v,  # value [B, H, N, DV]
+    o,  # output [B, H, N, DV]
+    z,  # normalizer [B, H, N]
+    s_qk_h,  # stride size: N * D
+    s_qk_t,  # stride size: D
     s_qk_d,  # stride size: 1
-    s_vo_h,  # stride size: L * D_head_V
-    s_vo_t,  # stride size: D_head_V
+    s_vo_h,  # stride size: N * DV
+    s_vo_t,  # stride size: DV
     s_vo_d,  # stride size: 1
     B,  # batch size
     H,  # n_heads
-    T,  # seq_len
-    scale,  # D_head_K ** -0.5
-    BTL: tl.constexpr,  # BLOCK SIZE along the sequence dimension for Q
-    BTS: tl.constexpr,  # BLOCK SIZE along the sequence dimension for K/V
-    BK: tl.constexpr,  # BLOCK SIZE along the K dimension
-    BV: tl.constexpr,  # BLOCK SIZE along the V dimension
-    DK: tl.constexpr,  # D_head_K
-    DV: tl.constexpr,  # D_head_V
+    N,  # seq_len
+    scale,  # D ** -0.5
+    BS_q_n: tl.constexpr,  # BLOCK SIZE along the sequence dimension for Q
+    BS_kv_n: tl.constexpr,  # BLOCK SIZE along the sequence dimension for K/V
+    BS_k_d: tl.constexpr,  # BLOCK SIZE along the K dimension
+    BS_v_dv: tl.constexpr,  # BLOCK SIZE along the V dimension
+    DK: tl.constexpr,  # D
+    DV: tl.constexpr,  # DV
 ):
-    # i_c: chunk index. used for sequence parallelism
-    i_kv, i_c, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
-    NV = tl.cdiv(DV, BV)
+    i_kv, i_n, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    NV = tl.cdiv(DV, BS_v_dv)
     i_k = i_kv // (NV)
     i_v = i_kv % (NV)
 
-    p_q = tl.make_block_ptr(q + i_bh * s_qk_h, (T, DK),
-                            (s_qk_t, s_qk_d), (i_c * BTL, i_k * BK), (BTL, BK), (1, 0))
-    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, T),
-                            (s_qk_d, s_qk_t), (i_k * BK, 0), (BK, BTS), (0, 1))
-    p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (T, DV),
-                            (s_vo_t, s_vo_d), (0, i_v * BV), (BTS, BV), (1, 0))
+    p_q = tl.make_block_ptr(q + i_bh * s_qk_h, (N, DK),
+                            (s_qk_t, s_qk_d), (i_n * BS_q_n, i_k * BS_k_d), (BS_q_n, BS_k_d), (1, 0))
+    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, N),
+                            (s_qk_d, s_qk_t), (i_k * BS_k_d, 0), (BS_k_d, BS_kv_n), (0, 1))
+    p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (N, DV),
+                            (s_vo_t, s_vo_d), (0, i_v * BS_v_dv), (BS_kv_n, BS_v_dv), (1, 0))
 
-    # [BQ, BD] block Q, in the shared memory throughout the whole kernel
+    # block Q - in the shared memory
     b_q = tl.load(p_q, boundary_check=(0, 1))
     b_q = (b_q * scale).to(b_q.dtype)
     
-    b_o = tl.zeros([BTL, BV], dtype=tl.float32)
-    b_z = tl.zeros([BTL], dtype=tl.float32)
+    b_o = tl.zeros([BS_q_n, BS_v_dv], dtype=tl.float32)
+    b_z = tl.zeros([BS_q_n], dtype=tl.float32)
 
-    # Q block and K block have no overlap
-    # no need for mask, thereby saving flops
-    for _ in range(0, i_c * BTL, BTS):
-        # [BK, BTS]
+    # Q block and K block (no mask part)
+    for _ in range(0, i_n * BS_q_n, BS_kv_n):
+        # [BS_k_d, BS_kv_n]
         b_k = tl.load(p_k, boundary_check=(0, 1))
 
-        # [BTS, BV]
+        # [BS_kv_n, BS_v_dv]
         b_v = tl.load(p_v, boundary_check=(0, 1))
-        # [BTL, BTS]
+        
+        # [BS_q_n, BS_kv_n]
         b_s = tl.dot(b_q, (b_k), allow_tf32=False)
         b_z += tl.sum(b_s, axis=1)
 
         # [BQ, BD]
         b_o = b_o + tl.dot(b_s.to(b_v.dtype), b_v, allow_tf32=False)
-        p_k = tl.advance(p_k, (0, BTS))
-        p_v = tl.advance(p_v, (BTS, 0))
+        
+        p_k = tl.advance(p_k, (0, BS_kv_n))
+        p_v = tl.advance(p_v, (BS_kv_n, 0))
 
-    # # rescale interchunk output
+    # rescale interchunk output
     tl.debug_barrier()
-    o_q = tl.arange(0, BTL)
+    o_q = tl.arange(0, BS_q_n)
+    
     # sync threads, easy for compiler to optimize
     tl.debug_barrier()
 
-    o_k = tl.arange(0, BTS)
-    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, T),
-                            (s_qk_d, s_qk_t), (i_k * BK, i_c * BTL), (BK, BTS), (0, 1))
-    p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (T, DV),
-                            (s_vo_t, s_vo_d), (i_c * BTL, i_v * BV), (BTS, BV), (1, 0))
-    # Q block and K block have overlap. masks required
-    for _ in range(i_c * BTL, (i_c + 1) * BTL, BTS):
-        # [BK, BTS]
+    o_k = tl.arange(0, BS_kv_n)
+    
+    p_k = tl.make_block_ptr(k + i_bh * s_qk_h, (DK, N),
+                            (s_qk_d, s_qk_t), (i_k * BS_k_d, i_n * BS_q_n), (BS_k_d, BS_kv_n), (0, 1))
+    p_v = tl.make_block_ptr(v + i_bh * s_vo_h, (N, DV),
+                            (s_vo_t, s_vo_d), (i_n * BS_q_n, i_v * BS_v_dv), (BS_kv_n, BS_v_dv), (1, 0))
+    
+    # Q block and K block (masked part)
+    for _ in range(i_n * BS_q_n, (i_n + 1) * BS_q_n, BS_kv_n):
+        # [BS_k_d, BS_kv_n]
         b_k = tl.load(p_k, boundary_check=(0, 1))
-        # [BTS, BV]
+        
+        # [BS_kv_n, BS_v_dv]
         b_v = tl.load(p_v, boundary_check=(0, 1))
-        # [BTL, BTS]
+        
+        # [BS_q_n, BS_kv_n]
         m_s = o_q[:, None] >= o_k[None, :]
         b_s = tl.dot(b_q, b_k, allow_tf32=False)
         b_s = tl.where(m_s, b_s, 0)
+        
         b_z += tl.sum(b_s, axis=1)
-        # [BTL, BV]
+        
+        # [BS_q_n, BS_v_dv]
         b_o += tl.dot(b_s.to(b_q.dtype), b_v, allow_tf32=False)
 
-        p_k = tl.advance(p_k, (0, BTS))
-        p_v = tl.advance(p_v, (BTS, 0))
-        o_k += BTS
+        p_k = tl.advance(p_k, (0, BS_kv_n))
+        p_v = tl.advance(p_v, (BS_kv_n, 0))
+        o_k += BS_kv_n
 
-    p_o = tl.make_block_ptr(o + (i_bh + B * H * i_k) * s_vo_h, (T, DV),
-                            (s_vo_t, s_vo_d), (i_c*BTL, i_v*BV), (BTL, BV), (1, 0))
-    p_z = z + (i_bh + B * H * i_k) * T + i_c * BTL + tl.arange(0, BTL)
+    p_o = tl.make_block_ptr(o + (i_bh + B * H * i_k) * s_vo_h, (N, DV),
+                            (s_vo_t, s_vo_d), 
+                            (i_n*BS_q_n, i_v*BS_v_dv), 
+                            (BS_q_n, BS_v_dv), (1, 0))
+    
+    p_z = z + (i_bh + B * H * i_k) * N + i_n * BS_q_n + tl.arange(0, BS_q_n)
+    
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_z, b_z.to(p_z.dtype.element_ty),
-             mask=((i_c * BTL + tl.arange(0, BTL)) < T))
+             mask=((i_n * BS_q_n + tl.arange(0, BS_q_n)) < N))
