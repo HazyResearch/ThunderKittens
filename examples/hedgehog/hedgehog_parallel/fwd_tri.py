@@ -59,7 +59,6 @@ def parallel_based_fwd_kernel_hedgehog(
         b_v = tl.load(p_v, boundary_check=(0, 1))
         # [BTL, BTS]
         b_s = tl.dot(b_q, (b_k), allow_tf32=False)
-        # b_s = 1 + b_s + 0.5 * b_s * b_s
         b_z += tl.sum(b_s, axis=1)
 
         # [BQ, BD]
@@ -87,7 +86,6 @@ def parallel_based_fwd_kernel_hedgehog(
         # [BTL, BTS]
         m_s = o_q[:, None] >= o_k[None, :]
         b_s = tl.dot(b_q, b_k, allow_tf32=False)
-        # b_s = 1 + b_s + 0.5 * b_s * b_s
         b_s = tl.where(m_s, b_s, 0)
         b_z += tl.sum(b_s, axis=1)
         # [BTL, BV]
