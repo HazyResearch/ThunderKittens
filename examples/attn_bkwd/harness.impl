@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_og, og_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_kg, kg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_vg, vg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_vg, vg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
     CUtensorMap tma_desc_q = {}; 
     CUtensorMap tma_desc_k = {};
@@ -187,8 +187,10 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(vg_bf, d_vg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
         o_out[i] = __bfloat162float(o_bf[i]);
+        vg_out[i] = __bfloat162float(vg_bf[i]);
     }
 
     bool good = true;
@@ -204,6 +206,19 @@ int main(int argc, char **argv) {
             good = false;
         }
     }
+
+    // std::ofstream vg_ref_file("printouts/vg_ref.txt");
+    // std::ofstream vg_file("printouts/vg.txt");
+    // std::ofstream diff_vg_file("printouts/diff_vg.txt");
+    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    //     float diff = vg_out[i] - vg[i % TOTAL_UNIQUE_ELEMENTS];
+    //     vg_ref_file << vg[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+    //     vg_file << vg_out[i] << ' ';
+    //     diff_vg_file << diff << ' ';
+    //     if(abs(diff) > 0.01 || isnan(diff)) {
+    //         good = false;
+    //     }
+    // }
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "Correct :)\n";

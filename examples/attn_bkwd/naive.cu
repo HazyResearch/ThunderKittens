@@ -24,13 +24,16 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     st_bf<qo_height, tile_width, layout_q> (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>();
     st_bf<kv_height, tile_width, layout_k> (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2, NUM_WORKERS_KV>();
     st_bf<kv_height, tile_width, layout_v> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2, NUM_WORKERS_KV>();
-    st_bf<qo_height, tile_width, layout_o> (&og_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_o>, NUM_WARPGROUPS>();
+    st_bf<qo_height, tile_width, layout_o> (&og_smem)  [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_o>, NUM_WARPGROUPS>();
 
     int tic = 0, toc = 1;
  
     rt_fl<1, kv_height> att_block;
     rt_bf<1, kv_height> att_block_mma;
+
     rt_fl<1, tile_width> o_prev;
+    rt_fl<1, tile_width> v_grad; 
+
     rt_fl<1, kv_height>::col_vec max_vec_last, max_vec;
     rt_fl<1, kv_height>::col_vec norm_vec_last, norm_vec;
 
@@ -75,6 +78,7 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     neg_infty(max_vec); // zero registers for the Q chunk
     zero(norm_vec);
     zero(o_prev);
+    zero(v_grad);
 
     tma::arrive_and_wait(qsmem_barrier, kPhaseBit); 
     __syncthreads();
@@ -133,6 +137,11 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
             warpgroup::fence(o_prev);
             warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
             warpgroup::mma_commit_group();
+
+            warpgroup::fence(v_grad); 
+            warpgroup::dot_accum(v_grad, att_block_mma, og_smem[warpgroupid]);
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait(); 
         }
     }
 
@@ -142,6 +151,16 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     if (warpid % 4 == 0) { // store o
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
         tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
+        tma::store_commit_group(); 
+    }
+    tma::store_async_wait();
+
+    auto *kg_smem = reinterpret_cast<st_bf<qo_height, tile_width, ducks::st_layout::wgmma_col_t_0b>*>(&og_smem[0].data[0]); // reuse og memory
+    warpgroup::store(kg_smem[warpgroupid], v_grad);
+    __syncthreads();
+    if (warpid % 4 == 0) { // store o
+        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
+        tma::store_async(tma_v_grad, (kg_smem[warpgroupid]), tile_idx); 
         tma::store_commit_group(); 
     }
     tma::store_async_wait();
