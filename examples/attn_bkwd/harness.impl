@@ -38,25 +38,32 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
     constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
 
+    // inputs
     float *q = new float[TOTAL_UNIQUE_ELEMENTS];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS];
     float *v = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *g = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *q_g_ref = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *k_g_ref = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *v_g_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *og = new float[TOTAL_UNIQUE_ELEMENTS];
 
+    // outputs
+    float *qg_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *kg_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *vg_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+
+    // device side inputs
     bf16 *q_bf = new bf16[TOTAL_ELEMENTS];
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS];
     bf16 *v_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *g_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *q_g_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *k_g_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *v_g_bf = new bf16[TOTAL_ELEMENTS];
-    
-    float *q_g = new float[TOTAL_ELEMENTS];
-    float *k_g = new float[TOTAL_ELEMENTS];
-    float *v_g = new float[TOTAL_ELEMENTS];
+    bf16 *og_bf = new bf16[TOTAL_ELEMENTS];
+
+    // device side outputs
+    bf16 *qg_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *kg_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *vg_bf = new bf16[TOTAL_ELEMENTS];
+
+    // host side outputs
+    float *qg = new float[TOTAL_ELEMENTS];
+    float *kg = new float[TOTAL_ELEMENTS];
+    float *vg = new float[TOTAL_ELEMENTS];
 
     std::ifstream infile(argv[1]);
 
@@ -68,86 +75,86 @@ int main(int argc, char **argv) {
     std::cout << "Finished loading K" << std::endl;
     for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v[i];
     std::cout << "Finished loading V" << std::endl;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> g[i];
-    std::cout << "Finished loading G Output" << std::endl;
-    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> q_g_ref[i];
-    std::cout << "Finished loading Q Gradient" << std::endl;
-    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> k_g_ref[i];
-    std::cout << "Finished loading K Gradient" << std::endl;
-    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v_g_ref[i];
-    std::cout << "Finished loading V Gradient" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> og[i];
+    std::cout << "Finished loading O Gradient" << std::endl;
+    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> qg_ref[i];
+    std::cout << "Finished loading Q Ref Gradient" << std::endl;
+    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> kg_ref[i];
+    std::cout << "Finished loading K Ref Gradient" << std::endl;
+    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> vg_ref[i];
+    std::cout << "Finished loading V Ref Gradient" << std::endl;
 
     std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
 
     // replicate into heads
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
-        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
-        v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
-        g_bf[i] = __float2bfloat16(g[i % TOTAL_UNIQUE_ELEMENTS]);
+        q_bf[i]  = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
+        k_bf[i]  = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
+        v_bf[i]  = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
+        og_bf[i] = __float2bfloat16(og[i % TOTAL_UNIQUE_ELEMENTS]);
     }
 
-    bf16 *d_q, *d_k, *d_v, *d_g, *d_q_g, *d_k_g, *d_v_g;
+    bf16 *d_q, *d_k, *d_v, *d_og, *d_qg, *d_kg, *d_vg;
     // inputs
     cudaMalloc(&d_q, TOTAL_ELEMENTS * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS * sizeof(bf16));
-    cudaMalloc(&d_g, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_og, TOTAL_ELEMENTS * sizeof(bf16));
 
     // outputs
-    cudaMalloc(&d_q_g, TOTAL_ELEMENTS * sizeof(bf16));
-    cudaMalloc(&d_k_g, TOTAL_ELEMENTS * sizeof(bf16));
-    cudaMalloc(&d_v_g, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_qg, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_kg, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_vg, TOTAL_ELEMENTS * sizeof(bf16));
 
-    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_g, g_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q,  q_bf,  TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k,  k_bf,  TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v,  v_bf,  TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_og, og_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
     CUtensorMap tma_desc_q = {}; 
     CUtensorMap tma_desc_k = {};
     CUtensorMap tma_desc_v = {};
-    CUtensorMap tma_desc_g = {};
+    CUtensorMap tma_desc_og = {};
 
-    CUtensorMap tma_desc_q_g = {};
-    CUtensorMap tma_desc_k_g = {};
-    CUtensorMap tma_desc_v_g = {};
+    CUtensorMap tma_desc_qg = {};
+    CUtensorMap tma_desc_kg = {};
+    CUtensorMap tma_desc_vg = {};
 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_g, d_g);
+    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_q,  d_q); 
+    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_k,  d_k);
+    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_v,  d_v);
+    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_og, d_og);
 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_q_g, d_q_g);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_k_g, d_k_g);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_v_g, d_v_g);
+    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_qg, d_qg);
+    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_kg, d_kg);
+    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_vg, d_vg);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
     CUtensorMap* tma_v_d;
-    CUtensorMap* tma_g_d;
+    CUtensorMap* tma_og_d;
 
-    CUtensorMap* tma_q_g_d;
-    CUtensorMap* tma_k_g_d;
-    CUtensorMap* tma_v_g_d;
+    CUtensorMap* tma_qg_d;
+    CUtensorMap* tma_kg_d;
+    CUtensorMap* tma_vg_d;
 
     cudaMalloc(&tma_q_d, sizeof(CUtensorMap));
     cudaMalloc(&tma_k_d, sizeof(CUtensorMap));
     cudaMalloc(&tma_v_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_g_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_og_d, sizeof(CUtensorMap));
 
-    cudaMalloc(&tma_q_g_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_k_g_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_v_g_d, sizeof(CUtensorMap)); 
+    cudaMalloc(&tma_qg_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_kg_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_vg_d, sizeof(CUtensorMap)); 
 
     cudaMemcpy(tma_q_d, &tma_desc_q, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     cudaMemcpy(tma_k_d, &tma_desc_k, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     cudaMemcpy(tma_v_d, &tma_desc_v, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_g_d, &tma_desc_g, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_og_d, &tma_desc_og, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     
-    cudaMemcpy(tma_q_g_d, &tma_desc_q_g, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_k_g_d, &tma_desc_k_g, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_v_g_d, &tma_desc_v_g, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_qg_d, &tma_desc_qg, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_kg_d, &tma_desc_kg, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_vg_d, &tma_desc_vg, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
@@ -162,17 +169,11 @@ int main(int argc, char **argv) {
 
     const int ITER = 1;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
-    // static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
-    // cudaDeviceSynchronize();
-    // std::cout << "Starting warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker_bwd<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_g_d, tma_q_g_d, tma_k_g_d, tma_v_g_d);
-    // }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_g_d, tma_q_g_d, tma_k_g_d, tma_v_g_d);
+        attend_ker_bwd<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -180,14 +181,14 @@ int main(int argc, char **argv) {
     std::cout << "Finished kernel\n";
     
     // check correctness
-    cudaMemcpy(q_g_bf, d_q_g, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    cudaMemcpy(k_g_bf, d_k_g, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    cudaMemcpy(v_g_bf, d_v_g, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(qg_bf, d_qg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kg_bf, d_kg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(vg_bf, d_vg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        q_g[i] = __bfloat162float(q_g_bf[i]);
-        k_g[i] = __bfloat162float(k_g_bf[i]);
-        v_g[i] = __bfloat162float(v_g_bf[i]);
+        qg[i] = __bfloat162float(qg_bf[i]);
+        kg[i] = __bfloat162float(kg_bf[i]);
+        vg[i] = __bfloat162float(vg_bf[i]);
     }
 
     bool good = true;
@@ -196,9 +197,9 @@ int main(int argc, char **argv) {
     std::ofstream q_g_file("printouts/q_g.txt");
     std::ofstream q_g_diff_file("printouts/q_g_diff.txt");
     for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = q_g[i] - q_g_ref[i];
-        q_g_ref_file << q_g_ref[i] << ' ';
-        q_g_file << q_g[i] << ' ';
+        float diff = qg[i] - qg_ref[i];
+        q_g_ref_file << qg_ref[i] << ' ';
+        q_g_file << qg[i] << ' ';
         q_g_diff_file << diff << ' ';
         if (abs(diff) > 0.01 || isnan(diff)) {
             good = false;
@@ -210,9 +211,9 @@ int main(int argc, char **argv) {
     std::ofstream k_g_file("printouts/k_g.txt");
     std::ofstream k_g_diff_file("printouts/k_g_diff.txt");
     for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = k_g[i] - k_g_ref[i];
-        k_g_ref_file << k_g_ref[i] << ' ';
-        k_g_file << k_g[i] << ' ';
+        float diff = kg[i] - kg_ref[i];
+        k_g_ref_file << kg_ref[i] << ' ';
+        k_g_file << kg[i] << ' ';
         k_g_diff_file << diff << ' ';
         if (abs(diff) > 0.01 || isnan(diff)) {
             good = false;
@@ -224,9 +225,9 @@ int main(int argc, char **argv) {
     std::ofstream v_g_file("printouts/v_g.txt");
     std::ofstream v_g_diff_file("printouts/v_g_diff.txt");
     for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = v_g[i] - v_g_ref[i];
-        v_g_ref_file << v_g_ref[i] << ' ';
-        v_g_file << v_g[i] << ' ';
+        float diff = vg[i] - vg_ref[i];
+        v_g_ref_file << vg_ref[i] << ' ';
+        v_g_file << vg[i] << ' ';
         v_g_diff_file << diff << ' ';
         if (abs(diff) > 0.01 || isnan(diff)) {
             good = false;
@@ -240,19 +241,19 @@ int main(int argc, char **argv) {
     cudaFree(d_q);
     cudaFree(d_k);
     cudaFree(d_v);
-    cudaFree(d_g);
+    cudaFree(d_og);
 
-    cudaFree(d_q_g);
-    cudaFree(d_k_g);
-    cudaFree(d_v_g);
+    cudaFree(d_qg);
+    cudaFree(d_kg);
+    cudaFree(d_vg);
     
     cudaFree(tma_q_d);
     cudaFree(tma_k_d);
     cudaFree(tma_v_d);
-    cudaFree(tma_g_d);
+    cudaFree(tma_og_d);
 
-    delete[] q, k, v, g, q_g_ref, k_g_ref, v_g_ref;
-    delete[] q_bf, k_bf, v_bf, g_bf, q_g_bf, k_g_bf, v_g_bf;
+    delete[] q, k, v, og, qg_ref, kg_ref, vg_ref;
+    delete[] q_bf, k_bf, v_bf, og_bf, qg_bf, kg_bf, vg_bf;
 
     return 0;
 }
