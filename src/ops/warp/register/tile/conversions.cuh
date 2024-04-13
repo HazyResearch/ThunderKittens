@@ -240,6 +240,64 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
     }
 }
 
+/* ----------  CAUSAL  ---------- */
+
+/**
+ * @brief Makes a square register tile causal by zeroing elements above the main diagonal.
+ *
+ * This function modifies a square register tile in-place to make it causal. All elements
+ * above the main diagonal are set to zero, while elements on or below the main diagonal
+ * are left unchanged.
+ *
+ * @tparam T The data type of the register tile elements.
+ * @tparam _size The size (height and width) of the square register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile[in,out] Reference to the register tile to be made causal.
+ */
+template<ducks::rt::row_layout RT>
+__device__ static inline void make_causal(RT &dst, const RT &src) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            if(j < i) { // below the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j > i) { // above the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = base_types::constants<typename RT::dtype>::zero();
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
+                dst.tiles[i][j].data[2] = base_types::constants<typename RT::dtype>::zero(); // above diagonal, zero
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                else {
+                    dst.tiles[i][j].data[0].x = base_types::constants<typeof(dst.tiles[i][j].data[0].x)>::zero();
+                    dst.tiles[i][j].data[3].x = base_types::constants<typeof(dst.tiles[i][j].data[3].x)>::zero();
+                }
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                else {
+                    dst.tiles[i][j].data[0].y = base_types::constants<typeof(dst.tiles[i][j].data[0].y)>::zero();
+                    dst.tiles[i][j].data[3].y = base_types::constants<typeof(dst.tiles[i][j].data[3].y)>::zero();
+                }
+            }
+        }
+    }
+}
+
+
 /* ----------  SUBTILE  ---------- */
 
 /**
