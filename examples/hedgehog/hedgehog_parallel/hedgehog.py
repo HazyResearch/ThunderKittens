@@ -58,7 +58,7 @@ class TiedHeadMLP(nn.Module):
         with torch.no_grad():
             nn.init.zeros_(self.layer.weight)
 
-    def zero_init_(self_):
+    def zero_init_(self):
         with torch.no_grad():
             nn.init.eye_(self.layer.weight)
 
@@ -132,7 +132,7 @@ class UntiedHeadEinsumMLP(UntiedHeadMLP):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Assume x.shape is b h l d"""
         if self.skip_connection:
-            return x + torch.einsum('hdf,bhld->bhlf', self.layer, x)  
+            return x + torch.einsum('hdf,bhld->bhlf', self.layer, x)
         return torch.einsum('hdf,bhld->bhlf', self.layer, x)
 
 
@@ -200,10 +200,11 @@ class SoftmaxDim(ExpDim):
     def forward(self, x: torch.Tensor):
         x = self.mlp(x)
         x = x * self.temp
-        return torch.cat([
+        o = torch.cat([
             torch.softmax( x, dim=self.head_dim_idx),
             torch.softmax(-x, dim=self.head_dim_idx)
         ], dim=self.head_dim_idx).clamp(min=self.eps)
+        return o
 
 
 class HedgehogBased(nn.Module):
@@ -334,7 +335,7 @@ class HedgehogBased(nn.Module):
                 ) + self.eps
             )
             y = v * z[..., None]
-            o = rearrange(y, 'b h l d -> b l (h d)')
+            return y
 
         else:
             if use_scale:
