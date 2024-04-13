@@ -82,6 +82,7 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
 
     neg_infty(max_vec); // zero registers for the Q chunk
     zero(norm_vec);
+    zero(q_grad);
 
     tma::arrive_and_wait(qsmem_barrier, kPhaseBit); 
     __syncthreads();
@@ -109,6 +110,11 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
                 tma::load_async((v_smem[toc][w]), tma_v, tile_idx, vsmem_barrier); 
             }
         }
+
+        zero(k_grad);
+        zero(v_grad);
+        zero(dO_v_block); 
+        zero(imd_block);
 
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
             warpgroup::fence(att_block);
