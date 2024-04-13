@@ -11,12 +11,12 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
     
     method2timing = defaultdict(dict)
     method2mem = defaultdict(dict)
-    for i, seq_len in enumerate([256, 512, 1024, 2048]):
-        batch_size = 1
-        n_heads = 1
-        
-        d  = 16
-        dv = 64
+    for i, seq_len in enumerate([256, 512, 1024, 2048, 4096]):
+        batch_size = 6
+        n_heads = 4
+
+        d  = 64     # this is the head dimension and input dimension
+        dv = 128    # this is the feature dimension
         
         print(f"B={batch_size}, H={n_heads}, N={seq_len}, D={d}, DV={dv}")
         print("-----------------------------------")
@@ -24,9 +24,9 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
         # prepare inputs 
         torch.random.manual_seed(0)
        
-        q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(torch.bfloat16) / 16).requires_grad_(True)
-        k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(torch.bfloat16) / 16).requires_grad_(True)
-        v = (torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(torch.bfloat16) / 128).requires_grad_(True)
+        q = (torch.randn(batch_size, n_heads, seq_len, d).cuda().to(torch.bfloat16) / d).requires_grad_(True)
+        k = (torch.randn(batch_size, n_heads, seq_len, d).cuda().to(torch.bfloat16) / d).requires_grad_(True)
+        v = (torch.randn(batch_size, n_heads, seq_len, dv).cuda().to(torch.bfloat16) / dv).requires_grad_(True)
         
         # initialize model
         scaling, norm = False, False
@@ -47,52 +47,64 @@ def parallel_benchmark(dt=torch.bfloat16, device='cuda'):
         ft = model_ft(q, k, v, scaling, norm)
 
         # ref model ---
-        torch.cuda.synchronize()
-        t0 = time.time()
-        
-        outs = [
-            model_ref(q, k, v, scaling, norm)
-            for _ in range(num_iters)
-        ]
+        try:
+            torch.cuda.synchronize()
+            t0 = time.time()
+            
+            outs = [
+                model_ref(q, k, v, scaling, norm)
+                for _ in range(num_iters)
+            ]
 
-        torch.cuda.synchronize()
-        t1 = time.time()
-        _time = (t1 - t0) / num_iters
+            torch.cuda.synchronize()
+            t1 = time.time()
+            _time = (t1 - t0) / num_iters
 
-        if i != 0: # triton is slow on the first call
-            method2timing['Pure PyTorch'][seq_len] = _time * 1000
+            if i != 0: # triton is slow on the first call
+                method2timing['Pure PyTorch'][seq_len] = _time * 1000
+        except:
+            print("Pure PyTorch failed")
+            pass
             
         # triton model ---
-        torch.cuda.synchronize()
-        t0 = time.time()
-        
-        outs = [
-            model_tri(q, k, v, scaling, norm)
-            for _ in range(num_iters)
-        ]
+        try:
+            torch.cuda.synchronize()
+            t0 = time.time()
+            
+            outs = [
+                model_tri(q, k, v, scaling, norm)
+                for _ in range(num_iters)
+            ]
 
-        torch.cuda.synchronize()
-        t1 = time.time()
-        _time = (t1 - t0) / num_iters
+            torch.cuda.synchronize()
+            t1 = time.time()
+            _time = (t1 - t0) / num_iters
 
-        if i != 0: # triton is slow on the first call
-            method2timing['Triton Kernel'][seq_len] = _time * 1000
+            if i != 0: # triton is slow on the first call
+                method2timing['Triton Kernel'][seq_len] = _time * 1000
+        except:
+            print("Triton Kernel failed")
+            pass
 
         # fast transformers model ---
-        torch.cuda.synchronize()
-        t0 = time.time()
+        try:
+            torch.cuda.synchronize()
+            t0 = time.time()
 
-        outs = [
-            model_ft(q, k, v, scaling, norm)
-            for _ in range(num_iters)
-        ]
+            outs = [
+                model_ft(q, k, v, scaling, norm)
+                for _ in range(num_iters)
+            ]
 
-        torch.cuda.synchronize()
-        t1 = time.time()
-        _time = (t1 - t0) / num_iters
+            torch.cuda.synchronize()
+            t1 = time.time()
+            _time = (t1 - t0) / num_iters
 
-        if i != 0: # triton is slow on the first call
-            method2timing['Fast Transformers'][seq_len] = _time * 1000
+            if i != 0: # triton is slow on the first call
+                method2timing['Fast Transformers'][seq_len] = _time * 1000
+        except:
+            print("Fast Transformers failed")
+            pass
 
 
     # plot: time vs. sequence length
