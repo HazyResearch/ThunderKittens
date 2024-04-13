@@ -11,26 +11,33 @@ constexpr int tile_width = 64/16;
 using namespace kittens;
 
 using layout_q = ducks::st_layout::wgmma_row_0b;
+
 using layout_k = ducks::st_layout::wgmma_row_0b;
 using layout_v = ducks::st_layout::wgmma_col_t_0b;
-using layout_o = ducks::st_layout::wgmma_row_0b; // tma_swizzle seems unreliable right now.
+
+using layout_g = ducks::st_layout::wgmma_row_0b;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
-void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, 
-                    CUtensorMap* tma_o_grad, CUtensorMap* tma_q_grad, CUtensorMap* tma_k_grad, CUtensorMap* tma_v_grad) {
+void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_g, CUtensorMap* tma_q_grad, CUtensorMap* tma_k_grad, CUtensorMap* tma_v_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
 
     st_bf<qo_height, tile_width, layout_q> (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>();
+
     st_bf<kv_height, tile_width, layout_k> (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2, NUM_WORKERS_KV>();
     st_bf<kv_height, tile_width, layout_v> (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2, NUM_WORKERS_KV>();
-    st_bf<qo_height, tile_width, layout_o> (&og_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_o>, NUM_WARPGROUPS>();
+
+    st_bf<qo_height, tile_width, layout_g> (&g_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_g>, NUM_WARPGROUPS>();
 
     int tic = 0, toc = 1;
  
     rt_fl<1, kv_height> att_block;
     rt_bf<1, kv_height> att_block_mma;
-    rt_fl<1, tile_width> o_prev;
+    
+    rt_fl<1, kv_height>  q_grad;
+    rt_fl<1, tile_width> k_grad; 
+    rt_fl<1, tile_width> v_grad; 
+    
     rt_fl<1, kv_height>::col_vec max_vec_last, max_vec;
     rt_fl<1, kv_height>::col_vec norm_vec_last, norm_vec;
 
@@ -40,7 +47,7 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     constexpr int qo_tiles  = N / q_smem[0].rows; 
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
-    __shared__ uint64_t qsmem_barrier, ksmem_barrier, vsmem_barrier, ogsmem_barrier;
+    __shared__ uint64_t qsmem_barrier, ksmem_barrier, vsmem_barrier;
 
     constexpr int tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS_KV, kPhaseBit = 1;
 
@@ -53,9 +60,6 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
 
         tma::init_barrier(vsmem_barrier, NUM_WORKERS*WARP_THREADS);
         tma::set_barrier_bytes(vsmem_barrier, tile_bytes);
-
-        tma::init_barrier(ogsmem_barrier, NUM_WORKERS*WARP_THREADS);
-        tma::set_barrier_bytes(ogsmem_barrier, tile_bytes);
     }
     __syncthreads();
 
@@ -63,7 +67,6 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
         for (int wg = 0; wg < NUM_WORKERS/kittens::WARPGROUP_WARPS; wg++) { // load q
             int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + wg;
             tma::load_async((q_smem[wg]), tma_q, tile_idx, qsmem_barrier); 
-            tma::load_async((og_smem[wg]), tma_o_grad, tile_idx, ogsmem_barrier);
         }
         for (int w = 0; w < NUM_WORKERS_KV; w++) { // load k, v      
             int tile_idx = (blockIdx.y * NUM_WORKERS_KV * kv_blocks) + (0 * NUM_WORKERS_KV) + w; 
@@ -79,7 +82,6 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     tma::arrive_and_wait(qsmem_barrier, kPhaseBit); 
     __syncthreads();
     warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f));
-    tma::arrive_and_wait(ogsmem_barrier, kPhaseBit);
 
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
@@ -141,7 +143,7 @@ void attend_ker_bwd(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     __syncthreads();
     if (warpid % 4 == 0) { // store o
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
-        tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
+        tma::store_async(tma_q_grad, (o_smem[warpgroupid]), tile_idx); 
         tma::store_commit_group(); 
     }
     tma::store_async_wait();

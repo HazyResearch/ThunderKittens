@@ -55,6 +55,7 @@ with open(fn, 'w') as f:
     qf = q.detach().to(torch.float32).flatten().cpu().numpy()
     kf = k.detach().to(torch.float32).flatten().cpu().numpy()
     vf = v.detach().to(torch.float32).flatten().cpu().numpy()
+    of = o.detach().to(torch.float32).flatten().cpu().numpy()
     grad_outputf = grad_output.detach().to(torch.float32).flatten().cpu().numpy()
     
     # outputs
@@ -70,6 +71,9 @@ with open(fn, 'w') as f:
         f.write(' ')
     for i in trange(B*H*N*D):
         f.write(repr(vf[i]))
+        f.write(' ')
+    for i in trange(B*H*N*D):
+        f.write(repr(of[i]))
         f.write(' ')
     for i in trange(B*H*N*D):
         f.write(repr(grad_outputf[i]))
