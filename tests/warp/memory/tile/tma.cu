@@ -2,238 +2,121 @@
 
 #ifdef TEST_WARP_MEMORY_TILE_TMA
 
-template<kittens::ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
-__global__ void
-test_tmaload_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input) {
-    using namespace kittens;
-    auto warpid = kittens::warpid(); 
-    auto lane   = kittens::laneid(); 
-
-    CUtensorMap* input_tma_descriptor  = tma_desc_input;
-
-    extern __shared__ int __shm[];
-    shared_allocator<1024> al((int*)&__shm[0]); 
-
-    // using worker_type = kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>;
-    kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers]  = al.allocate<kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
-
-    auto block = cooperative_groups::this_thread_block();
-    __shared__ uint64_t smem_barrier[workers]; 
-    constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
-
-    kittens::tma::prefetch(input_tile[warpid], input_tma_descriptor, 0);
-    kittens::tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
-
-    block.sync();
-
-    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
-        kittens::tma::load_async(input_tile[warpid], input_tma_descriptor, tile_idx, smem_barrier[warpid]);
-        // load(input_tile, input, TMA_WIDTH * 16);
-
-        int kPhaseBit = 0; 
-        kittens::tma::arrive_and_wait(smem_barrier[warpid], kPhaseBit);
-
-        kittens::tma::init_barrier<typeof(input_tile[warpid])>(smem_barrier[warpid], 1); 
-        kittens::store(output + (input_tile[warpid].num_elements * tile_idx), input_tile[warpid], TMA_WIDTH * 16); 
-        // tma::store_async(output_tma_descriptor, input_tile, tile_idx);
+struct test_load { // load with TMA, write out normally
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
+        (!std::is_same_v<L, kittens::ducks::st_layout::tma_swizzle> || W == 1 || W == 2 || W == 4) && W*H<=64>;
+    static inline const std::string test_identifier = "tma_load";
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        o_ref = i_ref; // overwrite the whole thing
     }
-}
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L>
+    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::st_bf<H, W, L> (&shared_tile)[2][2] = al.allocate<kittens::st_bf<H, W, L>, 2, 2>();
+        
+        __shared__ kittens::tma::barrier smem_barrier; 
+        kittens::tma::init_barrier<typeof(shared_tile[0][0]), 2, 2>(smem_barrier);
+        for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+            kittens::tma::load_async(shared_tile[i][j], tma_desc_input, smem_barrier, i, j);
+        }
+        kittens::tma::arrive_and_wait(smem_barrier);
 
-template<kittens::ducks::st_layout::all layout, int TMA_HEIGHT, int TMA_WIDTH, int workers>
-__global__ void
-test_tmastore_ker(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_output) {
-    using namespace kittens;
-    auto warpid = kittens::warpid();
-    auto lane   = kittens::laneid();
-
-    CUtensorMap* output_tma_descriptor = tma_desc_output;
-
-    extern __shared__ int __shm[];
-    kittens::shared_allocator<1024> al((int*)&__shm[0]); 
-    kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout> (&input_tile)[workers] = al.allocate<kittens::st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, workers>();
-
-    auto block = cooperative_groups::this_thread_block();
-    __shared__ uint64_t smem_barrier; 
-    constexpr int size_bytes = sizeof(bf16) * input_tile[warpid].num_elements;
-
-    block.sync();
-
-    for (int tile_idx = 0; tile_idx < 4; tile_idx++) {
-        // tma::load_async(input_tile, input_tma_descriptor, tile_idx, smem_barrier);
-        kittens::load(input_tile[warpid], input + (input_tile[warpid].num_elements * tile_idx), TMA_WIDTH * 16); 
-
-        // store(output, input_tile, TMA_WIDTH * 16);
-        kittens::tma::store_async(output_tma_descriptor, input_tile[warpid], tile_idx);
-    
+        kittens::store(output, shared_tile[0][0], W*16);
+        kittens::store(output + sizeof(kittens::bf16)*shared_tile[0][0].cols, shared_tile[0][1], W*16);
+        kittens::store(output + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements, shared_tile[1][0], W*16);
+        kittens::store(output + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements + sizeof(kittens::bf16)*shared_tile[0][0].cols, shared_tile[1][1], W*16);
+    }
+};
+struct test_store { // load normally, store with TMA
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
+        (!std::is_same_v<L, kittens::ducks::st_layout::tma_swizzle> || W == 1 || W == 2 || W == 4) && W*H<=64>;
+    static inline const std::string test_identifier = "tma_store";
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        o_ref = i_ref; // overwrite the whole thing
+    }
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L>
+    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::st_bf<H, W, L> (&shared_tile)[2][2] = al.allocate<kittens::st_bf<H, W, L>, 2, 2>();
+        kittens::load(shared_tile[0][0], input, W*16);
+        kittens::load(shared_tile[0][1], input + sizeof(kittens::bf16)*shared_tile[0][0].cols, W*16);
+        kittens::load(shared_tile[1][0], input + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements, W*16);
+        kittens::load(shared_tile[1][1], input + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements + sizeof(kittens::bf16)*shared_tile[0][0].cols, W*16);
+        __syncwarp();
+        for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+            kittens::tma::store_async(tma_desc_output, shared_tile[i][j], i, j);
+        }
         kittens::tma::store_commit_group();
-
         kittens::tma::store_async_wait<0>();
     }
+};
+
+template<typename Ker, int H, int W, int NW, typename... args>
+static __global__ void tma_global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    Ker::template device_func<H, W, NW, args...>(input, output, tma_desc_input, tma_desc_output);
 }
-
-template<kittens::ducks::st_layout::all layout, bool store_test, int TMA_HEIGHT, int TMA_WIDTH, int workers=1>
-void test_tma(test_data &results) {
-    using namespace kittens;
-    // initailize
-    bf16 *d_i, *d_o;
-    std::vector<float> i_ref(TMA_HEIGHT * TMA_WIDTH * 1024);
-    for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) i_ref[i] = float(i);
-    std::vector<float> o_ref(TMA_HEIGHT * TMA_WIDTH * 1024); 
-    initialize(&d_i, &d_o, i_ref, o_ref);
-
-    CUtensorMap tma_desc_input = {};
-    kittens::tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_input, d_i); 
-
-    CUtensorMap tma_desc_output = {};
-    kittens::tma::create_tensor_map<st_bf<TMA_HEIGHT, TMA_WIDTH, layout>, 4>(&tma_desc_output, d_o);
-
-    CUtensorMap* tma_desc_input_d;
-    CUtensorMap* tma_desc_output_d;
-
-    cudaMalloc(&tma_desc_input_d,                     sizeof(CUtensorMap));
-    cudaMalloc(&tma_desc_output_d,                    sizeof(CUtensorMap));
-    cudaMemcpy(tma_desc_input_d,    &tma_desc_input,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_desc_output_d,   &tma_desc_output, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-
-    unsigned long mem_size = 100000; 
-
-    // run kernel
-    if constexpr (!store_test) {
-        cudaFuncSetAttribute(test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-        CudaCheckError();
-
-        test_tmaload_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers><<<1, workers * 32, mem_size>>>(d_i, d_o, tma_desc_input_d);
-        CudaCheckError();
+template<typename test, int H, int W, int NUM_WORKERS, kittens::ducks::st_layout::all L, typename... args>
+struct tma_wrapper_2d {
+    static void run(test_data& results) {
+        test_info this_result;
+        this_result.label = generate_test_name<H,W,NUM_WORKERS, L, args...>(test::test_identifier);
+        if constexpr (test::template valid<H, W, NUM_WORKERS, L, args...>::value) {
+            constexpr int SIZE = H*W*256 * 2*2; // 2*2 for additional TMA dimensions
+            // initialize
+            kittens::bf16 *d_i, *d_o;
+            std::vector<float> i_ref(SIZE);
+            std::vector<float> o_ref(SIZE);
+            initialize(&d_i, &d_o, i_ref, o_ref);
+            // initialize TMA descriptors
+            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_i);
+            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_o);
+            // run kernel
+            cudaFuncSetAttribute(
+                tma_global_wrapper_2d<test, H, W, NUM_WORKERS, L, args...>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                kittens::MAX_SHARED_MEMORY
+            );
+            tma_global_wrapper_2d<test, H, W, NUM_WORKERS, L, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o, i_desc, o_desc);
+            // fill in correct results on cpu
+            test::template host_func<H, W, NUM_WORKERS, L, args...>(i_ref, o_ref);
+            // check and cleanup
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, 2*W*16);
+            cudaFree(i_desc);
+            cudaFree(o_desc);
+        }
+        else {
+            this_result.result = test_result::INVALID;
+        }
+        results.push_back(this_result);
     }
-    else {
-        cudaFuncSetAttribute(test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-        CudaCheckError();
-
-        test_tmastore_ker<layout, TMA_HEIGHT, TMA_WIDTH, workers><<<1, workers * 32, mem_size>>>(d_i, d_o, tma_desc_output_d);
-        CudaCheckError();
+};
+template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
+using tma_sweep_size_2d = loop_h<tma_wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
+template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
+struct tma_sweep_st_layout_size_2d {
+    static void run(test_data &results) {
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::tma_swizzle, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_row_0b, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_0b, args...>::run(results);
     }
-
-    // output identical to input
-    for(int i = 0; i < TMA_HEIGHT * TMA_WIDTH * 1024; i++) o_ref[i] = i_ref[i];
-    std::string load_str = "tma_["+layout_name<layout>()+(store_test ? "]_[store]" : "]_[load]");
-    load_str += "_["+std::to_string(TMA_HEIGHT)+"x"+std::to_string(TMA_WIDTH); 
-    load_str += "]_["+std::to_string(workers)+"]";
-
-    test_info info;
-    info.result = validate(d_i, d_o, i_ref, o_ref, load_str, 16 * TMA_WIDTH);
-    info.label = load_str;
-
-    results.push_back(info);
-}
-
-template<kittens::ducks::st_layout::all layout, bool store_test, bool swizzled=false>
-int tma_dim_test(test_data &results) {
-    using namespace kittens;
-    int failures = 0; 
-
-    
-    test_tma<layout, store_test, 1, 1>(results);
-    test_tma<layout, store_test, 1, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3>(results);
-    test_tma<layout, store_test, 1, 4>(results);
-
-    test_tma<layout, store_test, 1, 1, 2>(results); 
-    test_tma<layout, store_test, 1, 2, 2>(results); 
-    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 2>(results); 
-    test_tma<layout, store_test, 1, 4, 2>(results); 
-
-    test_tma<layout, store_test, 1, 1, 3>(results);
-    test_tma<layout, store_test, 1, 2, 3>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 3>(results);
-    test_tma<layout, store_test, 1, 4, 3>(results);
-
-    test_tma<layout, store_test, 1, 1, 4>(results);
-    test_tma<layout, store_test, 1, 2, 4>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 1, 3, 4>(results);
-    test_tma<layout, store_test, 1, 4, 4>(results);
-
-    test_tma<layout, store_test, 2, 1>(results);
-    test_tma<layout, store_test, 2, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3>(results);
-    test_tma<layout, store_test, 2, 4>(results);
-
-    test_tma<layout, store_test, 2, 1, 2>(results);
-    test_tma<layout, store_test, 2, 2, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 2>(results);
-    test_tma<layout, store_test, 2, 4, 2>(results);
-
-    test_tma<layout, store_test, 2, 1, 3>(results);
-    test_tma<layout, store_test, 2, 2, 3>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 3>(results);
-    test_tma<layout, store_test, 2, 4, 3>(results);
-
-    test_tma<layout, store_test, 2, 1, 4>(results);
-    test_tma<layout, store_test, 2, 2, 4>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 2, 3, 4>(results);
-    test_tma<layout, store_test, 2, 4, 4>(results);
-
-    test_tma<layout, store_test, 3, 1>(results);
-    test_tma<layout, store_test, 3, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3>(results);
-    test_tma<layout, store_test, 3, 4>(results);
-
-    test_tma<layout, store_test, 3, 1, 2>(results);
-    test_tma<layout, store_test, 3, 2, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 2>(results);
-    test_tma<layout, store_test, 3, 4, 2>(results);
-
-    test_tma<layout, store_test, 3, 1, 3>(results);
-    test_tma<layout, store_test, 3, 2, 3>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 3>(results);
-    test_tma<layout, store_test, 3, 4, 3>(results);
-
-    test_tma<layout, store_test, 3, 1, 4>(results);
-    test_tma<layout, store_test, 3, 2, 4>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 3, 3, 4>(results);
-    test_tma<layout, store_test, 3, 4, 4>(results);
-
-    test_tma<layout, store_test, 4, 1>(results);
-    test_tma<layout, store_test, 4, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3>(results);
-    test_tma<layout, store_test, 4, 4>(results);
-
-    test_tma<layout, store_test, 4, 1, 2>(results);
-    test_tma<layout, store_test, 4, 2, 2>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 2>(results);
-    test_tma<layout, store_test, 4, 4, 2>(results);
-
-    test_tma<layout, store_test, 4, 1, 3>(results);
-    test_tma<layout, store_test, 4, 2, 3>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 3>(results);
-    test_tma<layout, store_test, 4, 4, 3>(results);
-
-    test_tma<layout, store_test, 4, 1, 4>(results);
-    test_tma<layout, store_test, 4, 2, 4>(results);
-    if constexpr (!swizzled) test_tma<layout, store_test, 4, 3, 4>(results);
-    test_tma<layout, store_test, 4, 4, 4>(results);
-    
-    return failures;
-}
+};
+template<typename test, int MAX_H=8, int MAX_W=8, typename... args>
+using tma_sweep_st_layout_size_2d_warp = tma_sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
 
 void warp::memory::tile::tma::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/tile/tma tests! -----\n" << std::endl;
-    tma_dim_test<kittens::ducks::st_layout::naive, false>(results);
-    tma_dim_test<kittens::ducks::st_layout::naive, true>(results);
+    constexpr int SIZE = INTENSITY_1 ? 2  :
+                         INTENSITY_2 ? 4  : 
+                         INTENSITY_3 ? 8  :
+                         INTENSITY_4 ? 16 : -1;
 
-    tma_dim_test<kittens::ducks::st_layout::tma_swizzle, false, true>(results);
-    tma_dim_test<kittens::ducks::st_layout::tma_swizzle, true, true>(results);
-
-    tma_dim_test<kittens::ducks::st_layout::wgmma_row_0b, false>(results);
-    tma_dim_test<kittens::ducks::st_layout::wgmma_row_0b, true>(results);
-    // not supported with 32B swizzling modes
-    // tma_dim_test<kittens::ducks::st_layout::wgmma_row_32b, false>(results);
-    // tma_dim_test<kittens::ducks::st_layout::wgmma_row_32b, true>(results);
-
-    tma_dim_test<kittens::ducks::st_layout::wgmma_col_t_0b, false>(results);
-    tma_dim_test<kittens::ducks::st_layout::wgmma_col_t_0b, true>(results);
-    // not supported with 32B swizzling modes
-    // tma_dim_test<kittens::ducks::st_layout::wgmma_col_t_32b, false>(results);
-    // tma_dim_test<kittens::ducks::st_layout::wgmma_col_t_32b, true>(results);
+    tma_sweep_size_2d<test_load, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
+    tma_sweep_size_2d<test_store, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
+    // tma_sweep_st_layout_size_2d_warp<test_load,  SIZE, SIZE>::run(results);
+    // tma_sweep_st_layout_size_2d_warp<test_store, SIZE, SIZE>::run(results);
 }
 
 #endif

@@ -59,14 +59,6 @@ __device__ static inline void set_bytes(barrier& bar, uint32_t bytes) {
     }
 }
 
-// template magic allows arrays of these objects to be copied, too.
-template<typename T, uint32_t... dims> struct transfer_bytes;
-template<<ducks::st::all ST> struct transfer_bytes<ST> { constexpr uint32_t bytes = ST::num_elements * sizeof(typename ST::dtype); };
-template<<ducks::sv::all SV> struct transfer_bytes<SV> { constexpr uint32_t bytes = SV::length * sizeof(typename SV::dtype); };
-template<typename T, uint32_t dim, uint32_t... rest_dims> struct transfer_bytes<T, dim, rest_dims...> {
-    constexpr uint32_t bytes = dim*transfer_bytes<T, rest_dims...>::bytes;
-};
-
 
 /**
  * @brief Initialize a distribute shared memory barrier
@@ -93,7 +85,7 @@ __device__ static inline void init_bar(barrier& bar, int tc=1) {
     }
     // Now initialize the bar bytes
     if constexpr (ducks::st::all<T> || ducks::sv::all<T>) {
-        set_bytes(bar, transfer_bytes<T, dims...>::bytes);
+        set_bytes(bar, kittens::detail::transfer_bytes<T, dims...>::bytes);
     }
 }
 

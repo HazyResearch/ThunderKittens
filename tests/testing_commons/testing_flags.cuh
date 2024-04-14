@@ -198,7 +198,7 @@
 
 // Warp macros
 
-#if defined(TEST_ALL_WARP_MEMORY_TILE) || defined(TEST_ALL_WARP_MEMORY_VEC)
+#if defined(TEST_WARP_MEMORY_TILE) || defined(TEST_WARP_MEMORY_VEC)
 #define TEST_WARP_MEMORY
 #endif
 

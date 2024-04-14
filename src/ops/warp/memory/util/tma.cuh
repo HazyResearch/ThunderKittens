@@ -69,7 +69,7 @@ __device__ static inline void set_bytes(barrier& bar, uint32_t bytes) {
  * @param[out] barrier The barrier variable to initialize.
  * @param[in] tc The thread counter for the barrier.
  */
-template<typename T=ducks::default_type>
+template<typename T=ducks::default_type, int... dims>
 __device__ static inline void init_barrier(barrier& bar, int tc=1) {
     static_assert(detail::st_type_tma_layout<T> || std::is_same_v<T, ducks::default_type>);
     if (::kittens::laneid() == 0) {
@@ -80,7 +80,7 @@ __device__ static inline void init_barrier(barrier& bar, int tc=1) {
             :: "r"(bar_ptr), "r"(tc));
 
         if constexpr (detail::st_type_tma_layout<T> || ducks::sv::all<T>) {
-            set_bytes(bar, sizeof(T)); // set barrier bytes automatically
+            set_bytes(bar, kittens::detail::transfer_bytes<T, dims...>::bytes); // set barrier bytes automatically
         }
     }
 }

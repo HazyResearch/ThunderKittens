@@ -2,6 +2,7 @@
 
 #include "../../../../common/common.cuh"
 #include "../../../../types/types.cuh"
+#include "../util/util.cuh"
 
 #include <cuda.h>
 #include <iostream>
@@ -28,7 +29,7 @@ template<detail::st_type_tma_layout ST, int blocks_height, int blocks_width=1>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
     
     constexpr uint32_t  tma_dim      = detail::st_type_2d_tma_layout<ST> ? 2 : 5; 
-    void                *global_addr = reinterpret_cast<void*>(src);
+    void                *global_addr = (void*)(src);
 
     // if we're in a swizzled TMA mode, what would it be?
     constexpr CUtensorMapSwizzle      tma_swizzle_from_size = (
@@ -59,7 +60,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
         gmem_shape[0] = global_tile_width;
         gmem_shape[1] = global_tile_height;
 
-        gmem_stride[0] = shared_tile_width * sizeof(bf16);
+        gmem_stride[0] = global_tile_width * sizeof(bf16);
 
         smem_shape[0] = shared_tile_width;
         smem_shape[1] = shared_tile_height;
@@ -155,7 +156,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     if (result != CUDA_SUCCESS) {
         std::cerr << "Error: " << error_string << std::endl;
     }
-};
+}
 
 /**
 * @brief Allocates on the GPU and initializes a tensor map for the given source tensor.

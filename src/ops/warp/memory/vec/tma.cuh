@@ -2,6 +2,7 @@
 
 #include "../../../../common/common.cuh"
 #include "../../../../types/types.cuh"
+#include "../util/util.cuh"
 
 #include <cuda.h>
 #include <iostream>
@@ -27,7 +28,7 @@ template<ducks::sv::all SV, int num_vectors>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
     
     constexpr uint32_t  tma_dim      = 1; 
-    void                *global_addr = reinterpret_cast<void*>(src);
+    void                *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
@@ -140,7 +141,7 @@ __device__ static inline void store_async(void *dst_tma_map, const SV &src, int 
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = vec_idx * (dst.length);
+        int32_t crd0 = vec_idx * (src.length);
         
         asm volatile (
             "cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group"

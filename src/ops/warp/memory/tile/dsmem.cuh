@@ -2,6 +2,7 @@
 
 #include "../../../../common/common.cuh"
 #include "../../../../types/shared/shared.cuh"
+#include "../util/util.cuh"
 
 namespace kittens {
 namespace dsmem {
@@ -23,7 +24,7 @@ namespace dsmem {
  */
 template<ducks::st::all ST, uint32_t... dims>
 __device__ static inline void distribute(ST &dst_, ST &src_, int cluster_size, int dst_idx, barrier& bar) {
-    distribute(dst_, src_, cluster_size, dst_idx, transfer_bytes<ST, dims...>::bytes, bar); // wrap with auto calculated bytes
+    distribute(dst_, src_, cluster_size, dst_idx, kittens::detail::transfer_bytes<ST, dims...>::bytes, bar); // wrap with auto calculated bytes
 }
 
 }
