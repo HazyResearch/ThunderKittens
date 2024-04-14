@@ -4,7 +4,7 @@
 
 struct test_mma {
     template<int H, int W, int NW, typename K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_col L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=64>;
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>;
     static inline const std::string test_identifier = "wgmma_mma";
     template<int H, int W, int NW, typename _K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_col L2>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
@@ -42,7 +42,7 @@ struct test_mma {
 };
 struct test_dot {
     template<int H, int W, int NW, typename K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_row L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_dot";
     template<int H, int W, int NW, typename _K, kittens::ducks::st_layout::wgmma_row L1, kittens::ducks::st_layout::wgmma_row L2>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
@@ -112,7 +112,7 @@ struct mma_wrapper_2d {
     }
 };
 template<typename test, int H, int MAX_W, int NUM_WORKERS=1, typename... args> using mma_sweep_width = loop_w<mma_wrapper_2d, test, H, MAX_W, NUM_WORKERS, H, MAX_W, args...>;
-template<typename test, int MAX_W=4, typename... args> using mma_sweep_width_warpgroup = mma_sweep_width<test, 4, MAX_W, 4, args...>;
+template<typename test, int MAX_W, typename... args> using mma_sweep_width_warpgroup = mma_sweep_width<test, 4, MAX_W, 4, args...>;
 
 using namespace kittens::ducks::st_layout;
 // If 1 and 3 work, the others likely will too.
