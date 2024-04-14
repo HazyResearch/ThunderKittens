@@ -12,7 +12,7 @@ struct test_load { // load with TMA, write out normally
     template<int H, int W, int NW, kittens::ducks::st_layout::all L>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st_bf<H, W, L> (&shared_tile)[2][2] = al.allocate<kittens::st_bf<H, W, L>, 2, 2>();
         
         __shared__ kittens::tma::barrier smem_barrier; 
@@ -20,12 +20,12 @@ struct test_load { // load with TMA, write out normally
         for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
             kittens::tma::load_async(shared_tile[i][j], tma_desc_input, smem_barrier, i, j);
         }
-        kittens::tma::arrive_and_wait(smem_barrier);
+        kittens::tma::arrive_and_wait(smem_barrier, 0);
 
-        kittens::store(output, shared_tile[0][0], W*16);
-        kittens::store(output + sizeof(kittens::bf16)*shared_tile[0][0].cols, shared_tile[0][1], W*16);
-        kittens::store(output + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements, shared_tile[1][0], W*16);
-        kittens::store(output + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements + sizeof(kittens::bf16)*shared_tile[0][0].cols, shared_tile[1][1], W*16);
+        kittens::store(output, shared_tile[0][0], 2*W*16);
+        kittens::store(output + shared_tile[0][0].cols, shared_tile[0][1], 2*W*16);
+        kittens::store(output + 2*shared_tile[0][0].num_elements, shared_tile[1][0], 2*W*16);
+        kittens::store(output + 2*shared_tile[0][0].num_elements + shared_tile[0][0].cols, shared_tile[1][1], 2*W*16);
     }
 };
 struct test_store { // load normally, store with TMA
@@ -38,12 +38,12 @@ struct test_store { // load normally, store with TMA
     template<int H, int W, int NW, kittens::ducks::st_layout::all L>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st_bf<H, W, L> (&shared_tile)[2][2] = al.allocate<kittens::st_bf<H, W, L>, 2, 2>();
-        kittens::load(shared_tile[0][0], input, W*16);
-        kittens::load(shared_tile[0][1], input + sizeof(kittens::bf16)*shared_tile[0][0].cols, W*16);
-        kittens::load(shared_tile[1][0], input + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements, W*16);
-        kittens::load(shared_tile[1][1], input + 2*sizeof(kittens::bf16)*shared_tile[0][0].num_elements + sizeof(kittens::bf16)*shared_tile[0][0].cols, W*16);
+        kittens::load(shared_tile[0][0], input, 2*W*16);
+        kittens::load(shared_tile[0][1], input + shared_tile[0][0].cols, 2*W*16);
+        kittens::load(shared_tile[1][0], input + 2*shared_tile[0][0].num_elements, 2*W*16);
+        kittens::load(shared_tile[1][1], input + 2*shared_tile[0][0].num_elements + shared_tile[0][0].cols, 2*W*16);
         __syncwarp();
         for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
             kittens::tma::store_async(tma_desc_output, shared_tile[i][j], i, j);
@@ -68,7 +68,7 @@ struct tma_wrapper_2d {
             kittens::bf16 *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
-            initialize(&d_i, &d_o, i_ref, o_ref);
+            initialize<initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
             // initialize TMA descriptors
             CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_i);
             CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_o);
@@ -113,10 +113,10 @@ void warp::memory::tile::tma::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    tma_sweep_size_2d<test_load, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
-    tma_sweep_size_2d<test_store, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
-    // tma_sweep_st_layout_size_2d_warp<test_load,  SIZE, SIZE>::run(results);
-    // tma_sweep_st_layout_size_2d_warp<test_store, SIZE, SIZE>::run(results);
+    // tma_sweep_size_2d<test_load, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
+    // tma_sweep_size_2d<test_store, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
+    tma_sweep_st_layout_size_2d_warp<test_load,  SIZE, SIZE>::run(results);
+    tma_sweep_st_layout_size_2d_warp<test_store, SIZE, SIZE>::run(results);
 }
 
 #endif

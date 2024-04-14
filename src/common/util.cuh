@@ -210,6 +210,7 @@ struct shared_allocator {
  * @brief A wrapper for an allocator that enforces sufficient alignment to be used for TMA loads and stores.
  */
 using tma_allocator = shared_allocator<128>;
+using tma_swizzle_allocator = shared_allocator<1024>; // swizzled TMA modes require up to 1024 byte alignments :/
 #endif
 
 }

@@ -15,9 +15,9 @@ using barrier = uint64_t;
  * until the local memory has arrived.
  *
  * @param bar Reference to the barrier variable.
- * @param kPhaseBit The phase bit used for the barrier. Defaults to 1, as most transfers have an even number of phases.
+ * @param kPhaseBit The phase bit used for the barrier.
  */
-__device__ static inline void wait(barrier& bar, int kPhaseBit=1) {
+__device__ static inline void wait(barrier& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 

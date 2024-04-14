@@ -71,7 +71,7 @@ __device__ static inline void set_bytes(barrier& bar, uint32_t bytes) {
  */
 template<typename T=ducks::default_type, int... dims>
 __device__ static inline void init_barrier(barrier& bar, int tc=1) {
-    static_assert(detail::st_type_tma_layout<T> || std::is_same_v<T, ducks::default_type>);
+    static_assert(detail::st_type_tma_layout<T> || ducks::sv::all<T> || std::is_same_v<T, ducks::default_type>);
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -95,7 +95,7 @@ __device__ static inline void init_barrier(barrier& bar, int tc=1) {
 * @param barrier Reference to the barrier variable.
 * @param kPhaseBit The phase bit used for the barrier.
 */
-__device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit=1) {
+__device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 

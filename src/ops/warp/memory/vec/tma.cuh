@@ -37,7 +37,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     constexpr CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
 
     uint64_t gmem_shape [1] = {SV::length * num_vectors};
-    uint64_t gmem_stride[1] = {0};
+    uint64_t gmem_stride[1] = {1};
     uint32_t smem_shape [1] = {SV::length};
     uint32_t smem_stride[1] = {1};
 
@@ -116,8 +116,7 @@ __device__ static inline void prefetch(SV &dst, void const* const src_tma_map, i
             "cp.async.bulk.prefetch.tensor.1d.L2.global.tile"
             " [%0, {%1}];"
             :
-            : "l"(tma_ptr),
-            "r"(crd0)
+            : "l"(tma_ptr), "r"(crd0)
             : "memory"
         );
     }
@@ -131,8 +130,8 @@ __device__ static inline void prefetch(SV &dst, void const* const src_tma_map, i
  * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
  *
  * @tparam SV A shared vector type with a TMA-compatible layout
- * @param[out] dst The destination tensormap address in global memory
- * @param[in] src_tma_map The source shared memory vector.
+ * @param[out] dst_tma_map The destination tensormap address in global memory
+ * @param[in] src The source shared memory vector.
  * @param[in] vec_idx The index of the vector destination.
  */
 template<ducks::sv::all SV>
@@ -147,8 +146,7 @@ __device__ static inline void store_async(void *dst_tma_map, const SV &src, int 
             "cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group"
             " [%0, {%2}], [%1];"
             :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0)
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
             : "memory"
         );
     }
@@ -175,7 +173,7 @@ __device__ static inline void load_async(SV &dst, void const* const src_tma_map,
         int32_t crd0 = vec_idx * (dst.length);
 
         asm volatile (
-            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
             " [%0], [%1, {%3}], [%2];"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0)
