@@ -203,8 +203,6 @@ struct wrapper_2d {
     }
 };
 template<typename test, int H, int W, typename... args> using wrapper_2d_warp      = wrapper_2d<test, H, W, 1, args...>;
-template<typename test, int H, int W, typename... args> using wrapper_2d_warpgroup = wrapper_2d<test, H, W, 4, args...>;
-template<typename test, int H, int W, typename... args> using wrapper_2d_block     = wrapper_2d<test, H, W, 8, args...>;
 
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using sweep_size_2d = loop_h<wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warp = sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
@@ -222,6 +220,4 @@ struct sweep_st_layout_size_2d {
         sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_32b, args...>::run(results);
     }
 };
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warp      = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warpgroup = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 4, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_block     = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 8, args...>;
+template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warp = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
