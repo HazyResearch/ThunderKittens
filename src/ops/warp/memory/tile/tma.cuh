@@ -9,43 +9,23 @@
 namespace kittens {
 namespace tma {
 
-namespace detail {
-
-template<typename T> concept st_type_2d_tma_layout = (
-    ducks::st::all<T> && 
-    (
-        std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
-        std::is_same_v<typename T::layout, ducks::st_layout::tma_swizzle>
-    )
-);
-template<typename T> concept st_type_wgmma_row_layout = (
-    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_0b>
-);
-template<typename T> concept st_type_wgmma_col_t_layout = (
-    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_col_t_0b>
-);
-template<typename T> concept st_type_tma_layout = (
-    st_type_2d_tma_layout<T> || st_type_wgmma_row_layout<T> || st_type_wgmma_col_t_layout<T>
-);
-
-}; 
-
 /* ----------   Create tensor map descriptor (HOST)  ---------- */
 
 /**
 * @brief Creates a tensor map for the given source tensor.
 *
-* This function creates a tensor map (CUtensorMap) for the specified source shared tile  type. The tensor map
+* This function creates a tensor map (CUtensorMap) for the specified source shared tile type. The tensor map
 * is used to describe the shape and layout of the tensor in memory. The function sets up the tensor
 * map based on the provided source tensor pointer and the layout specified by the ST template parameter.
 *
 * @tparam ST The source tensor type, which must be TMA-compatible.
-* @tparam num_blocks The number of tiles present in global memory.
+* @tparam blocks_height The number of tiles present on the height axis in global memory.
+* @tparam blocks_width The number of tiles present on the width axis in global memory. Defaults to 1.
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<detail::st_type_tma_layout ST, int num_blocks>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
+template<detail::st_type_tma_layout ST, int blocks_height, int blocks_width=1>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
     
     constexpr uint32_t  tma_dim      = detail::st_type_2d_tma_layout<ST> ? 2 : 5; 
     void                *global_addr = reinterpret_cast<void*>(src);
@@ -70,8 +50,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     uint32_t smem_shape [5] = {0, 0, 0, 0, 0};
     uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
 
-    constexpr uint64_t global_tile_height = num_blocks * ST::rows;
-    constexpr uint64_t global_tile_width  = ST::cols; 
+    constexpr uint64_t global_tile_height = blocks_height * ST::rows;
+    constexpr uint64_t global_tile_width  = blocks_width * ST::cols; 
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
@@ -177,6 +157,29 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
     }
 };
 
+/**
+* @brief Allocates on the GPU and initializes a tensor map for the given source tensor.
+*
+* This function creates a tensor map (CUtensorMap) for the specified source shared tile type. The tensor map
+* is used to describe the shape and layout of the tensor in memory. The function sets up the tensor
+* map based on the provided source tensor pointer and the layout specified by the ST template parameter.
+*
+* @tparam ST The source tensor type, which must be TMA-compatible.
+* @tparam blocks_height The number of tiles present on the height axis in global memory.
+* @tparam blocks_width The number of tiles present on the width axis in global memory. Defaults to 1.
+* @param src Pointer to the source tensor data in global memory.
+* @returns Pointer to the CUtensorMap object to be initialized.
+*/
+template<detail::st_type_tma_layout ST, int blocks_height, int blocks_width=1>
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src) {
+    CUtensorMap *tma_map_d;
+    cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
+    CUtensorMap tma_map_host; // put it on the stack, why not.
+    create_tensor_map<ST, blocks_height, blocks_width>(&tma_map_host, src);
+    cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    return tma_map_d;
+}
+
 /* ----------   Prefetch Tensor Map  ---------- */
 
 /**
@@ -185,16 +188,17 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, bf16 *src) {
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination shared memory tile.
  * @param[in] src_tma_map The source tensormap address in global memory
- * @param[in] tile_idx The index of the requested tile.
+ * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
+ * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
 template<detail::st_type_tma_layout ST>
-__device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_idx) {
-    if (threadIdx.x == 0) {
+__device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_row_idx, int tile_col_idx=0) {
+    if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
         if constexpr (detail::st_type_2d_tma_layout<ST>) {
-            int32_t crd0 = 0;  
-            int32_t crd1 = tile_idx * (dst.rows); 
+            int32_t crd0 = tile_col_idx * (dst.cols);
+            int32_t crd1 = tile_row_idx * (dst.rows);
 
             asm volatile (
                 "cp.async.bulk.prefetch.tensor.2d.L2.global.tile"
@@ -209,8 +213,8 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
             int32_t crd2 = 0;
-            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (dst.rows/8) : 0;
-            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (dst.rows/16);
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_row_idx * (dst.rows/8)  : tile_col_idx * (dst.cols/8);
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? tile_col_idx * (dst.cols/16) : tile_row_idx * (dst.rows/16);
 
             asm volatile (
                 "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
@@ -234,17 +238,18 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination tensormap address in global memory
  * @param[in] src_tma_map The source shared memory tile.
- * @param[in] tile_idx The index of the tile destination.
+ * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
+ * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
 template<detail::st_type_tma_layout ST>
-__device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_idx) {
+__device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
         if constexpr (detail::st_type_2d_tma_layout<ST>) {
-            int32_t crd0 = 0;  
-            int32_t crd1 = tile_idx * (src.rows); 
+            int32_t crd0 = tile_col_idx * (src.cols);
+            int32_t crd1 = tile_row_idx * (src.rows);
 
             asm volatile (
                 "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"
@@ -259,8 +264,8 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
             int32_t crd2 = 0;
-            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (src.rows/8) : 0;
-            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (src.rows/16);
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_row_idx * (src.rows/8)  : tile_col_idx * (src.cols/8);
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? tile_col_idx * (src.cols/16) : tile_row_idx * (src.rows/16);
 
             asm volatile (
                 "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
@@ -282,19 +287,20 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination shared memory tile.
  * @param[in] src_tma_map The source tensormap address in global memory
- * @param[in] tile_idx The index of the requested tile.
- * @param[in,out] barrier The barrier used for synchronization of the asynchronous copy.
+ * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
+ * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
 template<detail::st_type_tma_layout ST>
-__device__ static inline void load_async(ST &dst, void const* const src_tma_map, int tile_idx, uint64_t& barrier) {
+__device__ static inline void load_async(ST &dst, void const* const src_tma_map, barrier& bar, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
-        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
         if constexpr (detail::st_type_2d_tma_layout<ST>) {
-            int32_t crd0 = 0;  
-            int32_t crd1 = tile_idx * (dst.rows); 
+            int32_t crd0 = tile_col_idx * (dst.cols);
+            int32_t crd1 = tile_row_idx * (dst.rows);
 
             asm volatile (
                 "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
@@ -309,8 +315,8 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
             int32_t crd2 = 0;
-            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_idx * (dst.rows/8) : 0;
-            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? 0 : tile_idx * (dst.rows/16);
+            int32_t crd3 = detail::st_type_wgmma_row_layout<ST> ? tile_row_idx * (dst.rows/8)  : tile_col_idx * (dst.cols/8);
+            int32_t crd4 = detail::st_type_wgmma_row_layout<ST> ? tile_col_idx * (dst.cols/16) : tile_row_idx * (dst.rows/16);
 
             asm volatile (
                 "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"

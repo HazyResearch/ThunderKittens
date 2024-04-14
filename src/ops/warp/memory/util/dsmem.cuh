@@ -1,15 +1,107 @@
 #pragma once
 
-#include "../../../common/common.cuh"
-#include "../../../types/shared/shared.cuh"
+#include "../../../../common/common.cuh"
+#include "../../../../types/shared/shared.cuh"
 
-struct dsmem {
+namespace kittens {
+namespace dsmem {
 
-template<int height, int width, ducks::st_layout::all layout>
-__device__ static inline void tile_distribute_smem(st<bf16, height, width, layout> &dst_, st<bf16, height, width, layout> &src_, int cluster_size, int dst_idx, uint32_t size_bytes, uint64_t& barrier) 
-{
-    if (threadIdx.x == 0) {
-        void const* const ptr = &barrier;
+using barrier = uint64_t;
+
+/**
+ * @brief Waits at a dsmem barrier until the memory and sufficient threads have arrived.
+ *
+ * This function is used to synchronize threads at a barrier. Each thread waits at the barrier
+ * until the local memory has arrived.
+ *
+ * @param bar Reference to the barrier variable.
+ * @param kPhaseBit The phase bit used for the barrier. Defaults to 1, as most transfers have an even number of phases.
+ */
+__device__ static inline void wait(barrier& bar, int kPhaseBit=1) {
+    void const* const ptr = &bar;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+    asm volatile (
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbar.try_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        ::
+        "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
+}
+
+/**
+ * @brief Sets the number of bytes expected at the barrier.
+ *
+ * This function is called by the first thread in the warp (laneid() == 0) to set the number of bytes
+ * expected at the barrier. It converts the barrier pointer to a generic shared memory pointer and
+ * uses inline assembly to set the expected number of bytes.
+ *
+ * @param bar Reference to the barrier variable.
+ * @param bytes The number of bytes expected at the barrier.
+ */
+__device__ static inline void set_bytes(barrier& bar, uint32_t bytes) {
+    if (laneid() == 0) {
+        void const* const ptr = &bar;
+        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+        asm volatile (
+            "mbar.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
+            :: "r"(bar_ptr), "r"(bytes)
+        );
+
+    }
+}
+
+// template magic allows arrays of these objects to be copied, too.
+template<typename T, uint32_t... dims> struct transfer_bytes;
+template<<ducks::st::all ST> struct transfer_bytes<ST> { constexpr uint32_t bytes = ST::num_elements * sizeof(typename ST::dtype); };
+template<<ducks::sv::all SV> struct transfer_bytes<SV> { constexpr uint32_t bytes = SV::length * sizeof(typename SV::dtype); };
+template<typename T, uint32_t dim, uint32_t... rest_dims> struct transfer_bytes<T, dim, rest_dims...> {
+    constexpr uint32_t bytes = dim*transfer_bytes<T, rest_dims...>::bytes;
+};
+
+
+/**
+ * @brief Initialize a distribute shared memory barrier
+ *
+ * If the template arguments are left blank, the user is expected to call set_bytes manually.
+ * Alternatively, if a shared tile or shared vector type is passed, along with optional array
+ * dimensions, the barrier will be automatically initialized with the correct transaction size, too.
+ *
+ * @tparam T the type of the shared memory object being passed. Defaults to kittens::ducks::default_type.
+ * @tparam dims... Dimensions of the multidimensional array, if an array is being transferred. If blank, a single object is transferred.
+ * @param[out] bar Reference to the barrier variable.
+ * @param[in] tc The number of arriving threads the barrier should also wait for.
+ */
+template<typename T=ducks::default_type, int... dims>
+__device__ static inline void init_bar(barrier& bar, int tc=1) {
+    if (laneid() == 0) {
+        void const* const ptr = &bar;
+        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+        asm volatile (
+            "mbar.init.shared::cta.b64 [%0], %1;\n"
+            :: "r"(bar_ptr), "r"(tc)
+        );
+    }
+    // Now initialize the bar bytes
+    if constexpr (ducks::st::all<T> || ducks::sv::all<T>) {
+        set_bytes(bar, transfer_bytes<T, dims...>::bytes);
+    }
+}
+
+// Generic transfer
+template<typename T>
+__device__ static inline void distribute(T &dst_, T &src_, int cluster_size, int dst_idx, uint32_t size_bytes, barrier& bar) {
+    if (laneid() == 0) {
+        void const* const ptr = &bar;
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
         // **************************************************
@@ -40,7 +132,7 @@ __device__ static inline void tile_distribute_smem(st<bf16, height, width, layou
         // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
         // copy src into dst in neighbor's cta
         asm volatile (
-            "cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
+            "cp.async.bulk.shared::cluster.shared::cta.mbar::complete_tx::bytes [%0], [%1], %2, [%3];\n"
             :
             : "r"(neighbor_addr_dst), "r"(src_ptr), "r"(size_bytes), "r"(neighbor_addr_mbar)
             : "memory"
@@ -48,47 +140,5 @@ __device__ static inline void tile_distribute_smem(st<bf16, height, width, layou
     }
 }
 
-__device__ static inline void distribution_wait(uint64_t& barrier, int kPhaseBit) {
-    void const* const ptr = &barrier;
-    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
-
-    asm volatile (
-        "{\n"
-        ".reg .pred                P1;\n"
-        "LAB_WAIT:\n"
-        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
-        "@P1                       bra.uni DONE;\n"
-        "bra.uni                   LAB_WAIT;\n"
-        "DONE:\n"
-        "}\n"
-        :: "r"(mbar_ptr),
-        "r"(kPhaseBit)
-    );
 }
-
-__device__ static inline void init_barrier(uint64_t& barrier, int tc) {
-    if (threadIdx.x == 0) {
-        void const* const ptr = &barrier;
-        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
-
-        asm volatile (
-            "mbarrier.init.shared::cta.b64 [%0], %1;\n"
-            :: "r"(bar_ptr), "r"(tc)
-        );
-    }
 }
-
-__device__ static inline void set_barrier_bytes(uint64_t& barrier, uint32_t bytes) {
-    if (threadIdx.x == 0) {
-        void const* const ptr = &barrier;
-        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
-
-        asm volatile (
-            "mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
-            :: "r"(bar_ptr), "r"(bytes)
-        );
-
-    }
-}
-
-};
