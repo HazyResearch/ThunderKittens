@@ -171,6 +171,10 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     st_bf<qo_height_bwd, tile_width_bwd, layout_o>           (&o_smem)     [NUM_WORKERS_QO_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WORKERS_QO_BWD>();
     st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec  (&d_smem)     [NUM_WORKERS_QO_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WORKERS_QO_BWD>();
 
+    rt_fl<qo_height_bwd, tile_width_bwd> o_grad;
+    rt_fl<qo_height_bwd, tile_width_bwd> o; 
+    rt_fl<qo_height_bwd, tile_width_bwd>::col_vec d;
+
     // compute D = rowsum(dO * O)
     constexpr int do_blocks = N / (NUM_WORKERS_QO_BWD*o_smem[0].rows);
 
@@ -194,6 +198,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
         tma::arrive_and_wait(ograd_smem_barrier, kPhaseBit);
         tma::arrive_and_wait(o_smem_barrier, kPhaseBit);
+        __syncthreads();
 
         // reinit barriers
         if (threadIdx.x == 0) {
@@ -202,9 +207,11 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         }
         __syncthreads();
 
-        mul(o_grad_smem[warpid], o_grad_smem[warpid], o_smem[warpid]);
-        __syncthreads();
-        row_sum(d_smem[warpid], o_grad_smem[warpid]);
+        load(o, o_smem[warpid]);
+        load(o_grad, o_grad_smem[warpid]);
+        mul(o_grad, o_grad, o);
+        row_sum(d, o_grad);
+        store(d_smem[warpid], d);
 
         __syncthreads(); 
         if (warpid == 0) {
@@ -214,8 +221,9 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             }
             tma::store_commit_group();
         }
-        tma::store_async_wait();
     }
+
+    tma::store_async_wait();
 }
 
 #include "harness_t.impl"
