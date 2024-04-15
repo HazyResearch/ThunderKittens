@@ -42,9 +42,8 @@ void attend_ker_fwd_inf(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma
     constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     __shared__ uint64_t qsmem_barrier, ksmem_barrier, vsmem_barrier;
-
-    constexpr int tile_bytes = sizeof(bf16) * k_smem[0][0].num_elements * NUM_WORKERS_KV; 
-    int kPhaseBit = 1;
+    
+    constexpr int kPhaseBit = 1;
 
     if (warpid == 0) {
         tma::init_barrier<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(qsmem_barrier, block.size());
