@@ -1,3 +1,13 @@
+/**
+ * @file
+ * @brief Declarations, manipulations, and wrappers for basic types.
+ * 
+ * This file is a bunch of utilities for going back and forth between different types.
+ * 
+ * Many of them are for the compiler, so as to clean up the code. It unfortunately
+ * seems necessary when we have types we really care about that are less than word width.
+ */
+
 #pragma once
 
 #include <cuda_bf16.h>
@@ -6,23 +16,31 @@
 #include <string>
 #include <bit>
 
-/*
-
-This file is a bunch of utilities for going back and forth between different types
-
-Many of them are for the compiler, so as to clean up the code. It unfortunately
-seems necessary when we have types we really care about that are less than word width.
-
-*/
-
 namespace kittens {
 
+/**
+ * @brief Bfloat16 floating-point type.
+ */
 using bf16 = __nv_bfloat16;
+/**
+ * @brief Half-precision floating-point type.
+ */
 using half = __half;
+/**
+ * @brief Packed word of two bfloat16 floating-point values.
+ */
 using bf16_2 = __nv_bfloat162;
+/**
+ * @brief Packed word of two half-precision floating-point values.
+ */
 using half_2 = __half2;
 
 namespace ducks {
+/**
+ * @namespace base_types
+ *
+ * @brief A namespace for concepts for basic data types.
+ */
 namespace base_types {
 
 template<typename T>
@@ -31,12 +49,38 @@ concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could ad
 } // namespace base_types
 } // namespace ducks
 
+/**
+ * @namespace base_types
+ *
+ * @brief A namespace for ThunderKittens basic data types.
+ */
 namespace base_types {
 
+/**
+ * @brief Provides compile-time constants for different types.
+ *
+ * @tparam T The type for which to provide constants.
+ */
 template<typename T> struct constants {
+    /**
+     * @brief Zero
+     * @return Constexpr zero with type T
+     */
     static __device__ inline constexpr T zero()      { return T{0}; }
+    /**
+     * @brief One
+     * @return Constexpr one with type T
+     */
     static __device__ inline constexpr T one()       { return T{1}; }
+    /**
+     * @brief Positive infinity. Particularly useful for initializing before a min op.
+     * @return Constexpr positive infinity with type T
+     */
     static __device__ inline constexpr T pos_infty() { return T{INFINITY}; } // I'll find a better way at some point but this appears to work.
+    /**
+     * @brief Negative infinity. Particularly useful for initializing before a max op.
+     * @return Constexpr negative infinity with type T
+     */
     static __device__ inline constexpr T neg_infty() { return T{-INFINITY}; }
 };
 template<> struct constants<float2> {
@@ -58,9 +102,25 @@ template<> struct constants<bf16_2> {
     static __device__ inline constexpr bf16_2 neg_infty() { return bf16_2{constants<bf16>::neg_infty(), constants<bf16>::neg_infty()}; }
 };
 
-// how many are packed?
+/**
+ * @brief Provides information about packing of elements for a given type.
+ *
+ * @tparam T The type for which to provide packing information.
+ */
 template<typename T> struct packing {
+    /**
+     * @brief The number of elements packed together.
+     *
+     * @return constexpr int representing number of elements within the type.
+     */
     static __device__ inline constexpr int num() { return 1; }
+    /**
+     * @brief Packs a single T element twice (replicated) into its packed type.
+     *
+     * @param i[in] The element to pack.
+     * @return The packed type.
+     */
+    static __device__ inline constexpr T pack(const bf16 &i);
 };
 template<> struct packing<bf16> {
     static __device__ inline constexpr int num() { return 1; }
@@ -102,8 +162,19 @@ template<> struct packing<int4> {
     static __device__ inline constexpr int num() { return 4; }
 };
 
-
+/**
+ * @brief Provides templated functionality to convert between different types.
+ *
+ * @tparam T The target type for conversion.
+ * @tparam U The source type for conversion.
+ */
 template<typename T, typename U> struct convertor {
+    /**
+     * @brief Converts a value of type U to type T.
+     *
+     * @param u[in] The value of type U to convert.
+     * @return T The converted value of type T.
+     */
     static __device__ inline T convert(const U & u) {
         return (T)u;
     }

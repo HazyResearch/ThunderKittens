@@ -7,7 +7,7 @@ __global__ void test_wgmma_tma_mma_ker_trans(CUtensorMap* tma_desc_a, CUtensorMa
     int warpid   = kittens::warpid();
 
     extern __shared__ alignment_dummy __shm22[]; // this is the CUDA shared memory
-    shared_allocator al = shared_allocator::create_allocator_tma((int*)&__shm22[0]); 
+    tma_allocator al = tma_allocator((int*)&__shm22[0]); 
 
     rt_fl<1, WGMMA_M> result;
 
