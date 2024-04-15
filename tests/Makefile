@@ -12,9 +12,9 @@ NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../src
 
 # At what level to run tests?
 # Level 1 takes a 15 seconds to compile 1,000 tests.
-# (Default) Level 2 takes a minute to compile 4,000 tests.
-# Level 3 takes 5 minutes to compile 14,000 tests.
-# Level 4 takes 15 while to compile 31,000 tests
+# (Default) Level 2 takes a minute to compile 3,000 tests.
+# Level 3 takes 5 minutes to compile 10,000 tests.
+# Level 4 takes 15 while to compile 25,000 tests
 NVCCFLAGS+= -DTEST_INTENSITY=2
 # Which tests to run?
 # -DTEST_ALL means run all tests.

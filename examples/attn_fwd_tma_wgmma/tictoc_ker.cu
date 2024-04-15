@@ -14,12 +14,12 @@ using namespace kittens;
 using layout_q = ducks::st_layout::wgmma_row_0b;
 using layout_k = ducks::st_layout::wgmma_row_0b;
 using layout_v = ducks::st_layout::wgmma_col_t_0b;
-using layout_o = ducks::st_layout::naive; // tma_swizzle seems unreliable right now.
+using layout_o = ducks::st_layout::xor_swizzle;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
-    tma_allocator al((int*)&__shm[0]);
+    tma_swizzle_allocator al((int*)&__shm[0]);
 
     st_bf<qo_height, tile_width, layout_q> (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>();
     st_bf<kv_height, tile_width, layout_k> (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2, NUM_WORKERS_KV>();
@@ -93,7 +93,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
         }
 
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
-            // warpgroup::fence(att_block);
+            warpgroup::mma_fence(att_block);
             warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
             warpgroup::mma_commit_group();
 
@@ -119,7 +119,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
             copy(att_block_mma, att_block); // convert to bf16 for mma
             mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
-            // warpgroup::fence(o_prev);
+            warpgroup::mma_fence(o_prev);
             warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
             warpgroup::mma_commit_group();
         }

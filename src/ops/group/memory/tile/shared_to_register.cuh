@@ -11,7 +11,7 @@
  * @param dst[out] The destination register tile.
  * @param src[in]  The source shared tile.
  */
-template<typename T2, typename U, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::row shared_layout>
+template<typename T2, typename U, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::all shared_layout>
 __device__ inline static void load(rt<T2, height/N_WARPS, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
     constexpr int warp_height = height/N_WARPS;
@@ -58,7 +58,7 @@ __device__ inline static void load(rt<T2, height/N_WARPS, width, reg_layout> &ds
  * @param dst[out] The destination shared tile.
  * @param src[in]  The source register tile.
  */
-template<typename U, typename T2, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::row shared_layout>
+template<typename U, typename T2, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::all shared_layout>
 __device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height/N_WARPS, width, reg_layout> &src) {
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
     constexpr int warp_height = height/N_WARPS;

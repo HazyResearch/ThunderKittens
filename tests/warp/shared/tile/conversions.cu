@@ -10,7 +10,6 @@ void warp::shared::tile::conversions::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     sweep_st_layout_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::st_layout::naive>::run(results);
-    sweep_st_layout_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::st_layout::tma_swizzle>::run(results);
     sweep_st_layout_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::st_layout::xor_swizzle>::run(results);
     sweep_st_layout_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::st_layout::wgmma_row_0b>::run(results);
     sweep_st_layout_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::st_layout::wgmma_row_32b>::run(results);

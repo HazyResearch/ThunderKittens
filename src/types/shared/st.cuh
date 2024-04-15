@@ -99,9 +99,9 @@ struct st {
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static_assert(
-        !std::is_same_v<layout, ducks::st_layout::tma_swizzle> || width == 1 || width == 2 || width == 4,
-        "For TMA swizzled modes, shared tile width must be 1, 2, or 4."
-    ); // TMA swizzling only appears to work with a few particular layout dimensions.
+        !std::is_same_v<layout, ducks::st_layout::xor_swizzle> || width == 1 || width == 2 || width == 4 || width == 8 || width == 16 || width == 32,
+        "For XOR swizzled modes, shared tile width must be a power of 2."
+    ); // XOR swizzling only works with a few particular layout dimensions.
 
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
@@ -234,24 +234,6 @@ namespace st {
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::st::identifier
-/**
-* @brief Concept for shared tiles with row layout.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T is a shared tile.
-* - T has an internal type layout that is row-contiguous
-*/
-template<typename T> concept row_layout = all<T> && ducks::st_layout::row<typename T::layout>;
-/**
-* @brief Concept for shared tiles with row layout.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T is a shared tile.
-* - T has an internal type layout that is col-contiguous
-*/
-template<typename T> concept col_layout = all<T> && ducks::st_layout::col<typename T::layout>;
 
 } // namespace st
 } // namespace ducks
@@ -259,18 +241,18 @@ template<typename T> concept col_layout = all<T> && ducks::st_layout::col<typena
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
 
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x4 = st_bf<1, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x8 = st_bf<1, 8, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x1 = st_bf<2, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x2 = st_bf<2, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x4 = st_bf<2, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x1 = st_bf<4, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x1 = st_bf<1, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x2 = st_bf<1, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x4 = st_bf<1, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x8 = st_bf<1, 8, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x1 = st_bf<2, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x2 = st_bf<2, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x4 = st_bf<2, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x1 = st_bf<4, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x2 = st_bf<4, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x4 = st_bf<4, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_8x1 = st_bf<8, 1, layout>;
 
 }

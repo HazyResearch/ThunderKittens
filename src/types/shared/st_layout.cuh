@@ -16,28 +16,20 @@ namespace ducks {
  */
 namespace st_layout {
 
-// row layouts are very much the default
 /**
  * @brief A naive row layout with no swizzling.
  */
 struct naive {}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
 /**
- * @brief A row layout with swizzling specialized to match TMA modes.
- *
- * Note this is only defined for Nx1, Nx2, and Nx4 shared tiles.
- */
-struct tma_swizzle {}; // only defined for x1, x2, x4 tiles.
-/**
- * @brief A row layout with XOR swizzling in 8-element chunks (16 bytes for bf16).
+ * @brief A row layout with XOR swizzling in 16-byte chunks (8 elements for bf16). Only defined for power-of-two widths.
  */
 struct xor_swizzle {}; // generic, non-tma swizzling mode
-
 /**
  * @brief A row layout for wgmma with no swizzling.
  */
 struct wgmma_row_0b { static constexpr int swizzling_mode=0; };
 /**
- * @brief A row layout for wgmma with 32-bit swizzling.
+ * @brief A row layout for wgmma with 32-byte swizzling.
  */
 struct wgmma_row_32b { static constexpr int swizzling_mode=3; };
 /**
@@ -45,7 +37,7 @@ struct wgmma_row_32b { static constexpr int swizzling_mode=3; };
  */
 struct wgmma_col_t_0b{ static constexpr int swizzling_mode=0; };
 /**
- * @brief A (transposed) column layout for wgmma with 32-bit swizzling.
+ * @brief A (transposed) column layout for wgmma with 32-byte swizzling.
  */
 struct wgmma_col_t_32b{ static constexpr int swizzling_mode=3; }; // Swizzled transposed layout not yet working
 
@@ -66,27 +58,16 @@ concept wgmma_col = (
     // std::is_same_v<T, wgmma_col_t_32b> -- this doesn't work right now.
 );
 /**
- * @brief Concept to check if a type is a row-contiguous layout.
+ * @brief Concept to check if a type is an ST layout.
  */
 template<typename T>
-concept row = (
+concept all = (
     wgmma_row<T>                         ||
     wgmma_col<T>                         || // wgmma col_t layouts are actually row layouts in terms of local contiguity.
     std::is_same_v<T, naive>             ||
-    std::is_same_v<T, tma_swizzle>       ||
     std::is_same_v<T, xor_swizzle>       ||
     std::is_same_v<T, wgmma_col_t_32b>      // temporary, until it merges into wgmma_col
 );
-/**
- * @brief Concept to check if a type is a col-contiguous layout.
- */
-template<typename T>
-concept col = false; // There are actually no column layouts right now. Which is good because they're slow!
-/**
- * @brief Concept to check if a type is an st_layout
- */
-template<typename T>
-concept all = row<T> || col<T>;
 
 }
 } // namespace ducks
@@ -122,23 +103,13 @@ struct shared_indexer {
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, ducks::st_layout::tma_swizzle> {
-    static constexpr int rows = height*16;
-    static constexpr int cols = width*16;
-    static constexpr int rows_per_core_matrix = 8;
-    static constexpr int cols_per_core_matrix = 8;
-    __device__ static inline int idx(int r, int c) { // naive row-major index default
-        return (r*cols + c) ^ (((r%8)*width/4)*8);
-    }
-};
-template<int height, int width>
 struct shared_indexer<height, width, ducks::st_layout::xor_swizzle> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int swizzling_bytes = sizeof(float4);
     static constexpr int swizzling_elements = swizzling_bytes / sizeof(bf16);
     __device__ static inline int idx(int r, int c) { // naive row-major index default
-        return (r*cols + c) ^ (swizzling_elements*r);
+        return (r*cols + c) ^ (((r%8)*width/4)*8);
     }
 };
 template<int height, int width>

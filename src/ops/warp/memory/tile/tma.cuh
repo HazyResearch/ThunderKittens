@@ -39,11 +39,13 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
         CUtensorMapSwizzle(-1)
     );
 
+
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::tma_swizzle>) ?
+    static_assert(!std::is_same_v<typename ST::layout, ducks::st_layout::xor_swizzle> || ST::width == 1 || ST::width == 2 || ST::width == 4);
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::xor_swizzle>) ?
                                                             tma_swizzle_from_size : CU_TENSOR_MAP_SWIZZLE_NONE;
 
     uint64_t gmem_shape [5] = {0, 0, 0, 0, 0};

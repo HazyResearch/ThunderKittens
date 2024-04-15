@@ -24,7 +24,7 @@ namespace kittens {
  * @param dst[out] The destination register tile.
  * @param src[in]  The source shared tile.
  */
-template<ducks::rt::all RT, ducks::st::row_layout ST>
+template<ducks::rt::all RT, ducks::st::all ST>
 __device__ inline static void load(RT &dst, const ST &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");
@@ -75,7 +75,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
  * @param dst[out] The destination shared tile.
  * @param src[in]  The source register tile.
  */
-template<ducks::rt::all RT, ducks::st::row_layout ST>
+template<ducks::rt::all RT, ducks::st::all ST>
 __device__ inline static void store(ST &dst, const RT &src) {
 
     static_assert(RT::height == ST::height, "register tile and shared tile must match height");

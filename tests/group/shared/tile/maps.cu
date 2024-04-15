@@ -4,7 +4,7 @@
 
 struct test_exp {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<H%NW==0 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::tma_swizzle> || W == 1 || W == 2 || W == 4) && W*H<=64>; // this is group-level
+        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16) && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_exp";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = __bfloat162float(__float2bfloat16(::expf(i_ref[i]))); // overwrite the whole thing

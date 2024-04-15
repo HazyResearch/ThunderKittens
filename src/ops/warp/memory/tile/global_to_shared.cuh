@@ -22,7 +22,7 @@ namespace kittens {
  * @param[in] src The source global memory array.
  * @param row_stride[in] The stride between rows in the source array.
  */
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void load(ST &dst, const bf16 *src, const int row_stride) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
@@ -54,7 +54,7 @@ __device__ static inline void load(ST &dst, const bf16 *src, const int row_strid
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
  */
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void store(bf16 *dst, const ST &src, const int row_stride) {
 
     int laneid = threadIdx.x % 32;
@@ -87,7 +87,7 @@ __device__ static inline void store(bf16 *dst, const ST &src, const int row_stri
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void load_async(ST &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
@@ -127,7 +127,7 @@ __device__ static inline void load_async(ST &dst, const bf16 *src, const int row
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void store_async(bf16 *dst, const ST &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram

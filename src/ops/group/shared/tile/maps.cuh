@@ -18,8 +18,7 @@ template<typename op, ducks::st::all T> // T2, w, h can be inferred from dst as 
 __device__ static inline void unary_map(T &dst, const T &src) {
     #pragma unroll
     for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
-        int row = i/dst.cols, col = i%dst.cols;
-        dst[{row, col}] = op::template op<typename T::dtype>(src[{row, col}]);
+        dst.data[i] = op::template op<typename T::dtype>(src.data[i]);
     }
 }
 
@@ -39,8 +38,7 @@ template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
     #pragma unroll
     for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
-        int row = i/dst.cols, col = i%dst.cols;
-        dst[{row, col}] = op::template op<typename T::dtype>(src[{row, col}], param);
+        dst.data[i] = op::template op<typename T::dtype>(src.data[i], param);
     }
 }
 
@@ -60,8 +58,7 @@ template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
     #pragma unroll
     for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
-        int row = i/dst.cols, col = i%dst.cols;
-        dst[{row, col}] = op::template op<typename T::dtype>(lhs[{row, col}], rhs[{row, col}]);
+        dst.data[i] = op::template op<typename T::dtype>(lhs.data[i], rhs.data[i]);
     }
 }
 

@@ -20,7 +20,7 @@ template<typename T> concept st_type_2d_tma_layout = (
     ducks::st::all<T> && 
     (
         std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
-        std::is_same_v<typename T::layout, ducks::st_layout::tma_swizzle>
+        std::is_same_v<typename T::layout, ducks::st_layout::xor_swizzle>
     )
 );
 template<typename T> concept st_type_wgmma_row_layout = (

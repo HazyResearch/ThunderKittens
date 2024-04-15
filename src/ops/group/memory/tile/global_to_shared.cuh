@@ -3,7 +3,7 @@
  * @brief Group (collaborative warp) ops for loading shared tiles from and storing to global memory. 
  */
 
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void load(ST &dst, const typename ST::dtype *src, const int row_stride) {
     // each thread needs to do 1 call per width*height / N_WARPS
     // attempting to improve striping into dram
@@ -28,7 +28,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
             *(float4*)(&dst[{row, col}]) = *(float4*)(&src[row*row_stride + col]);
     }
 }
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void store(typename ST::dtype *dst, const ST &src, const int row_stride) {
 
     int laneid = threadIdx.x % GROUP_THREADS;
@@ -51,7 +51,7 @@ __device__ static inline void store(typename ST::dtype *dst, const ST &src, cons
     }
 }
 
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void load_async(ST &dst, const typename ST::dtype *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height / N_WARPS
     // attempting to improve striping into dram
@@ -81,7 +81,7 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
             );
     }
 }
-template<ducks::st::row_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void store_async(typename ST::dtype *dst, const ST &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height/4
     // attempting to improve striping into dram
