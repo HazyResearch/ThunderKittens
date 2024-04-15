@@ -7,10 +7,10 @@ NVCC=nvcc
 NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../src
 
 # At what level to run tests?
-NVCCFLAGS+= -DTEST_INTENSITY=3 # this is still on the testing todo list
+NVCCFLAGS+= -DTEST_INTENSITY=4 # this is still on the testing todo list
 # Which tests to run?
-# NVCCFLAGS+= -DTEST_ALL # Run all tests. But be warned, this will take a year to link.
-NVCCFLAGS+= -DTEST_WARP_MEMORY_TILE_TMA # Or look in testing_commons/flags.cuh for specific tests to significantly reduce compilation time.
+NVCCFLAGS+= -DTEST_ALL # Run all tests. But be warned, this will take a year to link.
+# NVCCFLAGS+= -DTEST_WARP_MEMORY_VEC_DSMEM # Or look in testing_commons/flags.cuh for specific tests to significantly reduce compilation time.
 
 ifeq ($(COMP_LEVEL),fast)
 NVCCFLAGS+= -O0 --threads=0 -diag-suppress 20054

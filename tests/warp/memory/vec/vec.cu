@@ -16,6 +16,9 @@ void warp::memory::vec::tests(test_data &results) {
 #ifdef TEST_WARP_MEMORY_VEC_TMA
     warp::memory::vec::tma::tests(results);
 #endif
+#ifdef TEST_WARP_MEMORY_VEC_DSMEM
+    warp::memory::vec::dsmem::tests(results);
+#endif
 }
 
 #endif

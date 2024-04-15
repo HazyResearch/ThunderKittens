@@ -16,9 +16,9 @@ void warp::memory::tile::tests(test_data &results) {
 #ifdef TEST_WARP_MEMORY_TILE_TMA
     warp::memory::tile::tma::tests(results);
 #endif
-// #ifdef TEST_WARP_MEMORY_TILE_DSMEM
-//     warp::memory::tile::dsmem::tests(results);
-// #endif
+#ifdef TEST_WARP_MEMORY_TILE_DSMEM
+    warp::memory::tile::dsmem::tests(results);
+#endif
 }
 
 #endif
