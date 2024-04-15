@@ -1,3 +1,7 @@
+# NOTE: WE HIGHLY RECOMMEND RUNNING WITH `make -j32` or however many threads your machine has.
+# If you want to run lots of tests without parallel compilation, be prepared
+# to spend a *long* time compiling. (like, HOURS single-threaded.)
+
 # GPU Selection: Set to either 4090 or H100
 GPU_TARGET=H100
 COMP_LEVEL=fast
@@ -7,17 +11,23 @@ NVCC=nvcc
 NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../src
 
 # At what level to run tests?
-NVCCFLAGS+= -DTEST_INTENSITY=4 # this is still on the testing todo list
+# Level 1 takes a 15 seconds to compile 1,000 tests.
+# (Default) Level 2 takes a minute to compile 4,000 tests.
+# Level 3 takes 5 minutes to compile 14,000 tests.
+# Level 4 takes 15 while to compile 31,000 tests
+NVCCFLAGS+= -DTEST_INTENSITY=2
 # Which tests to run?
-NVCCFLAGS+= -DTEST_ALL # Run all tests. But be warned, this will take a year to link.
-# NVCCFLAGS+= -DTEST_WARP_MEMORY_VEC_DSMEM # Or look in testing_commons/flags.cuh for specific tests to significantly reduce compilation time.
+# -DTEST_ALL means run all tests.
+# You can also specify subsections, e.g. -DTEST_WARP_MEMORY
+# Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
+NVCCFLAGS+= -DTEST_ALL
 
 ifeq ($(COMP_LEVEL),fast)
 NVCCFLAGS+= -O0 --threads=0 -diag-suppress 20054
 else ifeq ($(COMP_LEVEL),debug)
 NVCCFLAGS+= -g -G
 else ifeq ($(COMP_LEVEL),profile)
-NVCCFLAGS+= -O3 --threads=0 --dlto
+NVCCFLAGS+= -O3 --threads=0 -diag-suppress 20054 --dlto
 endif
 
 # Compiler flags based on GPU target
