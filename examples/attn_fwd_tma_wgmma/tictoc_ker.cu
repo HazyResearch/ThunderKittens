@@ -93,7 +93,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
         }
 
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
-            // warpgroup::fence(att_block);
+            warpgroup::mma_fence(att_block);
             warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
             warpgroup::mma_commit_group();
 
@@ -119,7 +119,7 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
             copy(att_block_mma, att_block); // convert to bf16 for mma
             mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
-            // warpgroup::fence(o_prev);
+            warpgroup::mma_fence(o_prev);
             warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
             warpgroup::mma_commit_group();
         }
