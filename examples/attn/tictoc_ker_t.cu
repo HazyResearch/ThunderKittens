@@ -160,7 +160,7 @@ template<int N> __global__  __launch_bounds__(NUM_WORKERS_BWD*kittens::WARP_THRE
 void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l, CUtensorMap* tma_d, 
                             CUtensorMap* tma_o_grad, CUtensorMap* tma_q_grad, CUtensorMap* tma_k_grad, CUtensorMap* tma_v_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
-    tma_swizzle_allocator al((int*)&__shm[0]);
+    tma_allocator al((int*)&__shm[0]);
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
