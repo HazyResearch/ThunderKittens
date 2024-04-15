@@ -83,7 +83,7 @@ else:
 o = forward(q, k, v)
 q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
 
-fn = f'{TESTNAME}_{N}_{D}_bwd.txt'
+fn = f'{TESTNAME}_{N}_{D}.txt'
 with open(fn, 'w') as f:
     # inputs
     qf = q.to(torch.float32).flatten().cpu().numpy()

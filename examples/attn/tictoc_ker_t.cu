@@ -2,7 +2,7 @@
 #include "../../src/kittens.cuh"
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 20;
+constexpr int NUM_WORKERS = 16;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
 constexpr int qo_height = 4, kv_height = 4;
