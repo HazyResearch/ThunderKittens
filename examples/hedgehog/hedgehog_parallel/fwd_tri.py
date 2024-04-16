@@ -7,10 +7,9 @@ from torch.cuda.amp import custom_bwd, custom_fwd
 @triton.jit
 def parallel_based_fwd_kernel_hedgehog(
     q,  # query [B, H, N, D]
-    k,  # key [B, H, N, DV]
+    k,  # key [B, H, N, D]
     v,  # value [B, H, N, DV]
     o,  # output [B, H, N, DV]
-    z,  # normalizer [B, H, N]
     s_qk_h,  # stride size: N * D
     s_qk_t,  # stride size: D
     s_qk_d,  # stride size: 1
@@ -45,7 +44,6 @@ def parallel_based_fwd_kernel_hedgehog(
     b_q = (b_q * scale).to(b_q.dtype)
     
     b_o = tl.zeros([BS_q_n, BS_v_dv], dtype=tl.float32)
-    b_z = tl.zeros([BS_q_n], dtype=tl.float32)
 
     # Q block and K block (no mask part)
     for _ in range(0, i_n * BS_q_n, BS_kv_n):
@@ -57,7 +55,6 @@ def parallel_based_fwd_kernel_hedgehog(
         
         # [BS_q_n, BS_kv_n]
         b_s = tl.dot(b_q, (b_k), allow_tf32=False)
-        b_z += tl.sum(b_s, axis=1)
 
         # [BQ, BD]
         b_o = b_o + tl.dot(b_s.to(b_v.dtype), b_v, allow_tf32=False)
@@ -92,8 +89,6 @@ def parallel_based_fwd_kernel_hedgehog(
         b_s = tl.dot(b_q, b_k, allow_tf32=False)
         b_s = tl.where(m_s, b_s, 0)
         
-        b_z += tl.sum(b_s, axis=1)
-        
         # [BS_q_n, BS_v_dv]
         b_o += tl.dot(b_s.to(b_q.dtype), b_v, allow_tf32=False)
 
@@ -106,8 +101,4 @@ def parallel_based_fwd_kernel_hedgehog(
                             (i_n*BS_q_n, i_v*BS_v_dv), 
                             (BS_q_n, BS_v_dv), (1, 0))
     
-    p_z = z + (i_bh + B * H * i_k) * N + i_n * BS_q_n + tl.arange(0, BS_q_n)
-    
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
-    tl.store(p_z, b_z.to(p_z.dtype.element_ty),
-             mask=((i_n * BS_q_n + tl.arange(0, BS_q_n)) < N))

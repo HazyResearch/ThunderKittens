@@ -21,25 +21,28 @@ def main():
     def run_test(scaling, norm, rand):
         torch.manual_seed(0)
         
+        qk_dim = 256
+        v_dim = 128
+        
         if rand:
-            q = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-            k = (torch.randn(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-            v = (torch.randn(batch_size, n_heads, seq_len, 128).cuda().to(dtype) / 128).requires_grad_(True)
+            q = (torch.randn(batch_size, n_heads, seq_len, qk_dim).cuda().to(dtype) / qk_dim).requires_grad_(True)
+            k = (torch.randn(batch_size, n_heads, seq_len, qk_dim).cuda().to(dtype) / qk_dim).requires_grad_(True)
+            v = (torch.randn(batch_size, n_heads, seq_len, v_dim).cuda().to(dtype) / v_dim).requires_grad_(True)
         else:
-            q = (torch.ones(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-            k = (torch.ones(batch_size, n_heads, seq_len, 16).cuda().to(dtype) / 16).requires_grad_(True)
-            v = (torch.ones(batch_size, n_heads, seq_len, 128).cuda().to(dtype) / 128).requires_grad_(True)
+            q = (torch.ones(batch_size, n_heads, seq_len, qk_dim).cuda().to(dtype) / qk_dim).requires_grad_(True)
+            k = (torch.ones(batch_size, n_heads, seq_len, qk_dim).cuda().to(dtype) / qk_dim).requires_grad_(True)
+            v = (torch.ones(batch_size, n_heads, seq_len, v_dim).cuda().to(dtype) / v_dim).requires_grad_(True)
         
         q_tri = q.clone().detach().requires_grad_(True)
         k_tri = k.clone().detach().requires_grad_(True)
         v_tri = v.clone().detach().requires_grad_(True)
         
         torch.manual_seed(1)
-        model_ref = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False, use_triton=False)
+        model_ref = HedgehogBased(num_heads=n_heads, head_dim=qk_dim, feature_dim=v_dim, input_dim=qk_dim, dtype=dtype, zero_init=False, use_triton=False)
         ref = model_ref(q, k, v, scaling, norm)
         
         torch.manual_seed(1)
-        model_tri = HedgehogBased(num_heads=n_heads, head_dim=16, feature_dim=128, input_dim=16, dtype=dtype, zero_init=False, use_triton=True)
+        model_tri = HedgehogBased(num_heads=n_heads, head_dim=qk_dim, feature_dim=v_dim, input_dim=qk_dim, dtype=dtype, zero_init=False, use_triton=True)
         tri = model_tri(q_tri, k_tri, v_tri, scaling, norm)
         
         assert q.allclose(q_tri, 1e-1)

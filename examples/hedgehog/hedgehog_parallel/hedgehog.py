@@ -300,8 +300,12 @@ class HedgehogBased(nn.Module):
             # A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) * cumsum_matrix
             # o = torch.einsum("bhnm,bhme->bhne", A_qk, v)
             
+            print("q.shape: ", q.shape)
+            print("k.shape: ", k.shape)
+            print("v.shape: ", v.shape)
+            
             parallel_based_fwd_kernel_hedgehog[grid](
-                q, k, v, o, z,
+                q, k, v, o,
                 q.stride(1), q.stride(2), q.stride(3),
                 v.stride(1), v.stride(2), v.stride(3),
                 q.size(0), q.size(1), q.size(2),
@@ -314,12 +318,11 @@ class HedgehogBased(nn.Module):
                 num_warps=num_warps,
                 num_stages=num_stages
             )
-            
-            o, z = o.sum(0).to(q.dtype), z.sum(0).to(q.dtype)
-            
+                
             if use_norm:
-                o = o / (z[..., None] + self.eps)
-                return o
+                q, k = q.unsqueeze(-2), k.unsqueeze(-2)
+                z = (q * k.cumsum(dim=2)).sum(dim=-1) + self.eps
+                return o / z
 
         elif self.use_fast_transformers:
             v = causal_dot_product(
