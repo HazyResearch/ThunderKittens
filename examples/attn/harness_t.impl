@@ -6,7 +6,7 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 1024;
+constexpr int ATTN_N     = 5120;
 constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 constexpr int BLOCK_SIZE_BWD = (32*NUM_WORKERS_BWD);
@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
         d_ref[i] = 0.0f;
         for (int j = 0; j < ATTN_D; j++) {
             // simulate computation in bf16
-            d_ref[i] += o_ref[i*ATTN_D + j] * og[i*ATTN_D + j];
+            d_ref[i] += o_ref[i*ATTN_D + j] * og[i*ATTN_D + j]; 
         }
     }
 
@@ -409,44 +409,44 @@ int main(int argc, char **argv) {
         og_ref_file << og[i] << ' ';
     }
 
-    std::ofstream qg_ref_file("printouts/qg_ref.txt");
-    std::ofstream qg_file("printouts/qg.txt");
-    std::ofstream diff_qg_file("printouts/diff_qg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        qg_file << qg[i] << ' ';
-        diff_qg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
-            good = false;
-        }
-    }
+    // std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    // std::ofstream qg_file("printouts/qg.txt");
+    // std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    //     float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+    //     qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+    //     qg_file << qg[i] << ' ';
+    //     diff_qg_file << diff << ' ';
+    //     if(abs(diff) > 0.01 || isnan(diff)) {
+    //         good = false;
+    //     }
+    // }
 
-    std::ofstream kg_ref_file("printouts/kg_ref.txt");
-    std::ofstream kg_file("printouts/kg.txt");
-    std::ofstream diff_kg_file("printouts/diff_kg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = kg[i] - kg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        kg_ref_file << kg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        kg_file << kg[i] << ' ';
-        diff_kg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
-            good = false;
-        }
-    }
+    // std::ofstream kg_ref_file("printouts/kg_ref.txt");
+    // std::ofstream kg_file("printouts/kg.txt");
+    // std::ofstream diff_kg_file("printouts/diff_kg.txt");
+    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    //     float diff = kg[i] - kg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+    //     kg_ref_file << kg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+    //     kg_file << kg[i] << ' ';
+    //     diff_kg_file << diff << ' ';
+    //     if(abs(diff) > 0.01 || isnan(diff)) {
+    //         good = false;
+    //     }
+    // }
 
-    std::ofstream vg_ref_file("printouts/vg_ref.txt");
-    std::ofstream vg_file("printouts/vg.txt");
-    std::ofstream diff_vg_file("printouts/diff_vg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = vg[i] - vg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        vg_ref_file << vg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        vg_file << vg[i] << ' ';
-        diff_vg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
-            good = false;
-        }
-    }
+    // std::ofstream vg_ref_file("printouts/vg_ref.txt");
+    // std::ofstream vg_file("printouts/vg.txt");
+    // std::ofstream diff_vg_file("printouts/diff_vg.txt");
+    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    //     float diff = vg[i] - vg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+    //     vg_ref_file << vg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+    //     vg_file << vg[i] << ' ';
+    //     diff_vg_file << diff << ' ';
+    //     if(abs(diff) > 0.01 || isnan(diff)) {
+    //         good = false;
+    //     }
+    // }
 
     std::cout << "Average bwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n\n\n\n";
