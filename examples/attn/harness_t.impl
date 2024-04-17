@@ -6,7 +6,7 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 5120;
+constexpr int ATTN_N     = 4096;
 constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 constexpr int BLOCK_SIZE_BWD = (32*NUM_WORKERS_BWD);
@@ -301,18 +301,16 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_b_kg = {};
     CUtensorMap tma_desc_b_vg = {};
 
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_q, d_b_q);
-    tma::create_tensor_map<st_bf<kv_height_bwd, tile_width_bwd, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height_bwd * 16)>(&tma_desc_b_k, d_b_k);
-    tma::create_tensor_map<st_bf<kv_height_bwd, tile_width_bwd, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height_bwd * 16)>(&tma_desc_b_v, d_b_v);
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_o, d_b_o);
-
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_l, d_b_l);
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_d, d_b_d);
-
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_og, d_b_og);
-    tma::create_tensor_map<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height_bwd * 16)>(&tma_desc_b_qg, d_b_qg);
-    tma::create_tensor_map<st_bf<kv_height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(kv_height_bwd * 16)>(&tma_desc_b_kg, d_b_kg);
-    tma::create_tensor_map<st_bf<kv_height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(kv_height_bwd * 16)>(&tma_desc_b_vg, d_b_vg);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_q>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_q, d_b_q);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_k>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_k, d_b_k);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_v>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_v, d_b_v);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_o, d_b_o); 
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_l, d_b_l);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_d, d_b_d); 
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_og, d_b_og);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_qg, d_b_qg);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_kg, d_b_kg);
+    tma::create_tensor_map<st_bf<height_bwd, tile_width_bwd, layout_o>, ATTN_B*ATTN_H*ATTN_N/(height_bwd * 16)>(&tma_desc_b_vg, d_b_vg);
 
     CUtensorMap* tma_b_q_d;
     CUtensorMap* tma_b_k_d;

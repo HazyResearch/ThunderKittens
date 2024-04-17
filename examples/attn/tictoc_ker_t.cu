@@ -151,11 +151,10 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-constexpr int NUM_WORKERS_BWD = 20;
+constexpr int NUM_WORKERS_BWD = 16;
 constexpr int NUM_WARPGROUPS_BWD = (NUM_WORKERS_BWD/(kittens::WARPGROUP_WARPS));
 
-constexpr int qo_height_bwd = 4, kv_height_bwd = 4;
-constexpr int NUM_WORKERS_QO_BWD = 4;
+constexpr int height_bwd = 4; 
 constexpr int tile_width_bwd = 64/16;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS_BWD*kittens::WARP_THREADS, 1)
@@ -169,14 +168,14 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
     auto block = cooperative_groups::this_thread_block();
 
-    st_bf<qo_height_bwd, tile_width_bwd, layout_o>           (&o_grad_smem)[NUM_WARPGROUPS_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
-    st_bf<qo_height_bwd, tile_width_bwd, layout_o>           (&o_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
-    st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec  (&d_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
-    st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec  (&l_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<qo_height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
+    st_bf<height_bwd, tile_width_bwd, layout_o>           (&o_grad_smem)[NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
+    st_bf<height_bwd, tile_width_bwd, layout_o>           (&o_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
+    st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec  (&d_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
+    st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec  (&l_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
 
-    rt_fl<qo_height_bwd, tile_width_bwd> o_grad;
-    rt_fl<qo_height_bwd, tile_width_bwd> o; 
-    rt_fl<qo_height_bwd, tile_width_bwd>::col_vec d;
+    rt_fl<height_bwd, tile_width_bwd> o_grad;
+    rt_fl<height_bwd, tile_width_bwd> o; 
+    rt_fl<height_bwd, tile_width_bwd>::col_vec d;
 
     // compute D = rowsum(dO * O)
     constexpr int do_blocks = N / (NUM_WARPGROUPS_BWD*o_smem[0].rows);
@@ -185,8 +184,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     constexpr int kPhaseBit = 0;
 
     if (warpid == 0) {
-        tma::init_barrier<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
-        tma::init_barrier<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
+        tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
+        tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
     }
 
     for (auto do_idx = 0; do_idx < do_blocks; do_idx++) {
@@ -204,8 +203,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
         // reinit barriers
         if (threadIdx.x == 0) {
-            tma::init_barrier<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
-            tma::init_barrier<st_bf<qo_height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
+            tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
+            tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
         }
 
         load(o, o_smem[warpid]);
