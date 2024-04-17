@@ -300,9 +300,12 @@ class HedgehogBased(nn.Module):
             # A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) * cumsum_matrix
             # o = torch.einsum("bhnm,bhme->bhne", A_qk, v)
             
+            print("Using qkv triton style computation")
+            
             print("q.shape: ", q.shape)
             print("k.shape: ", k.shape)
             print("v.shape: ", v.shape)
+            print("\n")
             
             parallel_based_fwd_kernel_hedgehog[grid](
                 q, k, v, o,
@@ -325,6 +328,13 @@ class HedgehogBased(nn.Module):
                 return o / z
 
         elif self.use_fast_transformers:
+            print("Using qkv fast transformers style computation")
+            
+            print("q.shape: ", q.shape)
+            print("k.shape: ", k.shape)
+            print("v.shape: ", v.shape)
+            print("\n")
+            
             v = causal_dot_product(
                 q.contiguous().to(dtype=torch.float32), 
                 k.contiguous().to(dtype=torch.float32),
@@ -341,6 +351,13 @@ class HedgehogBased(nn.Module):
             return y
 
         else:
+            print("Using qkv linear attention style computation")
+            
+            print("q.shape: ", q.shape)
+            print("k.shape: ", k.shape)
+            print("v.shape: ", v.shape)
+            print("\n")
+            
             if use_scale:
                 q = q * (q.shape[-1] ** -0.5)
 
