@@ -129,10 +129,17 @@ def hedgehog_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps: float=1
     return num / den.unsqueeze(-1) #, den
 
 
+def hedgehog_step_tk(kv_state, kv_state_t, k_state, q, k, v, denom):
+    out_tk       = torch.zeros_like(v)
+    import based_inference as mod
+    mod.based_step(q, k, v, kv_state_t, k_state, out_tk, denom)
+    return out_tk
+
+
 def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     itype = dt
-    batch_size = 128
-    d_model = 128
+    batch_size = 32
+    d_model = 64
     d_state = 256
 
     print(f"Running hedgehog test with {dt} -- benchmark={benchmark} -- ones={ones}")
@@ -141,7 +148,7 @@ def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     torch.random.manual_seed(0)
     if not ones:
         kv_state = torch.randn(batch_size, d_model, d_state, dtype=itype, device=device)/d_state
-        k_state = torch.randn(batch_size, d_state, dtype=itype, device=device)/d_state
+        k_state = torch.randn(batch_size, d_state, dtype=itype, device=device)
         v = torch.randn(batch_size, d_model, device=device, dtype=itype)/d_model
         k = torch.randn(batch_size, d_state, device=device, dtype=itype)/d_state
         q = torch.randn(batch_size, d_state, device=device, dtype=itype)/d_state
@@ -155,43 +162,32 @@ def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     # check correctness against reference implementation
     kv_state_ref  = kv_state.detach().clone()
     k_state_ref   = k_state.detach().clone()
-    out_ref       = hedgehog_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q, denom=True)
-    out_triton    = hedgehog_step(kv_state=kv_state, k_state=k_state, v=v, k=k, q=q, denom=True)
+    kv_state_tri  = kv_state.detach().clone()
+    k_state_tri   = k_state.detach().clone()
+    kv_state_tk   = kv_state.detach().clone()
+    k_state_tk    = k_state.detach().clone()
 
-    for (out, name) in [(out_triton, "Triton")]:
+    outputs = []
+    out_ref       = hedgehog_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q, denom=True)
+    out_triton    = hedgehog_step(kv_state=kv_state_tri, k_state=k_state_tri, v=v, k=k, q=q, denom=True)
+    outputs.append((out_triton, kv_state_tri, k_state_tri, "Triton"))
+    
+    if dt != torch.float32:
+        denom = torch.zeros(batch_size, 1, device=device, dtype=itype)/d_model
+        kv_state_t = kv_state_tk.transpose(1,2).contiguous()
+        out_tk = hedgehog_step_tk(kv_state_tk, kv_state_t, k_state_tk, q, k, v, denom)
+        outputs.append((out_tk, kv_state_tk, k_state_tk, "ThunderKittens"))
+
+    for (out, kv_state, k_state, name) in outputs:
         print(f"**** {name} dtype={dt} ****")
         print(f"out max diff: {(out - out_ref).abs().max().item()}")
         print(f"k_state  max diff: {(k_state - k_state_ref).abs().max().item()}")
         print(f"kv_state max diff: {(kv_state - kv_state_ref).abs().max().item()}")
 
-    # for i in range(batch_size):
-    #     if len(den.shape) == 2: f = den[i]
-    #     else: f = den
-    #     g = out[i]
-    #     diff = (f - g).abs().max().item()
-    #     print(f"{i} -- {diff}")
-            
-
-    # for i in range(batch_size):
-    #     p = k_state[i]
-    #     g = k_state_ref[i]
-    #     diff = (p - g).abs().max().item()
-    #     if diff > 1e-3:
-    #         print(f"{i} -- {diff}")
-    #         breakpoint()
-
-    # thresh = 1e-2
-    # for i in range(out.shape[0]):
-    #     diff = (out[i] - out_ref[i]) 
-    #     # num_elements = len([e for e in diff if e > thresh])
-    #     if diff.abs().max().item() > thresh:
-    #         print(f"diff at {i} is {diff.abs().max().item()}") # -- num_elements: {num_elements}")
-    #         # breakpoint()
-
 
 if __name__ == "__main__":
     hedgehog_test(torch.bfloat16, benchmark=False, ones=False)
-    hedgehog_test(torch.float32, benchmark=False, ones=False)
     hedgehog_test(torch.bfloat16, benchmark=False, ones=True)
+    hedgehog_test(torch.float32, benchmark=False, ones=False) # fp32 not supported for TK, only Triton
     hedgehog_test(torch.float32, benchmark=False, ones=True)
 
