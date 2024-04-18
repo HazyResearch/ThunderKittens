@@ -151,79 +151,84 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-constexpr int NUM_WORKERS_BWD = 16;
-constexpr int NUM_WARPGROUPS_BWD = (NUM_WORKERS_BWD/(kittens::WARPGROUP_WARPS));
+constexpr int WORKERS = 8;
 
-constexpr int height_bwd = 4; 
-constexpr int tile_width_bwd = 64/16;
+constexpr int th = 4; 
+constexpr int tw = 64/16;
 
-template<int N> __global__  __launch_bounds__(NUM_WORKERS_BWD*kittens::WARP_THREADS, 1)
-void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l, CUtensorMap* tma_d, 
-                            CUtensorMap* tma_o_grad, CUtensorMap* tma_q_grad, CUtensorMap* tma_k_grad, CUtensorMap* tma_v_grad) {
+using layout_nrow = ducks::st_layout::naive;
+
+template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 1)
+void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
 
     int warpid = kittens::warpid();
-    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    auto block = cooperative_groups::this_thread_block();
+    st_bf<th, tw, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
+    st_bf<th, tw, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
+    st_bf<th, tw, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>::col_vec, WORKERS>();
 
-    st_bf<height_bwd, tile_width_bwd, layout_o>           (&o_grad_smem)[NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
-    st_bf<height_bwd, tile_width_bwd, layout_o>           (&o_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>();
-    st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec  (&d_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
-    st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec  (&l_smem)     [NUM_WARPGROUPS_BWD] = al.allocate<st_bf<height_bwd, tile_width_bwd, layout_o>::col_vec, NUM_WARPGROUPS_BWD>();
+    rt_fl<th, tw> og_reg;
+    rt_fl<th, tw> o_reg; 
+    rt_fl<th, tw>::col_vec d_reg; 
 
-    rt_fl<height_bwd, tile_width_bwd> o_grad;
-    rt_fl<height_bwd, tile_width_bwd> o; 
-    rt_fl<height_bwd, tile_width_bwd>::col_vec d;
-
-    // compute D = rowsum(dO * O)
-    constexpr int do_blocks = N / (NUM_WARPGROUPS_BWD*o_smem[0].rows);
+    constexpr int do_blocks = N / (WORKERS*o_smem[0].rows);
 
     __shared__ uint64_t ograd_smem_barrier, o_smem_barrier;
     constexpr int kPhaseBit = 0;
 
     if (warpid == 0) {
-        tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
-        tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
+        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS>(ograd_smem_barrier, 1);
+        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS>(o_smem_barrier, 1);
+    }
+    __syncthreads();
+
+    if (warpid == 0) {
+        for (int w = 0; w < WORKERS; w++) { // load o, o_grad
+            int tile_idx = (blockIdx.y * WORKERS * blockDim.x) + (blockIdx.x * WORKERS) + w; 
+            tma::load_async((o_smem[w]), tma_o, o_smem_barrier, tile_idx); 
+            tma::load_async((og_smem[w]), tma_o_grad, ograd_smem_barrier, tile_idx); 
+        }
     }
 
-    for (auto do_idx = 0; do_idx < do_blocks; do_idx++) {
-        __syncthreads();
-        if (warpid == 0) {
-            for (int w = 0; w < NUM_WARPGROUPS_BWD; w++) { // load o, o_grad
-                int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * do_blocks) + (do_idx * NUM_WARPGROUPS_BWD) + w; 
-                tma::load_async((o_smem[w]), tma_o, o_smem_barrier, tile_idx); 
-                tma::load_async((o_grad_smem[w]), tma_o_grad, ograd_smem_barrier, tile_idx); 
-            }
+    tma::arrive_and_wait(ograd_smem_barrier, kPhaseBit);
+    tma::arrive_and_wait(o_smem_barrier, kPhaseBit);
+
+    load(o_reg, o_smem[warpid]);
+    load(og_reg, og_smem[warpid]);
+
+    mul(og_reg, og_reg, o_reg);
+    row_sum(d_reg, og_reg);
+    
+    store(d_smem[warpid], d_reg);
+
+    __syncthreads(); 
+    if (warpid == 0) {
+        for (int w = 0; w < WORKERS; w++) {
+            int tile_idx = (blockIdx.y * WORKERS * blockDim.x) + (blockIdx.x * WORKERS) + w; 
+            tma::store_async(tma_d, (d_smem[w]), tile_idx); 
         }
-
-        tma::arrive_and_wait(ograd_smem_barrier, kPhaseBit);
-        tma::arrive_and_wait(o_smem_barrier, kPhaseBit);
-
-        // reinit barriers
-        if (threadIdx.x == 0) {
-            tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(ograd_smem_barrier, 1);
-            tma::init_barrier<st_bf<height_bwd, tile_width_bwd, layout_o>, NUM_WARPGROUPS_BWD>(o_smem_barrier, 1);
-        }
-
-        load(o, o_smem[warpid]);
-        load(o_grad, o_grad_smem[warpid]);
-        mul(o_grad, o_grad, o);
-        row_sum(d, o_grad);
-        store(d_smem[warpid], d);
-
-        __syncthreads(); 
-        if (warpid == 0) {
-            for (int w = 0; w < NUM_WARPGROUPS_BWD; w++) {
-                int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * do_blocks) + (do_idx * NUM_WARPGROUPS_BWD) + w; 
-                tma::store_async(tma_d, (d_smem[w]), tile_idx); 
-            }
-            tma::store_commit_group();
-        }
+        tma::store_commit_group();
     }
 
     tma::store_async_wait();
+}
+
+constexpr int WORKERS_BWD = 8;
+
+constexpr int tile_h = 4; 
+constexpr int tile_w = 64/16;
+
+template<int N> __global__  __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
+void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
+                            CUtensorMap* tma_l_vec, CUtensorMap* tma_d_vec, 
+                            CUtensorMap* tma_og, CUtensorMap* tma_qg, CUtensorMap* tma_kg, CUtensorMap* tma_vg)
+{
+    extern __shared__ int __shm[]; // this is the CUDA shared memory
+    tma_allocator al((int*)&__shm[0]);
+
+    int warpid = kittens::warpid();
 }
 
 #include "harness_t.impl"
