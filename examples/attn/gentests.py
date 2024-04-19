@@ -80,6 +80,14 @@ else:
     print('Invalid test name')
     sys.exit(0)
 
+l_vec = torch.einsum("bhnd,bhmd->bhnm", q.clone(), k.clone()) * softmax_scale
+max_vec = l_vec.max(dim=-1, keepdim=True).values
+l_vec = l_vec - max_vec
+l_vec = torch.exp(l_vec)
+l_vec = l_vec.sum(dim=-1, keepdim=True)
+
+l_vec = max_vec + torch.log(l_vec)
+
 o = forward(q, k, v)
 q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
 
@@ -91,6 +99,9 @@ with open(fn, 'w') as f:
     vf = v.to(torch.float32).flatten().cpu().numpy()
     of = o.to(torch.float32).flatten().cpu().numpy()
     grad_outputf = grad_output.to(torch.float32).flatten().cpu().numpy()
+    
+    # intermediate
+    l_vecf = l_vec.to(torch.float32).flatten().cpu().numpy()
     
     # outputs
     q_grad = q_grad.to(torch.float32).flatten().cpu().numpy()
@@ -108,6 +119,9 @@ with open(fn, 'w') as f:
         f.write(' ')
     for i in trange(B*H*N*D):
         f.write(repr(of[i]))
+        f.write(' ')
+    for i in trange(B*H*N):
+        f.write(repr(l_vecf[i]))
         f.write(' ')
     for i in trange(B*H*N*D):
         f.write(repr(grad_outputf[i]))
