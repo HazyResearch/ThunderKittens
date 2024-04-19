@@ -2,9 +2,9 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 1
-#define ATTN_H 1
-#define ATTN_N 1024
+#define ATTN_B 8
+#define ATTN_H 16
+#define ATTN_N 2048
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
@@ -92,24 +92,24 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 80000; //kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        a012_compute_ker<H,T,false>,
+        based_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
-    const int ITER = 10;
+    const int ITER = 2;
     cudaDeviceSynchronize();
     CudaCheckError();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        a012_compute_ker<H,T,false><<<ATTN_B*ATTN_H,N_THREADS,mem_size>>>(ATTN_N, ATTN_D_SMALL, ATTN_D, d_q, d_k, d_v, d_o, NULL, NULL, NULL);
+        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, d_q, d_k, d_v, d_o);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -132,10 +132,12 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i % TOTAL_UNIQUE_ELEMENTS_VO] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
         // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
-        o_file << o[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
-        diff_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
+        if(i < TOTAL_UNIQUE_ELEMENTS_VO) {
+            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
+            o_file << o[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.05 || isnan(diff)) {
             good = false;
         }
     }

@@ -80,13 +80,16 @@ concept all = requires {
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // vector types
-using sv_bf_1 = sv<bf16 ,1>;
-using sv_bf_2 = sv<bf16 ,2>;
-using sv_bf_4 = sv<bf16 ,4>;
-using sv_bf_8 = sv<bf16 ,8>;
-using sv_fl_1 = sv<float,1>;
-using sv_fl_2 = sv<float,2>;
-using sv_fl_4 = sv<float,4>;
-using sv_fl_8 = sv<float,8>;
+template<size_t _tiles> using sv_bf = sv<bf16,  _tiles>;
+template<size_t _tiles> using sv_fl = sv<float, _tiles>;
+
+using sv_bf_1 = sv<bf16,  1>;
+using sv_bf_2 = sv<bf16,  2>;
+using sv_bf_4 = sv<bf16,  4>;
+using sv_bf_8 = sv<bf16,  8>;
+using sv_fl_1 = sv<float, 1>;
+using sv_fl_2 = sv<float, 2>;
+using sv_fl_4 = sv<float, 4>;
+using sv_fl_8 = sv<float, 8>;
 
 } // namespace kittens
