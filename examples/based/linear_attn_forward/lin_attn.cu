@@ -94,6 +94,7 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
     }
 }
 
+
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
 
@@ -237,10 +238,11 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     }
 }
 
-// #include "harness.impl"
+// For testing via C++
+// #include "harness.impl" (comment out when using the code below)
 
-// Binding to PyTorch
-#include "/var/cr05_data/sim_data/code/release/ThunderKittens/src/common/pyutils/torch_helpers.cuh"
+// For binding to PyTorch (comment out include for harness.imple when using the code below)
+#include "src/common/pyutils/torch_helpers.cuh"
 void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -249,6 +251,7 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
     
     auto batch = q.size(0);
     auto heads = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
     auto n     = q.size(2);
     bool k_same = true, o_same = true;
     for(auto i = 0; i < 4; i++) { 
@@ -258,32 +261,24 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
     // This is just a restriction of what we're doing now...
     TORCH_CHECK(k_same, "Q and K should be same size");
     TORCH_CHECK(o_same, "V and O should be same size");
-
     TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
     TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
-
-    using H = __nv_bfloat16;
-    using T = c10::BFloat16;
-
     TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
-    
-    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
 
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
-
+    // convert to bf16
     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
 
-    // convert to bf16
     const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
     const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
     const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
           bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
+    unsigned long mem_size = 164000;
     based_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf);
 
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
