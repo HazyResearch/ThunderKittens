@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY/2; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
     
     cudaFuncSetAttribute(
         sliding_window,
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 10;
+    const int ITER = 1;
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();

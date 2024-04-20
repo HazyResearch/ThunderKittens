@@ -10,6 +10,8 @@ H = 1
 N = 4096
 D = 64
 
+WINDOW = 256
+
 TESTNAME = sys.argv[1]
 
 if TESTNAME == 'ones':
@@ -38,8 +40,8 @@ att /= D**.5
 att = torch.exp(att)
 for t in range(N):
     att[:,:,t,t+1:] = 0 # make causal
-    if t > 64:
-        att[:,:,t,:16*((t-64)//16)] = 0 # make sliding
+    if t > WINDOW:
+        att[:,:,t,:16*((t-WINDOW)//16)] = 0 # make sliding
 att /= att.sum(dim=-1, keepdims=True) # normalize softmax
 o = torch.einsum('bhts,bhsd->bhtd', att.to(torch.bfloat16), v)
 # o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
