@@ -65,7 +65,7 @@ __device__ inline void tile_reduce(ST &dst, const ST (&src)[N_TILES]) {
     #pragma unroll
     for(int j = 0; j < RESPONSIBLE_ELEMENTS; j++) {
         int idx = threadIdx.x + j*STRIDE;
-        dst.data[idx] = acc[j]; // set
+        dst.data[idx] = __float2bfloat16(acc[j]); // sets
     }
 }
 
@@ -94,11 +94,8 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
     }
 }
 
-// __global__ __launch_bounds__(NUM_THREADS, 1)
-template <typename H, typename T>
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void based_linear_attention(int n, const T* __q, const T* __k, const T* __v, T* __o) { 
-// void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
+void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -173,7 +170,7 @@ void based_linear_attention(int n, const T* __q, const T* __k, const T* __v, T* 
             add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
             // END comment-out for removing T2 (debug)
             copy(local_attn_bf, temp_attn_accum); // now stored.
-            make_causal(local_attn_bf, local_attn_bf);
+            make_causal(local_attn_bf, local_attn_bf, kittens::base_types::constants<bf16>::zero());
 
             load(v, v_s[warpid]);
             auto &v_col = swap_layout_inplace(v); // prepare for MMA
@@ -270,15 +267,24 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
 
-    unsigned long mem_size  =  2*2*NUM_WORKERS*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>); // q, k and v are double buffered.
-                  mem_size +=    2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
-                  mem_size += (NUM_WORKERS+NUM_WORKERS)*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
-                  mem_size += 2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>); // a0 and a1y
-
     TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
     
     auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-    based_linear_attention<H,T><<<batch*heads,threads,mem_size>>>(n, q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(), o.data_ptr<T>());
+
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+
+    // convert to bf16
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
+          bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+
+    based_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf);
 
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 }

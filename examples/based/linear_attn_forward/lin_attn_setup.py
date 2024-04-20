@@ -1,7 +1,7 @@
 # This is the commands for the pytorch jit...
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import torch
-name = "linear_attn"
+name = "lin_attn"
 
 import test_build_utils as tbu
 from setuptools import setup
