@@ -1,11 +1,16 @@
 #include "../../src/kittens.cuh"
+#include <cuda/pipeline>
 
-#define NUM_WORKERS 16
+#define HEAD_DIM (64)
+#define NUM_WORKERS (16)
+#define QO_ITERS (2)
+
 using namespace kittens;
-__global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
+template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
+__global__ void attend_ker(const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
 
     auto warpid        = kittens::warpid();
-    auto block_start   = blockIdx.x*(n*64);
+    auto block_start   = blockIdx.y*(N*64);
     const bf16 *_q = __q__ + block_start, *_k = __k__ + block_start, *_v = __v__ + block_start;
           bf16 *_o = __o__ + block_start;
 
@@ -21,12 +26,20 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     rt_fl_1x4<> o_prev;
     rt_fl_1x1<>::col_vec max_vec_last, max_vec;
     rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
+
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> kv_barrier;
+    if (threadIdx.x == 0) {init(&kv_barrier, NUM_WORKERS*kittens::WARP_THREADS);}
+    __syncthreads();
+    if(warpid < NUM_WORKERS/2) {
+        load_async(k_smem[warpid], _k + warpid*q_reg.num_elements, HEAD_DIM, kv_barrier);
+        load_async(v_smem[warpid], _v + warpid*q_reg.num_elements, HEAD_DIM, kv_barrier);
+    }
     
-    int qo_blocks = n / (q_reg.rows*NUM_WORKERS), kv_blocks = n / (q_reg.rows*NUM_WORKERS);
+    constexpr int kv_blocks = N / (k_reg.rows*NUM_WORKERS);
 
-    for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
+    for(auto qo_idx = 0; qo_idx < QO_ITERS; qo_idx++) {
 
-        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
+        load(q_reg, _q + ((blockIdx.x*QO_ITERS + qo_idx)*NUM_WORKERS + warpid)*q_reg.num_elements, HEAD_DIM);
         mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
 
         neg_infty(max_vec); // zero registers for the Q chunk
@@ -35,19 +48,31 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
-            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
-            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
-            __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
-
             for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
+
+                // simple poor man's async pipeline turns out to be good enough on the 4090
+                if(subtile == 0) {
+                    kv_barrier.arrive_and_wait();
+                    if(warpid >= NUM_WORKERS/2) { // load the other half
+                        load_async(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, HEAD_DIM, kv_barrier);
+                        load_async(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, HEAD_DIM, kv_barrier);
+                    }
+                }
+                else if(subtile == NUM_WORKERS/2) {
+                    kv_barrier.arrive_and_wait();
+                    if(warpid < NUM_WORKERS/2) { // load the other half
+                        load_async(k_smem[warpid], _k + (((kv_idx+1)%kv_blocks)*NUM_WORKERS + warpid)*q_reg.num_elements, HEAD_DIM, kv_barrier);
+                        load_async(v_smem[warpid], _v + (((kv_idx+1)%kv_blocks)*NUM_WORKERS + warpid)*q_reg.num_elements, HEAD_DIM, kv_barrier);
+                    }
+                }
 
                 load(k_reg, k_smem[subtile]);
 
-                zero(att_block);
-                dot(att_block, q_reg, k_reg, att_block);
-
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
+
+                zero(att_block);
+                dot(att_block, q_reg, k_reg, att_block);
 
                 row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
                 sub_row(att_block, att_block, max_vec);
@@ -71,10 +96,9 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
                 mma(o_prev, att_block_mma, v_reg_col, o_prev);
             }
-            __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
         }
 
-        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, d); // write out o. compiler has an issue with register usage if d is made constexpr q_reg.rows :/
+        store(_o + ((blockIdx.x*QO_ITERS + qo_idx)*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, HEAD_DIM);
     }
 }
 
