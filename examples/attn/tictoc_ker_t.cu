@@ -220,7 +220,7 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     tma::store_async_wait();
 }
 
-constexpr int WORKERS_BWD = 4;
+constexpr int WORKERS_BWD = 1;
 
 constexpr int tile_h = 4; 
 constexpr int tile_w = 64/16;
@@ -237,7 +237,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     st_bf<tile_h, tile_w, layout_nrow> (&k_smem) [WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>, WORKERS_BWD>();
     st_bf<tile_h, tile_w, layout_nrow> (&v_smem) [WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>, WORKERS_BWD>();
     st_bf<tile_h, tile_w, layout_nrow> (&og_smem)[WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>, WORKERS_BWD>();
-    st_bf<tile_h, tile_w, layout_nrow> (&qg_smem)[WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>, WORKERS_BWD>();
+    st_bf<tile_h, tile_w, layout_nrow> (&qg_smem)[WORKERS_BWD][WORKERS_BWD + 1] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>, WORKERS_BWD, WORKERS_BWD + 1>();
 
     st_bf<tile_h, tile_w, layout_nrow>::col_vec (&l_smem)[WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>::col_vec, WORKERS_BWD>();
     st_bf<tile_h, tile_w, layout_nrow>::col_vec (&d_smem)[WORKERS_BWD] = al.allocate<st_bf<tile_h, tile_w, layout_nrow>::col_vec, WORKERS_BWD>();
@@ -289,7 +289,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         }
 
         rt_bf<tile_h, tile_w> k_reg; 
-        rt_bf<tile_h, tile_w, ducks::rt_layout::col> k_reg_col; 
+        rt_bf<tile_h, tile_w> k_reg_t; 
         rt_bf<tile_h, tile_w> v_reg;
 
         rt_fl<tile_h, tile_w> kg_reg;
@@ -297,9 +297,10 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
         load(k_reg, k_smem[warpid]);
         load(v_reg, v_smem[warpid]);
-
-        swap_layout(k_reg_col, k_reg);
-        mul(k_reg_col, k_reg_col, __float2bfloat16(0.125f)); // temperature adjustment
+        
+        copy(k_reg_t, k_reg);
+        mul(k_reg_t, k_reg_t, __float2bfloat16(0.125f)); // temperature adjustment
+        rt_bf<tile_h, tile_w, ducks::rt_layout::col> &k_reg_col = swap_layout_inplace(k_reg_t);
 
         zero(kg_reg);
         zero(vg_reg);
@@ -311,7 +312,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                     int tile_idx = (blockIdx.y * WORKERS_BWD * qo_blocks) + (qo_idx * WORKERS_BWD) + w; 
                     tma::load_async((q_smem[w]),  tma_q,     qsmem_barrier,  tile_idx); 
                     tma::load_async((og_smem[w]), tma_og,    ogsmem_barrier, tile_idx); 
-                    tma::load_async((qg_smem[w]), tma_qg,    qgsmem_barrier, tile_idx);
+                    tma::load_async((qg_smem[w][0]), tma_qg,    qgsmem_barrier, tile_idx);
                     tma::load_async((l_smem[w]),  tma_l_vec, lsmem_barrier,  tile_idx); 
                     tma::load_async((d_smem[w]),  tma_d_vec, dsmem_barrier,  tile_idx); 
                 }
@@ -327,7 +328,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             if (threadIdx.x == 0) {
                 tma::set_bytes(qsmem_barrier,  WORKERS_BWD * sizeof(bf16) * q_smem[0].num_elements);
                 tma::set_bytes(ogsmem_barrier, WORKERS_BWD * sizeof(bf16) * og_smem[0].num_elements);
-                tma::set_bytes(qgsmem_barrier, WORKERS_BWD * sizeof(bf16) * qg_smem[0].num_elements);
+                tma::set_bytes(qgsmem_barrier, WORKERS_BWD * sizeof(bf16) * qg_smem[0][0].num_elements);
                 tma::set_bytes(lsmem_barrier,  WORKERS_BWD * sizeof(bf16) * l_smem[0].length);
                 tma::set_bytes(dsmem_barrier,  WORKERS_BWD * sizeof(bf16) * d_smem[0].length);
             }
@@ -335,10 +336,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             rt_bf<tile_h, tile_w> q_reg; 
             rt_bf<tile_h, tile_w, ducks::rt_layout::col> q_reg_col; 
             rt_bf<tile_h, tile_w> do_reg; 
-
-            rt_fl<tile_h, tile_w> qg_reg_out;
-            rt_fl<tile_h, tile_w> qg_reg_fl; 
-            rt_bf<tile_h, tile_w> qg_reg;
 
             rt_bf<tile_h, tile_h>::col_vec l_reg;  
             rt_bf<tile_h, tile_h>::col_vec d_reg;
@@ -350,8 +347,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             rt_fl<tile_h, tile_h> dP; 
             rt_bf<tile_h, tile_h> dP_mma;
 
-            load(qg_reg_out, qg_smem[warpid]);
-            copy(qg_reg, qg_reg_out);
+            rt_fl<tile_h, tile_w> qg_reg;
 
             for (int subtile = 0; subtile < WORKERS_BWD; subtile++) {
                 load(q_reg, q_smem[subtile]);
@@ -360,13 +356,11 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 zero(att_block);
                 dot(att_block, q_reg, k_reg, att_block);
 
-
                 load(l_reg, l_smem[subtile]);
                 copy(sub_reg, l_reg);
                 sub_row(att_block, att_block, sub_reg);
                 exp(att_block, att_block);
                 copy(dP, att_block); 
-
 
                 load(do_reg, og_smem[subtile]);
                 rt_bf<tile_h, tile_w, ducks::rt_layout::col> &do_reg_col = swap_layout_inplace(do_reg);
@@ -376,11 +370,9 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 
                 mma(vg_reg, att_block_mma, do_reg_col, vg_reg);
 
-                
                 load(do_reg, og_smem[subtile]);
                 zero(att_block);
                 dot(att_block, do_reg, v_reg, att_block);
-
 
                 load(d_reg, d_smem[subtile]);
                 copy(sub_reg, d_reg);
@@ -388,23 +380,26 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 mul(dP, dP, att_block);
                 copy(dP_mma, dP);
 
-                load(qg_reg, qg_smem[subtile]);
-                copy(qg_reg_fl, qg_reg);
-                mma(qg_reg_fl, dP_mma, k_reg_col, qg_reg_fl);
-                store(qg_smem[subtile], qg_reg_fl);
-                
+                zero(qg_reg);
+                mma(qg_reg, dP_mma, k_reg_col, qg_reg);
+                store(qg_smem[subtile][1 + warpid], qg_reg);
+
                 transpose_inplace(dP_mma);
                 swap_layout(q_reg_col, q_reg);
                 mma(kg_reg, dP_mma, q_reg_col, kg_reg);
             }
 
             __syncthreads();
-            store(qg_smem[warpid], qg_reg_fl);
+            #pragma unroll
+            for (int i = 0; i < WORKERS_BWD; i++) {
+                add(qg_smem[warpid][0], qg_smem[warpid][0], qg_smem[warpid][1 + i]);
+            }
             __syncthreads();
+
             if (warpid == 0) {
                 for (int w = 0; w < WORKERS_BWD; w++) {
                     int tile_idx = (blockIdx.y * WORKERS_BWD * qo_blocks) + (qo_idx * WORKERS_BWD) + w; 
-                    tma::store_async(tma_qg, (qg_smem[w]), tile_idx);
+                    tma::store_async(tma_qg, (qg_smem[w][0]), tile_idx);
                 }
                 tma::store_commit_group();
             }
@@ -415,7 +410,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         store(k_smem[warpid], kg_reg);
         __syncthreads();
 
-        // store vg
         if (warpid == 0) {
             for (int w = 0; w < WORKERS_BWD; w++) {
                 int tile_idx = (blockIdx.y * WORKERS_BWD * kv_blocks) + (kv_idx * WORKERS_BWD) + w; 
