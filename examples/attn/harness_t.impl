@@ -442,23 +442,26 @@ int main(int argc, char **argv) {
 
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    ITER = 1; 
-
     dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
-    // cudaDeviceSynchronize();
-    // std::cout << "Starting bwd warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
-    // }
     cudaDeviceSynchronize();
-    std::cout << "Starting bwd kernel" << std::endl;
-    const auto start_bwd2 = std::chrono::high_resolution_clock::now();
+    std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
         attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
     }
     cudaDeviceSynchronize();
-    const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
+    std::cout << "Starting bwd kernel" << std::endl;
+    auto total_time = 0; 
+    
+    for(int i = 0; i < ITER; i++) {
+        cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+        const auto start_bwd2 = std::chrono::high_resolution_clock::now();
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        cudaDeviceSynchronize();
+        const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
+    }
+    
     CudaCheckError();
     std::cout << "Finished bwd kernel\n";
 
@@ -513,7 +516,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::cout << "Average bwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count() / ITER << " us" << std::endl;
+    std::cout << "Average bwd execution time: " << total_time / ITER << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n\n\n\n";
     else std::cout << "BWD Incorrect :(\n\n\n\n";
 
