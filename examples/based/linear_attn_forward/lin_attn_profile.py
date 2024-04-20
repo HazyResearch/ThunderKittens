@@ -136,6 +136,7 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True):
     mod.based_fwd_tk(Q,K,V, o)
 
     torch.cuda.synchronize()
+    o += torch.zeros_like(o) # trigger an error if one exists
     t1 = time.time()
     peak_mem = torch.cuda.max_memory_allocated(device='cuda')
     tot = t1-t0

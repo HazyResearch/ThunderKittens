@@ -25,13 +25,19 @@ def jit_build(name, debug=False):
             extra_cuda_cflags=_cuda_flags)
 
 
-def cuda_extension(name, debug):
+def cuda_extension(name, debug, gpu):
+    gpu_flag = {
+        '4090': '-DKITTENS_4090',
+        'A100': '-DKITTENS_A100',
+        'H100': '-DKITTENS_HOPPER',
+    }[gpu]
     _cuda_flags  = [
                     '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', 
                     '-use_fast_math',
                     '-arch=native', 
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
+                    gpu_flag,
                     f"-I {project_root}"
                     ]
     if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G']

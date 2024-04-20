@@ -243,7 +243,9 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 
 // For binding to PyTorch (comment out include for harness.imple when using the code below)
 #include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
 void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+    std::cout << "Entered Based handler" << std::endl;
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -278,9 +280,21 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
     const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
           bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
-    unsigned long mem_size = 164000;
+    std::cout << "Checks and casts" << std::endl;
+
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    cudaFuncSetAttribute(
+        based_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    std::cout << "Set dynamic memory" << std::endl;
     based_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf);
 
+    std::cout << "Launched kernel" << std::endl;
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+
+    std::cout << "Exiting" << std::endl;
 }
 
