@@ -1,4 +1,4 @@
-# include "src/kittens.cuh"
+#include "src/kittens.cuh"
 
 #define NUM_WORKERS (16) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -94,8 +94,11 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
     }
 }
 
+// __global__ __launch_bounds__(NUM_THREADS, 1)
+template <typename H, typename T>
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
+void based_linear_attention(int n, const T* __q, const T* __k, const T* __v, T* __o) { 
+// void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -120,7 +123,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     st_bf_1x4<layout> (&a2_o_accumulate)[NUM_WORKERS]    = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>(); // 32768 bytes
     int total_block_idx = 0;
 
-    rt_fl_1x4 a2; // a2 gets propagated through here.
+    rt_fl_1x4<> a2; // a2 gets propagated through here.
 
     sv_bf_4 a0_total = al.allocate<sv_bf_4>();
 
@@ -187,7 +190,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         cumsum_inplace<NUM_WORKERS>(a1_s, total_block_idx);
         __syncthreads();
         if(warpid < ACTIVE_TILES) {
-            rt_bf_1x4 a1;
+            rt_bf_1x4<> a1;
             load(q, q_s[warpid]); // load q again
             load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
             auto &a1_col = swap_layout_inplace(a1); // prepare for MMA
@@ -237,4 +240,46 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     }
 }
 
-#include "harness.impl"
+// #include "harness.impl"
+
+// Binding to PyTorch
+#include "/var/cr05_data/sim_data/code/release/ThunderKittens/src/common/pyutils/torch_helpers.cuh"
+void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto n     = q.size(2);
+    bool k_same = true, o_same = true;
+    for(auto i = 0; i < 4; i++) { 
+        k_same &= q.size(i) == k.size(i);
+        o_same &= v.size(i) == o.size(i);
+    }
+    // This is just a restriction of what we're doing now...
+    TORCH_CHECK(k_same, "Q and K should be same size");
+    TORCH_CHECK(o_same, "V and O should be same size");
+
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
+
+    using H = __nv_bfloat16;
+    using T = c10::BFloat16;
+
+    unsigned long mem_size  =  2*2*NUM_WORKERS*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>); // q, k and v are double buffered.
+                  mem_size +=    2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
+                  mem_size += (NUM_WORKERS+NUM_WORKERS)*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);
+                  mem_size += 2*NUM_WORKERS*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>); // a0 and a1y
+
+    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
+    
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    based_linear_attention<H,T><<<batch*heads,threads,mem_size>>>(n, q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(), o.data_ptr<T>());
+
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+}
+
