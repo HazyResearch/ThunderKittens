@@ -230,17 +230,18 @@ constexpr int tile_w = 64/16;
 using layout_nrow      = ducks::st_layout::naive;
 using layout_wgmma_row = ducks::st_layout::wgmma_row_0b;
 using layout_wgmma_col = ducks::st_layout::wgmma_col_t_0b;
+using layout_swizzle   = ducks::st_layout::xor_swizzle; 
 
-#define k_smem_tile  st_bf<tile_h, tile_w, layout_nrow>
-#define v_smem_tile  st_bf<tile_h, tile_w, layout_nrow>
+#define k_smem_tile  st_bf<tile_h, tile_w, layout_swizzle>
+#define v_smem_tile  st_bf<tile_h, tile_w, layout_swizzle>
 
-#define q_smem_tile  st_bf<tile_h, tile_w, layout_nrow>
-#define og_smem_tile st_bf<tile_h, tile_w, layout_nrow>
-#define qg_smem_tile st_bf<tile_h, tile_w, layout_nrow>
-#define l_smem_tile  st_bf<tile_h, tile_w, layout_nrow>::col_vec
-#define d_smem_tile  st_bf<tile_h, tile_w, layout_nrow>::col_vec
+#define q_smem_tile  st_bf<tile_h, tile_w, layout_swizzle>
+#define og_smem_tile st_bf<tile_h, tile_w, layout_swizzle>
+#define qg_smem_tile st_bf<tile_h, tile_w, layout_swizzle>
+#define l_smem_tile  st_bf<tile_h, tile_w, layout_swizzle>::col_vec
+#define d_smem_tile  st_bf<tile_h, tile_w, layout_swizzle>::col_vec
 
-#define scratch_pad st_bf<tile_h, tile_h, layout_nrow>
+#define scratch_pad st_bf<tile_h, tile_h, layout_swizzle>
 
 template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 // void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
@@ -251,7 +252,7 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                           const bf16* __restrict__ __og__, bf16* __qg__, bf16* __kg__, bf16* __vg__) 
 {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
-    tma_allocator al((int*)&__shm[0]);
+    shared_allocator al((int*)&__shm[0]);
 
     const bf16 *_q = __q__ + (blockIdx.y * N * 64); 
     const bf16 *_k = __k__ + (blockIdx.y * N * 64);
@@ -264,11 +265,6 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     bf16 *_kg = __kg__ + (blockIdx.y * N * 64);
     bf16 *_vg = __vg__ + (blockIdx.y * N * 64);
 
-    // warpgroup level 
-    k_smem_tile  (&k_smem) [WORKERS_BWD] = al.allocate<k_smem_tile, WORKERS_BWD>();
-    v_smem_tile  (&v_smem) [WORKERS_BWD] = al.allocate<v_smem_tile, WORKERS_BWD>();
-
-    // warp level
     q_smem_tile  (&q_smem)  [WORKERS_BWD]                 = al.allocate<q_smem_tile,  WORKERS_BWD>();
     og_smem_tile (&og_smem) [WORKERS_BWD]                 = al.allocate<og_smem_tile, WORKERS_BWD>();
 
@@ -279,7 +275,6 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     scratch_pad (&sp_smem) [WORKERS_BWD][2]               = al.allocate<scratch_pad, WORKERS_BWD, 2>();
 
     rt_bf<tile_h, tile_w> k_reg; 
-    rt_bf<tile_h, tile_w> k_reg_t; 
     rt_bf<tile_h, tile_w> v_reg;
 
     rt_fl<tile_h, tile_w> qg_reg;
@@ -293,90 +288,20 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     rt_bf<tile_h, tile_h> att_block_mma;
 
     int warpid = kittens::warpid();
-    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
     constexpr int kv_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
-
-    // __shared__ uint64_t qsmem_b, ksmem_b, vsmem_b, lsmem_b, dsmem_b, ogsmem_b, qgsmem_b;
-
-    // int kv_phasebit = 0;
-    // int qo_phasebit = 0;
-
-    // if (threadIdx.x == 0) {
-    //     tma::init_barrier<q_smem_tile , WORKERS_BWD>(qsmem_b,  1);
-    //     tma::init_barrier<k_smem_tile , WORKERS_BWD>(ksmem_b,  1);
-    //     tma::init_barrier<v_smem_tile , WORKERS_BWD>(vsmem_b,  1);
-    //     tma::init_barrier<og_smem_tile, WORKERS_BWD>(ogsmem_b, 1);
-    //     tma::init_barrier<qg_smem_tile, WORKERS_BWD>(qgsmem_b, 1);
-    //     tma::init_barrier<l_smem_tile , WORKERS_BWD>(lsmem_b,  1);
-    //     tma::init_barrier<d_smem_tile , WORKERS_BWD>(dsmem_b,  1);        
-    // }
-    // __syncthreads();
 
     for (int kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
         load(k_reg, _k + (kv_idx * WORKERS_BWD + warpid) * k_reg.num_elements, k_reg.cols);
         load(v_reg, _v + (kv_idx * WORKERS_BWD + warpid) * v_reg.num_elements, v_reg.cols);
-        
-        // if (warpid == 0) {
-        //     // load k and v
-        //     for (int w = 0; w < WORKERS_BWD; w++) {
-        //         int tile_idx = (blockIdx.y * WORKERS_BWD * kv_blocks) + (kv_idx * WORKERS_BWD) + w; 
-        //         tma::load_async((k_smem[w]), tma_k, ksmem_b, tile_idx); 
-        //         tma::load_async((v_smem[w]), tma_v, vsmem_b, tile_idx); 
-        //     }
-        // }
-
-        // tma::arrive_and_wait(ksmem_b, kv_phasebit);
-        // tma::arrive_and_wait(vsmem_b, kv_phasebit);
-        // kv_phasebit ^= 1;
-
-        // if (threadIdx.x == 0) {
-        //     tma::set_bytes(ksmem_b, WORKERS_BWD * sizeof(bf16) * k_smem[0].num_elements);
-        //     tma::set_bytes(vsmem_b, WORKERS_BWD * sizeof(bf16) * v_smem[0].num_elements);
-        // }
-
-        // load(k_reg, k_smem[warpid]);
-        // load(v_reg, v_smem[warpid]);
-        
-        copy(k_reg_t, k_reg);
-        mul(k_reg_t, k_reg_t, __float2bfloat16(0.125f)); // temperature adjustment
-        rt_bf<tile_h, tile_w, ducks::rt_layout::col> &k_reg_col = swap_layout_inplace(k_reg_t);
 
         zero(kg_reg);
         zero(vg_reg);
         __syncthreads(); 
 
         for (int qo_idx = 0; qo_idx < qo_blocks; qo_idx++) {
-            // if (warpid == 0) {
-                
-            //     for (int w = 0; w < WORKERS_BWD; w++) {
-            //         int tile_idx = (blockIdx.y * WORKERS_BWD * qo_blocks) + (qo_idx * WORKERS_BWD) + w;
-
-            //         tma::load_async((q_smem[w]),  tma_q,  qsmem_b,  tile_idx); 
-            //         tma::load_async((og_smem[w]), tma_og, ogsmem_b, tile_idx); 
-                    
-            //         tma::load_async((qg_smem[w][0]), tma_qg,    qgsmem_b, tile_idx);
-            //         tma::load_async((l_smem[w]),     tma_l_vec, lsmem_b,  tile_idx); 
-            //         tma::load_async((d_smem[w]),     tma_d_vec, dsmem_b,  tile_idx); 
-            //     }
-            // }
-
-            // tma::arrive_and_wait(qsmem_b,  qo_phasebit);
-            // tma::arrive_and_wait(ogsmem_b, qo_phasebit);
-            // tma::arrive_and_wait(qgsmem_b, qo_phasebit);
-            // tma::arrive_and_wait(lsmem_b,  qo_phasebit);
-            // tma::arrive_and_wait(dsmem_b,  qo_phasebit);
-            // qo_phasebit ^= 1;
-
-            // if (threadIdx.x == 0) {
-            //     tma::set_bytes(qsmem_b,  WORKERS_BWD * sizeof(bf16) * q_smem[0].num_elements);
-            //     tma::set_bytes(ogsmem_b, WORKERS_BWD * sizeof(bf16) * og_smem[0].num_elements);
-            //     tma::set_bytes(qgsmem_b, WORKERS_BWD * sizeof(bf16) * qg_smem[0][0].num_elements);
-            //     tma::set_bytes(lsmem_b,  WORKERS_BWD * sizeof(bf16) * l_smem[0].length);
-            //     tma::set_bytes(dsmem_b,  WORKERS_BWD * sizeof(bf16) * d_smem[0].length);
-            // }
 
             load(q_smem[warpid], _q + (qo_idx * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols);
             load(og_smem[warpid], _og + (qo_idx * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols);
@@ -413,6 +338,11 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                 load(att_block_mma, sp_smem[warpid][0]);
 
                 zero(qg_reg);
+
+                copy(do_reg, k_reg);
+                mul(do_reg, do_reg, __float2bfloat16(0.125f)); // temperature adjustment
+                rt_bf<tile_h, tile_w, ducks::rt_layout::col> &k_reg_col = swap_layout_inplace(do_reg);
+
                 mma(qg_reg, att_block_mma, k_reg_col, qg_reg);
                 store(qg_smem[subtile][1 + warpid], qg_reg); 
 
@@ -428,34 +358,11 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
             }
             __syncthreads();
 
-            // if (warpid == 0) {
-            //     for (int w = 0; w < WORKERS_BWD; w++) {
-            //         int tile_idx = (blockIdx.y * WORKERS_BWD * qo_blocks) + (qo_idx * WORKERS_BWD) + w; 
-            //         tma::store_async(tma_qg, (qg_smem[w][0]), tile_idx);
-            //     }
-            //     tma::store_commit_group();
-            // }
-            // tma::store_async_wait();
             store(_qg + (qo_idx * WORKERS_BWD + warpid) * qg_reg.num_elements, qg_smem[warpid][0], qg_smem[warpid][0].cols);
         }
 
-        if (warpid < WORKERS_BWD) {
-            store(v_smem[warpid], vg_reg);
-            store(k_smem[warpid], kg_reg);
-            store(_vg + (kv_idx * WORKERS_BWD + warpid) * vg_reg.num_elements, v_smem[warpid], v_smem[warpid].cols); 
-            store(_kg + (kv_idx * WORKERS_BWD + warpid) * kg_reg.num_elements, k_smem[warpid], k_smem[warpid].cols);
-        }
-        // __syncthreads();
-
-        // if (warpid == 0) {
-        //     for (int w = 0; w < WORKERS_BWD; w++) {
-        //         int tile_idx = (blockIdx.y * WORKERS_BWD * kv_blocks) + (kv_idx * WORKERS_BWD) + w; 
-        //         tma::store_async(tma_vg, (v_smem[w]), tile_idx);
-        //         tma::store_async(tma_kg, (k_smem[w]), tile_idx);
-        //     }
-        //     tma::store_commit_group();
-        // }
-        // tma::store_async_wait();
+        store(_vg + (kv_idx * WORKERS_BWD + warpid) * vg_reg.num_elements, vg_reg, vg_reg.cols); 
+        store(_kg + (kv_idx * WORKERS_BWD + warpid) * kg_reg.num_elements, kg_reg, kg_reg.cols);
     }
 }
 
