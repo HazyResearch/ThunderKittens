@@ -246,14 +246,34 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
 
-    // q_smem_tile  (&q_smem) [WORKERS_KERNEL] = al.allocate<q_smem_tile , WORKERS_KERNEL>();
     k_smem_tile  (&k_smem) [WORKERS_KERNEL] = al.allocate<k_smem_tile , WORKERS_KERNEL>();
     v_smem_tile  (&v_smem) [WORKERS_KERNEL] = al.allocate<v_smem_tile , WORKERS_KERNEL>();
-    // og_smem_tile (&og_smem)[WORKERS_KERNEL] = al.allocate<og_smem_tile, WORKERS_KERNEL>();
     qg_smem_tile (&qg_smem)[WORKERS_KERNEL][WORKERS_KERNEL + 1] = al.allocate<qg_smem_tile, WORKERS_KERNEL, WORKERS_KERNEL + 1>();
 
     l_smem_tile (&l_smem)[WORKERS_KERNEL] = al.allocate<l_smem_tile, WORKERS_KERNEL>();
     d_smem_tile (&d_smem)[WORKERS_KERNEL] = al.allocate<d_smem_tile, WORKERS_KERNEL>();
+
+    rt_bf<tile_h, tile_w> k_reg; 
+    rt_bf<tile_h, tile_w> k_reg_t; 
+    rt_bf<tile_h, tile_w> v_reg;
+
+    rt_fl<tile_h, tile_w> kg_reg;
+    rt_fl<tile_h, tile_w> vg_reg;
+
+    rt_bf<tile_h, tile_w> q_reg;
+    rt_bf<tile_h, tile_w> do_reg; 
+
+    rt_bf<tile_h, tile_h>::col_vec l_reg;  
+    rt_bf<tile_h, tile_h>::col_vec d_reg;
+    rt_fl<tile_h, tile_h>::col_vec sub_reg;
+
+    rt_fl<tile_h, tile_h> att_block; 
+    rt_bf<tile_h, tile_h> att_block_mma;
+
+    rt_fl<tile_h, tile_h> dP; 
+    rt_bf<tile_h, tile_h> dP_mma;
+
+    rt_fl<tile_h, tile_w> qg_reg;
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -297,13 +317,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             tma::set_bytes(vsmem_barrier, WORKERS_KERNEL * sizeof(bf16) * v_smem[0].num_elements);
         }
 
-        rt_bf<tile_h, tile_w> k_reg; 
-        rt_bf<tile_h, tile_w> k_reg_t; 
-        rt_bf<tile_h, tile_w> v_reg;
-
-        rt_fl<tile_h, tile_w> kg_reg;
-        rt_fl<tile_h, tile_w> vg_reg;
-
         load(k_reg, k_smem[warpid]);
         load(v_reg, v_smem[warpid]);
         
@@ -315,8 +328,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         zero(vg_reg);
 
         for (int qo_idx = 0; qo_idx < qo_blocks; qo_idx++) {
-            
-            auto *q_smem = reinterpret_cast<q_smem_tile*>(&k_smem[0]); // reuse k_smem for q
+
+            auto *q_smem = reinterpret_cast<q_smem_tile*>(&k_smem[0]);   // reuse k_smem for q
             auto *og_smem = reinterpret_cast<og_smem_tile*>(&v_smem[0]); // reuse v_smem for og
 
             if (warpid == 0) {
@@ -344,21 +357,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 tma::set_bytes(lsmem_barrier,  WORKERS_KERNEL * sizeof(bf16) * l_smem[0].length);
                 tma::set_bytes(dsmem_barrier,  WORKERS_KERNEL * sizeof(bf16) * d_smem[0].length);
             }
-
-            rt_bf<tile_h, tile_w> q_reg;
-            rt_bf<tile_h, tile_w> do_reg; 
-
-            rt_bf<tile_h, tile_h>::col_vec l_reg;  
-            rt_bf<tile_h, tile_h>::col_vec d_reg;
-            rt_fl<tile_h, tile_h>::col_vec sub_reg;
-
-            rt_fl<tile_h, tile_h> att_block; 
-            rt_bf<tile_h, tile_h> att_block_mma;
-
-            rt_fl<tile_h, tile_h> dP; 
-            rt_bf<tile_h, tile_h> dP_mma;
-
-            rt_fl<tile_h, tile_w> qg_reg;
 
             for (int subtile = 0; subtile < WORKERS_KERNEL; subtile++) {
                 load(q_reg, q_smem[subtile]);
