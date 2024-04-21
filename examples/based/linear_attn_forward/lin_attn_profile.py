@@ -15,8 +15,8 @@ from statistics import median
 import torch
 import torch.nn as nn
 
-# sys.path.append("/var/cr05_data/sim_data/code/release/based/train/")
-# from csrc import causal_dot_product
+sys.path.append("/var/cr05_data/sim_data/code/release/based/train/")
+from csrc.causal_dot_prod import causal_dot_product
 
 
 def make_causal(X):
@@ -52,11 +52,11 @@ def pytorch_test(dt, Q, K, V, d, verbose=True):
 
         O   = torch.einsum("bhnd,bhmd->bhnm", Q, K)**2
         O2  = make_causal(O)
-        T2  = torch.einsum("bhnm,bhmd->bhnd", O2, V)
+        T2  = torch.einsum("bhnm,bhmd->bhnd", O2, V).to(torch.bfloat16)
         T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
-        T1 = torch.einsum("bhnm,bhme->bhne", T1a, V)  
-        T0  = V.cumsum(dim=2)
-        y  = T0  + T1 + T2/2
+        T1 = torch.einsum("bhnm,bhme->bhne", T1a, V).to(torch.bfloat16)
+        T0  = V.cumsum(dim=2).to(torch.bfloat16)
+        y  = T0 + T1 + T2/2
 
         torch.cuda.synchronize()
         t1 = time.time()
@@ -106,49 +106,63 @@ def fast_transformer_test(dt, q, k, v, d, verbose=True):
     torch.cuda.reset_peak_memory_stats()
     t0 = time.time()
 
-    q, k = feature_map(q), feature_map(k)
-    v = causal_dot_product(
-        q.contiguous().to(dtype=torch.float32), 
-        k.contiguous().to(dtype=torch.float32),
-        v.contiguous().to(dtype=torch.float32),
-    )
-    # z = 1 / torch.einsum(
-    #         "bhld,bhld->bhl", 
-    #         q.to(dtype=torch.float32), 
-    #         k.to(dtype=torch.float32).cumsum(2)
-    #     )
-    y = v # * z[..., None]
+    try:
+        q, k = feature_map(q), feature_map(k)
+        v = causal_dot_product(
+            q.contiguous().to(dtype=torch.float32), 
+            k.contiguous().to(dtype=torch.float32),
+            v.contiguous().to(dtype=torch.float32),
+        )
+        # z = 1 / torch.einsum(
+        #         "bhld,bhld->bhl", 
+        #         q.to(dtype=torch.float32), 
+        #         k.to(dtype=torch.float32).cumsum(2)
+        #     )
+        y = v # * z[..., None]
 
-    torch.cuda.synchronize()
-    t1 = time.time()
-    peak_mem = torch.cuda.max_memory_allocated(device='cuda')
-    tot = t1-t0
+        torch.cuda.synchronize()
+        t1 = time.time()
+        peak_mem = torch.cuda.max_memory_allocated(device='cuda')
+        tot =  t1-t0
+    except Exception as e:
+        print(f"Error: {e}")
+        tot = -1
+        peak_mem=-1
+        y= None
+
     return y, tot, peak_mem
 
 
 def based_kernel_test(dt, Q, K, V, d, verbose=True):
     o   = torch.zeros_like(V)
 
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
-    t0 = time.time()
+    try:
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        t0 = time.time()
 
-    mod.based_fwd_tk(Q,K,V, o)
+        mod.based_fwd_tk(Q,K,V, o)
 
-    torch.cuda.synchronize()
-    o += torch.zeros_like(o) # trigger an error if one exists
-    t1 = time.time()
-    peak_mem = torch.cuda.max_memory_allocated(device='cuda')
-    tot = t1-t0
+        torch.cuda.synchronize()
+        o += torch.zeros_like(o) # trigger an error if one exists
+        t1 = time.time()
+        peak_mem = torch.cuda.max_memory_allocated(device='cuda')
+        tot = t1-t0
+
+    except Exception as e:
+        print(f"Error: {e}")
+        tot = -1
+        peak_mem=-1
+        o= None
+
     return o, tot, peak_mem
 
 
-def linear_attn_forward_benchmark(dt,verbose=False, use_ones=False, profile=False):
+def linear_attn_forward_benchmark_batch(dt,verbose=False, use_ones=False, profile=False):
     num_iters = 10
     methods = {
-        # 'Pure PyTorch (Alg. 1)': pytorch_test, 
-        #'Pure PyTorch': pytorch_test_v2,
-        #'Fast Transformers Kernel': fast_transformer_test, 
+        'Pure PyTorch (Alg. 1)': pytorch_test, 
+        'Fast Transformers Kernel': fast_transformer_test, 
         'Based Kernel': based_kernel_test
     }
     method2timing = defaultdict(dict)
@@ -188,21 +202,26 @@ def linear_attn_forward_benchmark(dt,verbose=False, use_ones=False, profile=Fals
     ax.set_xlabel('Batch size')
     ax.set_ylabel('Time (ms)')
     ax.legend()
+
     # save pdf
-    plt.savefig('h100_lin-attn-fwd_benchmark.pdf', format='pdf', bbox_inches='tight')
+    plt.savefig('results/a100_lin-attn-fwd_benchmark_batch.pdf', format='pdf', bbox_inches='tight')
+
+    # save timings
+    with open('results/a100_lin-attn-fwd_benchmark_batch.txt', 'w') as f:
+        for name, timing in method2timing.items():
+            f.write(f"{name}: {timing}\n")
 
 
 def linear_attn_forward_benchmark_seqlen(dt,verbose=False, use_ones=False, profile=False):
     num_iters = 10
     methods = {
-        # 'Pure PyTorch (Alg. 1)': pytorch_test, 
-        #'Pure PyTorch': pytorch_test_v2,
-        #'Fast Transformers Kernel': fast_transformer_test, 
+        'Pure PyTorch (Alg. 1)': pytorch_test, 
+        'Fast Transformers Kernel': fast_transformer_test, 
         'Based Kernel': based_kernel_test
     }
     method2timing = defaultdict(dict)
     method2mem = defaultdict(dict)
-    for n in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 131072]:
+    for i, n in enumerate([1024, 1024, 2048, 4096, 8192, 16384, 32768, 131072]):
         b = 4
         h = 16
         d = 16
@@ -221,8 +240,8 @@ def linear_attn_forward_benchmark_seqlen(dt,verbose=False, use_ones=False, profi
             _time = median(lst_time)
             _mem = median(lst_mem)
 
-            if n > 256 and _time > 0: method2timing[name][n] = _time * 1000
-            if n > 256 and _mem > 0: method2mem[name][n] = _mem
+            if i > 0 and _time > 0: method2timing[name][n] = _time * 1000
+            if i > 0 and _mem > 0: method2mem[name][n] = _mem
 
     print(f"\nEfficiency vs. Seqlen:")
     print(f"Timings:")
@@ -239,12 +258,17 @@ def linear_attn_forward_benchmark_seqlen(dt,verbose=False, use_ones=False, profi
     ax.legend()
 
     # save pdf
-    plt.savefig('h100_lin-attn-fwd_benchmark_seqlen.pdf', format='pdf', bbox_inches='tight') 
+    plt.savefig('results/a100_lin-attn-fwd_benchmark_seqlen.pdf', format='pdf', bbox_inches='tight') 
+
+    # save timings
+    with open('results/a100_lin-attn-fwd_benchmark_seqlen.txt', 'w') as f:
+        for name, timing in method2timing.items():
+            f.write(f"{name}: {timing}\n")
 
 
 def linear_attn_correct(dt):
     b = 8
-    n = 512
+    n = 2048
     h = 16
     d = 16
     dv = 64
@@ -259,9 +283,12 @@ def linear_attn_correct(dt):
     __eq("PyTorch Test v1 - Based Kernel Test", pytorch_test_result[0], based_kernel_test_result[0], debug=False)
 
 
+print(f"Storing results at 'results/'")
+os.makedirs('results', exist_ok=True)
+
 print("Benchmarking the kernels...")
-# linear_attn_forward_benchmark(torch.bfloat16, verbose=False)
-# linear_attn_forward_benchmark_seqlen(torch.bfloat16, verbose=False)
+linear_attn_forward_benchmark_batch(torch.bfloat16, verbose=False)
+linear_attn_forward_benchmark_seqlen(torch.bfloat16, verbose=False)
 
 print("Correctness test...")
 linear_attn_correct(torch.bfloat16)

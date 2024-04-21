@@ -1,4 +1,5 @@
 #include "src/kittens.cuh"
+#include <cassert>
 
 #define NUM_WORKERS (16) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -97,6 +98,8 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
+
+    assert(n >= 1024); // Assumes n >= 1024.
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -239,13 +242,13 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 }
 
 // For testing via C++
-// #include "harness.impl" (comment out when using the code below)
+// #include "harness.impl" // (comment out when using the code below)
 
 // For binding to PyTorch (comment out include for harness.imple when using the code below)
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
-    std::cout << "Entered Based handler" << std::endl;
+    // std::cout << "Entered Based handler" << std::endl;
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -260,6 +263,7 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
         k_same &= q.size(i) == k.size(i);
         o_same &= v.size(i) == o.size(i);
     }
+    
     // This is just a restriction of what we're doing now...
     TORCH_CHECK(k_same, "Q and K should be same size");
     TORCH_CHECK(o_same, "V and O should be same size");
@@ -280,8 +284,7 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
     const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
           bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
-    std::cout << "Checks and casts" << std::endl;
-
+    // std::cout << "Checks and casts" << std::endl;
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
     cudaFuncSetAttribute(
         based_linear_attention,
@@ -289,12 +292,12 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
         mem_size
     );
 
-    std::cout << "Set dynamic memory" << std::endl;
+    // std::cout << "Set dynamic memory" << std::endl;
     based_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf);
 
-    std::cout << "Launched kernel" << std::endl;
+    // std::cout << "Launched kernel" << std::endl;
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
-    std::cout << "Exiting" << std::endl;
+    // std::cout << "Exiting" << std::endl;
 }
 
