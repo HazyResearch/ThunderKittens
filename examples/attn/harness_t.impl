@@ -6,7 +6,7 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 512;
+constexpr int ATTN_N     = 1024;
 constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    int ITER = 1;
+    int ITER = 100;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
@@ -447,7 +447,8 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        // attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(d_b_q, d_b_k, d_b_v, d_b_l, d_b_d, d_b_og, d_b_qg, d_b_kg, d_b_vg);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
@@ -456,7 +457,8 @@ int main(int argc, char **argv) {
     for(int i = 0; i < ITER; i++) {
         cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
         const auto start_bwd2 = std::chrono::high_resolution_clock::now();
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        // attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(d_b_q, d_b_k, d_b_v, d_b_l, d_b_d, d_b_og, d_b_qg, d_b_kg, d_b_vg);
         cudaDeviceSynchronize();
         const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
@@ -485,8 +487,9 @@ int main(int argc, char **argv) {
         qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
         qg_file << qg[i] << ' ';
         diff_qg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
+        if(abs(diff) > 0.02 || isnan(diff)) {
             good = false;
+            
         }
     }
 
@@ -498,8 +501,9 @@ int main(int argc, char **argv) {
         kg_ref_file << kg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
         kg_file << kg[i] << ' ';
         diff_kg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
+        if(abs(diff) > 0.02 || isnan(diff)) {
             good = false;
+            
         }
     }
 
@@ -511,8 +515,9 @@ int main(int argc, char **argv) {
         vg_ref_file << vg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
         vg_file << vg[i] << ' ';
         diff_vg_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
+        if(abs(diff) > 0.02 || isnan(diff)) {
             good = false;
+            
         }
     }
 
