@@ -246,10 +246,10 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
 
-    q_smem_tile  (&q_smem) [WORKERS_KERNEL] = al.allocate<q_smem_tile , WORKERS_KERNEL>();
+    // q_smem_tile  (&q_smem) [WORKERS_KERNEL] = al.allocate<q_smem_tile , WORKERS_KERNEL>();
     k_smem_tile  (&k_smem) [WORKERS_KERNEL] = al.allocate<k_smem_tile , WORKERS_KERNEL>();
     v_smem_tile  (&v_smem) [WORKERS_KERNEL] = al.allocate<v_smem_tile , WORKERS_KERNEL>();
-    og_smem_tile (&og_smem)[WORKERS_KERNEL] = al.allocate<og_smem_tile, WORKERS_KERNEL>();
+    // og_smem_tile (&og_smem)[WORKERS_KERNEL] = al.allocate<og_smem_tile, WORKERS_KERNEL>();
     qg_smem_tile (&qg_smem)[WORKERS_KERNEL][WORKERS_KERNEL + 1] = al.allocate<qg_smem_tile, WORKERS_KERNEL, WORKERS_KERNEL + 1>();
 
     l_smem_tile (&l_smem)[WORKERS_KERNEL] = al.allocate<l_smem_tile, WORKERS_KERNEL>();
@@ -258,7 +258,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    constexpr int qo_blocks = N / (q_smem[0].rows*WORKERS_KERNEL);
+    constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_KERNEL);
     constexpr int kv_blocks = N / (k_smem[0].rows*WORKERS_KERNEL);
 
     __shared__ uint64_t qsmem_barrier, ksmem_barrier, vsmem_barrier, lsmem_barrier, dsmem_barrier, ogsmem_barrier, qgsmem_barrier;
@@ -315,6 +315,9 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         zero(vg_reg);
 
         for (int qo_idx = 0; qo_idx < qo_blocks; qo_idx++) {
+            
+            auto *q_smem = reinterpret_cast<q_smem_tile*>(&k_smem[0]); // reuse k_smem for q
+            auto *og_smem = reinterpret_cast<og_smem_tile*>(&v_smem[0]); // reuse v_smem for og
 
             if (warpid == 0) {
                 for (int w = 0; w < WORKERS_KERNEL; w++) {
