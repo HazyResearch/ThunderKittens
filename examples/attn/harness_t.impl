@@ -6,7 +6,7 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 1024;
+constexpr int ATTN_N     = 512;
 constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    int ITER = 100;
+    int ITER = 1;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
