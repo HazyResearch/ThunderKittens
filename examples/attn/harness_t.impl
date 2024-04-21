@@ -392,15 +392,15 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_b_l  = {};
     CUtensorMap tma_desc_n_d  = {};
 
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_q,  d_b_q);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_og, d_b_og);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>::col_vec, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_l,  d_b_l);
-    tma::create_tensor_map<st_bf<tile_h, tile_w, layout_nrow>::col_vec, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_d,  d_b_d);
+    tma::create_tensor_map<q_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_q,  d_b_q);
+    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
+    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
+    tma::create_tensor_map<qg_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
+    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
+    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
+    tma::create_tensor_map<og_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_og, d_b_og);
+    tma::create_tensor_map<l_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_l,  d_b_l);
+    tma::create_tensor_map<d_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_d,  d_b_d);
 
     CUtensorMap* tma_b_q_d;
     CUtensorMap* tma_b_k_d;
