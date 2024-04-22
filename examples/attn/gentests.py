@@ -135,5 +135,76 @@ with open(fn, 'w') as f:
     for i in trange(B*H*N*D):
         f.write(repr(v_grad[i]))
         f.write(' ')
-
+        
 print(f'Run the harness like `./attn_bwd {fn}`')
+        
+# time how long backwards pass takes in pytorch 
+
+B = 16
+H = 16
+N = 1024
+D = 64
+
+q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+
+print("Timing forward pass for B=16, H=16, N=" + str(N) + ", D=" + str(D))
+with torch.backends.cuda.sdp_kernel(
+    enable_flash=True, 
+    enable_math=True, 
+    enable_mem_efficient=True
+):
+    # warmup
+    for _ in range(10):
+        o = forward(q, k, v)
+    
+    # Prepare for timing
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+
+    # Time the forward pass
+
+    for i in range(100):
+        start_events[i].record()
+        torch.cuda.synchronize()
+        o = forward(q, k, v)
+        torch.cuda.synchronize()
+        end_events[i].record()
+    
+    
+times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+time_us = np.mean(times) * 1000
+print(f'Average time for forward pass in us: {time_us:.2f}')
+
+print("Timing backwards pass for B=16, H=16, N=1024, D=64")
+
+with torch.backends.cuda.sdp_kernel(
+    enable_flash=True, 
+    enable_math=True, 
+    enable_mem_efficient=True
+):
+    # warmup
+    for _ in range(10):
+        q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
+    
+    # Prepare for timing
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+
+    # Time the backward pass
+
+    for i in range(100):
+        start_events[i].record()
+        torch.cuda.synchronize()
+        q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
+        torch.cuda.synchronize()
+        end_events[i].record()
+    
+
+times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+
+time_us = np.mean(times) * 1000
+
+print(f'Average time for backward pass in us: {time_us:.2f}')
