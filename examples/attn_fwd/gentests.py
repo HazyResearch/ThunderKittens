@@ -175,7 +175,7 @@ with torch.backends.cuda.sdp_kernel(
     
 torch.cuda.synchronize()
 times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-time_us = np.mean(times) * 100 # generally this method seems to return 10x the actual time
+time_us = np.mean(times) * 1000
 print(f'Average time for forward pass in us: {time_us:.2f}')
 
 print("Timing backwards pass for B=16, H=16, N=1024, D=64")
@@ -205,6 +205,6 @@ with torch.backends.cuda.sdp_kernel(
 torch.cuda.synchronize()
 times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
 
-time_us = np.mean(times) * 100 # generally this method seems to return 10x the actual time
+time_us = np.mean(times) * 1000
 
 print(f'Average time for backward pass in us: {time_us:.2f}')
