@@ -247,10 +247,14 @@ using layout_tma_swi   = ducks::st_layout::tma_swizzle;
 template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
                             CUtensorMap* tma_l_vec, CUtensorMap* tma_d_vec, 
-                            CUtensorMap* tma_og, CUtensorMap* tma_qg, CUtensorMap* tma_kg, CUtensorMap* tma_vg)
+                            CUtensorMap* tma_og, CUtensorMap* tma_qg, CUtensorMap* tma_kg, CUtensorMap* tma_vg, 
+                            const bf16* __restrict__ __l__, const bf16* __restrict__ __d__)
 {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_allocator al((int*)&__shm[0]);
+
+    const bf16 *_l  = __l__ + (blockIdx.y * N);
+    const bf16 *_d  = __d__ + (blockIdx.y * N);
 
     // warpgroup level 
     k_smem_tile  (&k_smem) [WORKERS_KERNEL] = al.allocate<k_smem_tile, WORKERS_KERNEL>();
@@ -285,7 +289,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_KERNEL);
     constexpr int kv_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_KERNEL);
 
-    __shared__ uint64_t qsmem_b, ksmem_b, vsmem_b, lsmem_b, dsmem_b, ogsmem_b, qgsmem_b;
+    __shared__ uint64_t qsmem_b, ksmem_b, vsmem_b, ogsmem_b, qgsmem_b;
 
     int kv_phasebit = 0;
     int qo_phasebit = 0;
@@ -296,10 +300,11 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         tma::init_barrier<v_smem_tile , WORKERS_KERNEL>(vsmem_b,  1);
         tma::init_barrier<og_smem_tile, WORKERS_KERNEL>(ogsmem_b, 1);
         tma::init_barrier<qg_smem_tile, WORKERS_KERNEL>(qgsmem_b, 1);
-        tma::init_barrier<l_smem_tile , WORKERS_KERNEL>(lsmem_b,  1);
-        tma::init_barrier<d_smem_tile , WORKERS_KERNEL>(dsmem_b,  1);        
+        // tma::init_barrier<l_smem_tile , WORKERS_KERNEL>(lsmem_b,  1);
+        // tma::init_barrier<d_smem_tile , WORKERS_KERNEL>(dsmem_b,  1);        
     }
-    __syncthreads();
+
+    __syncthreads(); 
 
     for (int kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
         
@@ -338,16 +343,19 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                     tma::load_async((og_smem[w]), tma_og, ogsmem_b, tile_idx); 
                     
                     tma::load_async((qg_smem[w][0]), tma_qg,    qgsmem_b, tile_idx);
-                    tma::load_async((l_smem[w]),     tma_l_vec, lsmem_b,  tile_idx); 
-                    tma::load_async((d_smem[w]),     tma_d_vec, dsmem_b,  tile_idx); 
+                    // tma::load_async((l_smem[w]),     tma_l_vec, lsmem_b,  tile_idx); 
+                    // tma::load_async((d_smem[w]),     tma_d_vec, dsmem_b,  tile_idx); 
                 }
             }
+
+            load(l_smem[warpid], _l + (qo_idx * WORKERS_KERNEL + warpid) * l_smem[warpid].length);
+            load(d_smem[warpid], _d + (qo_idx * WORKERS_KERNEL + warpid) * d_smem[warpid].length);
 
             tma::arrive_and_wait(qsmem_b,  qo_phasebit);
             tma::arrive_and_wait(ogsmem_b, qo_phasebit);
             tma::arrive_and_wait(qgsmem_b, qo_phasebit);
-            tma::arrive_and_wait(lsmem_b,  qo_phasebit);
-            tma::arrive_and_wait(dsmem_b,  qo_phasebit);
+            // tma::arrive_and_wait(lsmem_b,  qo_phasebit);
+            // tma::arrive_and_wait(dsmem_b,  qo_phasebit);
             qo_phasebit ^= 1;
             
             mul(q_smem[warpid], q_smem[warpid], __float2bfloat16(0.125f)); 
@@ -356,8 +364,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 tma::set_bytes(qsmem_b,  WORKERS_KERNEL * sizeof(bf16) * q_smem[0].num_elements);
                 tma::set_bytes(ogsmem_b, WORKERS_KERNEL * sizeof(bf16) * og_smem[0].num_elements);
                 tma::set_bytes(qgsmem_b, WORKERS_KERNEL * sizeof(bf16) * qg_smem[0][0].num_elements);
-                tma::set_bytes(lsmem_b,  WORKERS_KERNEL * sizeof(bf16) * l_smem[0].length);
-                tma::set_bytes(dsmem_b,  WORKERS_KERNEL * sizeof(bf16) * d_smem[0].length);
+                // tma::set_bytes(lsmem_b,  WORKERS_KERNEL * sizeof(bf16) * l_smem[0].length);
+                // tma::set_bytes(dsmem_b,  WORKERS_KERNEL * sizeof(bf16) * d_smem[0].length);
             }
 
             for (int subtile = 0; subtile < WORKERS_KERNEL; subtile++) {
