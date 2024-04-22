@@ -9,8 +9,12 @@ NVCC=nvcc
 # Conditional setup based on the target GPU
 ifeq ($(GPU_TARGET),4090)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_4090 -arch=sm_89 -lcuda -lcudadevrt -lcudart_static -lcublas # 4090
-TARGET=attn # 4090
-SRC=tictoc_ker.cu # 4090
+	ifeq ($(PURPOSE),inference)
+	TARGET=attn # 4090
+	SRC=4090_fwd.cu # 4090
+	else ifeq ($(PURPOSE),training)
+	# ERROR: No training kernel for 4090 yet
+	endif
 else ifeq ($(GPU_TARGET),A100)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_A100 -arch=sm_80 -lcuda -lcudadevrt -lcudart_static -lcublas # H100
 TARGET=attn # A100
