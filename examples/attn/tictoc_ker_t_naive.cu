@@ -225,6 +225,8 @@ constexpr int WORKERS_BWD   = 8;
 constexpr int tile_h = 1;
 constexpr int tile_w = 64/16;
 
+static_assert(tile_h * WORKERS_BWD <= 8, "You will run out of shared memory");
+
 using layout_nrow      = ducks::st_layout::naive;
 using layout_wgmma_row = ducks::st_layout::wgmma_row_0b;
 using layout_wgmma_col = ducks::st_layout::wgmma_col_t_0b;
@@ -247,7 +249,9 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                           const bf16* __restrict__ __og__, bf16* __qg__, bf16* __kg__, bf16* __vg__) 
 {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
+    
     shared_allocator al((int*)&__shm[0]);
+    // tma_allocator al((int*)&__shm[0]);
 
     const bf16 *_q = __q__ + (blockIdx.y * N * 64); 
     const bf16 *_k = __k__ + (blockIdx.y * N * 64);
