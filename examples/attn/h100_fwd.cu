@@ -5,16 +5,16 @@
 constexpr int NUM_WORKERS = 20;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
 
-constexpr int qo_height = 4, kv_height = 4;
+constexpr int qo_height = 4, kv_height = 4; // 4
 constexpr int NUM_WORKERS_KV = 4;
 constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_row_0b;
-using layout_k = ducks::st_layout::wgmma_row_0b;
-using layout_v = ducks::st_layout::wgmma_col_t_0b;
-using layout_o = ducks::st_layout::tma_swizzle; 
+using layout_q = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_k = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_v = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_o = ducks::st_layout::xor_swizzle;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker_fwd_inf(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
@@ -93,7 +93,7 @@ void attend_ker_fwd_inf(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma
 
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
             warpgroup::mma_fence(att_block);
-            warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
+            warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
             warpgroup::mma_commit_group();
 
             copy(norm_vec_last, norm_vec);
@@ -119,7 +119,7 @@ void attend_ker_fwd_inf(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma
             mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
             warpgroup::mma_fence(o_prev);
-            warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
+            warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic][subtile]);
             warpgroup::mma_commit_group();
         }
     }

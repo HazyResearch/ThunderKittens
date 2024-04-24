@@ -13,10 +13,10 @@ constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_row_0b;
-using layout_k = ducks::st_layout::wgmma_row_0b;
-using layout_v = ducks::st_layout::wgmma_col_t_0b;
-using layout_o = ducks::st_layout::naive; 
+using layout_q = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_k = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_v = ducks::st_layout::wgmma_0b; // need to make this 128b
+using layout_o = ducks::st_layout::xor_swizzle; 
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
@@ -102,7 +102,7 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
         for(int subtile = 0; subtile < NUM_WORKERS_KV; subtile++) {
             warpgroup::mma_fence(att_block);
-            warpgroup::dot_reset(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
+            warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic][subtile]);
             warpgroup::mma_commit_group();
 
             copy(norm_vec_last, norm_vec);
@@ -128,7 +128,7 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
             mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
             warpgroup::mma_fence(o_prev);
-            warpgroup::mma_accum(o_prev, att_block_mma, v_smem[tic][subtile]);
+            warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic][subtile]);
             warpgroup::mma_commit_group();
         }
     }
@@ -162,12 +162,12 @@ constexpr int WORKERS = 8;
 constexpr int th = 4; 
 constexpr int tw = 64/16;
 
-using layout_nrow = ducks::st_layout::naive;
+using layout_nrow = ducks::st_layout::xor_swizzle;
 
 template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
-    tma_allocator al((int*)&__shm[0]);
+    tma_swizzle_allocator al((int*)&__shm[0]);
 
     int warpid = kittens::warpid();
 
@@ -220,28 +220,6 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     tma::store_async_wait();
 }
 
-constexpr int WORKERS_BWD = 8; 
-constexpr int WORKERS_KERNEL = 8; 
-
-constexpr int tile_h = 1;
-constexpr int tile_w = 64/16;
-
-using layout_nrow      = ducks::st_layout::naive;
-using layout_wgmma_row = ducks::st_layout::wgmma_row_0b;
-using layout_wgmma_col = ducks::st_layout::wgmma_col_t_0b;
-using layout_tma_swi   = ducks::st_layout::tma_swizzle; 
-
-#define k_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
-#define v_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
-
-#define q_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
-#define og_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
-#define qg_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
-#define l_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
-#define d_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
-
-#define scratch_pad  st_bf<tile_h, tile_h, layout_tma_swi>
-
 template<int WORKERS, kittens::ducks::st::all ST, int N_TILES>
 __device__ inline void tile_reduce(ST (&dst)[N_TILES]) {
     constexpr int STRIDE = WORKERS*kittens::WARP_THREADS;
@@ -266,6 +244,27 @@ __device__ inline void tile_reduce(ST (&dst)[N_TILES]) {
         if(ST::num_elements%STRIDE == 0 || idx < ST::num_elements) dst[0].data[idx] = acc[j]; // set
     }
 }
+
+constexpr int WORKERS_BWD = 8; 
+constexpr int WORKERS_KERNEL = 8; 
+
+constexpr int tile_h = 1;
+constexpr int tile_w = 64/16;
+
+using layout_nrow      = ducks::st_layout::xor_swizzle;
+using layout_wgmma     = ducks::st_layout::wgmma_0b;
+using layout_tma_swi   = ducks::st_layout::xor_swizzle; 
+
+#define k_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
+#define v_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
+
+#define q_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
+#define og_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
+#define qg_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
+#define l_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
+#define d_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
+
+#define scratch_pad  st_bf<tile_h, tile_h, layout_tma_swi>
 
 template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
@@ -311,6 +310,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     rt_fl<tile_h, tile_h> att_block; 
     rt_bf<tile_h, tile_h> att_block_mma;
     rt_fl<tile_h, tile_h> temp_block; 
+    rt_bf<tile_h, tile_h> temp_block_mma; 
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -400,7 +400,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 mul(q_reg, q_reg, __float2bfloat16(0.125f));
                 
                 zero(att_block);
-                dot(att_block, q_reg, k_reg, att_block);
+                mma_ABt(att_block, q_reg, k_reg, att_block);
 
                 load(l_reg_bf, l_smem[subtile]);
                 copy(l_reg_fl, l_reg_bf);
@@ -414,11 +414,11 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 
                 transpose_inplace(att_block_mma);
                 
-                mma(vg_reg, att_block_mma, do_reg_col, vg_reg);
+                mma_AB(vg_reg, att_block_mma, do_reg_col, vg_reg);
 
                 load(do_reg, og_smem[subtile]);
                 zero(att_block);
-                dot(att_block, do_reg, v_reg, att_block);
+                mma_ABt(att_block, do_reg, v_reg, att_block);
 
                 load(d_reg_bf, d_smem[subtile]);
                 copy(d_reg_fl, d_reg_bf);
@@ -432,12 +432,12 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 mul(do_reg, do_reg, __float2bfloat16(0.125f));
                 rt_bf<tile_h, tile_w, ducks::rt_layout::col> &k_reg_col = swap_layout_inplace(do_reg);
                 
-                mma(qg_reg, att_block_mma, k_reg_col, qg_reg);
+                mma_AB(qg_reg, att_block_mma, k_reg_col, qg_reg);
                 store(qg_smem[subtile][1 + warpid], qg_reg);
 
                 transpose_inplace(att_block_mma);
                 rt_bf<tile_h, tile_w, ducks::rt_layout::col> &q_reg_col = swap_layout_inplace(q_reg);
-                mma(kg_reg, att_block_mma, q_reg_col, kg_reg);
+                mma_AB(kg_reg, att_block_mma, q_reg_col, kg_reg);
             }
 
             __syncthreads();

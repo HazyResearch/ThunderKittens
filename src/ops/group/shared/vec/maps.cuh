@@ -122,6 +122,17 @@ __device__ static inline void exp(T &dst, const T &src) {
     unary_op<base_ops::exp, T>(dst, src);
 }
 /**
+ * @brief Applies the natural logarithm function element-wise to a shared vector.
+ *
+ * @tparam T Shared vector type.
+ * @param dst[out] Destination vector where the exponential values will be stored.
+ * @param src[in] Source vector to apply the logarithm function to.
+ */
+template<ducks::sv::all T>
+__device__ static inline void log(T &dst, const T &src) {
+    unary_op<base_ops::log, T>(dst, src);
+}
+/**
  * @brief Applies the absolute value function element-wise to a shared vector.
  *
  * @tparam T Shared vector type.

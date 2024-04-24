@@ -85,6 +85,22 @@ template<> __device__ inline float2 exp::op<float2>(const float2 &x) { return fl
 template<> __device__ inline bf16   exp::op<bf16>  (const bf16 &x  ) { return hexp(x);                          }
 template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2exp(x);                         }
 /**
+ * @brief Natural log function operation.
+ *
+ * This operation calculates the natural logarithm of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The natural logarithm of the input value.
+ */
+struct log {
+    template<typename T> static __device__ inline T op(const T &x) { return log(x); }
+};
+template<> __device__ inline float  log::op<float> (const float &x ) { return __logf(x);                        }
+template<> __device__ inline float2 log::op<float2>(const float2 &x) { return float2{__logf(x.x), __logf(x.y)}; }
+template<> __device__ inline bf16   log::op<bf16>  (const bf16 &x  ) { return hlog(x);                          }
+template<> __device__ inline bf16_2 log::op<bf16_2>(const bf16_2 &x) { return h2log(x);                         }
+/**
  * @brief Absolute value operation.
  *
  * This operation calculates the absolute value of the input.
