@@ -14,7 +14,24 @@ template<int height, int width, ducks::st_layout::all L>
 struct wgmma_descriptor { static_assert("Asbtract wgmma descriptor struct should never be instantiated."); };
 
 template<int height, int width>
-struct wgmma_descriptor<height, width, ducks::st_layout::wgmma_0b> {
+struct wgmma_descriptor<height, width, ducks::st_layout::interleave> {
+    __device__ static inline uint64_t normal(uint64_t start_addr, int chunk_idx) {
+        uint64_t desc = 0x0000000000000000;
+        desc |= matrix_descriptor_encode(start_addr + chunk_idx*(128 * 2));
+        desc |= matrix_descriptor_encode((uint64_t)128) << 16;
+        desc |= matrix_descriptor_encode((uint64_t)256*width) << 32;
+        return desc;
+    }
+    __device__ static inline uint64_t transposed(uint64_t start_addr, int chunk_idx) {
+        uint64_t desc = 0x0000000000000000;
+        desc |= matrix_descriptor_encode(start_addr + chunk_idx*(256*width * 2));
+        desc |= matrix_descriptor_encode((uint64_t)256*width) << 16;
+        desc |= matrix_descriptor_encode((uint64_t)128) << 32;
+        return desc;
+    }
+};
+template<int height, int width>
+struct wgmma_descriptor<height, width, ducks::st_layout::xor_swizzle> {
     __device__ static inline uint64_t normal(uint64_t start_addr, int chunk_idx) {
         uint64_t desc = 0x0000000000000000;
         desc |= matrix_descriptor_encode(start_addr + chunk_idx*(128 * 2));
@@ -48,12 +65,14 @@ struct wgmma_base {
     __device__ static inline void rt_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const rt_bf<1, 1, ducks::rt_layout::row> & a_rt,
-        const uint64_t b_st_desc
+        const uint64_t b_st_desc,
+        int scale_d = 1
     );
     __device__ static inline void st_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
-        const uint64_t b_st_desc
+        const uint64_t b_st_desc,
+        int scale_d = 1
     );
     template<ducks::st::all ST> __device__ static inline uint64_t a_desc(const ST &tile, int chunk_idx) {
         return make_descriptor<trans_a>(tile, chunk_idx);

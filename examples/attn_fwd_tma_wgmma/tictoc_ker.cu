@@ -11,9 +11,9 @@ constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_0b;
-using layout_k = ducks::st_layout::wgmma_0b;
-using layout_v = ducks::st_layout::wgmma_0b;
+using layout_q = ducks::st_layout::interleave;
+using layout_k = ducks::st_layout::interleave;
+using layout_v = ducks::st_layout::interleave;
 using layout_o = ducks::st_layout::xor_swizzle;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)

@@ -21,7 +21,7 @@ template<typename T> concept st_type_2d_tma_layout = (
     std::is_same_v<typename T::layout, ducks::st_layout::xor_swizzle>
 );
 template<typename T> concept st_type_wgmma_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_0b>
+    std::is_same_v<typename T::layout, ducks::st_layout::interleave>
 );
 template<typename T> concept st_type_tma_layout = (
     st_type_2d_tma_layout<T> || st_type_wgmma_layout<T>

@@ -71,10 +71,13 @@ struct st {
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
-    static_assert(
-        !std::is_same_v<layout, ducks::st_layout::xor_swizzle> || width == 1 || width == 2 || width == 4 || width == 8 || width == 16 || width == 32,
-        "For XOR swizzled modes, shared tile width must be a power of 2."
-    ); // XOR swizzling only works with a few particular layout dimensions.
+    static constexpr int swizzle_bytes = (
+        std::is_same_v<layout, ducks::st_layout::xor_swizzle> ? (
+            width%4 == 0 ? 128 :
+            width%2 == 0 ? 64  :
+            32
+        ) : 0
+    );
 
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
@@ -192,18 +195,18 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
 
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x1 = st_bf<1, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x2 = st_bf<1, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x4 = st_bf<1, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x8 = st_bf<1, 8, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x1 = st_bf<2, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x2 = st_bf<2, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x4 = st_bf<2, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x1 = st_bf<4, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x2 = st_bf<4, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x4 = st_bf<4, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_8x1 = st_bf<8, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x4 = st_bf<1, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_1x8 = st_bf<1, 8, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x1 = st_bf<2, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x2 = st_bf<2, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_2x4 = st_bf<2, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x1 = st_bf<4, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::xor_swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
 
 }

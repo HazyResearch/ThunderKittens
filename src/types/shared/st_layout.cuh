@@ -31,37 +31,31 @@ struct xor_swizzle {}; // only defined for x1, x2, x4 tiles.
 /**
  * @brief A row layout for wgmma with no swizzling.
  */
-struct wgmma_0b { static constexpr int swizzling_mode=0; };
-/**
- * @brief A row layout for wgmma with 32-bit swizzling.
- */
-struct wgmma_32b { static constexpr int swizzling_mode=3; };
+struct interleave { static constexpr int swizzling_mode=0; };
 
 /**
  * @brief Concept to check if a type is a wgmma row layout.
  */
 template<typename T>
 concept wgmma_normal = (
-    std::is_same_v<T, wgmma_0b>   ||
-    std::is_same_v<T, wgmma_32b> 
+    std::is_same_v<T, interleave>   ||
+    std::is_same_v<T, xor_swizzle> 
 );
 /**
  * @brief Concept to check if a type is a wgmma column layout.
  */
 template<typename T>
 concept wgmma_transposed = (
-    std::is_same_v<T, wgmma_0b>   // ||
-    // std::is_same_v<T, wgmma_32b> -- cutlass indicates swizzling does not work for B matrices
+    std::is_same_v<T, interleave>   // ||
 );
 /**
  * @brief Concept to check if a type is a row-contiguous layout.
  */
 template<typename T>
 concept all = (
-    wgmma_normal<T>                      ||
-    wgmma_transposed<T>                  ||
     std::is_same_v<T, naive>             ||
-    std::is_same_v<T, xor_swizzle>
+    std::is_same_v<T, xor_swizzle>       ||
+    std::is_same_v<T, interleave>
 );
 
 }
@@ -88,8 +82,6 @@ template<int height, int width, ducks::st_layout::all T=ducks::st_layout::naive>
 struct shared_indexer {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
-    static constexpr int rows_per_core_matrix = 8;
-    static constexpr int cols_per_core_matrix = 8;
     /**
      * @brief Get a memory offset from a row and column index.
      */
@@ -101,14 +93,12 @@ template<int height, int width>
 struct shared_indexer<height, width, ducks::st_layout::xor_swizzle> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
-    static constexpr int rows_per_core_matrix = 8;
-    static constexpr int cols_per_core_matrix = 8;
     __device__ static inline int idx(int r, int c) { // naive row-major index default
         return (r*cols + c) ^ (((r%8)*width/4)*8);
     }
 };
 template<int height, int width>
-struct shared_indexer<height, width, ducks::st_layout::wgmma_0b> {
+struct shared_indexer<height, width, ducks::st_layout::interleave> {
     static constexpr int rows = height*16;
     static constexpr int cols = width*16;
     static constexpr int rows_per_core_matrix = 8;
@@ -128,28 +118,6 @@ struct shared_indexer<height, width, ducks::st_layout::wgmma_0b> {
             ) * 8 // * 8 columns per row
             + idx4
         );
-    }
-};
-template<int height, int width>
-struct shared_indexer<height, width, ducks::st_layout::wgmma_32b> {
-    static constexpr int rows = height*16;
-    static constexpr int cols = width*16;
-    static constexpr int rows_per_core_matrix = 8;
-    static constexpr int cols_per_core_matrix = 8;
-    __device__ static inline int idx(int r, int c) { // naive row-major index default
-        return 0; // TODO
-        // int idx1 = c/cols_per_idx1;
-        // int idx2 = r/rows_per_idx2;
-        // int idx3 = (r%rows_per_idx2)/4; // 4 is a constant specific to 32B swizzling
-        // int idx4 = (r%4)*2 + (c%cols_per_idx1)/8;
-        // int idx5 = (c%8);
-        // return (
-        //     (((idx1 * (2*height) // height is in units of 16, but we want units of 8
-        //         + idx2) * 2 // * 2 tensormaps across
-        //         + idx3) * 8 // * 8 rows per tensormap
-        //         + idx4) * 8 // * 8 columns per row
-        //         + idx5
-        // ) ^ (idx3*8);
     }
 };
 

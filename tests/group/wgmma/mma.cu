@@ -200,12 +200,10 @@ void group::wgmma::mma::tests(test_data &results) {
                          INTENSITY_2 ? 2 : 
                          INTENSITY_3 ? 4 :
                          INTENSITY_4 ? 8 : -1;
-    mma_sweep_width_warpgroup<test_mma_AB, SIZE, I1_t, wgmma_0b , wgmma_0b>::run(results);
-    // mma_sweep_width_warpgroup<test_mma, SIZE, I1_t, wgmma_32b, wgmma_0b >::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt, SIZE, I1_t, wgmma_0b , wgmma_0b>::run(results);
-    // mma_sweep_width_warpgroup<test_dot, SIZE, I1_t, wgmma_32b, wgmma_0b>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtB, SIZE, I1_t, wgmma_0b , wgmma_0b>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtBt, SIZE, I1_t, wgmma_0b , wgmma_0b>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AB, SIZE, I1_t, interleave , interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt, SIZE, I1_t, interleave , interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtB, SIZE, I1_t, interleave , interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtBt, SIZE, I1_t, interleave , interleave>::run(results);
 }
 
 #endif

@@ -213,7 +213,7 @@ struct sweep_st_layout_size_2d {
     static void run(test_data &results) {
         sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
         sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::xor_swizzle, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_0b, args...>::run(results);
+        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::interleave, args...>::run(results);
         sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_32b, args...>::run(results);
     }
 };
