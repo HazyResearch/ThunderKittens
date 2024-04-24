@@ -31,40 +31,6 @@ struct identifier {};
 } // namespace st
 } // namespace ducks
 
-// wgmma helpers
-namespace detail {
-// see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
-__device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
-
-template<typename T> concept wgmma_layout = ducks::st_layout::wgmma_row<T> || ducks::st_layout::wgmma_col<T>;
-template<wgmma_layout layout>
-__device__ inline uint64_t matrix_descriptor(uint64_t start_addr) {
-    uint64_t desc = 0x0000000000000000;
-    desc |= matrix_descriptor_encode(start_addr);
-    desc |= matrix_descriptor_encode((uint64_t)128) << 16;
-    desc |= matrix_descriptor_encode((uint64_t)256) << 32;
-    uint64_t base_offset = 0;
-    if constexpr (layout::swizzling_mode == 3) {
-        if((uint64_t)(start_addr) % 256 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    if constexpr (layout::swizzling_mode == 2) {
-        if((uint64_t)(start_addr) % 512 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    if constexpr (layout::swizzling_mode == 1) {
-        if((uint64_t)(start_addr) % 1024 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    desc |= ((uint64_t)base_offset) << 49;
-    desc |= ((uint64_t)layout::swizzling_mode) << 62;
-    return desc;
-}
-}
-
 // Forward declaration of subtile
 template<
     typename _T,
@@ -89,6 +55,13 @@ struct st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using layout = _layout; ///< Memory layout of the tile.
     using dtype = _T; ///< Data type of the elements in the tile.
+
+    // define underlying data as same as that projected, to make clear that this is *not* a subtile.
+    static constexpr int underlying_height        = _height;
+    static constexpr int underlying_width         = _width;
+    static constexpr int underlying_rows          = underlying_height * kittens::TILE_DIM;
+    static constexpr int underlying_cols          = underlying_width  * kittens::TILE_DIM;
+    static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int height              = _height; ///< Height of the tile in terms of 16-element subtiles.
     static constexpr int width               = _width; ///< Width of the tile in terms of 16-element subtiles.
@@ -127,7 +100,7 @@ struct st {
 
     __device__ inline uint64_t descriptor(int chunk_idx=0) const {
         uint64_t start_addr;
-        if constexpr (ducks::st_layout::wgmma_row<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
+        if constexpr (ducks::st_layout::wgmma_normal<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
             start_addr = (uint64_t)&(*this)[{0, 16*chunk_idx}];
         }
         else { // we're in a column layout mode, so the next chunk we want is by row.
@@ -154,7 +127,7 @@ struct st {
  * calculations. You should never create this directly, but instead
  * have subtile_inplace return it for you instead. (`auto` is nice.)
  *
- * You can generally just pretend this is an st.
+ * You can generally just pretend this is an st. But not for wgmma's.
  */
 template<
     typename _T,
@@ -202,17 +175,6 @@ struct st_subtile {
     }
 
     // single-index operator[] is left undefined as it would likely be an improper use of st_subtile type
-
-    __device__ inline uint64_t descriptor(int chunk_idx=0) const {
-        uint64_t start_addr;
-        if constexpr (ducks::st_layout::wgmma_row<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
-            start_addr = (uint64_t)&(*this)[{0, 16*chunk_idx}];
-        }
-        else { // we're in a column layout mode, so the next chunk we want is by row.
-            start_addr = (uint64_t)&(*this)[{16*chunk_idx, 0}];
-        }
-        return detail::matrix_descriptor<layout>(start_addr);
-    }
 
     // vector types
     using col_vec = sv<dtype, height>;
