@@ -23,7 +23,7 @@ def simple_test(dt, use_ones=False):
     mod.micro(Q, K, V, o_small)
 
     o_small_ref = torch.einsum("bhnd,bhnd->bhnd", Q, K)
-    __eq("simple dot product (16x16)", o_small_ref.bfloat16(), o_small, debug=False)
+    __eq("simple mma_ABt product (16x16)", o_small_ref.bfloat16(), o_small, debug=False)
 
 
 profile = False

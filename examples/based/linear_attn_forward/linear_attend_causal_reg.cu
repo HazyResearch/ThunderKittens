@@ -1,7 +1,7 @@
 #include <iostream>
 #include <math.h>
 #include <assert.h>
-#include <mma.h>
+#include <mma_AB.h>
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 using namespace nvcuda;
@@ -379,7 +379,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
         
 //         // zero(temp_accum);
 //         // zero(o_accum);
-//         // mma(temp_accum, qfrag, kfrag, temp_accum);
+//         // mma_AB(temp_accum, qfrag, kfrag, temp_accum);
 //         // make_causal(temp_accum);
 //         // // Save for the A1 term in qk_a1 so we can reuse temp_accum
 //         // copy(qk_a1, temp_accum); 
@@ -387,13 +387,13 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 //         // // Produce output w/r/t A1
 //         // // Qc@A1 + make_causal(Qc@Ktc)@Vc
 //         // copy(qk_a1_f, qk_a1);
-//         // mma(o_accum, qk_a1_f, vfrag, o_accum);
+//         // mma_AB(o_accum, qk_a1_f, vfrag, o_accum);
         
 //         // // Update the hidden KV state for A1
 //         // zero(a1_accum);
 //         // _rtd_qk rkfrag;
 //         // swap_layout(rkfrag, kfrag);
-//         // mma(a1_accum, rkfrag, vfrag, a1_accum);
+//         // mma_AB(a1_accum, rkfrag, vfrag, a1_accum);
 
 //         // // Need to do a cumulative sum for A1 in different Warps
 //         // store(a1[warpid], a1_accum);
@@ -402,7 +402,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 
 //         // // Put whole part of A1y into o_accum
 //         // load(a1_col_frag, a1[warpid]);
-//         // mma(o_accum, qfrag, a1_col_frag, o_accum);
+//         // mma_AB(o_accum, qfrag, a1_col_frag, o_accum);
         
 //         /*********************************
 //         *  Reuse of A1 computation in A2.
@@ -412,7 +412,7 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 //         // mul(temp_accum, temp_accum, temp_accum); 
 //         // mul(temp_accum, temp_accum, 0.5f);
 //         // copy(qkfrag, temp_accum);
-//         // mma(o_accum, qkfrag, vfrag, o_accum);
+//         // mma_AB(o_accum, qkfrag, vfrag, o_accum);
 
 //         // Store everything so far
 //         store(y[warpid], o_accum);
@@ -440,8 +440,8 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 
 //         //     // Compute qj, a2j portion
 //         //     zero(qA2_accum);
-//         //     mma(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
-//         //     mma(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
+//         //     mma_AB(qA2_accum, qj0, A2j0, qA2_accum); // false means clear registers
+//         //     mma_AB(qA2_accum, qj1, A2j1, qA2_accum); // false means clear registers
 //         //     mul(qA2_accum,  qA2_accum, 0.5f);
 //         //     store(ty[warpid], qA2_accum);
             
@@ -457,13 +457,13 @@ void a012_compute_ker(int n, int d, int dv, const T* __q, const T* __k,
 
 //         //     // Compute the A2[j] update and put it back in the register
 //         //     load(vfrag, v[tic][blk]);
-//         //     mma(A2j0_accum, kj0, vfrag, A2j0_accum);
+//         //     mma_AB(A2j0_accum, kj0, vfrag, A2j0_accum);
 
 //         //     _rtd_v copy_bf_A2j0;
 //         //     copy(copy_bf_A2j0, A2j0_accum);
 //         //     swap_layout(A2j0, copy_bf_A2j0);            
 
-//         //     mma(A2j1_accum, kj1, vfrag, A2j1_accum); 
+//         //     mma_AB(A2j1_accum, kj1, vfrag, A2j1_accum); 
 //         //     _rtd_v copy_bf_A2j1;
 //         //     copy(copy_bf_A2j1, A2j1_accum);
 //         //     swap_layout(A2j1, copy_bf_A2j1); 

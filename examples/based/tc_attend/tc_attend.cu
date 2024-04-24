@@ -3,7 +3,7 @@
 #define NUM_WORKERS (4) // this comes from the fact that we want a 64-long sliding window
 using namespace kittens;
 
-#define WINDOW_WIDTH (64)
+#define WINDOW_WIDTH (256)
 static_assert(WINDOW_WIDTH%64==0 && WINDOW_WIDTH<=256);
 #define WINDOW_TILES ((WINDOW_WIDTH/64)+1)
 #define WINDOW_MINI_TILES ((WINDOW_WIDTH/16)+1)
@@ -58,7 +58,7 @@ void sliding_window(int n, int d, const bf16* __restrict__ __q__, const bf16* __
                 load(k_reg, k_smem[(start_block+(src_idx/4))%WINDOW_TILES][src_idx%4]);
 
                 zero(att_block[subtile]);
-                dot(att_block[subtile], q_reg, k_reg, att_block[subtile]);
+                mma_ABt(att_block[subtile], q_reg, k_reg, att_block[subtile]);
                 if(subtile == WINDOW_MINI_TILES-1) {
                     // last tile becomes causal
                     make_causal(att_block[subtile], att_block[subtile], base_types::constants<float>::neg_infty());
@@ -93,7 +93,7 @@ void sliding_window(int n, int d, const bf16* __restrict__ __q__, const bf16* __
             rt_bf_1x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
             copy(att_block_bf, att_block[subtile]);
-            mma(o_reg, att_block_bf, v_reg_col, o_reg); // accumulate
+            mma_AB(o_reg, att_block_bf, v_reg_col, o_reg); // accumulate
         }
 
         store(_o + (qo_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_reg, d); // write out o. compiler has an issue with register usage if d is made constexpr q_reg.rows :/
