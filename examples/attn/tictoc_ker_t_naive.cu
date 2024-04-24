@@ -225,8 +225,6 @@ constexpr int WORKERS_BWD   = 8;
 constexpr int tile_h = 1;
 constexpr int tile_w = 64/16;
 
-static_assert(tile_h * WORKERS_BWD <= 8, "You will run out of shared memory");
-
 using layout_nrow      = ducks::st_layout::naive;
 using layout_wgmma_row = ducks::st_layout::wgmma_row_0b;
 using layout_wgmma_col = ducks::st_layout::wgmma_col_t_0b;
@@ -253,11 +251,11 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     shared_allocator al((int*)&__shm[0]);
     // tma_allocator al((int*)&__shm[0]);
 
-    const bf16 *_q = __q__ + (blockIdx.y * N * 64); 
-    const bf16 *_k = __k__ + (blockIdx.y * N * 64);
-    const bf16 *_v = __v__ + (blockIdx.y * N * 64);
-    const bf16 *_l = __l__ + (blockIdx.y * N);
-    const bf16 *_d = __d__ + (blockIdx.y * N);
+    const bf16 *_q = __q__   + (blockIdx.y * N * 64); 
+    const bf16 *_k = __k__   + (blockIdx.y * N * 64);
+    const bf16 *_v = __v__   + (blockIdx.y * N * 64);
+    const bf16 *_l = __l__   + (blockIdx.y * N);
+    const bf16 *_d = __d__   + (blockIdx.y * N);
     const bf16 *_og = __og__ + (blockIdx.y * N * 64);
 
     bf16 *_qg = __qg__ + (blockIdx.y * N * 64);
@@ -271,8 +269,6 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     l_smem_tile (&l_smem)  [WORKERS_BWD]                  = al.allocate<l_smem_tile,  WORKERS_BWD>();
     d_smem_tile (&d_smem)  [WORKERS_BWD]                  = al.allocate<d_smem_tile,  WORKERS_BWD>();
 
-    scratch_pad (&sp_smem) [WORKERS_BWD][2]               = al.allocate<scratch_pad, WORKERS_BWD, 2>();
-
     rt_bf<tile_h, tile_w> k_reg; 
     rt_bf<tile_h, tile_w> v_reg;
 
@@ -280,12 +276,18 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     rt_fl<tile_h, tile_w> kg_reg;
     rt_fl<tile_h, tile_w> vg_reg;
 
+    rt_bf<tile_h, tile_w>::col_vec l_reg_bf; 
+    rt_bf<tile_h, tile_w>::col_vec d_reg_bf;
+    rt_fl<tile_h, tile_w>::col_vec l_reg_fl; 
+    rt_fl<tile_h, tile_w>::col_vec d_reg_fl;
+    rt_fl<tile_h, tile_h> temp_block; 
+
     rt_bf<tile_h, tile_w> q_reg;
     rt_bf<tile_h, tile_w> do_reg; 
 
     rt_fl<tile_h, tile_h> att_block; 
     rt_bf<tile_h, tile_h> att_block_mma;
-
+    
     int warpid = kittens::warpid();
 
     constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
@@ -315,10 +317,12 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                 zero(att_block);
                 dot(att_block, q_reg, k_reg, att_block);
  
-                store(sp_smem[warpid][0], att_block);
-                sub_row(sp_smem[warpid][0], sp_smem[warpid][0], l_smem[subtile]);
-                exp(sp_smem[warpid][0], sp_smem[warpid][0]);
-                load(att_block_mma, sp_smem[warpid][0]);
+                load(l_reg_bf, l_smem[subtile]);
+                copy(l_reg_fl, l_reg_bf);
+                sub_row(att_block, att_block, l_reg_fl);
+                exp(att_block, att_block);
+                copy(temp_block, att_block);
+                copy(att_block_mma, att_block);
 
                 load(do_reg, og_smem[subtile]);
                 rt_bf<tile_h, tile_w, ducks::rt_layout::col> &do_reg_col = swap_layout_inplace(do_reg);
@@ -331,10 +335,11 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                 zero(att_block);
                 dot(att_block, do_reg, v_reg, att_block);
 
-                store(sp_smem[warpid][1], att_block);
-                sub_row(sp_smem[warpid][1], sp_smem[warpid][1], d_smem[subtile]);
-                mul(sp_smem[warpid][0], sp_smem[warpid][0], sp_smem[warpid][1]);
-                load(att_block_mma, sp_smem[warpid][0]);
+                load(d_reg_bf, d_smem[subtile]);
+                copy(d_reg_fl, d_reg_bf);
+                sub_row(att_block, att_block, d_reg_fl);
+                mul(temp_block, temp_block, att_block);
+                copy(att_block_mma, temp_block);
 
                 zero(qg_reg);
 

@@ -26,7 +26,7 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-conste
 	SRC=h100_fwd.cu # H100
 	else ifeq ($(PURPOSE),training)
 	TARGET=attn # H100
-	SRC=h100_bwd.cu # H100
+	SRC=tictoc_ker_t_naive.cu # H100 naive
 	endif
 endif
 
