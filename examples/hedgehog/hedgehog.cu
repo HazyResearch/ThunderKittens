@@ -105,9 +105,9 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
 
     int tic = 0, toc = 1;
     for(int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
-        rt_bf_1x1<> q, k, local_attn_bf; // 16 x 16 = 256 elements, one token feature dim 256
-        rt_fl_1x1<> local_attn;          // 16 x 16 due to N x N (SA: ?) 
-        rt_bf_1x4<> v;                   // 16 x 64, 16 tokens with 64 features each (SA: ?)
+        rt_bf_1x1<> q, k, local_attn_bf; // Stores for each of 16 tokens, 16 features of the D_QK per warp
+        rt_fl_1x1<> local_attn;          
+        rt_bf_1x4<> v;                   // 16 x 64, 16 tokens with 64 head_dim each
         rt_fl_1x4<> o;
 
         // load new q, k, v into shared memory and zero o -- collaboratively, across the whole group
@@ -160,78 +160,71 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
         mma(kv_state, kt, v_col, kv_state);
     }
 
-    // each of the 16 workers has a 16x64 of the kv state, we need to store the 256x64 kv state.
-    // if (warpid == 0 && lane == 0) {
-    //     print QK_BLOCK::cols, D_QK*D_VO
-    //     printf("QK_BLOCK::cols: %d\n", QK_BLOCK::cols); // 16
-    //     printf("D_QK, D_VO: %d, %d\n", D_QK, D_VO); // 256, 64
-    //     printf("VO_BLOCK::num_elements %d\n", VO_BLOCK::num_elements); // 1024
-    //     printf("kv_state::num_elements %d\n", kv_state.num_elements); // 4096
-    // }
      __syncthreads();
     store(kv_g + warpid*kv_state.num_elements, kv_state, D_VO); 
     __syncthreads();
 }
 
 
-#include "harness.impl"  // (comment out when using the code below)
+// #include "harness.impl"  // (comment out when using the code below)
 
 
 // For binding to PyTorch (comment out include for harness.imple when using the code below)
-// #include "src/common/pyutils/torch_helpers.cuh"
-// #include <iostream>
-// void hedgehog_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor kv_state) {
-//     std::cout << "Entered Hedgehog handler" << std::endl;
-//     CHECK_INPUT(q);
-//     CHECK_INPUT(k);
-//     CHECK_INPUT(v);
-//     CHECK_INPUT(o);
-//     CHECK_INPUT(kv_state);
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void hedgehog_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor kv_state) {
+    std::cout << "Entered Hedgehog handler" << std::endl;
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    CHECK_INPUT(kv_state);
     
-//     auto batch = q.size(0);
-//     auto heads = q.size(1);
-//     auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-//     auto n     = q.size(2);
-//     bool k_same = true, o_same = true;
-//     for(auto i = 0; i < 4; i++) { 
-//         k_same &= q.size(i) == k.size(i);
-//         o_same &= v.size(i) == o.size(i);
-//     }
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n     = q.size(2);
+    bool k_same = true, o_same = true;
+    for(auto i = 0; i < 4; i++) { 
+        k_same &= q.size(i) == k.size(i);
+        o_same &= v.size(i) == o.size(i);
+    }
     
-//     // This is just a restriction of what we're doing now...
-//     TORCH_CHECK(k_same, "Q and K should be same size");
-//     TORCH_CHECK(o_same, "V and O should be same size");
-//     TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
-//     TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
-//     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
-//     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
-//     TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
+    // This is just a restriction of what we're doing now...
+    TORCH_CHECK(k_same, "Q and K should be same size");
+    TORCH_CHECK(o_same, "V and O should be same size");
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
+    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
 
-//     // convert to bf16
-//     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *kv_ptr = kv_state.data_ptr<c10::BFloat16>();
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_ptr = kv_state.data_ptr<c10::BFloat16>();
 
-//     const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
-//     const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
-//     const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
-//           bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
-//           bf16* kv_bf = reinterpret_cast<bf16*>(kv_ptr);
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
+          bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+          bf16* kv_bf = reinterpret_cast<bf16*>(kv_ptr);
 
-//     std::cout << "Checks and casts" << std::endl;
-//     unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
-//     cudaFuncSetAttribute(
-//         hedgehog_linear_attention,
-//         cudaFuncAttributeMaxDynamicSharedMemorySize,
-//         mem_size
-//     );
+    std::cout << "Checks and casts" << std::endl;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    cudaFuncSetAttribute(
+        hedgehog_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
 
-//     std::cout << "Set dynamic memory" << std::endl;
-//     hedgehog_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf, kv_bf);
+    std::cout << "Set dynamic memory" << std::endl;
+    hedgehog_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf, kv_bf);
 
-//     std::cout << "Launched kernel" << std::endl;
-//     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-//     std::cout << "Exiting" << std::endl;
-// }
+    std::cout << "Launched kernel" << std::endl;
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    std::cout << "Exiting" << std::endl;
+}
+

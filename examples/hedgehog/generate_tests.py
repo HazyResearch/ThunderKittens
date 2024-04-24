@@ -47,7 +47,7 @@ def pytorch_test(Q, K, V, TESTNAME='all'):
 
     K, V = K.unsqueeze(-2), V.unsqueeze(-1)
     kv_state = (K * V).cumsum(dim=2)
-    last_kv_state = kv_state[:, :, -1]
+    last_kv_state = kv_state[:, :, -1].transpose(2, 3)
     return out, last_kv_state
 
 o, last_kv_state = pytorch_test(q, k, v, TESTNAME)

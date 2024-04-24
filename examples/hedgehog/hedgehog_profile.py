@@ -54,7 +54,8 @@ def torch_linear_attn(dt, q, k, v):
     q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
     kv_state = (k * v).cumsum(dim=2)
     out = (q * kv_state).sum(dim=-1)
-    return out
+    last_kv_state = kv_state[:, :, -1].transpose(2, 3)
+    return out, last_kv_state
 
 
 def fast_transformer_test(dt, q, k, v):
@@ -73,12 +74,10 @@ def hedgehog_kernel_test(dt, Q, K, V,verbose=True):
     b, h, d, dv = last_kv_state.shape
 
     o   = torch.zeros_like(V)
-    kv_state = torch.zeros((b, h, d, dv), dtype=dt, device='cuda')
+    kv_state = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
     mod.hedgehog_fwd_tk(Q, K, V, o, kv_state)
 
-    breakpoint()
-
-    return o
+    return o, kv_state
 
 
 def linear_attn_correct(dt):
@@ -93,36 +92,48 @@ def linear_attn_correct(dt):
     K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
     V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
 
-    pytorch_test_result = pytorch_test(dt, Q, K, V)
-    # pytorch_2_test_result = torch_linear_attn(dt, Q, K, V)
-    # pytorch_3_test_result = torch_chunk_linear_attn(Q, K, V)
-    # fast_transformer_test_result = fast_transformer_test(dt, Q, K, V)
-    hedgehog_kernel_test_result = hedgehog_kernel_test(dt, Q, K, V)
+    result_ref_1 = pytorch_test(dt, Q, K, V)
+    result_ref_2, kv_state_ref = torch_linear_attn(dt, Q, K, V)
+    result_ref_3 = torch_chunk_linear_attn(Q, K, V)
+    result_ref_4 = fast_transformer_test(dt, Q, K, V)
+    tk_result, tk_kv_state = hedgehog_kernel_test(dt, Q, K, V)
 
+    # Output and KV state
     __eq(
-        "PyTorch Test v1 - Based Kernel Test", 
-        pytorch_test_result[0], 
-        hedgehog_kernel_test_result[0], 
+        "PyTorch Test v2 - Based Kernel Test", 
+        result_ref_2[0], 
+        tk_result[0], 
         debug=False
     )
-    # __eq(
-    #     "PyTorch Test v2 - Based Kernel Test", 
-    #     pytorch_2_test_result[0], 
-    #     hedgehog_kernel_test_result[0], 
-    #     debug=False
-    # )
-    # __eq(
-    #     "PyTorch Test v3 - Based Kernel Test", 
-    #     pytorch_3_test_result[0], 
-    #     hedgehog_kernel_test_result[0], 
-    #     debug=False
-    # )   
-    # __eq(
-    #     "Fast Transformer Test - Based Kernel Test", 
-    #     fast_transformer_test_result[0], 
-    #     hedgehog_kernel_test_result[0], 
-    #     debug=False
-    # )
+    __eq(
+        "PyTorch Test v2 - Based Kernel Test", 
+        kv_state_ref[0], 
+        tk_kv_state[0], 
+        debug=False
+    )
+
+    diff_state = torch.abs(kv_state_ref - tk_kv_state).max()
+    print(f"Max diff in state: {diff_state}")
+
+    # Output, more variants
+    __eq(
+        "PyTorch Test v1 - Based Kernel Test", 
+        result_ref_1[0], 
+        tk_result[0], 
+        debug=False
+    )
+    __eq(
+        "PyTorch Test v3 - Based Kernel Test", 
+        result_ref_3[0], 
+        tk_result[0], 
+        debug=False
+    )   
+    __eq(
+        "Fast Transformer Test - Based Kernel Test", 
+        result_ref_4[0], 
+        tk_result[0], 
+        debug=False
+    )
 
 
 print("Correctness test...")
