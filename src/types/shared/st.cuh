@@ -98,17 +98,6 @@ struct st {
         return data[idx];
     }
 
-    __device__ inline uint64_t descriptor(int chunk_idx=0) const {
-        uint64_t start_addr;
-        if constexpr (ducks::st_layout::wgmma_normal<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
-            start_addr = (uint64_t)&(*this)[{0, 16*chunk_idx}];
-        }
-        else { // we're in a column layout mode, so the next chunk we want is by row.
-            start_addr = (uint64_t)&(*this)[{16*chunk_idx, 0}];
-        }
-        return detail::matrix_descriptor<layout>(start_addr);
-    }
-
     // vector types
     using col_vec = sv<dtype, height>; ///< Column vector type for this tile
     using row_vec = sv<dtype, width>; ///< Row vector type for this tile

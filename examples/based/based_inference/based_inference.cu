@@ -1,7 +1,7 @@
 #include <iostream>
 #include <math.h>
 #include <assert.h>
-#include <mma.h>
+#include <mma_AB.h>
 using namespace nvcuda;
 
 # include "src/kittens.cuh" // needs to come before torch_helpers, since torch_helpers relies on kittens.

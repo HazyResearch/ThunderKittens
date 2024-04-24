@@ -44,7 +44,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      xor_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::tam_swizzle>) ?
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::xor_swizzle>) ?
                                                             tma_swizzle_from_size : CU_TENSOR_MAP_SWIZZLE_NONE;
 
     uint64_t gmem_shape [4] = {0, 0, 0, 0};
@@ -78,8 +78,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 
         smem_shape[0] = 8;
         smem_shape[1] = 8;
+        smem_shape[2] = shared_tile_width/8;
         smem_shape[3] = shared_tile_height/8;
-        smem_shape[4] = shared_tile_width/8;
     }
 
     // ensure that the global address is always 16-byte aligned 
@@ -103,7 +103,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 
     assert(smem_stride[0] == 1); // smem_stride[0] is ignored when interleave is none
 
-    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && xor_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
+    if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
         constexpr int swizzle_size = (ST::width) * 32;
         assert(smem_shape[0] * sizeof(bf16) <= swizzle_size);
     }
@@ -123,7 +123,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
         smem_shape_ptr,
         smem_stride_ptr,
         tma_interleave,
-        xor_swizzle,
+        tma_swizzle,
         tma_l2Promotion,
         tma_oobFill);
 
@@ -291,7 +291,7 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
             int32_t crd2 = tile_col_idx * (dst.cols/8);
-            int32_t crd3 = tile_row_idx * (dst.rows/16);
+            int32_t crd3 = tile_row_idx * (dst.rows/8);
 
             asm volatile (
                 "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
