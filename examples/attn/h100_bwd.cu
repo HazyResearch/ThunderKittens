@@ -220,12 +220,12 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     tma::store_async_wait();
 }
 
-constexpr int WORKERS_BWD = 2; 
-constexpr int WORKERS_KERNEL = 2; 
+constexpr int WORKERS_BWD = 8; 
+constexpr int WORKERS_KERNEL = 8; 
 // constexpr int WARPGROUPS_BWD = (WORKERS_BWD/4);
 // static_assert(WORKERS_BWD % 4 == 0, "WORKERS_BWD must be a multiple of 4");
 
-constexpr int tile_h = 4;
+constexpr int tile_h = 1;
 constexpr int tile_w = 64/16;
 
 using layout_nrow      = ducks::st_layout::naive;
