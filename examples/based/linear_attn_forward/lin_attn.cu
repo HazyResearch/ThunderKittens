@@ -8,7 +8,7 @@
 
 using namespace kittens;
 
-using layout = kittens::ducks::st_layout::xor_swizzle;
+using layout = kittens::ducks::st_layout::swizzle;
 
 // cumulative sum of v onto o
 template<kittens::ducks::st::all ST, int N_TILES>

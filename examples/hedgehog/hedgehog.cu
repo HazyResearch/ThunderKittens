@@ -8,7 +8,7 @@
 
 using namespace kittens;
 
-using layout = kittens::ducks::st_layout::xor_swizzle;
+using layout = kittens::ducks::st_layout::swizzle;
 
 // sum of an array of tiles -- in fp32 to preserve maximal accuracy
 template<int WORKERS, kittens::ducks::st::all ST, int N_TILES>

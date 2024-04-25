@@ -11,10 +11,10 @@ constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::interleave;
-using layout_k = ducks::st_layout::interleave;
-using layout_v = ducks::st_layout::interleave;
-using layout_o = ducks::st_layout::xor_swizzle;
+using layout_q = ducks::st_layout::wgmma_swizzle;
+using layout_k = ducks::st_layout::wgmma_interleave;
+using layout_v = ducks::st_layout::wgmma_interleave;
+using layout_o = ducks::st_layout::swizzle;
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
