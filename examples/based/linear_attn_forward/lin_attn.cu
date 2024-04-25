@@ -161,7 +161,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
             load(k, k_s[warpid]);
 
             zero(local_attn);
-            dot(local_attn, q, k, local_attn);
+            mma_ABt(local_attn, q, k, local_attn);
 
             // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
             copy(temp_attn_accum, local_attn);
@@ -177,11 +177,11 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
             auto &v_col = swap_layout_inplace(v); // prepare for MMA
 
             zero(o);
-            mma(o, local_attn_bf, v_col, o);
+            mma_AB(o, local_attn_bf, v_col, o);
 
             zero(accum); // plan to save 24 registers: break this up and store between.
             auto &kt = transpose_inplace(k); // k is now transposed! k has been invalidated; there is only kt.
-            mma(accum, kt, v_col, accum);
+            mma_AB(accum, kt, v_col, accum);
             store(a1_s[(total_block_idx+warpid+1)%(ACTIVE_TILES+1)], accum);
         }
         __syncthreads();
@@ -192,7 +192,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
             load(q, q_s[warpid]); // load q again
             load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
             auto &a1_col = swap_layout_inplace(a1); // prepare for MMA
-            mma(o, q, a1_col, o); // mma onto O in registers
+            mma_AB(o, q, a1_col, o); // mma_AB onto O in registers
             store(o_s[warpid], o); // store current o to shared memory
         }
         total_block_idx = (total_block_idx+ACTIVE_TILES)%(ACTIVE_TILES+1); // count backwards on the ring
@@ -208,7 +208,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
             copy(a2_bf, a2);
             auto &a2_bf_col = swap_layout_inplace(a2_bf);
             zero(o);
-            mma(o, q, a2_bf_col, o);
+            mma_AB(o, q, a2_bf_col, o);
 
             // next we have everyone load k and do the same
             load(k, k_s[t]);
@@ -217,7 +217,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 
             load(v, v_s[t]);
             auto &v_col = swap_layout_inplace(v); // prepare for MMA
-            mma(a2, kt, v_col, a2); // accumulate onto a2
+            mma_AB(a2, kt, v_col, a2); // accumulate onto a2
 
             // good chance I need to make this faster
             store(a2_o_accumulate[warpid], o);

@@ -44,7 +44,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 load(k_reg, k_smem[subtile]);
 
                 zero(att_block);
-                dot(att_block, q_reg, k_reg, att_block);
+                mma_ABt(att_block, q_reg, k_reg, att_block);
 
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
@@ -63,13 +63,13 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 mul(norm_vec_last, norm_vec_last, max_vec_last);
                 div(norm_vec_last, norm_vec_last, norm_vec);
 
-                copy(att_block_mma, att_block); // convert to bf16 for mma
+                copy(att_block_mma, att_block); // convert to bf16 for mma_AB
 
                 load(v_reg, v_smem[subtile]);
                 rt_bf_1x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
-                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-                mma(o_prev, att_block_mma, v_reg_col, o_prev);
+                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma_AB'ing onto it
+                mma_AB(o_prev, att_block_mma, v_reg_col, o_prev);
             }
             __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
         }

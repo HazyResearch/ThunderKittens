@@ -89,7 +89,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 load(local_reg, k_smem[tic][subtile]);
 
                 zero(att_block);
-                dot(att_block, q_reg, local_reg, att_block);
+                mma_ABt(att_block, q_reg, local_reg, att_block);
 
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
@@ -113,8 +113,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 load(local_reg, v_smem[tic][subtile]);
                 rt_bf_2x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(local_reg); // this is a reference and the call has invalidated v_reg
 
-                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-                mma(o_prev, att_block_mma, v_reg_col, o_prev);
+                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma_AB'ing onto it
+                mma_AB(o_prev, att_block_mma, v_reg_col, o_prev);
             }
 
             tic ^= 1;

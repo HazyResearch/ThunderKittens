@@ -17,20 +17,14 @@ namespace detail {
 // Concepts for tiles
 
 template<typename T> concept st_type_2d_tma_layout = (
-    ducks::st::all<T> && 
-    (
-        std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
-        std::is_same_v<typename T::layout, ducks::st_layout::xor_swizzle>
-    )
+    std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
+    std::is_same_v<typename T::layout, ducks::st_layout::xor_swizzle>
 );
-template<typename T> concept st_type_wgmma_row_layout = (
-    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_row_0b>
-);
-template<typename T> concept st_type_wgmma_col_t_layout = (
-    ducks::st::all<T> && std::is_same_v<typename T::layout, ducks::st_layout::wgmma_col_t_0b>
+template<typename T> concept st_type_wgmma_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_0b>
 );
 template<typename T> concept st_type_tma_layout = (
-    st_type_2d_tma_layout<T> || st_type_wgmma_row_layout<T> || st_type_wgmma_col_t_layout<T>
+    st_type_2d_tma_layout<T> || st_type_wgmma_layout<T>
 );
 
 }; 

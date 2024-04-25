@@ -122,7 +122,7 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
         load(q, q_s[tic][warpid]);
         load(k, k_s[tic][warpid]);
         zero(local_attn);
-        dot(local_attn, q, k, local_attn); // Why dot and not mult?
+        mma_ABt(local_attn, q, k, local_attn);
         store(att_accumulate[warpid], local_attn);
         // sum up local attention
         __syncthreads();
@@ -136,7 +136,7 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
             load(local_attn_bf, att_accumulate[0]);
             make_causal(local_attn_bf, local_attn_bf, kittens::base_types::constants<bf16>::zero());
             zero(o);
-            mma(o, local_attn_bf, v_col, o); // causal bit.
+            mma_AB(o, local_attn_bf, v_col, o); // causal bit.
             store(o_s[tic], o);
             // we have now taken care of the current attention block
         }
@@ -146,7 +146,7 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
         copy(kv_bf, kv_state);
         auto &kv_bf_col = swap_layout_inplace(kv_bf);
         zero(o);
-        mma(o, q, kv_bf_col, o);
+        mma_AB(o, q, kv_bf_col, o);
         store(kv_accumulate[warpid], o);
         __syncthreads();
         tile_reduce<NUM_WORKERS>(o_s[tic], kv_accumulate); // sum onto o_s.
@@ -157,7 +157,7 @@ void hedgehog_linear_attention(int n, const bf16* __q, const bf16* __k, const bf
 
         // finally we need to update the kv state for future iterations
         auto &kt = transpose_inplace(k); // k is now transposed! k has been invalidated; there is only kt.
-        mma(kv_state, kt, v_col, kv_state);
+        mma_AB(kv_state, kt, v_col, kv_state);
     }
 
      __syncthreads();

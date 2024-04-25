@@ -32,28 +32,19 @@ void group::shared::tile::conversions::tests(test_data &results) {
 
     sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::naive>::run(results);
     sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::xor_swizzle>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_row_0b>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_row_32b>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_col_t_0b>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_col_t_32b>::run(results);
+    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_0b>::run(results);
 
     if constexpr (TEST_INTENSITY > 1) {
 
         sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::naive>::run(results);
         sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::xor_swizzle>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_row_0b>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_row_32b>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_col_t_0b>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_col_t_32b>::run(results);
+        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_0b>::run(results);
 
         if constexpr (TEST_INTENSITY > 3) {
 
             sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::naive>::run(results);
             sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::xor_swizzle>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_row_0b>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_row_32b>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_col_t_0b>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_col_t_32b>::run(results);
+            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_0b>::run(results);
 
         }
     }

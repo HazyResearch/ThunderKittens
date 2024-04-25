@@ -2,9 +2,9 @@
 
 #ifdef TEST_WARP_REGISTER_TILE_MMA
 
-struct test_mma {
+struct test_mma_AB {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
-    static inline const std::string test_identifier = "reg_mma";
+    static inline const std::string test_identifier = "reg_mma_AB";
     template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -25,13 +25,13 @@ struct test_mma {
         kittens::load(a, input, K*16);
         kittens::load(b, input+a.num_elements, W*16);
         kittens::zero(c);
-        kittens::mma(c, a, b, c);
+        kittens::mma_AB(c, a, b, c);
         kittens::store(output, c, W*16);
     }
 };
-struct test_dot {
+struct test_mma_ABt {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
-    static inline const std::string test_identifier = "reg_dot";
+    static inline const std::string test_identifier = "reg_mma_ABt";
     template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -52,7 +52,61 @@ struct test_dot {
         kittens::load(a, input, K*16);
         kittens::load(b, input+a.num_elements, K*16);
         kittens::zero(c);
-        kittens::dot(c, a, b, c);
+        kittens::mma_ABt(c, a, b, c);
+        kittens::store(output, c, W*16);
+    }
+};
+struct test_mma_AtB {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_AB";
+    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += i_ref[i + k*16*H]*i_ref[(256*H*K) + k*16*W + j];
+                }
+                o_ref[i*16*W + j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+        constexpr int K = _K::value;
+        kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<H, W> c;
+        kittens::load(a, input, H*16);
+        kittens::load(b, input+a.num_elements, W*16);
+        kittens::zero(c);
+        kittens::mma_AtB(c, a, b, c);
+        kittens::store(output, c, W*16);
+    }
+};
+struct test_mma_AtBt {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_ABt";
+    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += i_ref[i+k*H*16]*i_ref[256*K*H + j*K*16+k];
+                }
+                o_ref[i*W*16+j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+        constexpr int K = _K::value;
+        kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_bf<W, K> b;
+        kittens::rt_fl<H, W> c;
+        kittens::load(a, input, H*16);
+        kittens::load(b, input+a.num_elements, K*16);
+        kittens::zero(c);
+        kittens::mma_AtBt(c, a, b, c);
         kittens::store(output, c, W*16);
     }
 };
@@ -99,14 +153,22 @@ void warp::reg::tile::mma::tests(test_data &results) {
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
-    mma_sweep_size_warp<test_mma, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
-    mma_sweep_size_warp<test_mma, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
-    mma_sweep_size_warp<test_mma, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
-    mma_sweep_size_warp<test_mma, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
-    mma_sweep_size_warp<test_dot, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
-    mma_sweep_size_warp<test_dot, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
-    mma_sweep_size_warp<test_dot, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
-    mma_sweep_size_warp<test_dot, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    mma_sweep_size_warp<test_mma_AB, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    mma_sweep_size_warp<test_mma_AB, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
+    mma_sweep_size_warp<test_mma_AB, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
+    mma_sweep_size_warp<test_mma_AB, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    mma_sweep_size_warp<test_mma_ABt, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    mma_sweep_size_warp<test_mma_ABt, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
+    mma_sweep_size_warp<test_mma_ABt, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
+    mma_sweep_size_warp<test_mma_ABt, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    mma_sweep_size_warp<test_mma_AtB, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    mma_sweep_size_warp<test_mma_AtB, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
+    mma_sweep_size_warp<test_mma_AtB, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
+    mma_sweep_size_warp<test_mma_AtB, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
+    mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
+    mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
 }
 
 #endif

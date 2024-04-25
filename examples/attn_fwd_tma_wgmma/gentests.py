@@ -8,7 +8,7 @@ import sys
 B = 1
 H = 1
 N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
-D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
+D = 64 if len(sys.argv) <= 3 else int(sys.argv[3])
 
 TESTNAME = sys.argv[1]
 
