@@ -91,6 +91,9 @@ l_vec = max_vec + torch.log(l_vec)
 o = forward(q, k, v)
 q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
 
+d_vec = torch.mul(grad_output, o)
+d_vec = d_vec.sum(dim=-1, keepdim=True)
+
 fn = f'{TESTNAME}_{N}_{D}.txt'
 with open(fn, 'w') as f:
     # inputs
@@ -102,6 +105,7 @@ with open(fn, 'w') as f:
     
     # intermediate
     l_vecf = l_vec.to(torch.float32).flatten().cpu().numpy()
+    d_vecf = d_vec.to(torch.float32).flatten().cpu().numpy()
     
     # outputs
     q_grad = q_grad.to(torch.float32).flatten().cpu().numpy()

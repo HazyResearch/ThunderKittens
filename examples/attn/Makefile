@@ -1,7 +1,8 @@
 # GPU Selection: Set to either 4090 or H100
 GPU_TARGET=H100
+PURPOSE=training_ideal
 # PURPOSE=training
-PURPOSE=training_naive
+# PURPOSE=training_naive
 # PURPOSE=inference
 
 # Compiler
@@ -31,6 +32,9 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-conste
 	else ifeq ($(PURPOSE),training_naive)
 	TARGET=attn # H100
 	SRC=naive_bwd.cu # H100
+	else ifeq ($(PURPOSE),training_ideal)
+	TARGET=attn # H100
+	SRC=h100_bwd_ideal.cu # H100
 	endif
 endif
 

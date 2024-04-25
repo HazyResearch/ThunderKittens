@@ -318,38 +318,23 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
     constexpr int kv_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
 
-    auto block = cooperative_groups::this_thread_block();
-    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> mem_barrier; 
-    if (threadIdx.x == 0) {init(&mem_barrier, block.size());}
-    block.sync();
-
-    load_async(q_smem[warpid], _q + (0 * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols, mem_barrier);
-    load_async(og_smem[warpid], _og + (0 * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols, mem_barrier);
-    load_async(qg_smem[warpid][0], _qg + (0 * WORKERS_BWD + warpid) * qg_smem[warpid][0].num_elements, qg_smem[warpid][0].cols, mem_barrier);
-    __syncthreads();
-
     for (int kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
         load(k_reg, _k + (kv_idx * WORKERS_BWD + warpid) * k_reg.num_elements, k_reg.cols);
         load(v_reg, _v + (kv_idx * WORKERS_BWD + warpid) * v_reg.num_elements, v_reg.cols);
+        __syncthreads();
 
         zero(kg_reg);
-        zero(vg_reg);
-
-        if (kv_idx > 0) {
-            load_async(q_smem[warpid], _q + (0 * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols, mem_barrier);
-            load_async(og_smem[warpid], _og + (0 * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols, mem_barrier);
-            load_async(qg_smem[warpid][0], _qg + (0 * WORKERS_BWD + warpid) * qg_smem[warpid][0].num_elements, qg_smem[warpid][0].cols, mem_barrier);
-        }
-        __syncthreads(); 
+        zero(vg_reg); 
 
         for (int qo_idx = 0; qo_idx < qo_blocks; qo_idx++) {
 
+            load(q_smem[warpid], _q + (qo_idx * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols);
+            load(og_smem[warpid], _og + (qo_idx * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols);
+            load(qg_smem[warpid][0], _qg + (qo_idx * WORKERS_BWD + warpid) * qg_smem[warpid][0].num_elements, qg_smem[warpid][0].cols);
             load(l_smem[warpid], _l + (qo_idx * WORKERS_BWD + warpid) * l_smem[warpid].length);
             load(d_smem[warpid], _d + (qo_idx * WORKERS_BWD + warpid) * d_smem[warpid].length);
             __syncthreads();
-
-            mem_barrier.arrive_and_wait();
 
             for (int subtile = 0; subtile < WORKERS_KERNEL; subtile++) {
                 load(q_reg, q_smem[subtile]);
@@ -400,12 +385,6 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
             tile_reduce<1, qg_smem_tile, WORKERS_BWD + 1>(qg_smem[warpid]);
 
             store(_qg + (qo_idx * WORKERS_BWD + warpid) * qg_reg.num_elements, qg_smem[warpid][0], qg_smem[warpid][0].cols);
-
-            if (qo_idx + 1 < qo_blocks) {
-                load_async(q_smem[warpid], _q + ((qo_idx + 1) * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols, mem_barrier);
-                load_async(og_smem[warpid], _og + ((qo_idx + 1) * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols, mem_barrier);
-                load_async(qg_smem[warpid][0], _qg + ((qo_idx + 1) * WORKERS_BWD + warpid) * qg_smem[warpid][0].num_elements, qg_smem[warpid][0].cols, mem_barrier);
-            }
         }
 
         store(_vg + (kv_idx * WORKERS_BWD + warpid) * vg_reg.num_elements, vg_reg, vg_reg.cols); 
