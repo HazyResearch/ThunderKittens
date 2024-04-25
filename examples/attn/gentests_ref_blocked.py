@@ -111,10 +111,12 @@ def backward_blocked(Q, K, V, dO, l_vec, d_vec):
         v_grad[:,:,kv_blk,:,:] = v_g
     
     # combine q_grads in a reduction-only kernel
+    # done in a reduction kernel
     for kv_blk in range(K.shape[2]):
         q_grad += q_grads[kv_blk, :, :, :, :, :]
         
     return q_grad.reshape(B, H, N, D), k_grad.reshape(B, H, N, D), v_grad.reshape(B, H, N, D)
+
 
 TESTNAME = sys.argv[1]
 
