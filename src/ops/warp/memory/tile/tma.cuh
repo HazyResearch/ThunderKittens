@@ -25,27 +25,29 @@ namespace tma {
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<detail::st_type_tma_layout ST, int blocks_height, int blocks_width=1>
+template<ducks::st::all ST, int blocks_height, int blocks_width=1>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
+    static_assert(std::is_same_v<typename ST::dtype, bf16>);
     
-    constexpr uint32_t  tma_dim      = detail::st_type_2d_tma_layout<ST> ? 2 : 4; 
-    void                *global_addr = (void*)(src);
-
-    // if we're in a swizzled TMA mode, what would it be?
-    constexpr CUtensorMapSwizzle      tma_swizzle_from_size = (
-        ST::width == 1 ? CU_TENSOR_MAP_SWIZZLE_32B  :
-        ST::width == 2 ? CU_TENSOR_MAP_SWIZZLE_64B  :
-        ST::width == 4 ? CU_TENSOR_MAP_SWIZZLE_128B : 
-        CUtensorMapSwizzle(-1)
+    constexpr uint32_t  tma_dim      = (
+        detail::st_type_naive_layout<ST>            ? 2 :
+        detail::st_type_swizzle_layout<ST>          ? 3 :
+        detail::st_type_wgmma_swizzle_layout<ST>    ? 3 :
+        detail::st_type_wgmma_interleave_layout<ST> ? 4 :
+        -1
     );
-
+    void *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = (std::is_same_v<typename ST::layout, ducks::st_layout::xor_swizzle>) ?
-                                                            tma_swizzle_from_size : CU_TENSOR_MAP_SWIZZLE_NONE;
+    constexpr CUtensorMapSwizzle      tma_swizzle     = (
+        ST::swizzle_bytes == 32  ? CU_TENSOR_MAP_SWIZZLE_32B  :
+        ST::swizzle_bytes == 64  ? CU_TENSOR_MAP_SWIZZLE_64B  :
+        ST::swizzle_bytes == 128 ? CU_TENSOR_MAP_SWIZZLE_128B : 
+        CU_TENSOR_MAP_SWIZZLE_NONE
+    );
 
     uint64_t gmem_shape [4] = {0, 0, 0, 0};
     uint64_t gmem_stride[3] = {0, 0, 0};
@@ -57,7 +59,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
-    if constexpr (detail::st_type_2d_tma_layout<ST>) {
+    if constexpr (detail::st_type_naive_layout<ST>) {
         gmem_shape[0] = global_tile_width;
         gmem_shape[1] = global_tile_height;
 
@@ -66,7 +68,35 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
         smem_shape[0] = shared_tile_width;
         smem_shape[1] = shared_tile_height;
     }
-    else if constexpr (detail::st_type_wgmma_layout<ST>) {
+    else if constexpr (detail::st_type_swizzle_layout<ST>) {
+        constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(bf16);
+
+        gmem_shape[0] = swizzle_elements;
+        gmem_shape[1] = global_tile_width / swizzle_elements;
+        gmem_shape[2] = global_tile_height;
+
+        gmem_stride[0] = ST::swizzle_bytes;
+        gmem_stride[1] = global_tile_width * sizeof(bf16);
+
+        smem_shape[0] = swizzle_elements;
+        smem_shape[1] = shared_tile_width / swizzle_elements;
+        smem_shape[2] = shared_tile_height;
+    }
+    else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
+        constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(bf16);
+
+        gmem_shape[0] = swizzle_elements;
+        gmem_shape[1] = global_tile_height;
+        gmem_shape[2] = global_tile_width / swizzle_elements;
+
+        gmem_stride[0] = global_tile_width * sizeof(bf16);
+        gmem_stride[1] = ST::swizzle_bytes;
+
+        smem_shape[0] = swizzle_elements;
+        smem_shape[1] = shared_tile_height;
+        smem_shape[2] = shared_tile_width / swizzle_elements;
+    }
+    else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
         gmem_shape[0] = 8;
         gmem_shape[1] = 8;
         gmem_shape[2] = global_tile_width/8;
@@ -94,14 +124,14 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     assert(smem_shape[2] <= 256); // smem_shape[2] elements must be <= 256
     assert(smem_shape[3] <= 256); // smem_shape[3] elements must be <= 256
 
-    assert(smem_shape[0] * sizeof(bf16) % 16 == 0); // if interleave is none, then smem_shape[0] * sizeof(bf16) must be a multiple of 16B
+    assert(smem_shape[0] * sizeof(bf16) % 16 == 0); // if wgmma_interleave is none, then smem_shape[0] * sizeof(bf16) must be a multiple of 16B
 
     assert(smem_stride[0] <= 8); // smem_stride[0] must be less <= 8
     assert(smem_stride[1] <= 8); // smem_stride[1] must be less <= 8
     assert(smem_stride[2] <= 8); // smem_stride[2] must be less <= 8
     assert(smem_stride[3] <= 8); // smem_stride[3] must be less <= 8
 
-    assert(smem_stride[0] == 1); // smem_stride[0] is ignored when interleave is none
+    assert(smem_stride[0] == 1); // smem_stride[0] is ignored when wgmma_interleave is none
 
     if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
         constexpr int swizzle_size = (ST::width) * 32;
@@ -148,7 +178,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 * @param src Pointer to the source tensor data in global memory.
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
-template<detail::st_type_tma_layout ST, int blocks_height, int blocks_width=1>
+template<ducks::st::all ST, int blocks_height, int blocks_width=1>
 __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
@@ -169,12 +199,12 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *s
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<detail::st_type_tma_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
 
-        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+        if constexpr (detail::st_type_naive_layout<ST>) {
             int32_t crd0 = tile_col_idx * (dst.cols);
             int32_t crd1 = tile_row_idx * (dst.rows);
 
@@ -187,7 +217,35 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
                 : "memory"
             );
         }
-        else {
+        if constexpr (detail::st_type_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(bf16)));
+            int32_t crd2 = tile_row_idx * (dst.rows);
+
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
+                " [%0, {%1, %2, %3}];"
+                :
+                : "l"(tma_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_row_idx * (dst.rows);
+            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(bf16)));
+
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
+                " [%0, {%1, %2, %3}];"
+                :
+                : "l"(tma_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0;  
             int32_t crd1 = 0;
             int32_t crd2 = tile_col_idx * (dst.cols/8);
@@ -218,13 +276,13 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<detail::st_type_tma_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+        if constexpr (detail::st_type_naive_layout<ST>) {
             int32_t crd0 = tile_col_idx * (src.cols);
             int32_t crd1 = tile_row_idx * (src.rows);
 
@@ -237,7 +295,35 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
                 : "memory"
             );
         }
-        else {
+        else if constexpr (detail::st_type_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(bf16)));
+            int32_t crd2 = tile_row_idx * (src.rows);
+
+            asm volatile (
+                "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3, %4}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_row_idx * (src.rows);
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(bf16)));
+
+            asm volatile (
+                "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3, %4}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0; 
             int32_t crd1 = 0;
             int32_t crd2 = tile_col_idx * (src.cols/8);
@@ -267,14 +353,14 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<detail::st_type_tma_layout ST>
+template<ducks::st::all ST>
 __device__ static inline void load_async(ST &dst, void const* const src_tma_map, barrier& bar, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
-        if constexpr (detail::st_type_2d_tma_layout<ST>) {
+        if constexpr (detail::st_type_naive_layout<ST>) {
             int32_t crd0 = tile_col_idx * (dst.cols);
             int32_t crd1 = tile_row_idx * (dst.rows);
 
@@ -287,7 +373,35 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
                 : "memory"
             );
         }
-        else {
+        else if constexpr (detail::st_type_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(bf16)));
+            int32_t crd2 = tile_row_idx * (dst.rows);
+
+            asm volatile (
+                "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+                " [%0], [%1, {%3, %4, %5}], [%2];"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_row_idx * (dst.rows);
+            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(bf16)));
+
+            asm volatile (
+                "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+                " [%0], [%1, {%3, %4, %5}], [%2];"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
             int32_t crd2 = tile_col_idx * (dst.cols/8);

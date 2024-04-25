@@ -41,12 +41,12 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_transposed L_B, int accumulate=1>
+template<int N_DIV_4, int K, int M, ducks::wgmma::transposed L_B, int accumulate=1>
 __device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                                const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                                const st_bf<K, M, L_B>                         &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 0, 1>;
+    using base = kittens::wgmma::base<M, 0, 1>;
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
@@ -67,19 +67,19 @@ __device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d
         }
     }
 }
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_normal L_B>
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
 __device__ static inline void mm_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                               const st_bf<K, M, L_B>                         &b) {
     mm_AB<N_DIV_4, K, M, L_B, 0>(d, a, b);
 }
 
-template<int K, int M, ducks::st_layout::wgmma_normal L_A, ducks::st_layout::wgmma_transposed L_B, int accumulate=1>
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B, int accumulate=1>
 __device__ static inline void mma_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
                                const st_bf<4, K, L_A>                   &a,
                                const st_bf<K, M, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 0, 1>;
+    using base = kittens::wgmma::base<M, 0, 1>;
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -96,7 +96,7 @@ __device__ static inline void mma_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::st_layout::wgmma_normal L_A, ducks::st_layout::wgmma_transposed L_B>
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B>
 __device__ static inline void mm_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
                               const st_bf<4, K, L_A>                   &a,
                               const st_bf<K, M, L_B>                   &b) {
@@ -118,12 +118,12 @@ __device__ static inline void mm_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_normal L_B, int accumulate=1>
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B, int accumulate=1>
 __device__ static inline void mma_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                                 const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                                 const st_bf<M, K, L_B>                         &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 0, 0>;
+    using base = kittens::wgmma::base<M, 0, 0>;
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
@@ -144,7 +144,7 @@ __device__ static inline void mma_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &
         }
     }
 }
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_normal L_B>
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
 __device__ static inline void mm_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                                const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                                const st_bf<M, K, L_B>                         &b) {
@@ -166,12 +166,12 @@ __device__ static inline void mm_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int K, int M, ducks::st_layout::wgmma_normal L_A, ducks::st_layout::wgmma_normal L_B, int accumulate=1>
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B, int accumulate=1>
 __device__ static inline void mma_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
                                 const st_bf<4, K, L_A>                   &a,
                                 const st_bf<M, K, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 0, 0>;
+    using base = kittens::wgmma::base<M, 0, 0>;
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -188,7 +188,7 @@ __device__ static inline void mma_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::st_layout::wgmma_normal L_A, ducks::st_layout::wgmma_normal L_B>
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B>
 __device__ static inline void mm_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
                                const st_bf<4, K, L_A>                   &a,
                                const st_bf<M, K, L_B>                   &b) {
@@ -210,12 +210,12 @@ __device__ static inline void mm_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int K, int M, ducks::st_layout::wgmma_transposed L_A, ducks::st_layout::wgmma_transposed L_B, int accumulate=1>
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::transposed L_B, int accumulate=1>
 __device__ static inline void mma_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
                                 const st_bf<K, 4, L_A>                   &a,
                                 const st_bf<K, M, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 1, 1>;
+    using base = kittens::wgmma::base<M, 1, 1>;
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -232,7 +232,7 @@ __device__ static inline void mma_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::st_layout::wgmma_transposed L_A, ducks::st_layout::wgmma_transposed L_B>
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::transposed L_B>
 __device__ static inline void mm_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
                                const st_bf<K, 4, L_A>                   &a,
                                const st_bf<K, M, L_B>                   &b) {
@@ -254,12 +254,12 @@ __device__ static inline void mm_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int K, int M, ducks::st_layout::wgmma_transposed L_A, ducks::st_layout::wgmma_normal L_B, int accumulate=1>
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::normal L_B, int accumulate=1>
 __device__ static inline void mma_AtBt(rt_fl<1, M, ducks::rt_layout::row> &d,
                                  const st_bf<K, 4, L_A>                   &a,
                                  const st_bf<M, K, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::detail::wgmma_base<M, 1, 0>;
+    using base = kittens::wgmma::base<M, 1, 0>;
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -276,7 +276,7 @@ __device__ static inline void mma_AtBt(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::st_layout::wgmma_transposed L_A, ducks::st_layout::wgmma_normal L_B>
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::normal L_B>
 __device__ static inline void mm_AtBt(rt_fl<1, M, ducks::rt_layout::row> &d,
                                 const st_bf<K, 4, L_A>                   &a,
                                 const st_bf<M, K, L_B>                   &b) {

@@ -4,7 +4,7 @@
 
 struct normalize_row {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
     static inline const std::string test_identifier = "shared_norm_row";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
@@ -37,7 +37,7 @@ struct normalize_row {
 };
 struct normalize_col {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
     static inline const std::string test_identifier = "shared_norm_col";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
@@ -70,7 +70,7 @@ struct normalize_col {
 };
 struct broadcast_row {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
     static inline const std::string test_identifier = "shared_broadcast_row";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
@@ -103,7 +103,7 @@ struct broadcast_row {
 };
 struct broadcast_col {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<H%NW==0 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
     static inline const std::string test_identifier = "shared_broadcast_col";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());

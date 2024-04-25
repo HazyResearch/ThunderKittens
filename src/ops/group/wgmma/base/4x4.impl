@@ -1,5 +1,5 @@
 template<int trans_a, int trans_b>
-struct wgmma_base<4, trans_a, trans_b> {
+struct base<4, trans_a, trans_b> {
     __device__ static inline void rt_st(
         rt_fl<1, 4, ducks::rt_layout::row> &dst,
         const rt_base_bf<ducks::rt_layout::row> & a_rt,
