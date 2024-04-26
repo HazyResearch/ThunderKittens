@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    unsigned long mem_size = 100000; //kittens::MAX_SHARED_MEMORY;
     
     cudaFuncSetAttribute(
         attend_ker<ATTN_N>,

@@ -110,9 +110,10 @@ struct base {
 
 // can add bigger ones later, just annoying
 // #include "4x5.impl"
-// #include "4x6.impl"
+#include "4x6.impl"
 // #include "4x7.impl"
 #include "4x8.impl"
+#include "4x16.impl"
 
 }
 }
