@@ -1,4 +1,4 @@
-#include "../../src/kittens.cuh"
+#include "../../../src/kittens.cuh"
 
 #define NUM_WORKERS 16
 using namespace kittens;
