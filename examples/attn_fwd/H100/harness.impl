@@ -5,7 +5,7 @@
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 4096;
-constexpr int ATTN_D     = 64;
+constexpr int ATTN_D     = 128;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 constexpr int ITER = 20;
 
@@ -82,6 +82,9 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
+    constexpr static int tile_width = ker_tile_dims<ATTN_D>::tile_width;
+    constexpr static int qo_height  = ker_tile_dims<ATTN_D>::qo_height;
+    constexpr static int kv_height  = ker_tile_dims<ATTN_D>::kv_height;
     CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(d_q); 
     CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_k);
     CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_v);
@@ -89,10 +92,10 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = 100000; // need to launch two blocks.
+    unsigned long mem_size = 112000; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(
-        attend_ker<ATTN_N>,
+        attend_ker<ATTN_N, ATTN_D>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -103,13 +106,13 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+        attend_ker<ATTN_N, ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
     }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+        attend_ker<ATTN_N, ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
