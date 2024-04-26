@@ -37,19 +37,24 @@ int main(int argc, char **argv) {
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H*ATTN_N*ATTN_D_QK;
     constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H*ATTN_N*ATTN_D_VO;
+    constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*(ATTN_D_QK*ATTN_D_VO);
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_QK;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D_VO;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_D_QK*ATTN_D_VO;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *v = new float[TOTAL_UNIQUE_ELEMENTS_VO];
     float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS_VO];
+    float *kv_state_ref = new float[TOTAL_UNIQUE_ELEMENTS_KV];
 
     bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *v_bf = new bf16[TOTAL_ELEMENTS_VO];
     bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *kv_state_bf = new bf16[TOTAL_ELEMENTS_KV];
     float *o = new float[TOTAL_ELEMENTS_VO];
+    float *kv_state = new float[TOTAL_ELEMENTS_KV];
 
     if(argc > 1) {
         std::ifstream infile(argv[1]);
@@ -64,9 +69,11 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading V" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) {
             infile >> o_ref[i];
-            // if(i < 300) std::cout << o_ref[i] << std::endl;
+            // if(i < 300) std::cout << v[i] << std::endl;
         }
         std::cout << "Finished loading O_REF" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_KV; i++) infile >> kv_state_ref[i];
+        std::cout << "Finished loading KV_STATE_REF" << std::endl;
 
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
     }
@@ -80,11 +87,12 @@ int main(int argc, char **argv) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
     }
 
-    bf16 *d_q, *d_k, *d_v, *d_o;
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_state;
     cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -98,7 +106,7 @@ int main(int argc, char **argv) {
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        hedgehog,
+        hedgehog_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -109,14 +117,14 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        hedgehog<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, d_q, d_k, d_v, d_o);
+        hedgehog_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, d_q, d_k, d_v, d_o, d_kv_state);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
     
-    // check correctness
+    // Check output
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o[i] = __bfloat162float(o_bf[i]);
@@ -142,17 +150,44 @@ int main(int argc, char **argv) {
         }
     }
 
+   // Check KV state
+    cudaMemcpy(kv_state_bf, d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        kv_state[i] = __bfloat162float(kv_state_bf[i]);
+    }
+
+    bool good_kv = true;
+    std::ofstream kv_state_file("printouts/kv_state.txt");
+    std::ofstream kv_state_ref_file("printouts/kv_state_ref.txt");
+    std::ofstream kv_state_diff_file("printouts/kv_state_diff.txt");
+
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        float diff = kv_state[i % TOTAL_UNIQUE_ELEMENTS_KV] - kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV];
+        if(i < TOTAL_UNIQUE_ELEMENTS_KV) {
+            kv_state_ref_file << kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV] << ' ';
+            kv_state_file << kv_state[i  % TOTAL_UNIQUE_ELEMENTS_KV] << ' ';
+            kv_state_diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.05 || isnan(diff)) {
+            good_kv = false;
+        }
+    }
+
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
+
+    if(good_kv) std::cout << "KV state correct :)\n";
+    else std::cout << "KV state incorrect :(\n";
 
     cudaFree(d_q);
     cudaFree(d_k);
     cudaFree(d_v);
     cudaFree(d_o);
+    cudaFree(d_kv_state);
 
-    delete[] q, k, v, o, o_ref;
-    delete[] q_bf, k_bf, v_bf, o_bf;
+    delete[] q, k, v, o, o_ref, kv_state_ref;
+    delete[] q_bf, k_bf, v_bf, o_bf, kv_state_bf;
 
     return 0;
 }

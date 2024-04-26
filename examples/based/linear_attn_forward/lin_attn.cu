@@ -95,7 +95,7 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
+void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o, bf16* __kv_state) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -104,6 +104,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     const bf16 *k_g   = reinterpret_cast<const bf16*>(__k)+blockIdx.x*(n*D_QK);
     const bf16 *v_g   = reinterpret_cast<const bf16*>(__v)+blockIdx.x*(n*D_VO);
           bf16 *o_g   = reinterpret_cast<bf16*>      (__o)+blockIdx.x*(n*D_VO);
+          bf16 *kv_g  = reinterpret_cast<bf16*>      (__kv_state)+blockIdx.x*(D_QK*D_QK*D_VO); // 256x64
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -120,7 +121,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     st_bf_1x4<layout> (&a2_o_accumulate)[NUM_WORKERS]    = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>(); // 32768 bytes
     int total_block_idx = 0;
 
-    rt_fl_1x4 a2; // a2 gets propagated through here.
+    rt_fl_1x4<> a2; // a2 gets propagated through here.
 
     sv_bf_4 a0_total = al.allocate<sv_bf_4>();
 
@@ -187,7 +188,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         cumsum_inplace<NUM_WORKERS>(a1_s, total_block_idx);
         __syncthreads();
         if(warpid < ACTIVE_TILES) {
-            rt_bf_1x4 a1;
+            rt_bf_1x4<> a1;
             load(q, q_s[warpid]); // load q again
             load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
             auto &a1_col = swap_layout_inplace(a1); // prepare for MMA
@@ -234,7 +235,13 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         if(warpid < ACTIVE_TILES) {
             store(o_g + cur_idx * o_s[warpid].num_elements, o_s[warpid], D_VO);
         }
+
+        // store the kv state (a2) to global memory. 
+        // each warp has a differen part of the kv state
+        store(kv_g + warpid*a2.num_elements, a2, D_VO); 
+        __syncthreads();
     }
 }
 
 #include "harness.impl"
+
