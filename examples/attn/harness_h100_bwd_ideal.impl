@@ -196,10 +196,10 @@ int main(int argc, char **argv) {
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    std::cout << "Starting fwd warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {
-        attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-    }
+    // std::cout << "Starting fwd warmup" << std::endl;
+    // for(int i = 0; i < ITER; i++) {
+    //     attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    // }
     cudaDeviceSynchronize();
     std::cout << "Starting fwd kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
@@ -325,9 +325,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(tma_b_d_d, &tma_desc_b_d, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     cudaMemcpy(tma_b_og_d, &tma_desc_b_og, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
 
-    std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl; 
-    
-   // mem_size = 100000; 
+    std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl;
 
     cudaFuncSetAttribute(
         attend_ker_prep_train<ATTN_N>,
@@ -339,10 +337,10 @@ int main(int argc, char **argv) {
     dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*th), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*th) == 0);
     cudaDeviceSynchronize();
-    std::cout << "Starting bwd prep warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {
-        attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
-    }
+    // std::cout << "Starting bwd prep warmup" << std::endl;
+    // for(int i = 0; i < ITER; i++) {
+    //     attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
+    // }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep kernel" << std::endl;
     const auto start_bwd = std::chrono::high_resolution_clock::now();
@@ -479,18 +477,18 @@ int main(int argc, char **argv) {
     }
 
     good = true;
-    // std::ofstream qg_ref_file("printouts/qg_ref.txt");
-    // std::ofstream qg_file("printouts/qg.txt");
-    // std::ofstream diff_qg_file("printouts/diff_qg.txt");
-    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-    //     float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-    //     qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-    //     qg_file << qg[i] << ' ';
-    //     diff_qg_file << diff << ' ';
-    //     if(abs(diff) > 0.02 || isnan(diff)) {
-    //         good = false;
-    //     }
-    // }
+    std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    std::ofstream qg_file("printouts/qg.txt");
+    std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+        float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+        qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+        qg_file << qg[i] << ' ';
+        diff_qg_file << diff << ' ';
+        if(abs(diff) > 0.02 || isnan(diff)) {
+            good = false;
+        }
+    }
 
     std::ofstream kg_ref_file("printouts/kg_ref.txt");
     std::ofstream kg_file("printouts/kg.txt");
