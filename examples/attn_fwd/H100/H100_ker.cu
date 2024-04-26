@@ -2,28 +2,26 @@
 #include <cooperative_groups.h>
 using namespace kittens;
 
-constexpr int NUM_WORKERS = 8;
-constexpr int NUM_WARPGROUPS = (NUM_WORKERS/WARPGROUP_WARPS);
-
+constexpr int NUM_WORKERS = 8, NUM_WARPGROUPS = (NUM_WORKERS/WARPGROUP_WARPS);
 using layout_q = ducks::st_layout::wgmma_swizzle;
 using layout_k = ducks::st_layout::wgmma_swizzle;
 using layout_v = ducks::st_layout::wgmma_interleave; // must support imm-trans-b
 using layout_o = ducks::st_layout::swizzle; // fastest write out
-
-template<int D> struct ker_tile_dims {
+template<int D> struct fwd_attend_ker_tile_dims {
     static_assert(D==64 || D==128);
     constexpr static int tile_width = D/kittens::TILE_DIM;
     constexpr static int qo_height  = 4;
     constexpr static int kv_height  = 512/D;
 };
-template<int N, int D> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 2)
-void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
+
+template<int D, int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 2)
+void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // dynamic shared memory
     tma_swizzle_allocator al((int*)&__shm[0]); // lightweight allocator enforces alignments.
 
-    constexpr int tile_width = ker_tile_dims<D>::tile_width; // constants
-    constexpr int qo_height  = ker_tile_dims<D>::qo_height;
-    constexpr int kv_height  = ker_tile_dims<D>::kv_height;
+    constexpr int tile_width = fwd_attend_ker_tile_dims<D>::tile_width; // constants
+    constexpr int qo_height  = fwd_attend_ker_tile_dims<D>::qo_height;
+    constexpr int kv_height  = fwd_attend_ker_tile_dims<D>::kv_height;
     constexpr int kv_blocks  = N / (kv_height*TILE_DIM);
 
     st_bf<qo_height, tile_width, layout_q> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(); // shared tiles
