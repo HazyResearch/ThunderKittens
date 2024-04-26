@@ -32,33 +32,32 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
 
     rt_fl<1, kv_height> att_block; // declare registers
     rt_bf<1, kv_height> att_block_mma;
-    rt_fl<1, tile_width> o_prev;
+    rt_fl<1, tile_width> o_accum;
     col_vec<rt_fl<1, kv_height>> max_vec_last, max_vec;
     col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
 
     int warpid      = kittens::warpid(); // who am i? when am i?
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS; 
-    int tic = 0, toc = 1;
+    int tic = 0, toc = 1, phase = 0; // since we have two barriers, we need a half-rate tic as the phase bit
 
-    __shared__ uint64_t qsmem_barrier, kvsmem_barrier; // initialize barriers
-    if (warpid == 0) {
-        tma::init_barrier<typeof(q_smem[0]), NUM_WARPGROUPS>(qsmem_barrier, 1);
-        tma::init_barrier<typeof(k_smem[0]), 2             >(kvsmem_barrier, 1); 
-    }
+    __shared__ uint64_t qsmem_barrier, ksmem_barrier[2], vsmem_barrier[2]; // initialize barriers
+    if      (warpid == 0) tma::init_barrier<typeof(q_smem[0]), NUM_WARPGROUPS>(qsmem_barrier);
+    else if (warpid == 1) tma::init_barrier<typeof(k_smem[0])>(ksmem_barrier[0]);
+    else if (warpid == 2) tma::init_barrier<typeof(v_smem[0])>(vsmem_barrier[0]);
+    else if (warpid == 3) tma::init_barrier(ksmem_barrier[1]);
+    else if (warpid == 4) tma::init_barrier(vsmem_barrier[1]);
     __syncthreads();
 
     if (warpid%4 == 0) { // load q from HBM
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
         tma::load_async(q_smem[warpgroupid], tma_q, qsmem_barrier, tile_idx);
     }
-    if (warpid == 0) { // load initial k, v from HBM
-        tma::load_async(k_smem[tic], tma_k, kvsmem_barrier, blockIdx.y*kv_blocks);
-        tma::load_async(v_smem[tic], tma_v, kvsmem_barrier, blockIdx.y*kv_blocks);
-    }
+    if      (warpid == 0) tma::load_async(k_smem[tic], tma_k, ksmem_barrier[tic], blockIdx.y*kv_blocks); // load initial k, v from HBM
+    else if (warpid == 1) tma::load_async(v_smem[tic], tma_v, vsmem_barrier[tic], blockIdx.y*kv_blocks);
 
     neg_infty(max_vec); // zero registers, while we wait
     zero(norm_vec);
-    zero(o_prev);
+    zero(o_accum);
 
     tma::arrive_and_wait(qsmem_barrier, 0); // wait for memory to arrive
     if constexpr (D==64)  warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); // temperature adjustment
@@ -66,15 +65,15 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
 
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
-        tma::arrive_and_wait(kvsmem_barrier, tic); // wait for kv memory to arrive
+        tma::arrive_and_wait(ksmem_barrier[tic], phase); // wait for kv memory to arrive
         __syncthreads(); // everybody on the same page?
-        if (warpid == 0) { // go get the K, V from HBM
-            tma::set_bytes(kvsmem_barrier, detail::transfer_bytes<typeof(k_smem[0]), 2>::bytes);
-            if (kv_idx + 1 < kv_blocks) {    
-                int tile_idx = (blockIdx.y * kv_blocks) + kv_idx + 1; 
-                tma::load_async((k_smem[toc]), tma_k, kvsmem_barrier, tile_idx);
-                tma::load_async((v_smem[toc]), tma_v, kvsmem_barrier, tile_idx);
-            }
+        if (warpid == 0) { // go get the next K from HBM
+            tma::set_bytes(ksmem_barrier[toc], detail::transfer_bytes<typeof(k_smem[0])>::bytes);
+            if (kv_idx+1 < kv_blocks) tma::load_async(k_smem[toc], tma_k, ksmem_barrier[toc], (blockIdx.y * kv_blocks) + kv_idx + 1);
+        }
+        else if (warpid == 1) { // go get the next V from HBM
+            tma::set_bytes(vsmem_barrier[toc], detail::transfer_bytes<typeof(v_smem[0])>::bytes);
+            if (kv_idx+1 < kv_blocks) tma::load_async(v_smem[toc], tma_v, vsmem_barrier[toc], (blockIdx.y * kv_blocks) + kv_idx + 1);
         }
 
         warpgroup::mma_fence(att_block); // qk matmul fence
@@ -97,15 +96,19 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
         mul(norm_vec_last, norm_vec_last, max_vec_last); // incorporate previous max into norm for o
         div(norm_vec_last, norm_vec_last, norm_vec); // incorporate current norm into new norm for o
         copy(att_block_mma, att_block); // convert to bf16 for mma
-        mul_row(o_prev, o_prev, norm_vec_last); // normalize o in advance of mma'ing onto it
+        mul_row(o_accum, o_accum, norm_vec_last); // normalize o in advance of mma'ing onto it
 
-        warpgroup::mma_fence(o_prev);  // av matmul fence
-        warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic]); // mm accumulate next attention chunk onto o
+        tma::arrive_and_wait(vsmem_barrier[tic], phase); // wait for kv memory to arrive
+
+        warpgroup::mma_fence(o_accum);  // av matmul fence
+        warpgroup::mma_AB(o_accum, att_block_mma, v_smem[tic]); // mm accumulate next attention chunk onto o
         warpgroup::mma_commit_group(); // dew it.
+
+        if(tic) phase^=1;
     }
 
     auto *o_smem = reinterpret_cast<st_bf<qo_height, tile_width, layout_o>*>(&q_smem[0].data[0]); // reuse q memory for store
-    warpgroup::store(o_smem[warpgroupid], o_prev); // store from registers to shared mem
+    warpgroup::store(o_smem[warpgroupid], o_accum); // store from registers to shared mem
     __syncthreads(); // everyone done?
     if (warpid%4 == 0) { // store o to HBM
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
