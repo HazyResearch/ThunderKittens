@@ -15,7 +15,8 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-conste
 	TARGET=attn # 4090
 	SRC=4090_fwd.cu # 4090
 	else ifeq ($(PURPOSE),training)
-	# ERROR: No training kernel for 4090 yet
+	TARGET=attn # 4090
+	SRC=4090_bwd.cu # 4090
 	endif
 else ifeq ($(GPU_TARGET),A100)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_A100 -arch=sm_80 -lcuda -lcudadevrt -lcudart_static -lcublas # H100

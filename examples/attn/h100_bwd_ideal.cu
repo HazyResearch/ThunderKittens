@@ -245,7 +245,7 @@ __device__ inline void tile_reduce(ST (&dst)[N_TILES]) {
     }
 }
 
-constexpr int WORKERS_BWD = 16; 
+constexpr int WORKERS_BWD = 8; 
 constexpr int NUM_WARPGROUPS_BWD = (WORKERS_BWD/(kittens::WARPGROUP_WARPS));
 
 constexpr int NUM_WARPGROUPS_BWD_INNER = 1; 
@@ -288,7 +288,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     og_smem_tile (&og_smem) [NUM_WARPGROUPS_BWD_INNER]  = al.allocate<og_smem_tile, NUM_WARPGROUPS_BWD_INNER>();
     l_smem_tile  (&l_smem)  [NUM_WARPGROUPS_BWD_INNER]  = al.allocate<l_smem_tile,  NUM_WARPGROUPS_BWD_INNER>();
     d_smem_tile  (&d_smem)  [NUM_WARPGROUPS_BWD_INNER]  = al.allocate<d_smem_tile,  NUM_WARPGROUPS_BWD_INNER>();
-    qg_smem_tile (&qg_smem) [NUM_WARPGROUPS_BWD_INNER]  = al.allocate<qg_smem_tile, NUM_WARPGROUPS_BWD_INNER>();
 
     // rt_bf<tile_h, tile_w> k_reg;  
     // rt_bf<tile_h, tile_w> v_reg;
@@ -457,7 +456,9 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 warpgroup::mma_async_wait();
             }
 
-            warpgroup::store(qg_smem[warpgroupid], qg_reg);
+            __syncthreads();
+            // reuse og_smem for storing the output
+            warpgroup::store(og_smem[warpgroupid], qg_reg);
             __syncthreads();
 
             if (warpid == 0) {
@@ -465,10 +466,11 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 /// WE STORE THE DATA FOR EACH WORKER AND EACH KV/QO - then launch another kernel to reduce
                 for (int w = 0; w < NUM_WARPGROUPS_BWD_INNER; w++) {
                     int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_INNER * qo_blocks) + (qo_idx * NUM_WARPGROUPS_BWD_INNER) + w; 
-                    tma::store_async(tma_qg, (qg_smem[w]), tile_idx);
+                    tma::store_async(tma_qg, (og_smem[w]), tile_idx);
                 }
                 tma::store_commit_group();
             }
+            tma::store_async_wait();
         }
         
         warpgroup::store(v_smem[warpgroupid], vg_reg);

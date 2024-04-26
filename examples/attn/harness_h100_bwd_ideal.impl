@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    int ITER = 1;
+    int ITER = 100;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
@@ -325,7 +325,9 @@ int main(int argc, char **argv) {
     cudaMemcpy(tma_b_d_d, &tma_desc_b_d, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     cudaMemcpy(tma_b_og_d, &tma_desc_b_og, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
 
-    std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl;
+    std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl; 
+    
+   // mem_size = 100000; 
 
     cudaFuncSetAttribute(
         attend_ker_prep_train<ATTN_N>,
