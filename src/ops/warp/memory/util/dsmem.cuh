@@ -85,7 +85,7 @@ __device__ static inline void init_barrier(barrier& bar, int tc=1) {
     }
     // Now initialize the bar bytes
     if constexpr (ducks::st::all<T> || ducks::sv::all<T>) {
-        set_bytes(bar, kittens::detail::transfer_bytes<T, dims...>::bytes);
+        set_bytes(bar, kittens::size_bytes<T, dims...>);
     }
 }
 

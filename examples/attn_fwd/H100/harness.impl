@@ -5,9 +5,9 @@
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 4096;
-constexpr int ATTN_D     = 128;
+constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
-constexpr int ITER = 20;
+constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {

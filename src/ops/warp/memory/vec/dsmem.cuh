@@ -24,7 +24,7 @@ namespace dsmem {
  */
 template<ducks::sv::all SV, uint32_t... dims>
 __device__ static inline void distribute(SV &dst_, SV &src_, int cluster_size, int dst_idx, barrier& bar) {
-    distribute(dst_, src_, cluster_size, dst_idx, kittens::detail::transfer_bytes<SV, dims...>::bytes, bar); // wrap with auto calculated bytes
+    distribute(dst_, src_, cluster_size, dst_idx, kittens::size_bytes<SV, dims...>, bar); // wrap with auto calculated bytes
 }
 
 }

@@ -3,17 +3,18 @@
 using namespace kittens;
 
 constexpr int NUM_WORKERS = 8, NUM_WARPGROUPS = (NUM_WORKERS/WARPGROUP_WARPS);
-using layout_q = ducks::st_layout::wgmma_swizzle;
-using layout_k = ducks::st_layout::wgmma_swizzle;
-using layout_v = ducks::st_layout::wgmma_interleave; // must support imm-trans-b
-using layout_o = ducks::st_layout::swizzle; // fastest write out
+using layout_q = wgmma_swizzle_l;
+using layout_k = wgmma_swizzle_l;
+using layout_v = wgmma_interleave_l; // must support imm-trans-b
+using layout_o = swizzle_l; // fastest write out
 template<int D> struct fwd_attend_ker_tile_dims {
-    static_assert(D==64 || D==128);
     constexpr static int tile_width = D/kittens::TILE_DIM;
     constexpr static int qo_height  = 4;
     constexpr static int kv_height  = 512/D;
 };
 
+// the two cases (D=64, D=128) basically identical, but the barriers have been slightly tuned to eke out that extra few percent.
+// current benchmarks (N=4096) are 460 TFLOPs at D=64 and 517 TFLOPs at D=128.
 template<int D, int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 2)
 void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // dynamic shared memory
@@ -24,9 +25,9 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     constexpr int kv_height  = fwd_attend_ker_tile_dims<D>::kv_height;
     constexpr int kv_blocks  = N / (kv_height*TILE_DIM);
 
-    st_bf<qo_height, tile_width, layout_q> (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(); // shared tiles
-    st_bf<kv_height, tile_width, layout_k> (&k_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2>();
-    st_bf<kv_height, tile_width, layout_v> (&v_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2>();
+    auto (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(); // shared tiles
+    auto (&k_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2>();
+    auto (&v_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2>();
 
     rt_fl<1, kv_height> att_block; // declare registers
     rt_bf<1, kv_height> att_block_mma;
@@ -36,22 +37,27 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
 
     int warpid      = kittens::warpid(); // who am i? when am i?
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS; 
-    int tic = 0, toc = 1, phase = 0; // since we have two barriers, we need a half-rate tic as the phase bit
+    int tic = 0, toc = 1, v_phase = 0; // since we have two barriers for v, we need a half-rate tic as the v phase bit
 
-    __shared__ uint64_t qsmem_barrier, ksmem_barrier[2], vsmem_barrier[2]; // initialize barriers
+    __shared__ uint64_t qsmem_barrier, kv_smem_barriers[3]; // init barriers
+    // D=64 and D=128 meaningfully (2% perf) prefer different barrier, so this is my hack to prevent splitting into separate kernels.
+    uint64_t *kbar, *vbar[2];
+    if constexpr (D==64)  { kbar = &kv_smem_barriers[0]; vbar[0] = &kv_smem_barriers[0]; vbar[1] = &kv_smem_barriers[0]; } // set all as aliases
+    if constexpr (D==128) { kbar = &kv_smem_barriers[0]; vbar[0] = &kv_smem_barriers[1]; vbar[1] = &kv_smem_barriers[2]; } // separate barriers
     if      (warpid == 0) tma::init_barrier<typeof(q_smem[0]), NUM_WARPGROUPS>(qsmem_barrier);
-    else if (warpid == 1) tma::init_barrier<typeof(k_smem[0])>(ksmem_barrier[tic]);
-    else if (warpid == 2) tma::init_barrier<typeof(v_smem[0])>(vsmem_barrier[tic]);
-    else if (warpid == 3) tma::init_barrier(ksmem_barrier[toc]);
-    else if (warpid == 4) tma::init_barrier(vsmem_barrier[toc]);
+    else if (warpid == 1) tma::init_barrier<typeof(k_smem[0]), 128/D         >(*kbar);
+    if constexpr(D==128) {
+        if      (warpid == 2) tma::init_barrier<typeof(v_smem[0])>(*vbar[tic]);
+        else if (warpid == 3) tma::init_barrier                   (*vbar[toc]); // will set bytes later anyways.
+    }
     __syncthreads();
 
     if (warpid%4 == 0) { // load q from HBM
         int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
         tma::load_async(q_smem[warpgroupid], tma_q, qsmem_barrier, tile_idx);
     }
-    if      (warpid == 0) tma::load_async(k_smem[tic], tma_k, ksmem_barrier[tic], blockIdx.y*kv_blocks); // load initial k, v from HBM
-    else if (warpid == 1) tma::load_async(v_smem[tic], tma_v, vsmem_barrier[tic], blockIdx.y*kv_blocks);
+    if      (warpid == 0) tma::load_async(k_smem[tic], tma_k,* kbar     , blockIdx.y*kv_blocks); // load initial k, v from HBM
+    else if (warpid == 1) tma::load_async(v_smem[tic], tma_v, *vbar[tic], blockIdx.y*kv_blocks);
 
     neg_infty(max_vec); // zero registers, while we wait
     zero(norm_vec);
@@ -63,15 +69,15 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
 
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
-        tma::arrive_and_wait(ksmem_barrier[tic], phase); // wait for kv memory to arrive
+        tma::arrive_and_wait(*kbar, tic); // wait for k memory to arrive (and also v, too, if D=64)
         __syncthreads(); // everybody on the same page?
         if (warpid == 0) { // go get the next K from HBM
-            tma::set_bytes(ksmem_barrier[toc], detail::transfer_bytes<typeof(k_smem[0])>::bytes);
-            if (kv_idx+1 < kv_blocks) tma::load_async(k_smem[toc], tma_k, ksmem_barrier[toc], (blockIdx.y * kv_blocks) + kv_idx + 1);
-        }
-        else if (warpid == 1) { // go get the next V from HBM
-            tma::set_bytes(vsmem_barrier[toc], detail::transfer_bytes<typeof(v_smem[0])>::bytes);
-            if (kv_idx+1 < kv_blocks) tma::load_async(v_smem[toc], tma_v, vsmem_barrier[toc], (blockIdx.y * kv_blocks) + kv_idx + 1);
+            tma::set_bytes(*kbar, size_bytes<typeof(k_smem[0]), 128/D>); // depending on how many real barriers, adjust
+            if constexpr (D==128) tma::set_bytes(*vbar[toc], size_bytes<typeof(v_smem[0])>);
+            if (kv_idx+1 < kv_blocks) {
+                tma::load_async(k_smem[toc], tma_k, *kbar     , (blockIdx.y * kv_blocks) + kv_idx + 1);
+                tma::load_async(v_smem[toc], tma_v, *vbar[toc], (blockIdx.y * kv_blocks) + kv_idx + 1);
+            }
         }
 
         warpgroup::mma_fence(att_block); // qk matmul fence
@@ -96,13 +102,13 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
         copy(att_block_mma, att_block); // convert to bf16 for mma
         mul_row(o_accum, o_accum, norm_vec_last); // normalize o in advance of mma'ing onto it
 
-        tma::arrive_and_wait(vsmem_barrier[tic], phase); // wait for kv memory to arrive
+        if constexpr (D==128) tma::arrive_and_wait(*vbar[tic], v_phase); // wait for v memory to arrive, if this is a real barrier
 
         warpgroup::mma_fence(o_accum);  // av matmul fence
         warpgroup::mma_AB(o_accum, att_block_mma, v_smem[tic]); // mm accumulate next attention chunk onto o
         warpgroup::mma_commit_group(); // dew it.
 
-        if(tic) phase^=1;
+        if(tic) v_phase^=1;
     }
 
     auto *o_smem = reinterpret_cast<st_bf<qo_height, tile_width, layout_o>*>(&q_smem[0].data[0]); // reuse q memory for store
