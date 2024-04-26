@@ -5,10 +5,10 @@ using namespace kittens;
 constexpr int NUM_WORKERS = 8;
 constexpr int NUM_WARPGROUPS = (NUM_WORKERS/WARPGROUP_WARPS);
 
-using layout_q = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_k = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_v = ducks::st_layout::wgmma_interleave; // need to make this 128b
-using layout_o = ducks::st_layout::swizzle;
+using layout_q = ducks::st_layout::wgmma_swizzle;
+using layout_k = ducks::st_layout::wgmma_swizzle;
+using layout_v = ducks::st_layout::wgmma_interleave; // must support imm-trans-b
+using layout_o = ducks::st_layout::swizzle; // fastest write out
 
 template<int D> struct ker_tile_dims {
     static_assert(D==64 || D==128);
@@ -42,10 +42,10 @@ void attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUte
 
     __shared__ uint64_t qsmem_barrier, ksmem_barrier[2], vsmem_barrier[2]; // initialize barriers
     if      (warpid == 0) tma::init_barrier<typeof(q_smem[0]), NUM_WARPGROUPS>(qsmem_barrier);
-    else if (warpid == 1) tma::init_barrier<typeof(k_smem[0])>(ksmem_barrier[0]);
-    else if (warpid == 2) tma::init_barrier<typeof(v_smem[0])>(vsmem_barrier[0]);
-    else if (warpid == 3) tma::init_barrier(ksmem_barrier[1]);
-    else if (warpid == 4) tma::init_barrier(vsmem_barrier[1]);
+    else if (warpid == 1) tma::init_barrier<typeof(k_smem[0])>(ksmem_barrier[tic]);
+    else if (warpid == 2) tma::init_barrier<typeof(v_smem[0])>(vsmem_barrier[tic]);
+    else if (warpid == 3) tma::init_barrier(ksmem_barrier[toc]);
+    else if (warpid == 4) tma::init_barrier(vsmem_barrier[toc]);
     __syncthreads();
 
     if (warpid%4 == 0) { // load q from HBM
