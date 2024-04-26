@@ -4,7 +4,7 @@
 
 struct test_swap_layout {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> using valid = std::bool_constant<H%NW==0 && W*H<=64 &&
-        (!(std::is_same_v<L1, kittens::ducks::st_layout::xor_swizzle> || std::is_same_v<L2, kittens::ducks::st_layout::xor_swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+        (!(std::is_same_v<L1, kittens::ducks::st_layout::swizzle> || std::is_same_v<L2, kittens::ducks::st_layout::swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
     static inline const std::string test_identifier = "shared_swaplayout";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -31,20 +31,23 @@ void group::shared::tile::conversions::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::naive>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::xor_swizzle>::run(results);
-    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_0b>::run(results);
+    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::swizzle>::run(results);
+    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_swizzle>::run(results);
+    sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 2, kittens::ducks::st_layout::wgmma_interleave>::run(results);
 
     if constexpr (TEST_INTENSITY > 1) {
 
         sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::naive>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::xor_swizzle>::run(results);
-        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_0b>::run(results);
+        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::swizzle>::run(results);
+        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_swizzle>::run(results);
+        sweep_st_layout_size_2d<test_swap_layout, SIZE, SIZE, 4, kittens::ducks::st_layout::wgmma_interleave>::run(results);
 
         if constexpr (TEST_INTENSITY > 3) {
 
             sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::naive>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::xor_swizzle>::run(results);
-            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_0b>::run(results);
+            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::swizzle>::run(results);
+            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_swizzle>::run(results);
+            sweep_st_layout_size_2d<test_swap_layout, 12, 4, 12, kittens::ducks::st_layout::wgmma_interleave>::run(results);
 
         }
     }

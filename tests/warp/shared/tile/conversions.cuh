@@ -13,7 +13,7 @@ namespace conversions {
 
 struct test_swap_layout {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!(std::is_same_v<L1, kittens::ducks::st_layout::xor_swizzle> || std::is_same_v<L2, kittens::ducks::st_layout::xor_swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is warp-level
+        (!(std::is_same_v<L1, kittens::ducks::st_layout::swizzle> || std::is_same_v<L2, kittens::ducks::st_layout::swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is warp-level
     static inline const std::string test_identifier = "shared_swaplayout";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -31,7 +31,7 @@ struct test_swap_layout {
 
 struct test_subtile {
     template<int H, int W, int NW, kittens::ducks::st_layout::all L, typename _ST_H, typename _ST_W> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!(std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)
+        (!(std::is_same_v<L, kittens::ducks::st_layout::swizzle>) || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)
         && (H % _ST_H::value == 0 && W % _ST_W::value == 0)>;
     static inline const std::string test_identifier = "shared_subtile";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L, typename _ST_H, typename _ST_W> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {

@@ -4,9 +4,10 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 5120;
+constexpr int ATTN_N     = 4096;
 constexpr int ATTN_D     = 64;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int ITER = 20;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -108,7 +109,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    unsigned long mem_size = 100000; //kittens::MAX_SHARED_MEMORY;
     
     cudaFuncSetAttribute(
         attend_ker<ATTN_N>,
@@ -117,7 +118,6 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    const int ITER = 100;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();

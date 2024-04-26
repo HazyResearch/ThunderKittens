@@ -15,19 +15,20 @@ namespace tma {
 namespace detail {
 
 // Concepts for tiles
+template<typename T> concept st_type_naive_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::naive>
+);
+template<typename T> concept st_type_swizzle_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::swizzle>
+);
+template<typename T> concept st_type_wgmma_swizzle_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_swizzle>
+);
+template<typename T> concept st_type_wgmma_interleave_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_interleave>
+);
 
-template<typename T> concept st_type_2d_tma_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::naive> || 
-    std::is_same_v<typename T::layout, ducks::st_layout::xor_swizzle>
-);
-template<typename T> concept st_type_wgmma_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_0b>
-);
-template<typename T> concept st_type_tma_layout = (
-    st_type_2d_tma_layout<T> || st_type_wgmma_layout<T>
-);
-
-}; 
+}
 
 using barrier = uint64_t;
 
@@ -65,7 +66,7 @@ __device__ static inline void set_bytes(barrier& bar, uint32_t bytes) {
  */
 template<typename T=ducks::default_type, int... dims>
 __device__ static inline void init_barrier(barrier& bar, int tc=1) {
-    static_assert(detail::st_type_tma_layout<T> || ducks::sv::all<T> || std::is_same_v<T, ducks::default_type>);
+    static_assert(ducks::st::all<T> || ducks::sv::all<T> || std::is_same_v<T, ducks::default_type>);
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -73,7 +74,7 @@ __device__ static inline void init_barrier(barrier& bar, int tc=1) {
         asm volatile ("mbarrier.init.shared::cta.b64 [%0], %1;\n"
             :: "r"(bar_ptr), "r"(tc));
 
-        if constexpr (detail::st_type_tma_layout<T> || ducks::sv::all<T>) {
+        if constexpr (ducks::st::all<T> || ducks::sv::all<T>) {
             set_bytes(bar, kittens::detail::transfer_bytes<T, dims...>::bytes); // set barrier bytes automatically
         }
     }
