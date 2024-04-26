@@ -13,10 +13,10 @@ constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_0b; // need to make this 128b
-using layout_k = ducks::st_layout::wgmma_0b; // need to make this 128b
-using layout_v = ducks::st_layout::wgmma_0b; // need to make this 128b
-using layout_o = ducks::st_layout::xor_swizzle; 
+using layout_q = ducks::st_layout::wgmma_swizzle; // need to make this 128b
+using layout_k = ducks::st_layout::wgmma_swizzle; // need to make this 128b
+using layout_v = ducks::st_layout::wgmma_interleave; // need to make this 128b
+using layout_o = ducks::st_layout::swizzle; 
 
 template<int N> __global__  __launch_bounds__(NUM_WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
@@ -162,7 +162,7 @@ constexpr int WORKERS = 8;
 constexpr int th = 4; 
 constexpr int tw = 64/16;
 
-using layout_nrow = ducks::st_layout::xor_swizzle;
+using layout_nrow = ducks::st_layout::swizzle;
 
 template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 1)
 void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
@@ -246,25 +246,24 @@ __device__ inline void tile_reduce(ST (&dst)[N_TILES]) {
 }
 
 constexpr int WORKERS_BWD = 8; 
-constexpr int WORKERS_KERNEL = 8; 
+constexpr int WORKERS_BWD_QO = 8; 
 
-constexpr int tile_h = 1;
+constexpr int tile_h = 1; // can go up to 8
+constexpr int tile_h_qo = 1; 
 constexpr int tile_w = 64/16;
 
-using layout_nrow      = ducks::st_layout::xor_swizzle;
-using layout_wgmma     = ducks::st_layout::wgmma_0b;
-using layout_tma_swi   = ducks::st_layout::xor_swizzle; 
+using layout_swi = ducks::st_layout::swizzle; 
 
-#define k_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
-#define v_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
+#define k_smem_tile  st_bf<tile_h, tile_w, layout_swi>
+#define v_smem_tile  st_bf<tile_h, tile_w, layout_swi>
 
-#define q_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>
-#define og_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
-#define qg_smem_tile st_bf<tile_h, tile_w, layout_tma_swi>
-#define l_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
-#define d_smem_tile  st_bf<tile_h, tile_w, layout_tma_swi>::col_vec
+#define q_smem_tile  st_bf<tile_h, tile_w, layout_swi>
+#define og_smem_tile st_bf<tile_h, tile_w, layout_swi>
+#define qg_smem_tile st_bf<tile_h, tile_w, layout_swi>
+#define l_smem_tile  st_bf<tile_h, tile_w, layout_swi>::col_vec
+#define d_smem_tile  st_bf<tile_h, tile_w, layout_swi>::col_vec
 
-#define scratch_pad  st_bf<tile_h, tile_h, layout_tma_swi>
+#define scratch_pad  st_bf<tile_h, tile_h, layout_swi>
 
 template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, 
@@ -287,41 +286,41 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
     bf16 *_kg = __kg__ + (blockIdx.y * N * 64);
     bf16 *_vg = __vg__ + (blockIdx.y * N * 64);
 
-    q_smem_tile  (&q_smem)  [WORKERS_BWD]                 = al.allocate<q_smem_tile, WORKERS_BWD>();
-    og_smem_tile (&og_smem) [WORKERS_BWD]                 = al.allocate<og_smem_tile, WORKERS_BWD>();
-
-    qg_smem_tile (&qg_smem)[WORKERS_BWD][WORKERS_BWD + 1] = al.allocate<qg_smem_tile, WORKERS_BWD, WORKERS_BWD + 1>();
-    l_smem_tile (&l_smem)  [WORKERS_BWD]                  = al.allocate<l_smem_tile,  WORKERS_BWD>();
-    d_smem_tile (&d_smem)  [WORKERS_BWD]                  = al.allocate<d_smem_tile,  WORKERS_BWD>();
+    q_smem_tile  (&q_smem)  [WORKERS_BWD_QO]                 = al.allocate<q_smem_tile,  WORKERS_BWD_QO>();
+    og_smem_tile (&og_smem) [WORKERS_BWD_QO]                 = al.allocate<og_smem_tile, WORKERS_BWD_QO>();
+    qg_smem_tile (&qg_smem)[WORKERS_BWD_QO][WORKERS_BWD + 1] = al.allocate<qg_smem_tile, WORKERS_BWD_QO, WORKERS_BWD + 1>();
+    l_smem_tile (&l_smem)  [WORKERS_BWD_QO]                  = al.allocate<l_smem_tile,  WORKERS_BWD_QO>();
+    d_smem_tile (&d_smem)  [WORKERS_BWD_QO]                  = al.allocate<d_smem_tile,  WORKERS_BWD_QO>();
 
     rt_bf<tile_h, tile_w> k_reg; 
+    rt_bf<tile_h, tile_w, ducks::rt_layout::col> k_reg_col;
     rt_bf<tile_h, tile_w> v_reg;
-
-    rt_fl<tile_h, tile_w> qg_reg;
     rt_fl<tile_h, tile_w> kg_reg;
     rt_fl<tile_h, tile_w> vg_reg;
 
-    rt_bf<tile_h, tile_w>::col_vec l_reg_bf; 
-    rt_bf<tile_h, tile_w>::col_vec d_reg_bf;
-    rt_fl<tile_h, tile_w>::col_vec l_reg_fl; 
-    rt_fl<tile_h, tile_w>::col_vec d_reg_fl; 
+    rt_fl<tile_h_qo, tile_w> qg_reg;
+    rt_bf<tile_h_qo, tile_w> q_reg;
+    rt_bf<tile_h_qo, tile_w> do_reg;
 
-    rt_bf<tile_h, tile_w> q_reg;
-    rt_bf<tile_h, tile_w> do_reg; 
+    rt_bf<tile_h_qo, tile_w>::col_vec l_reg_bf; 
+    rt_bf<tile_h_qo, tile_w>::col_vec d_reg_bf;
+    rt_fl<tile_h_qo, tile_w>::col_vec l_reg_fl; 
+    rt_fl<tile_h_qo, tile_w>::col_vec d_reg_fl; 
 
-    rt_fl<tile_h, tile_h> att_block; 
-    rt_bf<tile_h, tile_h> att_block_mma;
-    rt_fl<tile_h, tile_h> temp_block;
+    rt_fl<tile_h_qo, tile_h> att_block; 
+    rt_bf<tile_h_qo, tile_h> att_block_mma;
+    rt_fl<tile_h_qo, tile_h> temp_block;
     
     int warpid = kittens::warpid();
 
-    constexpr int qo_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
-    constexpr int kv_blocks = N / (tile_h * kittens::TILE_DIM * WORKERS_BWD);
+    constexpr int qo_blocks = N / (q_smem[0].rows * WORKERS_BWD_QO);
+    constexpr int kv_blocks = N / (v_reg.rows * WORKERS_BWD);
 
     for (int kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
         load(k_reg, _k + (kv_idx * WORKERS_BWD + warpid) * k_reg.num_elements, k_reg.cols);
         load(v_reg, _v + (kv_idx * WORKERS_BWD + warpid) * v_reg.num_elements, v_reg.cols);
+        swap_layout(k_reg_col, k_reg);
         __syncthreads();
 
         zero(kg_reg);
@@ -329,14 +328,16 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
 
         for (int qo_idx = 0; qo_idx < qo_blocks; qo_idx++) {
 
-            load(q_smem[warpid], _q + (qo_idx * WORKERS_BWD + warpid) * q_smem[warpid].num_elements, q_smem[warpid].cols);
-            load(og_smem[warpid], _og + (qo_idx * WORKERS_BWD + warpid) * og_smem[warpid].num_elements, og_smem[warpid].cols);
-            load(qg_smem[warpid][0], _qg + (qo_idx * WORKERS_BWD + warpid) * qg_smem[warpid][0].num_elements, qg_smem[warpid][0].cols);
-            load(l_smem[warpid], _l + (qo_idx * WORKERS_BWD + warpid) * l_smem[warpid].length);
-            load(d_smem[warpid], _d + (qo_idx * WORKERS_BWD + warpid) * d_smem[warpid].length);
+            if (warpid < WORKERS_BWD_QO) {
+                load(q_smem[warpid], _q + (qo_idx * WORKERS_BWD_QO + warpid) * q_smem[0].num_elements, q_smem[0].cols);
+                load(og_smem[warpid], _og + (qo_idx * WORKERS_BWD_QO + warpid) * og_smem[0].num_elements, og_smem[0].cols);
+                load(qg_smem[warpid][0], _qg + (qo_idx * WORKERS_BWD_QO + warpid) * qg_smem[0][0].num_elements, qg_smem[0][0].cols);
+                load(l_smem[warpid], _l + (qo_idx * WORKERS_BWD_QO + warpid) * l_smem[0].length);
+                load(d_smem[warpid], _d + (qo_idx * WORKERS_BWD_QO + warpid) * d_smem[0].length);
+            }
             __syncthreads();
 
-            for (int subtile = 0; subtile < WORKERS_KERNEL; subtile++) {
+            for (int subtile = 0; subtile < WORKERS_BWD_QO; subtile++) {
                 load(q_reg, q_smem[subtile]);
                 mul(q_reg, q_reg, __float2bfloat16(0.125f));
                 
@@ -351,11 +352,10 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
                 copy(att_block_mma, att_block);
 
                 load(do_reg, og_smem[subtile]);
-                rt_bf<tile_h, tile_w, ducks::rt_layout::col> &do_reg_col = swap_layout_inplace(do_reg);
+                rt_bf<tile_h_qo, tile_w, ducks::rt_layout::col> &do_reg_col = swap_layout_inplace(do_reg);
+                rt_bf<tile_h_qo, tile_h, ducks::rt_layout::col> &att_block_mma_col = swap_layout_inplace(att_block_mma);
                 
-                transpose_inplace(att_block_mma);
-                
-                mma_AB(vg_reg, att_block_mma, do_reg_col, vg_reg);
+                mma_AtB(vg_reg, att_block_mma_col, do_reg_col, vg_reg);
 
                 load(do_reg, og_smem[subtile]);
                 zero(att_block);
@@ -369,22 +369,21 @@ void attend_ker_bwd_train(const bf16* __restrict__ __q__, const bf16* __restrict
 
                 zero(qg_reg);
                 
-                copy(do_reg, k_reg); 
-                mul(do_reg, do_reg, __float2bfloat16(0.125f));
-                rt_bf<tile_h, tile_w, ducks::rt_layout::col> &k_reg_col = swap_layout_inplace(do_reg);
-                
                 mma_AB(qg_reg, att_block_mma, k_reg_col, qg_reg);
+                mul(qg_reg, qg_reg, __float2bfloat16(0.125f));
                 store(qg_smem[subtile][1 + warpid], qg_reg);
 
-                transpose_inplace(att_block_mma);
-                rt_bf<tile_h, tile_w, ducks::rt_layout::col> &q_reg_col = swap_layout_inplace(q_reg);
-                mma_AB(kg_reg, att_block_mma, q_reg_col, kg_reg);
+                rt_bf<tile_h_qo, tile_h, ducks::rt_layout::col> &att_block_mma_col2 = swap_layout_inplace(att_block_mma);
+                rt_bf<tile_h_qo, tile_w, ducks::rt_layout::col> &q_reg_col = swap_layout_inplace(q_reg);
+
+                mma_AtB(kg_reg, att_block_mma_col2, q_reg_col, kg_reg);
             }
 
             __syncthreads();
-            tile_reduce<1, qg_smem_tile, WORKERS_BWD + 1>(qg_smem[warpid]);
-
-            store(_qg + (qo_idx * WORKERS_BWD + warpid) * qg_reg.num_elements, qg_smem[warpid][0], qg_smem[warpid][0].cols);
+            if (warpid < WORKERS_BWD_QO) {
+                tile_reduce<1, qg_smem_tile, WORKERS_BWD + 1>(qg_smem[warpid]);
+                store(_qg + (qo_idx * WORKERS_BWD_QO + warpid) * qg_reg.num_elements, qg_smem[warpid][0], qg_smem[0][0].cols);
+            }
         }
 
         store(_vg + (kv_idx * WORKERS_BWD + warpid) * vg_reg.num_elements, vg_reg, vg_reg.cols); 

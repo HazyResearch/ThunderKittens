@@ -196,10 +196,10 @@ int main(int argc, char **argv) {
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    // std::cout << "Starting fwd warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-    // }
+    std::cout << "Starting fwd warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    }
     cudaDeviceSynchronize();
     std::cout << "Starting fwd kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
@@ -337,10 +337,10 @@ int main(int argc, char **argv) {
     dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*th), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*th) == 0);
     cudaDeviceSynchronize();
-    // std::cout << "Starting bwd prep warmup" << std::endl;
-    // for(int i = 0; i < ITER; i++) {
-    //     attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
-    // }
+    std::cout << "Starting bwd prep warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
+    }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep kernel" << std::endl;
     const auto start_bwd = std::chrono::high_resolution_clock::now();
@@ -395,10 +395,13 @@ int main(int argc, char **argv) {
     tma::create_tensor_map<q_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_q,  d_b_q);
     tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
     tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
+
     tma::create_tensor_map<qg_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
     tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
     tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
+
     tma::create_tensor_map<og_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_og, d_b_og);
+
     tma::create_tensor_map<l_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_l,  d_b_l);
     tma::create_tensor_map<d_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_d,  d_b_d);
 
@@ -447,7 +450,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d, d_b_l, d_b_d);
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d, d_b_l, d_b_d); 
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;

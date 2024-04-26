@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    int ITER = 100;
+    int ITER = 1;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
@@ -393,14 +393,16 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_n_d  = {};
 
     tma::create_tensor_map<q_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_q,  d_b_q);
-    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
-    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
-    tma::create_tensor_map<qg_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
-    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
-    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
     tma::create_tensor_map<og_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_og, d_b_og);
     tma::create_tensor_map<l_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_l,  d_b_l);
     tma::create_tensor_map<d_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_n_d,  d_b_d);
+
+    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
+    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
+
+    tma::create_tensor_map<qg_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
+    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
+    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
 
     CUtensorMap* tma_b_q_d;
     CUtensorMap* tma_b_k_d;
