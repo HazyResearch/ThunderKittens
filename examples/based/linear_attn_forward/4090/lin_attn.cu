@@ -107,7 +107,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
           bf16 *kv_g  = reinterpret_cast<bf16*>      (__kv_state)+blockIdx.x*(D_QK*D_QK*D_VO); // 256x64
 
     extern __shared__ alignment_dummy __shm[];
-    shared_allocator al((int*)&__shm[0]);
+    tma_swizzle_allocator al((int*)&__shm[0]);
     st_bf_1x1<layout> (&q_s)[ACTIVE_TILES]  = al.allocate<st_bf_1x1<layout>, ACTIVE_TILES>(); // 4096 bytes
     st_bf_1x1<layout> (&k_s)[ACTIVE_TILES]  = al.allocate<st_bf_1x1<layout>, ACTIVE_TILES>(); // 4096 bytes
     st_bf_1x4<layout> (&v_s)[ACTIVE_TILES]  = al.allocate<st_bf_1x4<layout>, ACTIVE_TILES>(); // 16384 bytes
@@ -123,7 +123,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 
     rt_fl_1x4<> a2; // a2 gets propagated through here.
 
-    sv_bf_4 a0_total = al.allocate<sv_bf_4>();
+    sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
     if(warpid == 0) {
         zero(a0_total);
