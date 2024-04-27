@@ -146,8 +146,10 @@ print(f'Run the harness like `./attn_bwd {fn}`')
 
 N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
-H = 2048 // D
-B = 16384 // N
+H = 16
+B = 16
+# H = 2048 // D
+# B = 16384 // N
 
 torch.use_deterministic_algorithms(False)
 
@@ -163,7 +165,7 @@ def efficiency(flop, time):
     return flop / time
 
 print("\n\n\n")
-print("Timing forward pass for B={B}, H={H}, N={N}, D={D}")
+print(f'Timing forward pass for for B={B}, H={H}, N={N}, D={D}')
 with torch.backends.cuda.sdp_kernel(
     enable_flash=True, 
     enable_math=False, 
@@ -197,7 +199,7 @@ print(f'Average time for forward pass in us: {time_us:.2f}')
 print(f'Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, D, H, False, "fwd"), time_us):.2f}')
 
 print("\n\n\n")
-print("Timing backwards pass for B={B}, H={H}, N={N}, D={D}")
+print(f'Timing backwards pass for B={B}, H={H}, N={N}, D={D}')
 
 with torch.backends.cuda.sdp_kernel(
     enable_flash=True, 

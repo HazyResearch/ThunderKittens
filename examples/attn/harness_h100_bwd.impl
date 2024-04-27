@@ -4,11 +4,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_B     = 16;
-constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 1024;
 constexpr int ATTN_D     = 64;
-constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+
+constexpr int ATTN_B     = 16384/(ATTN_N); 
+constexpr int ATTN_H     = 2048/(ATTN_D);
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -157,11 +157,15 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_o = {};
     CUtensorMap tma_desc_l = {};
 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>,          ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>,          ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>,          ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>,          ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_o, d_o);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>::col_vec, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_l, d_l);
+    constexpr int tw  = fwd_attend_ker_tile_dims<ATTN_D>::tile_width;
+    constexpr int qh  = fwd_attend_ker_tile_dims<ATTN_D>::qo_height;
+    constexpr int kv  = fwd_attend_ker_tile_dims<ATTN_D>::kv_height;
+
+    tma::create_tensor_map<st_bf<qh, tw, layout_q>,          ATTN_B*ATTN_H*ATTN_N/(qh * 16)>(&tma_desc_q, d_q); 
+    tma::create_tensor_map<st_bf<kv, tw, layout_k>,          ATTN_B*ATTN_H*ATTN_N/(kv * 16)>(&tma_desc_k, d_k);
+    tma::create_tensor_map<st_bf<kv, tw, layout_v>,          ATTN_B*ATTN_H*ATTN_N/(kv * 16)>(&tma_desc_v, d_v);
+    tma::create_tensor_map<st_bf<qh, tw, layout_o>,          ATTN_B*ATTN_H*ATTN_N/(qh * 16)>(&tma_desc_o, d_o);
+    tma::create_tensor_map<st_bf<qh, tw, layout_q>::col_vec, ATTN_B*ATTN_H*ATTN_N/(qh * 16)>(&tma_desc_l, d_l);
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -198,13 +202,13 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting fwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        attend_ker_fwd_train<ATTN_N><<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting fwd kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker_fwd_train<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        attend_ker_fwd_train<ATTN_N><<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -400,9 +404,9 @@ int main(int argc, char **argv) {
     tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_k,  d_b_k);
     tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_v,  d_b_v);
 
-    tma::create_tensor_map<qg_smem_tile, ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
-    tma::create_tensor_map<k_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
-    tma::create_tensor_map<v_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
+    tma::create_tensor_map<qg_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_qg, d_b_qg);
+    tma::create_tensor_map<kg_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_kg, d_b_kg);
+    tma::create_tensor_map<vg_smem_tile,  ATTN_B*ATTN_H*ATTN_N/(tile_h * 16)>(&tma_desc_b_vg, d_b_vg);
 
     CUtensorMap* tma_b_q_d;
     CUtensorMap* tma_b_k_d;

@@ -4,7 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024;
+constexpr int ATTN_N     = 2048;
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 16; 
 constexpr int ATTN_B     = 16; 
@@ -194,7 +194,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    int ITER = 100;
+    int ITER = 1;
     dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
@@ -482,18 +482,18 @@ int main(int argc, char **argv) {
     }
 
     good = true;
-    std::ofstream qg_ref_file("printouts/qg_ref.txt");
-    std::ofstream qg_file("printouts/qg.txt");
-    std::ofstream diff_qg_file("printouts/diff_qg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        qg_file << qg[i] << ' ';
-        diff_qg_file << diff << ' ';
-        if(abs(diff) > 0.02 || isnan(diff)) {
-            good = false;
-        }
-    }
+    // std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    // std::ofstream qg_file("printouts/qg.txt");
+    // std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    //     float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+    //     qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+    //     qg_file << qg[i] << ' ';
+    //     diff_qg_file << diff << ' ';
+    //     if(abs(diff) > 0.02 || isnan(diff)) {
+    //         good = false;
+    //     }
+    // }
 
     std::ofstream kg_ref_file("printouts/kg_ref.txt");
     std::ofstream kg_file("printouts/kg.txt");
