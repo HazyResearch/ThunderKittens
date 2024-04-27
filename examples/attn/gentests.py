@@ -143,10 +143,13 @@ with open(fn, 'w') as f:
 print(f'Run the harness like `./attn_bwd {fn}`')
         
 # time
-B = 16
-H = 16
-N = 1024
+
+N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
+H = 2048 // D
+B = 16384 // N
+
+torch.use_deterministic_algorithms(False)
 
 def flops(batch, seqlen, headdim, nheads, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
@@ -160,37 +163,29 @@ def efficiency(flop, time):
     return flop / time
 
 print("\n\n\n")
-print("Timing forward pass for B=16, H=16, N=" + str(N) + ", D=" + str(D))
+print("Timing forward pass for B={B}, H={H}, N={N}, D={D}")
 with torch.backends.cuda.sdp_kernel(
     enable_flash=True, 
     enable_math=False, 
     enable_mem_efficient=False
 ):
-    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
-    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
-    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
 
     # warmup
     for _ in range(10):
-        q.grad = None
-        k.grad = None
-        v.grad = None
-        o.grad = None
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
     
     # Prepare for timing
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
 
     # Time the forward pass
 
-    for i in range(100):
+    for i in range(30):
         start_events[i].record()
         torch.cuda.synchronize()
-        q.grad = None
-        k.grad = None
-        v.grad = None
-        o.grad = None
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
         torch.cuda.synchronize()
         end_events[i].record()
@@ -202,7 +197,7 @@ print(f'Average time for forward pass in us: {time_us:.2f}')
 print(f'Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, D, H, False, "fwd"), time_us):.2f}')
 
 print("\n\n\n")
-print("Timing backwards pass for B=16, H=16, N=" + str(N) + ", D=" + str(D))
+print("Timing backwards pass for B={B}, H={H}, N={N}, D={D}")
 
 with torch.backends.cuda.sdp_kernel(
     enable_flash=True, 
@@ -212,7 +207,7 @@ with torch.backends.cuda.sdp_kernel(
     q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
     k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
     v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
-    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
         
     # warmup
     for _ in range(10):
@@ -233,12 +228,12 @@ with torch.backends.cuda.sdp_kernel(
         o.backward(grad_output, retain_graph=True)
     
     # Prepare for timing
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
 
     # Time the backward pass
 
-    for i in range(100):
+    for i in range(30):
         q.grad = None
         k.grad = None
         v.grad = None
@@ -246,7 +241,7 @@ with torch.backends.cuda.sdp_kernel(
         o.grad = None
 
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
-       
+        
         q.grad = None
         k.grad = None
         v.grad = None
@@ -268,7 +263,7 @@ print(f'Average time for backward pass in us: {time_us:.2f}')
 print(f'Average efficiency for backward pass in TFLOPS: {efficiency(flops(B, N, D, H, False, "bwd"), time_us):.2f}')
 
 print("\n\n\n")
-print(f'Timing forward + backward pass for B=16, H=16, N={N}, D={D}')
+print(f'Timing forward + backward pass for B={B}, H={H}, N={N}, D={D}')
 
 with torch.backends.cuda.sdp_kernel(
     enable_flash=True, 
@@ -278,7 +273,7 @@ with torch.backends.cuda.sdp_kernel(
     q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
     k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
     v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
-    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
         
     # warmup
     for _ in range(10):
@@ -299,12 +294,12 @@ with torch.backends.cuda.sdp_kernel(
         o.backward(grad_output, retain_graph=True)
     
     # Prepare for timing
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
 
     # Time the forward and backward pass
 
-    for i in range(100):
+    for i in range(30):
         start_events[i].record()
         torch.cuda.synchronize()
         
@@ -313,6 +308,7 @@ with torch.backends.cuda.sdp_kernel(
         v.grad = None
         grad_output.grad = None
         o.grad = None
+        
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
         
         q.grad = None
@@ -320,6 +316,7 @@ with torch.backends.cuda.sdp_kernel(
         v.grad = None
         grad_output.grad = None
         o.grad = None
+        
         o.backward(grad_output, retain_graph=True)
         
         torch.cuda.synchronize()
