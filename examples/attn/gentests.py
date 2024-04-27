@@ -166,12 +166,16 @@ with torch.backends.cuda.sdp_kernel(
     enable_math=False, 
     enable_mem_efficient=False
 ):
-    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
 
     # warmup
     for _ in range(10):
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        o.grad = None
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
     
     # Prepare for timing
@@ -183,6 +187,10 @@ with torch.backends.cuda.sdp_kernel(
     for i in range(100):
         start_events[i].record()
         torch.cuda.synchronize()
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        o.grad = None
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
         torch.cuda.synchronize()
         end_events[i].record()
@@ -201,10 +209,10 @@ with torch.backends.cuda.sdp_kernel(
     enable_math=False, 
     enable_mem_efficient=False
 ):
-    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
         
     # warmup
     for _ in range(10):
@@ -215,6 +223,13 @@ with torch.backends.cuda.sdp_kernel(
         o.grad = None
         
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
+        
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        o.grad = None
+        
         o.backward(grad_output, retain_graph=True)
     
     # Prepare for timing
@@ -224,6 +239,11 @@ with torch.backends.cuda.sdp_kernel(
     # Time the backward pass
 
     for i in range(100):
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        o.grad = None
 
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
        
@@ -255,10 +275,10 @@ with torch.backends.cuda.sdp_kernel(
     enable_math=False, 
     enable_mem_efficient=False
 ):
-    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
         
     # warmup
     for _ in range(10):
@@ -269,6 +289,13 @@ with torch.backends.cuda.sdp_kernel(
         o.grad = None
         
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
+        
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        o.grad = None
+    
         o.backward(grad_output, retain_graph=True)
     
     # Prepare for timing
@@ -280,8 +307,21 @@ with torch.backends.cuda.sdp_kernel(
     for i in range(100):
         start_events[i].record()
         torch.cuda.synchronize()
+        
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        o.grad = None
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v).requires_grad_()
+        
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        o.grad = None
         o.backward(grad_output, retain_graph=True)
+        
         torch.cuda.synchronize()
         end_events[i].record()
     
