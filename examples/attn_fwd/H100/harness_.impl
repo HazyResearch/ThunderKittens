@@ -82,9 +82,9 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    // constexpr static int tile_width = fwd_attend_ker_tile_dims<ATTN_D>::tile_width;
-    // constexpr static int qo_height  = fwd_attend_ker_tile_dims<ATTN_D>::qo_height;
-    // constexpr static int kv_height  = fwd_attend_ker_tile_dims<ATTN_D>::kv_height;
+    constexpr static int tile_width = fwd_attend_ker_tile_dims<ATTN_D>::tile_width;
+    constexpr static int qo_height  = fwd_attend_ker_tile_dims<ATTN_D>::qo_height;
+    constexpr static int kv_height  = fwd_attend_ker_tile_dims<ATTN_D>::kv_height;
     CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(d_q); 
     CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_k);
     CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_v);
@@ -101,8 +101,8 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(QO_BLOCKS*NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (QO_BLOCKS*NUM_WORKERS*kittens::TILE_DIM) == 0);
+    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
