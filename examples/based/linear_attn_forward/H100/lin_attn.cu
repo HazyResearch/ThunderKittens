@@ -52,8 +52,8 @@ __device__ static void mul_slice(rt_bf_1x4<> &dst, const rt_bf_1x1<> &src, const
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {//, CUtensorMap* __kv_state) {
 
-    int warpid      = kittens::warpid(); // who am i? when am i?
-    int tic = 0;
+    int warpid = kittens::warpid(); // who am i? when am i?
+    int tic = 0, toc = 1;
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -71,6 +71,9 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
     st_bf_4x4<wgmma_interleave_l> (&test_chunk_0) = al.allocate<st_bf_4x4<wgmma_interleave_l>>(); // 8192 bytes
 
     sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
+    int a0_offset;
+    __shared__ float a0_ring[320];
+    a0_ring[threadIdx.x] = 0;
 
     if(warpid == 0) {
         zero(a0_total);
@@ -87,8 +90,9 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
 
     // initial load
     __shared__ tma::barrier bar;
+    if (warpid == 0) tma::init_barrier(bar);
+    __syncthreads();
     if (warpid == 0) {
-        tma::init_barrier(bar);
         tma::set_bytes(bar,
             size_bytes<typeof(q_s[0])> +
             size_bytes<typeof(k_s[0])> +
@@ -100,7 +104,7 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
         tma::load_async(v_s[tic], tma_v, bar, tile_idx);
     }
 
-    for (int block = 0; block < n_blocks; block++, tic^=1) {
+    for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
         rt_bf_1x4<> local_attn_bf; // 4 registers each -- 16
         rt_fl_1x4<> local_attn, temp_attn_accum; // 32 registers each -- 64
         rt_fl_1x4<> o; // 32 registers each -- 64
@@ -114,10 +118,10 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
                 size_bytes<typeof(k_s[0])> +
                 size_bytes<typeof(v_s[0])>
             );
-            int next_tile_idx = (blockIdx.x * n_blocks) + block+1;
-            tma::load_async(q_s[tic^1], tma_q, bar, next_tile_idx);
-            tma::load_async(k_s[tic^1], tma_k, bar, next_tile_idx);
-            tma::load_async(v_s[tic^1], tma_v, bar, next_tile_idx);
+            int next_tile_idx = (blockIdx.x * n_blocks) + block + 1;
+            tma::load_async(q_s[toc], tma_q, bar, next_tile_idx);
+            tma::load_async(k_s[toc], tma_k, bar, next_tile_idx);
+            tma::load_async(v_s[toc], tma_v, bar, next_tile_idx);
         }
 
         // we start by doing the very local computations. Then, we'll follow up later with the rest.
@@ -152,7 +156,6 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
         warpgroup::mma_async_wait(); // ding dong! o matmuls have arrived
 
         warpgroup::copy(test_chunk_0, v_s[tic]); // this extra copy should not be necessary, but stuff breaks without it for unclear reasons.
-        __syncthreads();
         warpgroup::mma_fence(a1_trans); // a1 accumulation matmul fence
         warpgroup::mma_AtB(a1_trans, test_chunk_0, k_s[tic]); // we now have 4 1x4 registers that need to eventually be summed.
         warpgroup::mma_commit_group(); // dew it
@@ -183,7 +186,7 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
 
-        // do the cumulative sum last, after everything is stored
+        // // do the cumulative sum last, after everything is stored
         warpgroup::store(o_s[tic], o);
         __syncthreads();
         accumulate_v0(o_s[tic], a0_total, v_s[tic]); // cumulative sum of V onto O in shared memory

@@ -2,9 +2,9 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 16
+#define ATTN_B 32
 #define ATTN_H 16
-#define ATTN_N 2048
+#define ATTN_N 4096
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
@@ -99,15 +99,15 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf_4x1<wgmma_swizzle_l>,    ATTN_B*ATTN_H*ATTN_N/64>(d_q); 
-    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf_4x1<wgmma_interleave_l>, ATTN_B*ATTN_H*ATTN_N/64>(d_k);
-    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf_4x4<wgmma_interleave_l>, ATTN_B*ATTN_H*ATTN_N/64>(d_v);
-    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf_4x4<swizzle_l>,          ATTN_B*ATTN_H*ATTN_N/64>(d_o);
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf_4x1<wgmma_swizzle_l>,    (ATTN_B*ATTN_H*ATTN_N)/64>(d_q); 
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf_4x1<wgmma_interleave_l>, (ATTN_B*ATTN_H*ATTN_N)/64>(d_k);
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf_4x4<wgmma_interleave_l>, (ATTN_B*ATTN_H*ATTN_N)/64>(d_v);
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf_4x4<swizzle_l>,          (ATTN_B*ATTN_H*ATTN_N)/64>(d_o);
 
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 80000; // have the flag tell us
+    unsigned long mem_size = 98000; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
@@ -118,7 +118,13 @@ int main(int argc, char **argv) {
         mem_size
     );
 
-    const int ITER = 20;
+    const int ITER = 1;
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Warmup!\n";
+    for(int i = 0; i < 1; i++) {
+        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d); //, d_kv_state);
+    }
     cudaDeviceSynchronize();
     CudaCheckError();
     std::cout << "Starting kernel\n";

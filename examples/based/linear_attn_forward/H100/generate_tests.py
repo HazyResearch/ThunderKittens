@@ -7,11 +7,11 @@ import sys
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 2048
+N = 4096
 D = 16
 DV = 64
 
-TESTNAME = sys.argv[1]
+TESTNAME = 'randn_all' if len(sys.argv) == 1 else sys.argv[1]
 
 if TESTNAME in ['ones_all', 'ones_t0', 'ones_t1', 'ones_t0t1', 'ones_t2']:
     q = (torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')/D).to(torch.float32)
