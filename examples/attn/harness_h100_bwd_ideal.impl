@@ -4,7 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024;
+constexpr int ATTN_N     = 1024 * 2;
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 16; 
 constexpr int ATTN_B     = 16; 
@@ -250,7 +250,7 @@ int main(int argc, char **argv) {
             l_file << l[i] << ' ';
             diff_l_file << diff << ' ';
         }
-        if(abs(diff) > 2 || isnan(diff)) {
+        if(abs(diff) > 1 || isnan(diff)) {
             good = false;
         }
     }
@@ -480,35 +480,39 @@ int main(int argc, char **argv) {
     cudaMemcpy(kg_bf, d_b_kg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
     cudaMemcpy(vg_bf, d_b_vg, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
 
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         qg[i] = __bfloat162float(qg_bf[i]);
         kg[i] = __bfloat162float(kg_bf[i]);
         vg[i] = __bfloat162float(vg_bf[i]);
     }
 
     good = true;
-    // std::ofstream qg_ref_file("printouts/qg_ref.txt");
-    // std::ofstream qg_file("printouts/qg.txt");
-    // std::ofstream diff_qg_file("printouts/diff_qg.txt");
-    // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-    //     float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-    //     qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-    //     qg_file << qg[i] << ' ';
-    //     diff_qg_file << diff << ' ';
-    //     if(abs(diff) > 0.02 || isnan(diff)) {
-    //         good = false;
-    //     }
-    // }
+    std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    std::ofstream qg_file("printouts/qg.txt");
+    std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+        float diff = qg[i] - qg_ref[i % TOTAL_UNIQUE_ELEMENTS];
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            qg_ref_file << qg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            qg_file << qg[i] << ' ';
+            diff_qg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.025 || isnan(diff)) {
+            good = false;
+        }
+    }
 
     std::ofstream kg_ref_file("printouts/kg_ref.txt");
     std::ofstream kg_file("printouts/kg.txt");
     std::ofstream diff_kg_file("printouts/diff_kg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = kg[i] - kg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        kg_ref_file << kg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        kg_file << kg[i] << ' ';
-        diff_kg_file << diff << ' ';
-        if(abs(diff) > 0.02 || isnan(diff)) {
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            kg_ref_file << kg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            kg_file << kg[i] << ' ';
+            diff_kg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
         }
     }
@@ -516,12 +520,14 @@ int main(int argc, char **argv) {
     std::ofstream vg_ref_file("printouts/vg_ref.txt");
     std::ofstream vg_file("printouts/vg.txt");
     std::ofstream diff_vg_file("printouts/diff_vg.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = vg[i] - vg_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        vg_ref_file << vg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        vg_file << vg[i] << ' ';
-        diff_vg_file << diff << ' ';
-        if(abs(diff) > 0.02 || isnan(diff)) {
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            vg_ref_file << vg_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            vg_file << vg[i] << ' ';
+            diff_vg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
         }
     }
