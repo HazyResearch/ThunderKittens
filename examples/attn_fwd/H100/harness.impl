@@ -2,12 +2,15 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
-constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 4096;
 constexpr int ATTN_D     = 64;
-constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int BLOCK_SIZE = (32*(NUM_WORKERS));
 constexpr int ITER = 30;
+
+constexpr int ATTN_B     = 16;
+constexpr int ATTN_H     = 16;
+// constexpr int ATTN_B     = 16384 / ATTN_N;
+// constexpr int ATTN_H     = 2048 / ATTN_D;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -121,7 +124,7 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
 
@@ -129,11 +132,13 @@ int main(int argc, char **argv) {
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        o_file << o[i] << ' ';
-        diff_file << diff << ' ';
+        if(i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }

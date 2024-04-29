@@ -135,5 +135,16 @@ __device__ static inline void store_async_wait() {
     __syncwarp();
 }
 
+template <int N=0>
+__device__ static inline void store_read_async_wait() {
+    asm volatile (
+        "cp.async.bulk.wait_group.read %0;"
+        :
+        : "n"(N)
+        : "memory"
+    );
+    __syncwarp();
+}
+
 } // namespace tma
 } // namespace kittens

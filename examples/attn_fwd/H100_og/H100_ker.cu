@@ -25,8 +25,6 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     constexpr int kv_height  = fwd_attend_ker_tile_dims<D>::kv_height;
     constexpr int kv_blocks  = N / (kv_height*TILE_DIM);
 
-    constexpr int gridDimx   = (N / (NUM_WORKERS*kittens::TILE_DIM)); 
-
     auto (&q_smem)[NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(); // shared tiles
     auto (&k_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2>();
     auto (&v_smem)[2]              = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2>();
@@ -55,7 +53,7 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     __syncthreads();
 
     if (warpid%4 == 0) { // load q from HBM
-        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDimx) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
+        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
         tma::load_async(q_smem[warpgroupid], tma_q, qsmem_barrier, tile_idx);
     }
     if      (warpid == 0) tma::load_async(k_smem[tic], tma_k,* kbar     , blockIdx.y*kv_blocks); // load initial k, v from HBM
@@ -117,7 +115,7 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     warpgroup::store(o_smem[warpgroupid], o_accum); // store from registers to shared mem
     __syncthreads(); // everyone done?
     if (warpid%4 == 0) { // store o to HBM
-        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDimx) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
+        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * blockDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid; 
         tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
         tma::store_commit_group(); // dew it
     }
