@@ -26,6 +26,24 @@ __device__ static inline void load(SV &dst, const typename SV::dtype *src) {
     }
 }
 
+template<ducks::sv::all SV>
+__device__ static inline void load_async(SV &dst, const typename SV::dtype *src, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
+    #pragma unroll
+    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
+        if(i * elem_per_transfer < dst.length) {
+            cuda::memcpy_async(
+                (void*)&dst[i*elem_per_transfer], 
+                (void*)&src[i*elem_per_transfer], 
+                cuda::aligned_size_t<16>(sizeof(float4)), 
+                barrier
+            );
+        }
+    }
+}
+
 /**
  * @brief Stores data from a shared memory vector to global memory.
  * 
