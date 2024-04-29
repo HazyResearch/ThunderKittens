@@ -146,14 +146,14 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-constexpr int WORKERS = 8;
+constexpr int WORKERS = 4;
 
 constexpr int th = 4; 
 constexpr int tw = 64/16;
 
 using layout_nrow = ducks::st_layout::swizzle;
 
-template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 1)
+template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 2)
 void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -168,26 +168,24 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     rt_fl<th, tw> o_reg; 
     rt_fl<th, tw>::col_vec d_reg;
 
-    __shared__ uint64_t ograd_smem_barrier, o_smem_barrier;
+    __shared__ uint64_t smem_barrier;
     int o_phasebit = 0; 
-    int og_phasebit = 0;
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS>(ograd_smem_barrier, 1);
-        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS>(o_smem_barrier, 1);
+        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS * 2>(smem_barrier, 1);
     }
-    __syncthreads();
 
     if (warpid == 0) {
         for (int w = 0; w < WORKERS; w++) { // load o, o_grad
             int tile_idx = (blockIdx.y * WORKERS * gridDim.x) + (blockIdx.x * WORKERS) + w; 
-            tma::load_async((o_smem[w]), tma_o, o_smem_barrier, tile_idx); 
-            tma::load_async((og_smem[w]), tma_o_grad, ograd_smem_barrier, tile_idx); 
+            tma::load_async((o_smem[w]),  tma_o,      smem_barrier, tile_idx); 
+            tma::load_async((og_smem[w]), tma_o_grad, smem_barrier, tile_idx); 
         }
     }
+    __syncthreads();
 
-    tma::arrive_and_wait(ograd_smem_barrier, og_phasebit);
-    tma::arrive_and_wait(o_smem_barrier, o_phasebit);
+    tma::arrive_and_wait(smem_barrier, o_phasebit);
+    o_phasebit ^= 1;
 
     load(o_reg, o_smem[warpid]);
     load(og_reg, og_smem[warpid]);
@@ -196,8 +194,8 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     row_sum(d_reg, og_reg);
     
     store(d_smem[warpid], d_reg);
-
     __syncthreads(); 
+
     if (warpid == 0) {
         for (int w = 0; w < WORKERS; w++) {
             int tile_idx = (blockIdx.y * WORKERS * gridDim.x) + (blockIdx.x * WORKERS) + w; 

@@ -286,7 +286,7 @@ int main(int argc, char **argv) {
         o_bf[i] = __float2bfloat16(o_ref[i % TOTAL_UNIQUE_ELEMENTS]);
 
         og_bf[i] = __float2bfloat16(og[i % TOTAL_UNIQUE_ELEMENTS]);
-        qg_bf[i] = __float2bfloat16(0.0f);
+        qg_bf[i] = __float2bfloat16(0.0f); // dw, we're not giving it the answer
     }
 
     bf16 *d_b_q, *d_b_k, *d_b_v, *d_b_o, *d_b_l, *d_b_d, *d_b_og, *d_b_qg, *d_b_kg, *d_b_vg;
@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_b_l, l_bf, TOTAL_ELEMENTS/ATTN_D * sizeof(bf16), cudaMemcpyHostToDevice);
     // D will be produced
     cudaMemcpy(d_b_og, og_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice); // qg will be produced too, but we need to zero it out!
     // kg will be produced
     // vg will be produced
     
@@ -362,7 +362,7 @@ int main(int argc, char **argv) {
     // check correctness
     cudaMemcpy(d_bf, d_b_d, TOTAL_ELEMENTS/ATTN_D * sizeof(bf16), cudaMemcpyDeviceToHost);
 
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_D; i++) {
         d[i]  = __bfloat162float(d_bf[i]);
     }
 
@@ -370,9 +370,9 @@ int main(int argc, char **argv) {
     std::ofstream d_ref_file("printouts/d_ref.txt");
     std::ofstream d_file("printouts/d.txt");
     std::ofstream diff_d_file("printouts/diff_d.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS/ATTN_D; i++) {
-        float diff = d[i] - d_ref[i];
-        d_ref_file << d_ref[i] << ' ';
+    for(int i = 0; i < (TOTAL_ELEMENTS/ATTN_D); i++) {
+        float diff = d[i] - d_ref[i % ATTN_N];
+        d_ref_file << d_ref[i % ATTN_N] << ' ';
         d_file << d[i] << ' ';
         diff_d_file << diff << ' ';
         if(abs(diff) > 0.01 || isnan(diff)) {
@@ -385,8 +385,8 @@ int main(int argc, char **argv) {
     else std::cout << "BWD Prep Incorrect :(\n\n\n\n";
 
     // replicate d_ref into heads
-    for (int i = 0; i < TOTAL_ELEMENTS/ATTN_D; i++) {
-        d_bf[i] = __float2bfloat16(d_ref[i % TOTAL_UNIQUE_ELEMENTS/ATTN_D]);
+    for (int i = 0; i < (TOTAL_ELEMENTS/ATTN_D); i++) {
+        d_bf[i] = __float2bfloat16(d_ref[i % ATTN_N]);
     }
 
     CUtensorMap tma_desc_b_q  = {};
