@@ -6,26 +6,28 @@
 #define D_VO (64) // hardcoded but can be changed with some effort
 
 using namespace kittens;
-// cumulative sum of v onto o
-template<kittens::ducks::st::all ST1, kittens::ducks::st::all ST2>
-__device__ void accumulate_v0(ST1 &o, sv_bf<ST1::width> &running_sum, const ST2 &v) {
-    static_assert(ST1::rows == ST2::rows);
-    static_assert(ST1::cols == ST2::cols);
+// cumulative sum of v onto a0_total
+template<kittens::ducks::st::all ST>
+__device__ void accumulate_a0(sv_bf<ST::width> &a0_total, const ST &v) {
     int col = threadIdx.x*2;
-    // simple version first
-    if(col < ST1::cols) {
-        float2 acc = __bfloat1622float2(*(bf16_2*)&running_sum[col]);
+    constexpr int PARALLEL_LOADS = 16;
+    float2 v_data[PARALLEL_LOADS];
+    if(col < ST::cols) {
+        float2 acc = __bfloat1622float2(*(bf16_2*)&a0_total[col]);
         #pragma unroll
-        for(int i = 0; i < ST1::rows; i++) {
-            float2 v_data = __bfloat1622float2(*(bf16_2*)&v[int2{i, col}]);
-            float2 o_data = __bfloat1622float2(*(bf16_2*)&o[int2{i, col}]);
-            acc.x += v_data.x;
-            acc.y += v_data.y;
-            o_data.x += acc.x;
-            o_data.y += acc.y;
-            *(bf16_2*)&o[int2{i, col}] = __float22bfloat162_rn(o_data);
+        for(int k = 0; k < ST::rows/PARALLEL_LOADS; k++) {
+            #pragma unroll
+            for(int i = 0; i < PARALLEL_LOADS; i++) { // load it all in
+                int row = k*PARALLEL_LOADS+i;
+                v_data[i] = __bfloat1622float2(*(bf16_2*)&v[int2{row, col}]);
+            }
+            #pragma unroll
+            for(int i = 0; i < PARALLEL_LOADS; i++) { // accumulate, through registers, and write
+                acc.x += v_data[i].x;
+                acc.y += v_data[i].y;
+            }
         }
-        *(bf16_2*)&running_sum[col] = __float22bfloat162_rn(acc);
+        *(bf16_2*)&a0_total[col] = __float22bfloat162_rn(acc);
     }
 }
 // in pytorch, this computes, for a 16x64 tensor dst and 16x16 tensor src:
@@ -75,6 +77,7 @@ __device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, c
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o) {//, CUtensorMap* __kv_state) {
 
+    int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
     int tic = 0, toc = 1;
 
@@ -158,6 +161,7 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
         mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it
         mul(temp_attn_accum, temp_attn_accum, 0.5f); // divide by 2
         add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
+        add(temp_attn_accum, temp_attn_accum, 1.f); // cumulative sum for a0
         // END comment-out for removing T2 (debug)
         copy(local_attn_bf, temp_attn_accum); // now stored.
         // now make causal
@@ -205,10 +209,24 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
 
+        // now we do the sum of the previous a0 onto o
+        #pragma unroll
+        for(int i = 0; i < 4; i++) {
+            #pragma unroll
+            for(int j = 0; j < 2; j++) {
+                int col = i*16 + j*8 + (laneid%4)*2;
+                float2 data = __bfloat1622float2(*(bf16_2*)&a0_total[col]);
+                o.tiles[0][i].data[2*j].x += data.x;
+                o.tiles[0][i].data[2*j].y += data.y;
+                o.tiles[0][i].data[2*j+1].x += data.x;
+                o.tiles[0][i].data[2*j+1].y += data.y;
+            }
+        }
+
         // // do the cumulative sum last, after everything is stored
         warpgroup::store(o_s[tic], o);
         __syncthreads();
-        accumulate_v0(o_s[tic], a0_total, v_s_3[tic]); // cumulative sum of V onto O in shared memory
+        accumulate_a0(a0_total, v_s_3[tic]); // cumulative sum of V onto O in shared memory
         __syncthreads();
 
         if (block>0) tma::store_async_wait();
