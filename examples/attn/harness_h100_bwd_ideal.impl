@@ -4,15 +4,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024;
+constexpr int ATTN_N     = 1024 * 4;
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 32; 
 constexpr int ATTN_B     = 16; 
 
 constexpr int ITER = 30;
-
-// constexpr int ATTN_B     = 16384/(ATTN_N); 
-// constexpr int ATTN_H     = 2048/(ATTN_D);
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -457,7 +454,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d, d_b_l, d_b_d); 
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
@@ -466,7 +463,7 @@ int main(int argc, char **argv) {
     for(int i = 0; i < ITER; i++) {
         cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
         const auto start_bwd2 = std::chrono::high_resolution_clock::now();
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d, d_b_l, d_b_d);
+        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
         cudaDeviceSynchronize();
         const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
@@ -499,6 +496,7 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
+            // printf("diff: %f\n", diff);
         }
     }
 
@@ -514,6 +512,7 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
+            // printf("diff: %f\n", diff); 
         }
     }
 
@@ -529,6 +528,7 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
+            // printf("diff: %f\n", diff);
         }
     }
 

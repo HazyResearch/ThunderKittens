@@ -341,6 +341,71 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
     }
 }
 
+template<ducks::st::all ST>
+__device__ static inline void store_reduce_sum_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        if constexpr (detail::st_type_naive_layout<ST>) {
+            int32_t crd0 = tile_col_idx * (src.cols);
+            int32_t crd1 = tile_row_idx * (src.rows);
+
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(bf16)));
+            int32_t crd2 = tile_row_idx * (src.rows);
+
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3, %4}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
+            int32_t crd0 = 0;
+            int32_t crd1 = tile_row_idx * (src.rows);
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(bf16)));
+
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3, %4}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2)
+                : "memory"
+            );
+        }
+        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
+            int32_t crd0 = 0; 
+            int32_t crd1 = 0;
+            int32_t crd2 = tile_col_idx * (src.cols/8);
+            int32_t crd3 = tile_row_idx * (src.rows/8);
+
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.4d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
+                : "memory"
+            );
+        }
+    }
+}
+
 /**
  * @brief Asynchronously loads data from global memory into a shared memory tile.
  *
