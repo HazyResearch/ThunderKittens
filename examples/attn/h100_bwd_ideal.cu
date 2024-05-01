@@ -231,11 +231,11 @@ using layout_wgmma     = ducks::st_layout::wgmma_swizzle;
 using layout_wgmma_itl = ducks::st_layout::wgmma_interleave;
 using layout_tma_swi   = ducks::st_layout::swizzle; 
 
-#define k_smem_tile  st_bf<tile_h, tile_w, layout_wgmma_itl>
+#define k_smem_tile  st_bf<tile_h, tile_w, layout_wgmma>
 #define v_smem_tile  st_bf<tile_h, tile_w, layout_wgmma>
 
-#define q_smem_tile  st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
-#define og_smem_tile st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
+#define q_smem_tile  st_bf<tile_h_qo, tile_w, layout_wgmma>
+#define og_smem_tile st_bf<tile_h_qo, tile_w, layout_wgmma>
 #define qg_smem_tile st_bf<tile_h_qo, tile_w, layout_tma_swi>
 #define l_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
 #define d_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
@@ -261,6 +261,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     q_smem_tile  (&q_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<q_smem_tile,  2, NUM_WARPGROUPS_BWD_QO>();
     og_smem_tile (&og_smem)[2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<og_smem_tile, 2, NUM_WARPGROUPS_BWD_QO>();
     qg_smem_tile (&qg_smem)[2][NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = al.allocate<qg_smem_tile, 2, NUM_WARPGROUPS_BWD_QO, NUM_WARPGROUPS_BWD>();
+    
     l_smem_tile  (&l_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<l_smem_tile,  2, NUM_WARPGROUPS_BWD_QO>();
     d_smem_tile  (&d_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<d_smem_tile,  2, NUM_WARPGROUPS_BWD_QO>();
 
@@ -396,7 +397,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 copy(temp_block, att_block);
                 copy(att_block_mma, att_block);
 
-                auto (*att_smem)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = reinterpret_cast<st_bf<tile_h_qo, tile_w, layout_wgmma_itl> (*)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD]>(qg_smem); 
+                auto (*att_smem)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = reinterpret_cast<st_bf<tile_h_qo, tile_w, layout_wgmma> (*)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD]>(qg_smem); 
 
                 warpgroup::store(att_smem[tic][subtile][warpgroupid], att_block_mma);
                 __syncthreads(); 
@@ -409,7 +410,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 copy(d_reg_fl, d_reg_bf);
 
                 warpgroup::mma_fence(vg_reg);
-                warpgroup::mma_AtB(vg_reg, att_smem[tic][subtile][warpgroupid], og_smem[tic][subtile]);
+                warpgroup::mma_ABt(vg_reg, att_smem[tic][subtile][warpgroupid], og_smem[tic][subtile]);
                 warpgroup::mma_commit_group();
 
                 warpgroup::mma_async_wait();
@@ -418,15 +419,16 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 mul(temp_block, temp_block, __float2bfloat16(0.125f));
                 copy(att_block_mma, temp_block);
 
+                zero(qg_reg);
+                warpgroup::mma_fence(qg_reg);
+                warpgroup::mma_ABt(qg_reg, att_block_mma, k_smem[warpgroupid]);
+                warpgroup::mma_commit_group();
+
                 warpgroup::store(att_smem[tic][subtile][warpgroupid], att_block_mma);
                 __syncthreads(); 
 
-                warpgroup::mma_fence(qg_reg);
-                warpgroup::mm_AB(qg_reg, att_smem[tic][subtile][warpgroupid], k_smem[warpgroupid]);
-                warpgroup::mma_commit_group();
-
                 warpgroup::mma_fence(kg_reg);
-                warpgroup::mma_AtB(kg_reg, att_smem[tic][subtile][warpgroupid], q_smem[tic][subtile]);
+                warpgroup::mma_ABt(kg_reg, att_smem[tic][subtile][warpgroupid], q_smem[tic][subtile]);
                 warpgroup::mma_commit_group();
                 warpgroup::mma_async_wait();
                 warpgroup::store(qg_smem[tic][subtile][warpgroupid], qg_reg);
