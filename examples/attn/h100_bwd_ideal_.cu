@@ -243,10 +243,6 @@ using layout_tma_swi   = ducks::st_layout::swizzle;
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
-#define KV_BLOCKS 2
-// 8192 = kv_blocks should be 2
-// dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
-
 template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
                             CUtensorMap* tma_l_vec, CUtensorMap* tma_d_vec, 
@@ -282,7 +278,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     constexpr int qo_blocks = N / (tile_h_qo * kittens::TILE_DIM * NUM_WARPGROUPS_BWD_QO);
-    // constexpr int kv_blocks = N / (tile_h    * kittens::TILE_DIM * NUM_WARPGROUPS_BWD);
+    constexpr int kv_blocks = N / (tile_h    * kittens::TILE_DIM * NUM_WARPGROUPS_BWD);
 
     __shared__ uint64_t kv_b, qo_b, vec_b;
 
@@ -310,15 +306,22 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         } 
     }
 
-    for (int kv_idx = 0; kv_idx < KV_BLOCKS; kv_idx++) {
+    for (int kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
         
         if (warpid == 0) {
             // load k and v
             for (int w = 0; w < NUM_WARPGROUPS_BWD; w++) {
-                int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * KV_BLOCKS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS_BWD * KV_BLOCKS) + (kv_idx * NUM_WARPGROUPS_BWD) + w;
+                int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * kv_blocks) + (kv_idx * NUM_WARPGROUPS_BWD) + w; 
                 tma::load_async((k_smem[w]), tma_k, kv_b, tile_idx); 
                 tma::load_async((v_smem[w]), tma_v, kv_b, tile_idx); 
             }
+        }
+        
+        tma::arrive_and_wait(kv_b, kv_phasebit);
+        kv_phasebit ^= 1;
+
+        if (threadIdx.x == 0) {
+            tma::set_bytes(kv_b, NUM_WARPGROUPS_BWD * sizeof(bf16) * k_smem[0].num_elements * 2);
         }
 
         zero(kg_reg);
@@ -340,7 +343,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 if (warpid == 0) {
                     for (int w = 0; w < NUM_WARPGROUPS_BWD_QO; w++) {
                         int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + ((qo_idx + 1) * NUM_WARPGROUPS_BWD_QO) + w;
-                        tma::load_async((q_smem [toc][w]),    tma_q,   qo_b, tile_idx); 
+                        tma::load_async((q_smem [toc][w]),     tma_q,  qo_b, tile_idx); 
                         tma::load_async((og_smem[toc][w]),    tma_og,  qo_b, tile_idx);
 
                         tma::load_async((l_smem[toc][w]),     tma_l_vec, vec_b, tile_idx);
@@ -348,7 +351,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                     }
                 }
             }
-            else if (kv_idx + 1 < KV_BLOCKS) {
+            else if (kv_idx + 1 < kv_blocks) {
                 if (threadIdx.x == 0) {
                     tma::set_bytes(qo_b,  NUM_WARPGROUPS_BWD_QO * sizeof(bf16) * q_smem[0][0].num_elements * 2); 
                     tma::set_bytes(vec_b, NUM_WARPGROUPS_BWD_QO * sizeof(bf16) * l_smem[0][0].length       * 2);
@@ -357,7 +360,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 if (warpid == 0) {
                     for (int w = 0; w < NUM_WARPGROUPS_BWD_QO; w++) {
                         int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + (0 * NUM_WARPGROUPS_BWD_QO) + w;
-                        tma::load_async((q_smem [toc][w]),    tma_q,   qo_b, tile_idx); 
+                        tma::load_async((q_smem [toc][w]),     tma_q,  qo_b, tile_idx); 
                         tma::load_async((og_smem[toc][w]),    tma_og,  qo_b, tile_idx); 
 
                         tma::load_async((l_smem[toc][w]),     tma_l_vec, vec_b, tile_idx);
@@ -368,17 +371,6 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
 
             if (qo_idx > 0 || kv_idx > 0) {
                 tma::store_async_wait(); 
-            }
-
-            if (qo_idx == 0) {
-                tma::arrive_and_wait(kv_b, kv_phasebit);
-                kv_phasebit ^= 1;
-
-                if (KV_BLOCKS > 1) {
-                    if (threadIdx.x == 0) {
-                        tma::set_bytes(kv_b, NUM_WARPGROUPS_BWD * sizeof(bf16) * k_smem[0].num_elements * 2);
-                    }
-                }
             }
 
             for (int subtile = 0; subtile < NUM_WARPGROUPS_BWD_QO; subtile++) {
@@ -446,7 +438,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
         __syncthreads();
 
         if (warpid % 4 == 0) {
-            int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * KV_BLOCKS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS_BWD * KV_BLOCKS) + (kv_idx * NUM_WARPGROUPS_BWD) + warpgroupid; 
+            int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD * kv_blocks) + (kv_idx * NUM_WARPGROUPS_BWD) + warpgroupid; 
             tma::store_async(tma_kg, (k_smem[warpgroupid]), tile_idx);
             tma::store_async(tma_vg, (v_smem[warpgroupid]), tile_idx);
             tma::store_commit_group();

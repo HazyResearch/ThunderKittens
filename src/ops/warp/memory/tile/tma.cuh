@@ -342,7 +342,7 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
 }
 
 template<ducks::st::all ST>
-__device__ static inline void store_reduce_sum_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+__device__ static inline void store_sum_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));

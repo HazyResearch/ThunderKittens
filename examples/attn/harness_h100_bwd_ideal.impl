@@ -4,7 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024 * 4;
+constexpr int ATTN_N     = 1024;
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 32; 
 constexpr int ATTN_B     = 16; 
@@ -449,8 +449,12 @@ int main(int argc, char **argv) {
 
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
+    // dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
+    // static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
+
+    dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM) == 0);
+
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
