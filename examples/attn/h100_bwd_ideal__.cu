@@ -235,7 +235,7 @@ using layout_tma_swi   = ducks::st_layout::swizzle;
 #define v_smem_tile  st_bf<tile_h, tile_w, layout_wgmma>
 
 #define q_smem_tile  st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
-#define og_smem_tile st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
+#define og_smem_tile st_bf<tile_h_qo, tile_w, layout_wgmma>
 #define qg_smem_tile st_bf<tile_h_qo, tile_w, layout_tma_swi>
 #define l_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
 #define d_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
@@ -265,6 +265,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     l_smem_tile  (&l_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<l_smem_tile,  2, NUM_WARPGROUPS_BWD_QO>();
     d_smem_tile  (&d_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<d_smem_tile,  2, NUM_WARPGROUPS_BWD_QO>();
 
+    og_smem_tile (&og_smem_t)[NUM_WARPGROUPS_BWD_QO]                      = al.allocate<og_smem_tile, NUM_WARPGROUPS_BWD_QO>();
+
     rt_fl<tile_h/kittens::WARPGROUP_WARPS, tile_w> kg_reg;
     rt_fl<tile_h/kittens::WARPGROUP_WARPS, tile_w> vg_reg;
 
@@ -278,6 +280,8 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     rt_fl<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h> att_block; 
     rt_bf<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h> att_block_mma;
     rt_fl<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h> temp_block;
+
+    rt_bf<tile_h, tile_h_qo/kittens::WARPGROUP_WARPS> transpose; 
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -382,6 +386,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 }
             }
 
+            __syncthreads(); 
             for (int subtile = 0; subtile < NUM_WARPGROUPS_BWD_QO; subtile++) {
                 warpgroup::mma_fence(att_block);
                 warpgroup::mm_ABt(att_block, q_smem[tic][subtile], k_smem[warpgroupid]);
@@ -397,7 +402,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 copy(temp_block, att_block);
                 copy(att_block_mma, att_block);
 
-                auto (*att_smem)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = reinterpret_cast<st_bf<tile_h_qo, tile_w, layout_wgmma_itl> (*)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD]>(qg_smem); 
+                auto (*att_smem)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = reinterpret_cast<st_bf<tile_h_qo, tile_w, layout_wgmma> (*)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD]>(qg_smem); 
 
                 warpgroup::store(att_smem[tic][subtile][warpgroupid], att_block_mma);
                 __syncthreads(); 
@@ -409,8 +414,13 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 warpgroup::load(d_reg_bf, d_smem[tic][subtile]);
                 copy(d_reg_fl, d_reg_bf);
 
+                warpgroup::load(att_block_mma, og_smem[tic][subtile]);
+                transpose_sep(transpose, att_block_mma); 
+                auto ref = subtile_inplace<4, 1>(og_smem_t[subtile], 0, warpid % 4); 
+                store(ref, transpose);
+
                 warpgroup::mma_fence(vg_reg);
-                warpgroup::mma_AtB(vg_reg, att_smem[tic][subtile][warpgroupid], og_smem[tic][subtile]);
+                warpgroup::mma_ABt(vg_reg, og_smem_t[subtile], att_smem[tic][subtile][warpgroupid]);
                 warpgroup::mma_commit_group();
 
                 warpgroup::mma_async_wait();
@@ -424,11 +434,13 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 warpgroup::mma_AB(qg_reg, att_block_mma, k_smem[warpgroupid]);
                 warpgroup::mma_commit_group();
 
-                warpgroup::store(att_smem[tic][subtile][warpgroupid], att_block_mma);
+                auto (*att_smem2)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = reinterpret_cast<st_bf<tile_h_qo, tile_w, layout_wgmma_itl> (*)[NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD]>(qg_smem); 
+
+                warpgroup::store(att_smem2[tic][subtile][warpgroupid], att_block_mma);
                 __syncthreads(); 
 
                 warpgroup::mma_fence(kg_reg);
-                warpgroup::mma_AtB(kg_reg, att_smem[tic][subtile][warpgroupid], q_smem[tic][subtile]);
+                warpgroup::mma_AtB(kg_reg, att_smem2[tic][subtile][warpgroupid], q_smem[tic][subtile]);
                 warpgroup::mma_commit_group();
                 warpgroup::mma_async_wait();
                 warpgroup::store(qg_smem[tic][subtile][warpgroupid], qg_reg);
