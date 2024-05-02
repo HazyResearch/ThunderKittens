@@ -500,7 +500,6 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
-            // printf("diff: %f\n", diff);
         }
     }
 
@@ -516,7 +515,6 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
-            // printf("diff: %f\n", diff); 
         }
     }
 
@@ -532,7 +530,6 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.025 || isnan(diff)) {
             good = false;
-            // printf("diff: %f\n", diff);
         }
     }
 
