@@ -1,13 +1,15 @@
 #include "src/kittens.cuh"
 // #include "../../src/kittens.cuh"
+#include <cuda/pipeline>
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 8;
-constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
+#define NUM_WORKERS (8)
+#define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
 
-constexpr int qo_height = 4, kv_height = 8;
-constexpr int NUM_WORKERS_KV = 1;
-constexpr int tile_width = 64/16;
+#define qo_height (4)
+#define kv_height (8)
+#define NUM_WORKERS_KV (1)
+#define tile_width (64/16)
 
 using namespace kittens;
 
@@ -154,6 +156,14 @@ void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
 
+    // b, h, n -> 16, 16, 4096
+    // need to hard code TMA descriptor below
+
+    TORCH_CHECK(batch == 16, "Batch size is TMA hard coded to 16");
+    TORCH_CHECK(heads == 16, "Number of heads is TMA hard coded to 16");
+    TORCH_CHECK(n == 4096, "Seq len is TMA hard coded to 4096");
+    TORCH_CHECK(d == 64, "Head dim is TMA hard coded to 64"); 
+
     TORCH_CHECK(n % (NUM_WORKERS * kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
 
     // convert to bf16
@@ -167,19 +177,19 @@ void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
     bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
-    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>, (batch*heads*n)/(qo_height * 16)>(q_bf);
-    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>, (batch*heads*n)/(kv_height * 16)>(k_bf);
-    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>, (batch*heads*n)/(kv_height * 16)>(v_bf);
-    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>, (batch*heads*n)/(qo_height * 16)>(o_bf);
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>, (16 * 16 * 4096)/(qo_height * 16)>(q_bf);
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>, (16 * 16 * 4096)/(kv_height * 16)>(k_bf);
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>, (16 * 16 * 4096)/(kv_height * 16)>(v_bf);
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>, (16 * 16 * 4096)/(qo_height * 16)>(o_bf);
 
     std::cout << "Check and casts" << std::endl;
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; 
+    unsigned long mem_size = 227000;
     cudaFuncSetAttribute(fwd_attend_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     std::cout << "Set dynamic shared memory" << std::endl;
 
     dim3 grid(n/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
-    // fwd_attend_ker<<<grid, threads, mem_size>>>(n, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+    fwd_attend_ker<<<grid, threads, mem_size>>>(n, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
 
     std::cout << "Launched kernel" << std::endl;
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());

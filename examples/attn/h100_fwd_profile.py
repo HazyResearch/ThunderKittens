@@ -6,7 +6,6 @@ import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 sys.path.insert(0, project_root)
-
 from src.common.pyutils.test_build_utils import __eq
 sys.path.append('build/lib.linux-x86_64-3.10')
 import h100_fwd as mod
@@ -25,9 +24,9 @@ def pytorch_test(Q, K, V):
     o = torch.nn.functional.scaled_dot_product_attention(Q, K, V)
     return o
 
-def h100_fwd_kernel_test(Q, K, V, verbose=True); 
+def h100_fwd_kernel_test(Q, K, V, verbose=True):
     o = torch.zeros_like(Q)
-    mod.h100_fwd(Q, K, V, o)
+    mod.fwd_attend_ker_tk(Q, K, V, o)
     
     return o
 
