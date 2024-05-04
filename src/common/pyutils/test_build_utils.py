@@ -16,24 +16,45 @@ if project_root is None:
     os._exit(-1)   
 
 def _sources(name): return [f"{name}_frontend.cpp", f"{name}.cu"]
-def jit_build(name, debug=False):
-    _cuda_flags  = ['-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', '-arch=native', '--generate-line-info', '--restrict', 
+def jit_build(name, debug=False, gpu_type='4090'):
+    _cuda_flags  = ['-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', '--generate-line-info', '--restrict', 
                     f"-I {project_root}"]
+    
+    if gpu_type == '4090':
+        _cuda_flags.append('-DKITTENS_4090')
+        _cuda_flags.append('-arch=sm_89')
+    elif gpu_type == 'H100':
+        _cuda_flags.append('-DKITTENS_HOPPER')
+        _cuda_flags.append('-arch=sm_90a')
+    elif gpu_type == 'A100':
+        _cuda_flags.append('-DKITTENS_A100')
+        _cuda_flags.append('-arch=sm_80')
+    
     if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G', '-D TORCH_USE_CUDA_DSA']
     return load(name=f"{name}", sources=_sources(name), 
             extra_cflags=[],
             extra_cuda_cflags=_cuda_flags)
 
 
-def cuda_extension(name, debug):
+def cuda_extension(name, debug, gpu_type):
     _cuda_flags  = [
                     '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', 
-                    '-use_fast_math',
-                    '-arch=native', 
+                    '-use_fast_math', 
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
                     f"-I {project_root}"
                     ]
+    
+    if gpu_type == '4090':
+        _cuda_flags.append('-DKITTENS_4090')
+        _cuda_flags.append('-arch=sm_89')
+    elif gpu_type == 'H100':
+        _cuda_flags.append('-DKITTENS_HOPPER')
+        _cuda_flags.append('-arch=sm_90a')
+    elif gpu_type == 'A100':
+        _cuda_flags.append('-DKITTENS_A100')
+        _cuda_flags.append('-arch=sm_80')
+    
     if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G']
     return CUDAExtension(f'{name}', 
                         sources=_sources(name), 

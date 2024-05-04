@@ -2,7 +2,7 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
-using namespace nvcuda;
+// using namespace nvcuda;
 
 // *******
 // ** BROADCAST API

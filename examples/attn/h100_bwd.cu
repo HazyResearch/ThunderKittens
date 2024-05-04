@@ -1,7 +1,7 @@
 
 
 #define KITTENS_HOPPER // we are on an H100
-#include "../../src/kittens.cuh"
+#include "src/kittens.cuh"
 #include <cooperative_groups.h>
 
 constexpr int NUM_WORKERS = 8;
@@ -459,4 +459,10 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-#include "harness_h100_bwd.impl"
+#include "harness_h100_bwd.impl" // (comment out when using the code below)
+
+// // For binding to PyTorch (comment out include for harness_h100_bwd.impl when
+// // using the code below)
+
+// #include "src/common/pyutils/torch_helpers.cuh"
+// #include <iostream> 

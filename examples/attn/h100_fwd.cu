@@ -1,5 +1,5 @@
-#define KITTENS_HOPPER // we are on an H100
-#include "../../src/kittens.cuh"
+#include "src/kittens.cuh"
+// #include "../../src/kittens.cuh"
 #include <cooperative_groups.h>
 
 constexpr int NUM_WORKERS = 8;
@@ -11,13 +11,13 @@ constexpr int tile_width = 64/16;
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_k = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_v = ducks::st_layout::wgmma_interleave; // need to make this 128b
-using layout_o = ducks::st_layout::swizzle;
+using layout_q = kittens::ducks::st_layout::wgmma_swizzle; // need to make this 128b
+using layout_k = kittens::ducks::st_layout::wgmma_swizzle; // need to make this 128b
+using layout_v = kittens::ducks::st_layout::wgmma_interleave; // need to make this 128b
+using layout_o = kittens::ducks::st_layout::swizzle;
 
-template<int N> __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
-void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o) {
+__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
+void fwd_attend_ker(const int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
@@ -36,7 +36,7 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
+    int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     __shared__ uint64_t qsmem_barrier, kvsmem_barrier;//, vsmem_barrier;
 
@@ -131,4 +131,57 @@ void fwd_attend_ker(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
     tma::store_async_wait();
 }
 
-#include "harness_h100_fwd.impl"
+// #include "harness_h100_fwd.impl"
+
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+    std::cout << "Entered forward attention kernel handler" << std::endl;
+
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+
+    auto batch   = q.size(0);
+    auto heads   = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n       = q.size(2);
+    auto d       = q.size(3);
+
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
+
+    TORCH_CHECK(n % (NUM_WORKERS * kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+
+    bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
+    bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
+    bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
+    bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>, (batch*heads*n)/(qo_height * 16)>(q_bf);
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>, (batch*heads*n)/(kv_height * 16)>(k_bf);
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>, (batch*heads*n)/(kv_height * 16)>(v_bf);
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>, (batch*heads*n)/(qo_height * 16)>(o_bf);
+
+    std::cout << "Check and casts" << std::endl;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; 
+    cudaFuncSetAttribute(fwd_attend_ker, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+    std::cout << "Set dynamic shared memory" << std::endl;
+
+    dim3 grid(n/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+    // fwd_attend_ker<<<grid, threads, mem_size>>>(n, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+
+    std::cout << "Launched kernel" << std::endl;
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    std::cout << "Exiting forward attention kernel handler" << std::endl;
+}
