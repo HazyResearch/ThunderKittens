@@ -7,7 +7,6 @@
 
 #include <cuda_runtime.h>
 
-// last four args should be b, h, n, d
 extern void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
 
 

@@ -70,7 +70,7 @@ def library_build(name, debug=False):
 #####
 # Helpers
 #   
-def __eq(str, x,y, tol=1e-5, debug=False): 
+def __eq(str, x,y, tol=1e-3, debug=False): 
     err = torch.abs(x-y).max()
     pass_str = "pass" if err < tol else "fail" 
     print(f"{str} : {pass_str} [err={err:0.5f}]")

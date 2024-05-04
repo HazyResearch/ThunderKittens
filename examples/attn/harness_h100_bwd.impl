@@ -4,11 +4,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024 * 4; 
-constexpr int ATTN_D     = 64;
-constexpr int ATTN_H     = 32; 
-constexpr int ATTN_B     = 16; 
-
 constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -187,7 +182,7 @@ int main(int argc, char **argv) {
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
     
     cudaFuncSetAttribute(
-        attend_ker_fwd_train<ATTN_N>,
+        attend_ker_fwd_train,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -198,13 +193,13 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting fwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_fwd_train<ATTN_N><<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        attend_ker_fwd_train<<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting fwd kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker_fwd_train<ATTN_N><<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        attend_ker_fwd_train<<<grid, (32*NUM_WORKERS), mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -313,9 +308,9 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_b_d = {};  
     CUtensorMap tma_desc_b_og = {};
 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(th * 16)>(&tma_desc_b_o, d_b_o); 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>::col_vec, ATTN_B*ATTN_H*ATTN_N/(th * 16)>(&tma_desc_b_d, d_b_d); 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(th * 16)>(&tma_desc_b_og, d_b_og);
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(4 * 16)>(&tma_desc_b_o, d_b_o); 
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>::col_vec, ATTN_B*ATTN_H*ATTN_N/(4 * 16)>(&tma_desc_b_d, d_b_d); 
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>,          ATTN_B*ATTN_H*ATTN_N/(4 * 16)>(&tma_desc_b_og, d_b_og);
 
     CUtensorMap* tma_b_o_d;
     CUtensorMap* tma_b_d_d;
@@ -332,24 +327,24 @@ int main(int argc, char **argv) {
     std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl;
 
     cudaFuncSetAttribute(
-        attend_ker_prep_train<ATTN_N>,
+        attend_ker_prep_train,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*th), ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*th) == 0);
+    dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*4), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*4) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
+        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep kernel" << std::endl;
     const auto start_bwd = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker_prep_train<ATTN_N><<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
+        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
     }
     cudaDeviceSynchronize();
     const auto finish_bwd = std::chrono::high_resolution_clock::now();
@@ -442,7 +437,7 @@ int main(int argc, char **argv) {
     std::cout << "Allocated and set memory on GPU for backward!" << std::endl;
 
     cudaFuncSetAttribute(
-        attend_ker_bwd_train<ATTN_N>,
+        attend_ker_bwd_train,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -458,7 +453,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
+        attend_ker_bwd_train<<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
@@ -467,7 +462,7 @@ int main(int argc, char **argv) {
     for(int i = 0; i < ITER; i++) {
         cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
         const auto start_bwd2 = std::chrono::high_resolution_clock::now();
-        attend_ker_bwd_train<ATTN_N><<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        attend_ker_bwd_train<<<grid_bwd2, (32*WORKERS_BWD), mem_size>>>(tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
         cudaDeviceSynchronize();
         const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
@@ -498,7 +493,7 @@ int main(int argc, char **argv) {
             qg_file << qg[i] << ' ';
             diff_qg_file << diff << ' ';
         }
-        if(abs(diff) > 0.025 || isnan(diff)) {
+        if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
     }
@@ -513,7 +508,7 @@ int main(int argc, char **argv) {
             kg_file << kg[i] << ' ';
             diff_kg_file << diff << ' ';
         }
-        if(abs(diff) > 0.025 || isnan(diff)) {
+        if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
     }
@@ -528,7 +523,7 @@ int main(int argc, char **argv) {
             vg_file << vg[i] << ' ';
             diff_vg_file << diff << ' ';
         }
-        if(abs(diff) > 0.025 || isnan(diff)) {
+        if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
     }

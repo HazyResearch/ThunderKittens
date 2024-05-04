@@ -1,15 +1,21 @@
 
-
-#define KITTENS_HOPPER // we are on an H100
-#include "src/kittens.cuh"
+// #include "src/kittens.cuh"
+#include "../../src/kittens.cuh" // for harness_h100_fwd.impl
+#include <cuda/pipeline>
 #include <cooperative_groups.h>
 
-constexpr int NUM_WORKERS = 8;
-constexpr int NUM_WARPGROUPS = (NUM_WORKERS/(kittens::WARPGROUP_WARPS));
+#define ATTN_B 16
+#define ATTN_H 16
+#define ATTN_N 4096
+#define ATTN_D 64
 
-constexpr int qo_height = 4, kv_height = 8;
-constexpr int NUM_WORKERS_KV = 1;
-constexpr int tile_width = 64/16;
+#define NUM_WORKERS 8
+#define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
+
+#define qo_height 4
+#define kv_height 8
+#define NUM_WORKERS_KV 1
+#define tile_width 64/16
 
 using namespace kittens;
 
@@ -18,7 +24,7 @@ using layout_k = ducks::st_layout::wgmma_swizzle; // need to make this 128b
 using layout_v = ducks::st_layout::wgmma_interleave; // need to make this 128b
 using layout_o = ducks::st_layout::swizzle;
 
-template<int N> __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
+__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
 void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -39,7 +45,7 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    constexpr int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
+    constexpr int kv_blocks = ATTN_N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     __shared__ uint64_t qsmem_barrier, kvsmem_barrier;//, vsmem_barrier;
 
@@ -146,33 +152,29 @@ void attend_ker_fwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-constexpr int WORKERS = 4;
-
-constexpr int th = 4; 
-constexpr int tw = 64/16;
-
+#define WORKERS 4
 using layout_nrow = ducks::st_layout::swizzle;
 
-template<int N> __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 2)
+__global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 2)
 void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
     int warpid = kittens::warpid();
 
-    st_bf<th, tw, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
-    st_bf<th, tw, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
-    st_bf<th, tw, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>::col_vec, WORKERS>();
+    st_bf<4, 4, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
+    st_bf<4, 4, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
+    st_bf<4, 4, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>::col_vec, WORKERS>();
 
-    rt_fl<th, tw> og_reg;
-    rt_fl<th, tw> o_reg; 
-    rt_fl<th, tw>::col_vec d_reg;
+    rt_fl<4, 4> og_reg;
+    rt_fl<4, 4> o_reg; 
+    rt_fl<4, 4>::col_vec d_reg;
 
     __shared__ uint64_t smem_barrier;
     int o_phasebit = 0; 
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS * 2>(smem_barrier, 1);
+        tma::init_barrier<st_bf<4, 4, layout_o>, WORKERS * 2>(smem_barrier, 1);
     }
 
     if (warpid == 0) {
@@ -207,25 +209,15 @@ void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* 
     tma::store_async_wait();
 }
 
-constexpr int WORKERS_BWD    = 8;  
-constexpr int WORKERS_BWD_QO = 8; 
+#define WORKERS_BWD 8
+#define WORKERS_BWD_QO 8 
 
-constexpr int NUM_WARPGROUPS_BWD    = (WORKERS_BWD/(kittens::WARPGROUP_WARPS));
-constexpr int NUM_WARPGROUPS_BWD_QO = (WORKERS_BWD_QO/(kittens::WARPGROUP_WARPS));
+#define NUM_WARPGROUPS_BWD    (WORKERS_BWD/(kittens::WARPGROUP_WARPS))
+#define NUM_WARPGROUPS_BWD_QO (WORKERS_BWD_QO/(kittens::WARPGROUP_WARPS))
 
-// static assert that the bigger of the two is a multiple of the smaller
-static_assert(NUM_WARPGROUPS_BWD % NUM_WARPGROUPS_BWD_QO == 0 || NUM_WARPGROUPS_BWD_QO % NUM_WARPGROUPS_BWD == 0, "NUM_WARPGROUPS_BWD and NUM_WARPGROUPS_BWD_QO must be multiples of each other");
-
-// you have to revert to special handling if this is false
-// static_assert(NUM_WARPGROUPS_BWD == NUM_WARPGROUPS_BWD_QO); 
-
-constexpr int tile_h = 4;    // should be 1
-constexpr int tile_h_qo = 4; // should be 8
-
-static_assert(tile_h_qo % 4 == 0, "tile_h_qo must be a multiple of 4");
-static_assert(tile_h % 4 == 0, "tile_h must be a multiple of 4");
-
-constexpr int tile_w = 64/16;
+#define tile_h 4
+#define tile_h_qo 4
+#define tile_w 64/16
 
 using layout_wgmma     = ducks::st_layout::wgmma_swizzle;
 using layout_wgmma_itl = ducks::st_layout::wgmma_interleave;
@@ -244,10 +236,8 @@ using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
 #define KV_BLOCKS 2
-// 8192 = kv_blocks should be 2
-// dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
 
-template<int N> __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
+__global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 1)
 void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
                             CUtensorMap* tma_l_vec, CUtensorMap* tma_d_vec, 
                             CUtensorMap* tma_og, CUtensorMap* tma_qg, CUtensorMap* tma_kg, CUtensorMap* tma_vg)
@@ -282,7 +272,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    constexpr int qo_blocks = N / (tile_h_qo * kittens::TILE_DIM * NUM_WARPGROUPS_BWD_QO);
+    constexpr int qo_blocks = ATTN_N / (tile_h_qo * kittens::TILE_DIM * NUM_WARPGROUPS_BWD_QO);
 
     __shared__ uint64_t kv_b, qo_b, vec_b;
 
@@ -391,7 +381,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 copy(l_reg_fl, l_reg_bf);
                 
                 warpgroup::mma_async_wait();
-                mul(att_block, att_block, __float2bfloat16(0.125f));
+                mul(att_block, att_block, __bfloat162float(__float2bfloat16(0.125f)));
                 sub_row(att_block, att_block, l_reg_fl);
                 exp(att_block, att_block);
                 copy(temp_block, att_block);
@@ -416,7 +406,7 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
                 warpgroup::mma_async_wait<1>();
                 sub_row(att_block, att_block, d_reg_fl);
                 mul(temp_block, temp_block, att_block);
-                mul(temp_block, temp_block, __float2bfloat16(0.125f));
+                mul(temp_block, temp_block, __bfloat162float(__float2bfloat16(0.125f)));
                 copy(att_block_mma, temp_block);
 
                 warpgroup::mma_async_wait(); 
@@ -459,10 +449,188 @@ void attend_ker_bwd_train(CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* t
     tma::store_async_wait();
 }
 
-#include "harness_h100_bwd.impl" // (comment out when using the code below)
+// #include "harness_h100_bwd.impl" // (comment out when using the code below)
 
-// // For binding to PyTorch (comment out include for harness_h100_bwd.impl when
-// // using the code below)
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
 
-// #include "src/common/pyutils/torch_helpers.cuh"
-// #include <iostream> 
+void fwd_train_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {
+    std::cout << "Entered forward attention kernel handler" << std::endl;
+
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    CHECK_INPUT(l);
+
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n     = q.size(2);
+    auto d     = q.size(3);
+
+    TORCH_CHECK(batch == ATTN_B, "Batch size is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(heads == ATTN_H, "Num heads is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(n == ATTN_N, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(d == ATTN_D, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+
+    TORCH_CHECK(n % (NUM_WORKERS * kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *l_ptr = l.data_ptr<c10::BFloat16>();
+
+    bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
+    bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
+    bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
+    bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+    bf16* l_bf = reinterpret_cast<bf16*>(l_ptr);
+
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>,          (ATTN_B*ATTN_H*ATTN_N)/(qo_height * 16)>(q_bf);
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>,          (ATTN_B*ATTN_H*ATTN_N)/(kv_height * 16)>(k_bf);
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>,          (ATTN_B*ATTN_H*ATTN_N)/(kv_height * 16)>(v_bf);
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>,          (ATTN_B*ATTN_H*ATTN_N)/(qo_height * 16)>(o_bf);
+    CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>::col_vec, (ATTN_B*ATTN_H*ATTN_N)/(qo_height * 16)>(l_bf);
+
+    std::cout << "Check and casts" << std::endl;
+    unsigned long mem_size = 227000;
+    cudaFuncSetAttribute(attend_ker_fwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+    std::cout << "Launching kernel" << std::endl;
+
+    dim3 grid(n/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+    attend_ker_fwd_train<<<grid, threads, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+
+    std::cout << "Kernel launched" << std::endl;
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    std::cout << "Exiting forward train attention kernel handler" << std::endl;
+}
+
+void prep_train_attend_ker_tk(torch::Tensor o, torch::Tensor og, torch::Tensor d_vec) { 
+    std::cout << "Entered prep train attention kernel handler" << std::endl;
+
+    CHECK_INPUT(o);
+    CHECK_INPUT(og);
+    CHECK_INPUT(d_vec);
+
+    auto batch = o.size(0);
+    auto heads = o.size(1);
+    auto n     = o.size(2);
+    auto d     = o.size(3);
+
+    auto threads = WORKERS * kittens::WARP_THREADS;
+
+    TORCH_CHECK(batch == ATTN_B, "Batch size is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(heads == ATTN_H, "Num heads is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(n == ATTN_N, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(d == ATTN_D, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+
+    TORCH_CHECK(n % (WORKERS * kittens::TILE_DIM * 4) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+
+    // convert to bf16
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *og_ptr = og.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *d_vec_ptr = d_vec.data_ptr<c10::BFloat16>();
+
+    bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+    bf16* og_bf = reinterpret_cast<bf16*>(og_ptr);
+    bf16* d_vec_bf = reinterpret_cast<bf16*>(d_vec_ptr);
+
+    CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>,          (ATTN_B*ATTN_H*ATTN_N)/(4*16)>(o_bf);
+    CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec, (ATTN_B*ATTN_H*ATTN_N)/(4*16)>(d_vec_bf);
+    CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>,          (ATTN_B*ATTN_H*ATTN_N)/(4*16)>(og_bf);
+
+    std::cout << "Check and casts" << std::endl;
+    unsigned long mem_size = 227000;
+    cudaFuncSetAttribute(attend_ker_prep_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+    std::cout << "Launching kernel" << std::endl;
+
+    dim3 grid_1(n/(WORKERS*kittens::TILE_DIM), batch*heads, 1);
+    auto threads_1 = WORKERS * kittens::WARP_THREADS;
+
+    attend_ker_prep_train<<<grid_1, threads_1, mem_size>>>(tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
+
+    std::cout << "Kernel launched" << std::endl;
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    std::cout << "Exiting prep train attention kernel handler" << std::endl;
+}
+
+void bwd_train_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg) {
+    std::cout << "Entered backward train attention kernel handler" << std::endl;
+
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(l_vec);
+    CHECK_INPUT(d_vec);
+    CHECK_INPUT(og);
+    CHECK_INPUT(qg);
+    CHECK_INPUT(kg);
+    CHECK_INPUT(vg);
+
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto n     = q.size(2);
+    auto d     = q.size(3);
+
+    auto threads = WORKERS_BWD * kittens::WARP_THREADS;
+
+    TORCH_CHECK(batch == ATTN_B, "Batch size is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(heads == ATTN_H, "Num heads is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(n == ATTN_N, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+    TORCH_CHECK(d == ATTN_D, "Num elements is hard coded - if you change in PyTorch, change in h100_train.cu too");
+
+    TORCH_CHECK(n % (WORKERS_BWD * kittens::TILE_DIM * 4) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *l_ptr = l_vec.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *d_ptr = d_vec.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *og_ptr = og.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *qg_ptr = qg.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kg_ptr = kg.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *vg_ptr = vg.data_ptr<c10::BFloat16>();
+
+    bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
+    bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
+    bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
+    bf16* l_bf = reinterpret_cast<bf16*>(l_ptr);
+    bf16* d_bf = reinterpret_cast<bf16*>(d_ptr);
+    bf16* og_bf = reinterpret_cast<bf16*>(og_ptr);
+    bf16* qg_bf = reinterpret_cast<bf16*>(qg_ptr);
+    bf16* kg_bf = reinterpret_cast<bf16*>(kg_ptr);
+    bf16* vg_bf = reinterpret_cast<bf16*>(vg_ptr);
+
+    CUtensorMap* tma_q_d_bwd = tma::allocate_and_create_tensor_map<q_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16)>(q_bf);
+    CUtensorMap* tma_k_d_bwd = tma::allocate_and_create_tensor_map<k_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h * 16)>(k_bf);
+    CUtensorMap* tma_v_d_bwd = tma::allocate_and_create_tensor_map<v_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h * 16)>(v_bf);
+
+    CUtensorMap* tma_l_d_bwd = tma::allocate_and_create_tensor_map<l_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16)>(l_bf);
+    CUtensorMap* tma_d_d_bwd = tma::allocate_and_create_tensor_map<d_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16)>(d_bf);
+
+    CUtensorMap* tma_og_d_bwd = tma::allocate_and_create_tensor_map<og_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16)>(og_bf);
+    CUtensorMap* tma_qg_d_bwd = tma::allocate_and_create_tensor_map<qg_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16)>(qg_bf);
+    CUtensorMap* tma_kg_d_bwd = tma::allocate_and_create_tensor_map<k_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h * 16)>(kg_bf);
+    CUtensorMap* tma_vg_d_bwd = tma::allocate_and_create_tensor_map<v_smem_tile, (ATTN_B*ATTN_H*ATTN_N)/(tile_h * 16)>(vg_bf);
+
+    std::cout << "Check and casts" << std::endl;
+    unsigned long mem_size = 227000;
+    cudaFuncSetAttribute(attend_ker_bwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+    std::cout << "Launching kernel" << std::endl;
+
+    dim3 grid_2(n/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), batch*heads, 1);
+    auto threads_2 = WORKERS_BWD * kittens::WARP_THREADS;
+
+    attend_ker_bwd_train<<<grid_2, threads_2, mem_size>>>(tma_q_d_bwd, tma_k_d_bwd, tma_v_d_bwd, tma_l_d_bwd, tma_d_d_bwd, tma_og_d_bwd, tma_qg_d_bwd, tma_kg_d_bwd, tma_vg_d_bwd);
+
+    std::cout << "Kernel launched" << std::endl;
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    std::cout << "Exiting backward train attention kernel handler" << std::endl;
+}

@@ -88,6 +88,8 @@ l_vec = l_vec.sum(dim=-1, keepdim=True)
 
 l_vec = max_vec + torch.log(l_vec)
 
+print(l_vec.shape)
+
 o = forward(q, k, v)
 q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
 
