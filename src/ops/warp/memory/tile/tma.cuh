@@ -25,8 +25,8 @@ namespace tma {
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<ducks::st::all ST, int blocks_height, int blocks_width=1>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
+template<ducks::st::all ST>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src, int blocks_height, int blocks_width=1) {
     static_assert(std::is_same_v<typename ST::dtype, bf16>);
     
     constexpr uint32_t  tma_dim      = (
@@ -54,8 +54,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     uint32_t smem_shape [4] = {0, 0, 0, 0};
     uint32_t smem_stride[4] = {1, 1, 1, 1};
 
-    constexpr uint64_t global_tile_height = blocks_height * ST::rows;
-    constexpr uint64_t global_tile_width  = blocks_width * ST::cols; 
+              uint64_t global_tile_height = blocks_height * ST::rows;
+              uint64_t global_tile_width  = blocks_width * ST::cols; 
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
@@ -178,12 +178,12 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 * @param src Pointer to the source tensor data in global memory.
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
-template<ducks::st::all ST, int blocks_height, int blocks_width=1>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src) {
+template<ducks::st::all ST>
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src, int blocks_height, int blocks_width=1) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
-    create_tensor_map<ST, blocks_height, blocks_width>(&tma_map_host, src);
+    create_tensor_map<ST>(&tma_map_host, src, blocks_height, blocks_width);
     cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     return tma_map_d;
 }

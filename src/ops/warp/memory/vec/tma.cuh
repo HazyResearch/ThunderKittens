@@ -24,8 +24,8 @@ namespace tma {
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<ducks::sv::all SV, int num_vectors>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src) {
+template<ducks::sv::all SV>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src, int num_vectors) {
     
     constexpr uint32_t  tma_dim      = 1; 
     void                *global_addr = (void*)(src);
@@ -34,7 +34,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
+    constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
     uint64_t gmem_shape [1] = {SV::length * num_vectors};
     uint64_t gmem_stride[1] = {1};
@@ -85,12 +85,12 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 * @param src Pointer to the source tensor data in global memory.
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
-template<ducks::sv::all SV, int num_vectors>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src) {
+template<ducks::sv::all SV>
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src, int num_vectors) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
-    create_tensor_map<SV, num_vectors>(&tma_map_host, src);
+    create_tensor_map<SV>(&tma_map_host, src, num_vectors);
     cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     return tma_map_d;
 }

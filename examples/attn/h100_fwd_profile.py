@@ -31,10 +31,10 @@ def h100_fwd_kernel_test(Q, K, V, verbose=True):
     return o
 
 def h100_fwd_correct(): 
-    b = 16
-    h = 16
+    b = 12
+    h = 12
     n = 4096
-    d = 64
+    d = 128
     
     print(f"b={b} h={h} n={n} d={d}")
     
@@ -44,6 +44,11 @@ def h100_fwd_correct():
     
     result_pytorch = pytorch_test(Q, K, V)
     tk_result = h100_fwd_kernel_test(Q, K, V)
+    
+    # print avg magnitude of pytorch result
+    print(f"Pytorch result avg magnitude: {torch.mean(torch.abs(result_pytorch))}")
+    # print avg error
+    print(f"Avg error: {torch.mean(torch.abs(result_pytorch - tk_result))}")
     
     __eq("h100_fwd", result_pytorch[0], tk_result[0], debug=False)
     

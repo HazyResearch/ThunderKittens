@@ -44,15 +44,14 @@ def h100_fwd_kernel_test(Q, K, V, dO, verbose=True):
     kg = torch.zeros_like(K)
     vg = torch.zeros_like(V)
     
-    mod.prep_train_attend_ker_tk(o, dO, d_vec)
-    mod.bwd_train_attend_ker_tk(Q, K, V, l_vec, d_vec, dO, qg, kg, vg)
+    mod.bwd_train_attend_ker_tk(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg)
     
     return o, qg, kg, vg
 
 def h100_fwd_correct(): 
     b = 16
     h = 16
-    n = 4096
+    n = 8192 * 2
     d = 64
     
     print(f"b={b} h={h} n={n} d={d}")
@@ -69,6 +68,31 @@ def h100_fwd_correct():
     
     pt_o, pt_qg, pt_kg, pt_vg = pytorch_test(Q, K, V, dO)
     tk_o, tk_qg, tk_kg, tk_vg = h100_fwd_kernel_test(Q_tk, K_tk, V_tk, dO_tk)
+    
+    # o diff
+    # avg magnitude
+    print(f"pt_o avg magnitude: {torch.mean(torch.abs(pt_o)).item()}")
+    # avg diff (rmse)
+    print(f"pt_o avg diff: {torch.mean(torch.abs(pt_o - tk_o)).item()}")
+    
+    # qg diff
+    # avg magnitude
+    print(f"pt_qg avg magnitude: {torch.mean(torch.abs(pt_qg)).item()}")
+    # avg diff (rmse)
+    print(f"pt_qg avg diff: {torch.mean(torch.abs(pt_qg - tk_qg)).item()}")
+    
+    # kg diff
+    # avg magnitude
+    print(f"pt_kg avg magnitude: {torch.mean(torch.abs(pt_kg)).item()}")
+    # avg diff (rmse)
+    print(f"pt_kg avg diff: {torch.mean(torch.abs(pt_kg - tk_kg)).item()}")
+    
+    # vg diff
+    # avg magnitude
+    print(f"pt_vg avg magnitude: {torch.mean(torch.abs(pt_vg)).item()}")
+    # avg diff (rmse)
+    print(f"pt_vg avg diff: {torch.mean(torch.abs(pt_vg - tk_vg)).item()}")
+    
     
     __eq("h100_fwd", pt_o[0], tk_o[0], debug=False)
     __eq("h100_fwd_qg", pt_qg[0], tk_qg[0], debug=False)
