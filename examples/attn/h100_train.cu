@@ -147,7 +147,10 @@ void attend_ker_fwd_train(int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtenso
     tma::store_async_wait();
 }
 
+#define th 4
+#define tw 4
 #define WORKERS 4
+
 using layout_nrow = ducks::st_layout::swizzle;
 
 __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 2)
@@ -157,19 +160,19 @@ void attend_ker_prep_train(int N, CUtensorMap* tma_o, CUtensorMap* tma_d, CUtens
 
     int warpid = kittens::warpid();
 
-    st_bf<4, 4, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
-    st_bf<4, 4, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
-    st_bf<4, 4, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>::col_vec, WORKERS>();
+    st_bf<th, tw, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
+    st_bf<th, tw, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
+    st_bf<th, tw, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>::col_vec, WORKERS>();
 
-    rt_fl<4, 4> og_reg;
-    rt_fl<4, 4> o_reg; 
-    rt_fl<4, 4>::col_vec d_reg;
+    rt_fl<th, tw> og_reg;
+    rt_fl<th, tw> o_reg; 
+    rt_fl<th, tw>::col_vec d_reg;
 
     __shared__ uint64_t smem_barrier;
     int o_phasebit = 0; 
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<st_bf<4, 4, layout_o>, WORKERS * 2>(smem_barrier, 1);
+        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS * 2>(smem_barrier, 1);
     }
 
     if (warpid == 0) {
