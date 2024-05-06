@@ -61,6 +61,10 @@ def measure_performance(b, h, n, d):
     q = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
     k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
     v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+    
+    q.requires_grad = False
+    k.requires_grad = False
+    v.requires_grad = False
 
     # Warm up
     for _ in range(10):
@@ -72,11 +76,15 @@ def measure_performance(b, h, n, d):
     
     for i in range(100):        
         o = torch.zeros_like(v)
+        
+        o.requires_grad = False
+        
+        torch.cuda.synchronize()  # Wait for the events to be recorded!
 
         # Timing the forward pass
         start_events[i].record()
         
-        torch.cuda.synchronize()  # Wait for the events to be recorded!
+        
         tk.attention_forward(q, k, v, o)
         torch.cuda.synchronize()  # Wait for the events to be recorded!
         
@@ -94,7 +102,7 @@ def measure_performance(b, h, n, d):
     print(f"______________________________________________________")
 
 # Test configurations
-configs = [(16, 16, 1024 * 8, 64), (16, 16, 1024 * 8, 128)]
+configs = [(16, 32, 1024 * 4, 64), (16, 16, 1024 * 8, 128)]
 for config in configs:
     measure_performance(*config)
 
@@ -113,4 +121,3 @@ for config in configs:
 #     # Forward pass
 #     output = model(q, k, v)
 #     print("Attention computation successful, output shape:", output.shape)
-    

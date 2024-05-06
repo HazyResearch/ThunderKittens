@@ -286,6 +286,8 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     unsigned long mem_size = 227000;
     dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
 
+    TORCH_CHECK(D == 64 || D == 128, "Only D=64 and D=128 supported for now");
+
     if (D == 64) {
         cudaFuncSetAttribute(fwd_attend_ker_dim64, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
