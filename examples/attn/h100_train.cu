@@ -13,9 +13,9 @@
 
 using namespace kittens;
 
-using layout_q = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_k = ducks::st_layout::wgmma_swizzle; // need to make this 128b
-using layout_v = ducks::st_layout::wgmma_interleave; // need to make this 128b
+using layout_q = ducks::st_layout::wgmma_swizzle; 
+using layout_k = ducks::st_layout::wgmma_swizzle; 
+using layout_v = ducks::st_layout::wgmma_interleave; 
 using layout_o = ducks::st_layout::swizzle;
 
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
