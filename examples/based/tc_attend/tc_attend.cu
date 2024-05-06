@@ -100,4 +100,76 @@ void sliding_window(int n, int d, const bf16* __restrict__ __q__, const bf16* __
     }
 }
 
-#include "harness.impl"
+
+// For testing via C++
+// #include "harness.impl" // (comment out when using the code below)
+
+
+// For binding to PyTorch (comment out include for harness.imple when using the code below)
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void sliding_window_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+    std::cout << "Entered Sliding window handler" << std::endl;
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n     = q.size(2);
+    uint d     = q.size(3);
+
+    bool k_same = true, v_same = true;
+    for(auto i = 0; i < 2; i++) { 
+        k_same &= q.size(i) == k.size(i);
+        v_same &= q.size(i) == v.size(i);
+    }
+    k_same &= d == k.size(3);
+    v_same &= d == v.size(3);
+    v_same &= v.size(2) == n;
+    
+    // This is just a restriction of what we're doing now...
+    TORCH_CHECK(k_same, "X and K_out should be same size");
+    TORCH_CHECK(v_same, "X and V_out should be same size");
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
+    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
+          bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+
+    std::cout << "Checks and casts" << std::endl;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    cudaFuncSetAttribute(
+        sliding_window,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    std::cout << "Set dynamic memory" << std::endl;
+    sliding_window<<<batch*heads,threads,mem_size>>>(n, d, q_bf, k_bf, v_bf, o_bf);
+
+    // TODO: setup to launch with CUDA STREAM
+    // auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
+    // cudaStream_t stream = stream_wrapper.stream();
+    // sliding_window<H,T><<<batch*head,threads,0,stream>>>(n, 
+    //                     q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(), 
+    //                     o.data_ptr<T>());
+
+    std::cout << "Launched kernel" << std::endl;
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    std::cout << "Exiting" << std::endl;
+}
+
