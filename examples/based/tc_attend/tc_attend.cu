@@ -3,7 +3,8 @@
 #define NUM_WORKERS (4) // this comes from the fact that we want a 64-long sliding window
 using namespace kittens;
 
-#define WINDOW_WIDTH (128)
+
+#define WINDOW_WIDTH (64)
 static_assert(WINDOW_WIDTH%64==0 && WINDOW_WIDTH<=256);
 #define WINDOW_TILES ((WINDOW_WIDTH/64)+1)
 #define WINDOW_MINI_TILES ((WINDOW_WIDTH/16)+1)
