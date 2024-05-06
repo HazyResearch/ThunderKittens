@@ -4,12 +4,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define ATTN_B 16
-#define ATTN_H 16
-#define ATTN_N 1024
-#define ATTN_D 64
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16; 
+constexpr int ATTN_N = 4096; 
+constexpr int ATTN_D = 64; 
 
-constexpr int ITER = 1;
+constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
