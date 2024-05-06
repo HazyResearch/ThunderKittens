@@ -250,7 +250,7 @@ void fwd_attend_ker_dim128(int N, const CUtensorMap* tma_q, const CUtensorMap* t
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
-void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -269,7 +269,8 @@ void fwd_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
 
-    TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+    // make sure sequence length is multiple of 128 for now
+    TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "Please pad sequence length to be multiple of 128");
 
     // convert to bf16
     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();

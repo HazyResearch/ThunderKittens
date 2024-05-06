@@ -1,6 +1,6 @@
 
-// #include "src/kittens.cuh"
-#include "../../src/kittens.cuh" // for harness_h100_fwd.impl
+#include "src/kittens.cuh"
+// #include "../../src/kittens.cuh" // for harness_h100_fwd.impl
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
@@ -147,8 +147,6 @@ void attend_ker_fwd_train(int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtenso
     tma::store_async_wait();
 }
 
-#define th 4
-#define tw 4
 #define WORKERS 4
 
 using layout_nrow = ducks::st_layout::swizzle;
@@ -160,19 +158,19 @@ void attend_ker_prep_train(int N, CUtensorMap* tma_o, CUtensorMap* tma_d, CUtens
 
     int warpid = kittens::warpid();
 
-    st_bf<th, tw, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
-    st_bf<th, tw, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>, WORKERS>();
-    st_bf<th, tw, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<th, tw, layout_nrow>::col_vec, WORKERS>();
+    st_bf<4, 4, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
+    st_bf<4, 4, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
+    st_bf<4, 4, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>::col_vec, WORKERS>();
 
-    rt_fl<th, tw> og_reg;
-    rt_fl<th, tw> o_reg; 
-    rt_fl<th, tw>::col_vec d_reg;
+    rt_fl<4, 4> og_reg;
+    rt_fl<4, 4> o_reg; 
+    rt_fl<4, 4>::col_vec d_reg;
 
     __shared__ uint64_t smem_barrier;
     int o_phasebit = 0; 
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<st_bf<th, tw, layout_o>, WORKERS * 2>(smem_barrier, 1);
+        tma::init_barrier<st_bf<4, 4, layout_o>, WORKERS * 2>(smem_barrier, 1);
     }
 
     if (warpid == 0) {
@@ -448,139 +446,134 @@ void attend_ker_bwd_train(int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtenso
     tma::store_async_wait();
 }
 
-#include "harness_h100_bwd.impl" // (comment out when using the code below)
+// #include "harness_h100_bwd.impl" // (comment out when using the code below)
 
-// #include "src/common/pyutils/torch_helpers.cuh"
-// #include <iostream>
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
 
-// void fwd_train_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {
-//     std::cout << "Entered forward attention kernel handler" << std::endl;
+void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    CHECK_INPUT(l);
 
-//     CHECK_INPUT(q);
-//     CHECK_INPUT(k);
-//     CHECK_INPUT(v);
-//     CHECK_INPUT(o);
-//     CHECK_INPUT(l);
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N     = q.size(2);
+    auto D     = q.size(3);
 
-//     auto batch = q.size(0);
-//     auto heads = q.size(1);
-//     auto N     = q.size(2);
-//     auto D     = q.size(3);
+    TORCH_CHECK(D == 64, "Train functions do not support DIM=128 yet"); 
 
-//     TORCH_CHECK(D == 64, "128 not supported yet")
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
 
-//     auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    // sequence length must be divisible by 256 for bwd_prep kernel!!!
+    TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "For training, please pad sequence length to be divisible by 256");
 
-//     TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *l_ptr = l.data_ptr<c10::BFloat16>();
 
-//     // convert to bf16
-//     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *l_ptr = l.data_ptr<c10::BFloat16>();
+    bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
+    bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
+    bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
+    bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+    bf16* l_bf = reinterpret_cast<bf16*>(l_ptr);
 
-//     bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
-//     bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
-//     bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
-//     bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
-//     bf16* l_bf = reinterpret_cast<bf16*>(l_ptr);
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>         >(q_bf, (batch*heads*N)/(qo_height * 16));
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>         >(k_bf, (batch*heads*N)/(kv_height * 16));
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>         >(v_bf, (batch*heads*N)/(kv_height * 16));
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>         >(o_bf, (batch*heads*N)/(qo_height * 16));
+    CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>::col_vec>(l_bf, (batch*heads*N)/(qo_height * 16));
 
-//     CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>         >(q_bf, (batch*heads*N)/(qo_height * 16));
-//     CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_k>         >(k_bf, (batch*heads*N)/(kv_height * 16));
-//     CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, tile_width, layout_v>         >(v_bf, (batch*heads*N)/(kv_height * 16));
-//     CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_o>         >(o_bf, (batch*heads*N)/(qo_height * 16));
-//     CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, tile_width, layout_q>::col_vec>(l_bf, (batch*heads*N)/(qo_height * 16));
+    unsigned long mem_size = 227000;
+    cudaFuncSetAttribute(attend_ker_fwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
-//     unsigned long mem_size = 227000;
-//     cudaFuncSetAttribute(attend_ker_fwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+    attend_ker_fwd_train<<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
 
-//     dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
-//     attend_ker_fwd_train<<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
 
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-// }
+void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    CHECK_INPUT(l_vec);
+    CHECK_INPUT(d_vec);
+    CHECK_INPUT(og);
+    CHECK_INPUT(qg);
+    CHECK_INPUT(kg);
+    CHECK_INPUT(vg);
 
-// void bwd_train_attend_ker_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg) {
-//     std::cout << "Entered backward train attention kernel handler" << std::endl;
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N     = q.size(2);
+    auto D     = q.size(3);
 
-//     CHECK_INPUT(q);
-//     CHECK_INPUT(k);
-//     CHECK_INPUT(v);
-//     CHECK_INPUT(o);
-//     CHECK_INPUT(l_vec);
-//     CHECK_INPUT(d_vec);
-//     CHECK_INPUT(og);
-//     CHECK_INPUT(qg);
-//     CHECK_INPUT(kg);
-//     CHECK_INPUT(vg);
+    TORCH_CHECK(D == 64, "Train functions do not support DIM=128 yet");
 
-//     auto batch = q.size(0);
-//     auto heads = q.size(1);
-//     auto N     = q.size(2);
-//     auto D     = q.size(3);
+    // sequence length must be divisible by 256 for bwd_prep kernel!!!
+    TORCH_CHECK(N % (WORKERS * kittens::TILE_DIM * 4) == 0, "For training, please pad sequence length to be divisible by 256");
+    TORCH_CHECK(N % (WORKERS_BWD * kittens::TILE_DIM * KV_BLOCKS) == 0, "For training, please pad sequence length to be divisible by 256");
 
-//     TORCH_CHECK(D == 64, "128 not supported yet")
+    // convert to bf16
+    c10::BFloat16 *q_ptr  = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr  = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr  = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr  = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *l_ptr  = l_vec.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *d_ptr  = d_vec.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *og_ptr = og.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *qg_ptr = qg.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kg_ptr = kg.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *vg_ptr = vg.data_ptr<c10::BFloat16>();
 
-//     TORCH_CHECK(N % (WORKERS * kittens::TILE_DIM * 4) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
-//     TORCH_CHECK(N % (WORKERS_BWD * kittens::TILE_DIM * KV_BLOCKS) == 0, "The number of elements should be divisible the number of workers times the tile dimension");
+    bf16* q_bf  = reinterpret_cast<bf16*>(q_ptr);
+    bf16* k_bf  = reinterpret_cast<bf16*>(k_ptr);
+    bf16* v_bf  = reinterpret_cast<bf16*>(v_ptr);
+    bf16* o_bf  = reinterpret_cast<bf16*>(o_ptr);
+    bf16* l_bf  = reinterpret_cast<bf16*>(l_ptr);
+    bf16* d_bf  = reinterpret_cast<bf16*>(d_ptr);
+    bf16* og_bf = reinterpret_cast<bf16*>(og_ptr);
+    bf16* qg_bf = reinterpret_cast<bf16*>(qg_ptr);
+    bf16* kg_bf = reinterpret_cast<bf16*>(kg_ptr);
+    bf16* vg_bf = reinterpret_cast<bf16*>(vg_ptr);
 
-//     // convert to bf16
-//     c10::BFloat16 *q_ptr  = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_ptr  = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *v_ptr  = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *o_ptr  = o.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *l_ptr  = l_vec.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *d_ptr  = d_vec.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *og_ptr = og.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *qg_ptr = qg.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *kg_ptr = kg.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *vg_ptr = vg.data_ptr<c10::BFloat16>();
+    CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(o_bf, (batch*heads*N)/(4*16)); 
+    CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec  >(d_bf, (batch*heads*N)/(4*16));
+    CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(og_bf,(batch*heads*N)/(4*16));
 
-//     bf16* q_bf  = reinterpret_cast<bf16*>(q_ptr);
-//     bf16* k_bf  = reinterpret_cast<bf16*>(k_ptr);
-//     bf16* v_bf  = reinterpret_cast<bf16*>(v_ptr);
-//     bf16* o_bf  = reinterpret_cast<bf16*>(o_ptr);
-//     bf16* l_bf  = reinterpret_cast<bf16*>(l_ptr);
-//     bf16* d_bf  = reinterpret_cast<bf16*>(d_ptr);
-//     bf16* og_bf = reinterpret_cast<bf16*>(og_ptr);
-//     bf16* qg_bf = reinterpret_cast<bf16*>(qg_ptr);
-//     bf16* kg_bf = reinterpret_cast<bf16*>(kg_ptr);
-//     bf16* vg_bf = reinterpret_cast<bf16*>(vg_ptr);
+    unsigned long mem_size = 227000;
+    cudaFuncSetAttribute(attend_ker_prep_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
-//     CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(o_bf,     (batch*heads*N)/(4*16)); 
-//     CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec  >(d_bf, (batch*heads*N)/(4*16));
-//     CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(og_bf,    (batch*heads*N)/(4*16));
+    dim3 grid_1(N/(WORKERS*kittens::TILE_DIM*4), batch*heads, 1);
+    auto threads_1 = WORKERS * kittens::WARP_THREADS;
 
-//     unsigned long mem_size = 227000;
-//     cudaFuncSetAttribute(attend_ker_prep_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    attend_ker_prep_train<<<grid_1, threads_1, mem_size>>>(N, tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
+    CHECK_CUDA_ERROR(cudaGetLastError());
 
-//     dim3 grid_1(N/(WORKERS*kittens::TILE_DIM), batch*heads, 1);
-//     auto threads_1 = WORKERS * kittens::WARP_THREADS;
-
-//     attend_ker_prep_train<<<grid_1, threads_1, mem_size>>>(N, tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-
-//     CUtensorMap* tma_q_d_bwd  = tma::allocate_and_create_tensor_map<q_smem_tile>(q_bf, (batch*heads*N)/(tile_h_qo * 16)); 
-
-//     CUtensorMap* tma_k_d_bwd  = tma::allocate_and_create_tensor_map<k_smem_tile>(k_bf, (batch*heads*N)/(tile_h * 16));
-//     CUtensorMap* tma_v_d_bwd  = tma::allocate_and_create_tensor_map<v_smem_tile>(v_bf, (batch*heads*N)/(tile_h * 16));
-
-//     CUtensorMap* tma_l_d_bwd  = tma::allocate_and_create_tensor_map<l_smem_tile>(l_bf, (batch*heads*N)/(tile_h_qo * 16));
-//     CUtensorMap* tma_d_d_bwd  = tma::allocate_and_create_tensor_map<d_smem_tile>(d_bf, (batch*heads*N)/(tile_h_qo * 16));
-
-//     CUtensorMap* tma_og_d_bwd = tma::allocate_and_create_tensor_map<og_smem_tile>(og_bf, (batch*heads*N)/(tile_h_qo * 16));
-//     CUtensorMap* tma_qg_d_bwd = tma::allocate_and_create_tensor_map<qg_smem_tile>(qg_bf, (batch*heads*N)/(tile_h_qo * 16));
-//     CUtensorMap* tma_kg_d_bwd = tma::allocate_and_create_tensor_map<k_smem_tile>(kg_bf,  (batch*heads*N)/(tile_h * 16));
-//     CUtensorMap* tma_vg_d_bwd = tma::allocate_and_create_tensor_map<v_smem_tile>(vg_bf,  (batch*heads*N)/(tile_h * 16));
+    CUtensorMap* tma_q_d_bwd  = tma::allocate_and_create_tensor_map<q_smem_tile>(q_bf,   (batch*heads*N)/(tile_h_qo * 16)); 
+    CUtensorMap* tma_k_d_bwd  = tma::allocate_and_create_tensor_map<k_smem_tile>(k_bf,   (batch*heads*N)/(tile_h    * 16));
+    CUtensorMap* tma_v_d_bwd  = tma::allocate_and_create_tensor_map<v_smem_tile>(v_bf,   (batch*heads*N)/(tile_h    * 16));
+    CUtensorMap* tma_l_d_bwd  = tma::allocate_and_create_tensor_map<l_smem_tile>(l_bf,   (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_d_d_bwd  = tma::allocate_and_create_tensor_map<d_smem_tile>(d_bf,   (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_og_d_bwd = tma::allocate_and_create_tensor_map<og_smem_tile>(og_bf, (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_qg_d_bwd = tma::allocate_and_create_tensor_map<qg_smem_tile>(qg_bf, (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_kg_d_bwd = tma::allocate_and_create_tensor_map<k_smem_tile>(kg_bf,  (batch*heads*N)/(tile_h    * 16));
+    CUtensorMap* tma_vg_d_bwd = tma::allocate_and_create_tensor_map<v_smem_tile>(vg_bf,  (batch*heads*N)/(tile_h    * 16));
 
 
-//     cudaFuncSetAttribute(attend_ker_bwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(attend_ker_bwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
-//     dim3 grid_2(N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), batch*heads, 1);
-//     auto threads_2 = WORKERS_BWD * kittens::WARP_THREADS;
+    dim3 grid_2(N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), batch*heads, 1);
+    auto threads_2 = WORKERS_BWD * kittens::WARP_THREADS;
 
-//     attend_ker_bwd_train<<<grid_2, threads_2, mem_size>>>(N, tma_q_d_bwd, tma_k_d_bwd, tma_v_d_bwd, tma_l_d_bwd, tma_d_d_bwd, tma_og_d_bwd, tma_qg_d_bwd, tma_kg_d_bwd, tma_vg_d_bwd);
+    attend_ker_bwd_train<<<grid_2, threads_2, mem_size>>>(N, tma_q_d_bwd, tma_k_d_bwd, tma_v_d_bwd, tma_l_d_bwd, tma_d_d_bwd, tma_og_d_bwd, tma_qg_d_bwd, tma_kg_d_bwd, tma_vg_d_bwd);
 
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-// }
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
