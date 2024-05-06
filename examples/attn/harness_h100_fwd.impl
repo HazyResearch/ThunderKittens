@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16; 
+constexpr int ATTN_B = 32; 
 constexpr int ATTN_H = 16; 
 constexpr int ATTN_N = 4096; 
 constexpr int ATTN_D = 64;
@@ -28,6 +28,29 @@ inline void __cudaCheckError( const char *file, const int line ) {
                  file, line, cudaGetErrorString( err ) );
         exit( -1 );
     }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
 }
 
 int main(int argc, char **argv) {
@@ -141,6 +164,11 @@ int main(int argc, char **argv) {
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, false, "fwd");
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);
