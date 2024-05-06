@@ -7,7 +7,7 @@ import sys
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 2048
+N = 1024
 D = 16
 DV = 64
 
@@ -40,6 +40,9 @@ def pytorch_test(Q, K, V, TESTNAME='all'):
     T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
     T1 = torch.einsum("bhnm,bhme->bhne", T1a, V).to(torch.bfloat16).to(torch.float32)
     T0  = V.cumsum(dim=2).to(torch.bfloat16).to(torch.float32)
+
+    A2 = torch.einsum("bhnd,bhnf,bhne->bhndef",K,V,K).cumsum(dim=2)
+    last_kv_state = A2[:, :, -1]
     
     o = 0
     if 't0' in TESTNAME or 'all' in TESTNAME:
@@ -51,15 +54,16 @@ def pytorch_test(Q, K, V, TESTNAME='all'):
     if 't2' in TESTNAME or 'all' in TESTNAME:
         o += T2/2
         print('Adding T2/2')
-    return o.to(torch.bfloat16)
+    return o.to(torch.bfloat16), last_kv_state.to(torch.bfloat16)
 
-o = pytorch_test(q, k, v, TESTNAME)
+o, kv_state = pytorch_test(q, k, v, TESTNAME)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy()
     kf = k.to(torch.float32).flatten().cpu().numpy()
     vf = v.to(torch.float32).flatten().cpu().numpy()
     of = o.to(torch.float32).flatten().cpu().numpy()
+    kv_statef = kv_state.to(torch.float32).flatten().cpu().numpy()
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
         f.write(' ')
@@ -71,5 +75,8 @@ with open(f'{TESTNAME}.txt', 'w') as f:
         f.write(' ')
     for i in trange(B*H*N*DV):
         f.write(repr(of[i]))
+        f.write(' ')
+    for i in trange(B*H*D*D*DV):
+        f.write(repr(kv_statef[i]))
         f.write(' ')
 

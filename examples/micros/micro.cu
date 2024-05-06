@@ -1,7 +1,7 @@
 #include <iostream>
 #include <math.h>
 #include <assert.h>
-#include <mma.h>
+#include <mma_AB.h>
 using namespace nvcuda;
 
 # include "src/kittens.cuh"
@@ -39,10 +39,10 @@ void micro_ker(
     **********/
     extern __shared__ alignment_dummy __shm[]; 
     shared_allocator al((int*)&__shm[0]);
-    st_bf_1x1<ducks::st_layout::xor_swizzle> (&q)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
-    st_bf_1x1<ducks::st_layout::xor_swizzle> (&k)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
-    st_bf_1x4<ducks::st_layout::xor_swizzle> (&v)[2][NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::xor_swizzle>, 2, NUM_WORKERS>();
-    st_bf_1x1<ducks::st_layout::xor_swizzle> (&o_small)[NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::xor_swizzle>, NUM_WORKERS>();
+    st_bf_1x1<ducks::st_layout::swizzle> (&q)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
+    st_bf_1x1<ducks::st_layout::swizzle> (&k)[2][NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
+    st_bf_1x4<ducks::st_layout::swizzle> (&v)[2][NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
+    st_bf_1x1<ducks::st_layout::swizzle> (&o_small)[NUM_WORKERS] = al.allocate<st_bf_1x1<ducks::st_layout::swizzle>, NUM_WORKERS>();
 
     /*********
     REGISTER
@@ -62,8 +62,8 @@ void micro_ker(
     block.sync(); // Make sure no gets to the barrier before its initialized.
 
     // constants; num elements
-    const int qk_tile_elements = st_bf_1x1<ducks::st_layout::xor_swizzle>::num_elements;
-    const int  v_tile_elements = st_bf_1x4<ducks::st_layout::xor_swizzle>::num_elements;
+    const int qk_tile_elements = st_bf_1x1<ducks::st_layout::swizzle>::num_elements;
+    const int  v_tile_elements = st_bf_1x4<ducks::st_layout::swizzle>::num_elements;
     auto n_tiles  = n/kittens::TILE_DIM;
     auto n_blocks = n_tiles/NUM_WORKERS;
     assert(n_tiles % NUM_WORKERS == 0);
@@ -131,9 +131,9 @@ micro( torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o_small 
     const int workers = 8;
 
     // total shared memory allocation
-    unsigned long mem_size  = 2*2*workers*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>);      // q, k    (double buff)
-                  mem_size += 2*1*workers*sizeof(st_bf_1x4<ducks::st_layout::xor_swizzle>);      // v       (double buff)
-                  mem_size += 1*1*workers*sizeof(st_bf_1x1<ducks::st_layout::xor_swizzle>);      // o_small (single buff)
+    unsigned long mem_size  = 2*2*workers*sizeof(st_bf_1x1<ducks::st_layout::swizzle>);      // q, k    (double buff)
+                  mem_size += 2*1*workers*sizeof(st_bf_1x4<ducks::st_layout::swizzle>);      // v       (double buff)
+                  mem_size += 1*1*workers*sizeof(st_bf_1x1<ducks::st_layout::swizzle>);      // o_small (single buff)
 
     TORCH_CHECK(n % (workers*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
     

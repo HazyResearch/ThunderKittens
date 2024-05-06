@@ -31,40 +31,6 @@ struct identifier {};
 } // namespace st
 } // namespace ducks
 
-// wgmma helpers
-namespace detail {
-// see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
-__device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
-
-template<typename T> concept wgmma_layout = ducks::st_layout::wgmma_row<T> || ducks::st_layout::wgmma_col<T>;
-template<wgmma_layout layout>
-__device__ inline uint64_t matrix_descriptor(uint64_t start_addr) {
-    uint64_t desc = 0x0000000000000000;
-    desc |= matrix_descriptor_encode(start_addr);
-    desc |= matrix_descriptor_encode((uint64_t)128) << 16;
-    desc |= matrix_descriptor_encode((uint64_t)256) << 32;
-    uint64_t base_offset = 0;
-    if constexpr (layout::swizzling_mode == 3) {
-        if((uint64_t)(start_addr) % 256 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    if constexpr (layout::swizzling_mode == 2) {
-        if((uint64_t)(start_addr) % 512 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    if constexpr (layout::swizzling_mode == 1) {
-        if((uint64_t)(start_addr) % 1024 != 0) {
-            base_offset = (start_addr >> 0x7) & 0x7;
-        }
-    }
-    desc |= ((uint64_t)base_offset) << 49;
-    desc |= ((uint64_t)layout::swizzling_mode) << 62;
-    return desc;
-}
-}
-
 // Forward declaration of subtile
 template<
     typename _T,
@@ -85,10 +51,17 @@ struct st_subtile;
  * @tparam _layout The memory layout of the tile.
  */
 template<typename _T, int _height, int _width, ducks::st_layout::all _layout>
-struct st {
+struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using layout = _layout; ///< Memory layout of the tile.
     using dtype = _T; ///< Data type of the elements in the tile.
+
+    // define underlying data as same as that projected, to make clear that this is *not* a subtile.
+    static constexpr int underlying_height        = _height;
+    static constexpr int underlying_width         = _width;
+    static constexpr int underlying_rows          = underlying_height * kittens::TILE_DIM;
+    static constexpr int underlying_cols          = underlying_width  * kittens::TILE_DIM;
+    static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int height              = _height; ///< Height of the tile in terms of 16-element subtiles.
     static constexpr int width               = _width; ///< Width of the tile in terms of 16-element subtiles.
@@ -98,10 +71,13 @@ struct st {
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
-    static_assert(
-        !std::is_same_v<layout, ducks::st_layout::xor_swizzle> || width == 1 || width == 2 || width == 4 || width == 8 || width == 16 || width == 32,
-        "For XOR swizzled modes, shared tile width must be a power of 2."
-    ); // XOR swizzling only works with a few particular layout dimensions.
+    static constexpr int swizzle_bytes = (
+        std::is_same_v<layout, ducks::st_layout::swizzle> || std::is_same_v<layout, ducks::st_layout::wgmma_swizzle> ? (
+            underlying_width%4 == 0 ? 128 :
+            underlying_width%2 == 0 ? 64  :
+            32
+        ) : 0
+    );
 
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
@@ -113,27 +89,16 @@ struct st {
      * indexing calculations for swizzled or strangely ordered layouts.
      */
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return data[detail::shared_indexer<height, width, layout>::idx(rowcol.x, rowcol.y)];
+        return *detail::shared_indexer<height, width, layout>::idx(data, rowcol.x, rowcol.y);
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return data[detail::shared_indexer<height, width, layout>::idx(rowcol.x, rowcol.y)];
+        return *(const bf16*)detail::shared_indexer<height, width, layout>::idx((bf16*)data, rowcol.x, rowcol.y);
     }
     __device__ inline       dtype& operator[](int idx)       {
         return data[idx];
     }
     __device__ inline const dtype& operator[](int idx) const {
         return data[idx];
-    }
-
-    __device__ inline uint64_t descriptor(int chunk_idx=0) const {
-        uint64_t start_addr;
-        if constexpr (ducks::st_layout::wgmma_row<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
-            start_addr = (uint64_t)&(*this)[{0, 16*chunk_idx}];
-        }
-        else { // we're in a column layout mode, so the next chunk we want is by row.
-            start_addr = (uint64_t)&(*this)[{16*chunk_idx, 0}];
-        }
-        return detail::matrix_descriptor<layout>(start_addr);
     }
 
     // vector types
@@ -154,7 +119,7 @@ struct st {
  * calculations. You should never create this directly, but instead
  * have subtile_inplace return it for you instead. (`auto` is nice.)
  *
- * You can generally just pretend this is an st.
+ * You can generally just pretend this is an st. But not for wgmma's.
  */
 template<
     typename _T,
@@ -191,28 +156,17 @@ struct st_subtile {
     }
 
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return data[detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            rowcol.x+row_offset, rowcol.y+col_offset
-        )];
+        return *detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
+            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
+        );
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return data[detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            rowcol.x+row_offset, rowcol.y+col_offset
-        )];
+        return *(const bf16*)detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
+            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
+        );
     }
 
     // single-index operator[] is left undefined as it would likely be an improper use of st_subtile type
-
-    __device__ inline uint64_t descriptor(int chunk_idx=0) const {
-        uint64_t start_addr;
-        if constexpr (ducks::st_layout::wgmma_row<layout>) { // we're in a row layout mode, so the next chunk we want is by column.
-            start_addr = (uint64_t)&(*this)[{0, 16*chunk_idx}];
-        }
-        else { // we're in a column layout mode, so the next chunk we want is by row.
-            start_addr = (uint64_t)&(*this)[{16*chunk_idx, 0}];
-        }
-        return detail::matrix_descriptor<layout>(start_addr);
-    }
 
     // vector types
     using col_vec = sv<dtype, height>;
@@ -241,18 +195,18 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
 
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x1 = st_bf<1, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x2 = st_bf<1, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x4 = st_bf<1, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_1x8 = st_bf<1, 8, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x1 = st_bf<2, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x2 = st_bf<2, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_2x4 = st_bf<2, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x1 = st_bf<4, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x2 = st_bf<4, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_4x4 = st_bf<4, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::naive> using st_bf_8x1 = st_bf<8, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x4 = st_bf<1, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x8 = st_bf<1, 8, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x1 = st_bf<2, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x2 = st_bf<2, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x4 = st_bf<2, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x1 = st_bf<4, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
 
 }

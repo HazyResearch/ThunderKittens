@@ -3,6 +3,29 @@
  * @brief Warpgroup matrix-multiply accumulate operations. These ops are necessary to achieve full utilization on H100 GPUs.
  */
 
+
+ /*
+ ### OPTIONS:
+
+ REG+SMEM -> REG
+ - mma_AB   (accum) [DONE]
+ - mm_AB    (reset) [DONE]
+ - mma_ABt  (accum) [DONE]
+ - mm_ABt   (reset) [DONE]
+ 
+ SMEM+SMEM -> REG
+ - mma_AB   (accum) [DONE]
+ - mm_AB    (reset) [DONE]
+ - mma_ABt  (accum) [DONE]
+ - mm_ABt   (reset) [DONE]
+ - mma_AtB  (accum) [DONE]
+ - mm_AtB   (reset) [DONE]
+ - mma_AtBt (accum) [DONE]
+ - mm_AtBt  (reset) [DONE]
+ 
+Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
+*/
+
 // [(register, shared) -> register] edition
 /**
  * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
@@ -18,139 +41,66 @@
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int accumulate, int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                            const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                            const st_bf<K, M, L_B>           &b) {
+template<int N_DIV_4, int K, int M, ducks::wgmma::transposed L_B, int accumulate=1>
+__device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
+                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
+                               const st_bf<K, M, L_B>                         &b) {
     KITTENS_CHECK_WARPGROUP
+    using base = kittens::wgmma::base<M, 0, 1>;
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
-        kittens::detail::wgmma_base<M, 1>::rt_st(
+        base::rt_st(
             d_ref,
             a.tiles[n][0],
-            b.descriptor(0),
+            base::b_desc(b, 0),
             accumulate
         );
         #pragma unroll
         for(int k = 1; k < K; k++) {
-            kittens::detail::wgmma_base<M, 1>::rt_st(
+            base::rt_st(
                 d_ref,
                 a.tiles[n][k],
-                b.descriptor(k),
+                base::b_desc(b, k),
                 1
             );
         }
     }
 }
-/**
- * @brief Perform matrix multiply-accumulate operation with accumulation behavior.
- *
- * This function is a wrapper around `mma` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
- *
- * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The width of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated.
- * @param a[in] The source register tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma_accum(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                                  const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<K, M, L_B>           &b) {
-    mma<1, N_DIV_4, K, M, L_B>(d, a, b);
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
+__device__ static inline void mm_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
+                              const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
+                              const st_bf<K, M, L_B>                         &b) {
+    mm_AB<N_DIV_4, K, M, L_B, 0>(d, a, b);
 }
-/**
- * @brief Perform matrix multiply-accumulate operation with reset behavior.
- *
- * This function is a wrapper around `mma` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
- *
- * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The width of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is written.
- * @param a[in] The source register tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma_reset(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                                  const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<K, M, L_B>           &b) {
-    mma<0, N_DIV_4, K, M, L_B>(d, a, b);
-}
-// [(shared, shared) -> register] edition
-/**
- * @brief Perform matrix multiply-accumulate operation using warp group matrix multiply-accumulate (WGMMA) primitives.
- *
- * This function multiplies a shared tile `a` with a shared tile `b` and writes the result into a register tile `d`.
- *
- * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The width of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated or written.
- * @param a[in] The source register tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int accumulate, int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma(rt_fl<1, M, ducks::rt_layout::row> &d,
-                            const st_bf<4, K, L_A>           &a,
-                            const st_bf<K, M, L_B>           &b) {
+
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B, int accumulate=1>
+__device__ static inline void mma_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
+                               const st_bf<4, K, L_A>                   &a,
+                               const st_bf<K, M, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    kittens::detail::wgmma_base<M, 1>::st_st(
+    using base = kittens::wgmma::base<M, 0, 1>;
+    base::st_st(
         d,
-        a.descriptor(0),
-        b.descriptor(0),
+        base::a_desc(a, 0),
+        base::b_desc(b, 0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        kittens::detail::wgmma_base<M, 1>::st_st(
+        base::st_st(
             d,
-            a.descriptor(k),
-            b.descriptor(k),
+            base::a_desc(a, k),
+            base::b_desc(b, k),
             1
         );
     }
 }
-/**
- * @brief Perform matrix multiply-accumulate operation with accumulation behavior.
- *
- * This function is a wrapper around `mma` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
- *
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The width of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated.
- * @param a[in] The source shared tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma_accum(rt_fl<1, M, ducks::rt_layout::row> &d,
-                                  const st_bf<4, K, L_A>           &a,
-                                  const st_bf<K, M, L_B>           &b) {
-    mma<1, K, M, L_A, L_B>(d, a, b);
-}
-/**
- * @brief Perform matrix multiply-accumulate operation with reset behavior.
- *
- * This function is a wrapper around `mma` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
- *
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The width of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is written.
- * @param a[in] The source shared tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_col L_B>
-__device__ static inline void mma_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
-                                  const st_bf<4, K, L_A>           &a,
-                                  const st_bf<K, M, L_B>           &b) {
-    mma<0, K, M, L_A, L_B>(d, a, b);
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B>
+__device__ static inline void mm_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
+                              const st_bf<4, K, L_A>                   &a,
+                              const st_bf<K, M, L_B>                   &b) {
+    mma_AB<K, M, L_A, L_B, 0>(d, a, b);
 }
 
 // [(register, shared) -> register] edition
@@ -168,68 +118,37 @@ __device__ static inline void mma_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int accumulate, int N_DIV_4, int K, int M, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                            const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                            const st_bf<M, K, L_B>           &b) {
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B, int accumulate=1>
+__device__ static inline void mma_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
+                                const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
+                                const st_bf<M, K, L_B>                         &b) {
     KITTENS_CHECK_WARPGROUP
+    using base = kittens::wgmma::base<M, 0, 0>;
     #pragma unroll
     for(int n = 0; n < N_DIV_4; n++) {
         rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
-        kittens::detail::wgmma_base<M, 0>::rt_st(
+        base::rt_st(
             d_ref,
             a.tiles[n][0],
-            b.descriptor(0),
+            base::b_desc(b, 0),
             accumulate
         );
         #pragma unroll
         for(int k = 1; k < K; k++) {
-            kittens::detail::wgmma_base<M, 0>::rt_st(
+            base::rt_st(
                 d_ref,
                 a.tiles[n][k],
-                b.descriptor(k),
+                base::b_desc(b, k),
                 1
             );
         }
     }
 }
-/**
- * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
- *
- * This function is a wrapper around `dot` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
- *
- * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The height of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated or written.
- * @param a[in] The source register tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot_accum(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                                  const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<M, K, L_B>           &b) {
-    dot<1, N_DIV_4, K, M, L_B>(d, a, b);
-}
-/**
- * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
- *
- * This function is a wrapper around `dot` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
- *
- * @tparam N_DIV_4 The height of the matrix `a` divided by 4.
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The height of the matrices `b` and `d`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated or written.
- * @param a[in] The source register tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int N_DIV_4, int K, int M, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot_reset(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                                  const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                  const st_bf<M, K, L_B>           &b) {
-    dot<0, N_DIV_4, K, M, L_B>(d, a, b);
+template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
+__device__ static inline void mm_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
+                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
+                               const st_bf<M, K, L_B>                         &b) {
+    mma_ABt<N_DIV_4, K, M, L_B, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -247,51 +166,42 @@ __device__ static inline void dot_reset(rt_fl<N_DIV_4, M, ducks::rt_layout::row>
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int accumulate, int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot(rt_fl<1, M, ducks::rt_layout::row> &d,
-                            const st_bf<4, K, L_A>           &a,
-                            const st_bf<M, K, L_B>           &b) {
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B, int accumulate=1>
+__device__ static inline void mma_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
+                                const st_bf<4, K, L_A>                   &a,
+                                const st_bf<M, K, L_B>                   &b) {
     KITTENS_CHECK_WARPGROUP
-    kittens::detail::wgmma_base<M, 0>::st_st(
+    using base = kittens::wgmma::base<M, 0, 0>;
+    base::st_st(
         d,
-        a.descriptor(0),
-        b.descriptor(0),
+        base::a_desc(a, 0),
+        base::b_desc(b, 0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        kittens::detail::wgmma_base<M, 0>::st_st(
+        base::st_st(
             d,
-            a.descriptor(k),
-            b.descriptor(k),
+            base::a_desc(a, k),
+            base::b_desc(b, k),
             1
         );
     }
 }
-/**
- * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
- *
- * This function is a wrapper around `dot` with the `accumulate` parameter set to 1, indicating that the result should be accumulated into `d`.
- *
- * @tparam K The common dimension of matrices `a` and `b`.
- * @tparam M The height of the matrices `b` and `d`.
- * @tparam L_A The layout of the matrix `a`.
- * @tparam L_B The layout of the matrix `b`.
- * @param d[out] The destination register tile where the result is accumulated or written.
- * @param a[in] The source shared tile to be multiplied.
- * @param b[in] The source shared tile to be multiplied.
- */
-template<int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot_accum(rt_fl<1, M, ducks::rt_layout::row> &d,
-                                  const st_bf<4, K, L_A>           &a,
-                                  const st_bf<M, K, L_B>           &b) {
-    dot<1, K, M, L_A, L_B>(d, a, b);
+template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B>
+__device__ static inline void mm_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
+                               const st_bf<4, K, L_A>                   &a,
+                               const st_bf<M, K, L_B>                   &b) {
+    mma_ABt<K, M, L_A, L_B, 0>(d, a, b);
 }
+
+// [(shared, shared) -> register] edition
 /**
- * @brief Perform matrix outer product operation using warp group matrix multiply-accumulate (WGMMA) primitives.
+ * @brief Perform matrix multiply using warp group matrix multiply-accumulate (WGMMA) primitives, with A transposed.
  *
- * This function is a wrapper around `dot` with the `accumulate` parameter set to 0, indicating that the result should overwrite `d`.
+ * This function computes an outer product of a shared tile `a` with a shared tile `b` and writes the result into a register tile `d`.
  *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  * @tparam K The common dimension of matrices `a` and `b`.
  * @tparam M The height of the matrices `b` and `d`.
  * @tparam L_A The layout of the matrix `a`.
@@ -300,11 +210,77 @@ __device__ static inline void dot_accum(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int K, int M, ducks::st_layout::wgmma_row L_A, ducks::st_layout::wgmma_row L_B>
-__device__ static inline void dot_reset(rt_fl<1, M, ducks::rt_layout::row> &d,
-                                  const st_bf<4, K, L_A>           &a,
-                                  const st_bf<M, K, L_B>           &b) {
-    dot<0, K, M, L_A, L_B>(d, a, b);
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::transposed L_B, int accumulate=1>
+__device__ static inline void mma_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
+                                const st_bf<K, 4, L_A>                   &a,
+                                const st_bf<K, M, L_B>                   &b) {
+    KITTENS_CHECK_WARPGROUP
+    using base = kittens::wgmma::base<M, 1, 1>;
+    base::st_st(
+        d,
+        base::a_desc(a, 0),
+        base::b_desc(b, 0),
+        accumulate
+    );
+    #pragma unroll
+    for(int k = 1; k < K; k++) {
+        base::st_st(
+            d,
+            base::a_desc(a, k),
+            base::b_desc(b, k),
+            1
+        );
+    }
+}
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::transposed L_B>
+__device__ static inline void mm_AtB(rt_fl<1, M, ducks::rt_layout::row> &d,
+                               const st_bf<K, 4, L_A>                   &a,
+                               const st_bf<K, M, L_B>                   &b) {
+    mma_AtB<K, M, L_A, L_B, 0>(d, a, b);
+}
+
+// [(shared, shared) -> register] edition
+/**
+ * @brief Perform matrix multiply using warp group matrix multiply-accumulate (WGMMA) primitives, with A and B transposed.
+ *
+ * This function computes an outer product of a shared tile `a` with a shared tile `b` and writes the result into a register tile `d`.
+ *
+ * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
+ * @tparam K The common dimension of matrices `a` and `b`.
+ * @tparam M The height of the matrices `b` and `d`.
+ * @tparam L_A The layout of the matrix `a`.
+ * @tparam L_B The layout of the matrix `b`.
+ * @param d[out] The destination register tile where the result is accumulated or written.
+ * @param a[in] The source shared tile to be multiplied.
+ * @param b[in] The source shared tile to be multiplied.
+ */
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::normal L_B, int accumulate=1>
+__device__ static inline void mma_AtBt(rt_fl<1, M, ducks::rt_layout::row> &d,
+                                 const st_bf<K, 4, L_A>                   &a,
+                                 const st_bf<M, K, L_B>                   &b) {
+    KITTENS_CHECK_WARPGROUP
+    using base = kittens::wgmma::base<M, 1, 0>;
+    base::st_st(
+        d,
+        base::a_desc(a, 0),
+        base::b_desc(b, 0),
+        accumulate
+    );
+    #pragma unroll
+    for(int k = 1; k < K; k++) {
+        base::st_st(
+            d,
+            base::a_desc(a, k),
+            base::b_desc(b, k),
+            1
+        );
+    }
+}
+template<int K, int M, ducks::wgmma::transposed L_A, ducks::wgmma::normal L_B>
+__device__ static inline void mm_AtBt(rt_fl<1, M, ducks::rt_layout::row> &d,
+                                const st_bf<K, 4, L_A>                   &a,
+                                const st_bf<M, K, L_B>                   &b) {
+    mma_AtBt<K, M, L_A, L_B, 0>(d, a, b);
 }
 
 /**

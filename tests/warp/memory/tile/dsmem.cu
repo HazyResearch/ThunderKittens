@@ -5,7 +5,7 @@
 
 struct test_dsmem { // load with dsmem, write out normally
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16) && W*H<=64>;
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16) && W*H<=64>;
     static inline const std::string test_identifier = "dsmem_transfer";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < 4; i++) {
@@ -77,9 +77,8 @@ template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename...
 struct dsmem_sweep_st_layout_size_2d {
     static void run(test_data &results) {
         dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::xor_swizzle, args...>::run(results);
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_row_0b, args...>::run(results);
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_0b, args...>::run(results);
+        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::swizzle, args...>::run(results);
+        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_interleave, args...>::run(results);
     }
 };
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args>

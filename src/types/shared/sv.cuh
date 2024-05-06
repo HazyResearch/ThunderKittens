@@ -42,7 +42,7 @@ struct identifier {};
  * uniform layout which is just an array in memory. EZ!
  */
 template<typename _T, size_t _tiles>
-struct sv {
+struct KITTENS_DEFAULT_ALIGN sv {
     using identifier = ducks::sv::identifier;
     using dtype = _T;
 

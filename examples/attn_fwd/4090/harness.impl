@@ -2,11 +2,13 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
-constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 5120;
-constexpr int ATTN_D     = 64;
-constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16;
+constexpr int ATTN_N = 4096;
+constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ITER   = 10;
+
+#define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -80,56 +82,20 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-
-    CUtensorMap tma_desc_q = {}; 
-    CUtensorMap tma_desc_k = {};
-    CUtensorMap tma_desc_v = {};
-    CUtensorMap tma_desc_o = {};
-
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_q, d_q); 
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_k, d_k);
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(&tma_desc_v, d_v);
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(&tma_desc_o, d_o);
-
-    CUtensorMap* tma_q_d; 
-    CUtensorMap* tma_k_d;
-    CUtensorMap* tma_v_d;
-    CUtensorMap* tma_o_d;
-
-    cudaMalloc(&tma_q_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_k_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_v_d, sizeof(CUtensorMap));
-    cudaMalloc(&tma_o_d, sizeof(CUtensorMap));
-
-    cudaMemcpy(tma_q_d, &tma_desc_q, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_k_d, &tma_desc_k, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_v_d, &tma_desc_v, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-    cudaMemcpy(tma_o_d, &tma_desc_o, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
-
-    std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
     
     cudaFuncSetAttribute(
-        attend_ker<ATTN_N>,
+        attend_ker,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
-    std::cout << "Set max dynamic memory!" << std::endl;
 
-    const int ITER = 100;
-    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    std::cout << "Starting warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
-    }
-    cudaDeviceSynchronize();
-    std::cout << "Starting kernel" << std::endl;
+    std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, 64, d_q, d_k, d_v, d_o);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

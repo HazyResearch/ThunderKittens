@@ -11,19 +11,24 @@
  * @param dst[out] The destination register tile.
  * @param src[in]  The source shared tile.
  */
-template<typename T2, typename U, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::all shared_layout>
-__device__ inline static void load(rt<T2, height/N_WARPS, width, reg_layout> &dst, const st<U, height, width, shared_layout> &src) {
+template<ducks::rt::all RT, ducks::st::all ST>
+__device__ inline static void load(RT &dst, const ST &src) {
+    constexpr int height = ST::height;
+    constexpr int warp_height = RT::height;
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
-    constexpr int warp_height = height/N_WARPS;
+    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
     int local_warpid = warpid();
+    using T2 = RT::dtype;
+    using U  = ST::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
-    using U2 = base_types::packing<U >::packed_type;
+    using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = ::kittens::laneid();
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, ducks::rt_layout::row>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = (local_warpid*warp_height + i)*dst.tile_size + (warp_laneid / 4);
                 int col = j*dst.tile_size + 2*(warp_laneid % 4);
@@ -58,11 +63,16 @@ __device__ inline static void load(rt<T2, height/N_WARPS, width, reg_layout> &ds
  * @param dst[out] The destination shared tile.
  * @param src[in]  The source register tile.
  */
-template<typename U, typename T2, int height, int width, ducks::rt_layout::all reg_layout, ducks::st_layout::all shared_layout>
-__device__ inline static void store(st<U, height, width, shared_layout> &dst, const rt<T2, height/N_WARPS, width, reg_layout> &src) {
+template<ducks::st::all ST, ducks::rt::all RT>
+__device__ inline static void store(ST &dst, const RT &src) {
+    constexpr int height = ST::height;
+    constexpr int warp_height = RT::height;
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
-    constexpr int warp_height = height/N_WARPS;
+    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
     int local_warpid = warpid();
+    using T2 = RT::dtype;
+    using U  = ST::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = ::kittens::laneid();
@@ -70,7 +80,7 @@ __device__ inline static void store(st<U, height, width, shared_layout> &dst, co
     for(int i = 0; i < warp_height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<reg_layout, ducks::rt_layout::row>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                 // handle the row-major layout
                 int row = (local_warpid*warp_height + i)*src.tile_size + (warp_laneid / 4);
                 int col = j*src.tile_size + 2*(warp_laneid % 4);

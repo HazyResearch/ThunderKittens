@@ -7,10 +7,10 @@ import sys
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 1024
-D = 64
+N = int(sys.argv[1])
+D = int(sys.argv[2])
 
-TESTNAME = sys.argv[1]
+TESTNAME = sys.argv[3] if len(sys.argv) > 3 else 'randn'
 
 if TESTNAME == 'ones':
     q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
@@ -35,7 +35,7 @@ else:
 
 o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
 
-with open(f'{TESTNAME}.txt', 'w') as f:
+with open(f'{TESTNAME}_{N}N_{D}D.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy()
     kf = k.to(torch.float32).flatten().cpu().numpy()
     vf = v.to(torch.float32).flatten().cpu().numpy()

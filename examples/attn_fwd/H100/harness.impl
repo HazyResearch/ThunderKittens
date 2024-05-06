@@ -2,12 +2,12 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 16
-#define ATTN_H 16
-#define ATTN_N 1024
-#define ATTN_D 64 // hardcoded into this kernel
-
-#define BLOCK_SIZE (32*NUM_WORKERS)
+constexpr int ATTN_B     = 16;
+constexpr int ATTN_H     = 16;
+constexpr int ATTN_N     = 4096;
+constexpr int ATTN_D     = 64;
+constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -50,35 +50,20 @@ int main(int argc, char **argv) {
     bf16 *o_bf = new bf16[TOTAL_ELEMENTS];
     float *o = new float[TOTAL_ELEMENTS];
 
-    if(argc > 1) {
-        std::ifstream infile(argv[1]);
+    std::ifstream infile(argv[1]);
 
-        std::cout << "Starting to enter!" << std::endl;
+    std::cout << "Starting to enter!" << std::endl;
 
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> q[i];
-        std::cout << "Finished loading Q" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> k[i];
-        std::cout << "Finished loading K" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v[i];
-        std::cout << "Finished loading V" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> o_ref[i];
-        std::cout << "Finished loading O_REF" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> q[i];
+    std::cout << "Finished loading Q" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> k[i];
+    std::cout << "Finished loading K" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v[i];
+    std::cout << "Finished loading V" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> o_ref[i];
+    std::cout << "Finished loading O_REF" << std::endl;
 
-        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
-    } else {
-        std::cout << "Starting to enter!" << std::endl;
-
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) std::cin >> q[i];
-        std::cout << "Finished loading Q" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) std::cin >> k[i];
-        std::cout << "Finished loading K" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) std::cin >> v[i];
-        std::cout << "Finished loading V" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) std::cin >> o_ref[i];
-        std::cout << "Finished loading O_REF" << std::endl;
-
-        std::cout << "Finished loading file from stdin!" << std::endl;
-    }
+    std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
 
     // replicate into heads
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
@@ -96,21 +81,38 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    constexpr static int tile_width = fwd_attend_ker_tile_dims<ATTN_D>::tile_width;
+    constexpr static int qo_height  = fwd_attend_ker_tile_dims<ATTN_D>::qo_height;
+    constexpr static int kv_height  = fwd_attend_ker_tile_dims<ATTN_D>::kv_height;
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<qo_height, tile_width, layout_q>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(d_q); 
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_k>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_k);
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<kv_height, tile_width, layout_v>, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)>(d_v);
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf<qo_height, tile_width, layout_o>, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)>(d_o);
+
+    std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = 112000; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(
-        attend_ker,
+        fwd_attend_ker<ATTN_D, ATTN_N>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
+    std::cout << "Set max dynamic memory!" << std::endl;
 
-    const int ITER = 10;
+    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    std::cout << "Starting kernel\n";
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        fwd_attend_ker<ATTN_D, ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, 64, d_q, d_k, d_v, d_o);
+        fwd_attend_ker<ATTN_D, ATTN_N><<<grid, BLOCK_SIZE, mem_size>>>(tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

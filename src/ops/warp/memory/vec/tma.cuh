@@ -34,7 +34,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
+    constexpr CUtensorMapSwizzle      swizzle     = CU_TENSOR_MAP_SWIZZLE_NONE;
 
     uint64_t gmem_shape [1] = {SV::length * num_vectors};
     uint64_t gmem_stride[1] = {1};
@@ -61,7 +61,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
         smem_shape_ptr,
         smem_stride_ptr,
         tma_interleave,
-        tma_swizzle,
+        swizzle,
         tma_l2Promotion,
         tma_oobFill
     );

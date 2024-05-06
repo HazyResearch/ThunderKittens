@@ -3,8 +3,7 @@
 #ifdef TEST_WARP_MEMORY_TILE_TMA
 
 struct test_load { // load with TMA, write out normally
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4) && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
     static inline const std::string test_identifier = "tma_load";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -29,8 +28,7 @@ struct test_load { // load with TMA, write out normally
     }
 };
 struct test_store { // load normally, store with TMA
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::xor_swizzle> || W == 1 || W == 2 || W == 4) && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
     static inline const std::string test_identifier = "tma_store";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -98,9 +96,9 @@ template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename...
 struct tma_sweep_st_layout_size_2d {
     static void run(test_data &results) {
         tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
-        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::xor_swizzle, args...>::run(results);
-        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_row_0b, args...>::run(results);
-        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_col_t_0b, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::swizzle, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_swizzle, args...>::run(results);
+        tma_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_interleave, args...>::run(results);
     }
 };
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args>
