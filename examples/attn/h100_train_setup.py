@@ -1,4 +1,6 @@
 import torch 
+
+# import name in python file
 name = "h100_train"
 gpu = "H100"
 assert(gpu in ['4090', 'H100'])
