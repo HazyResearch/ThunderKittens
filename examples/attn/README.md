@@ -54,9 +54,9 @@ Set max dynamic memory!
 Starting warmup
 Starting kernel
 Finished kernel
-Average execution time: 2645 us
+Average execution time: 5226 us
 Correct :)
-Efficiency: 415.694 TFLOPS
+Efficiency: 420.785 TFLOPS
 ```
 - Training
 ```bash
