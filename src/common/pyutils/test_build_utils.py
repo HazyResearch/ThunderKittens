@@ -39,9 +39,14 @@ def jit_build(name, debug=False, gpu_type='4090'):
 def cuda_extension(name, debug, gpu_type): 
     _cuda_flags  = [
                     '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', 
-                    '-use_fast_math',
+                    '--use_fast_math',
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
+                    '--expt-relaxed-constexpr',
+                    '--expt-extended-lambda',
+                    '-Xcompiler=-fno-strict-aliasing',
+                    '-MD', '-MT', '-MF', '-x', 'cu', '-lrt', '-lpthread', '-ldl',
+                    '-lcuda', '-lcudadevrt', '-lcudart_static', '-lcublas',
                     f"-I {project_root}"
                     ]
     
@@ -70,7 +75,7 @@ def library_build(name, debug=False):
 #####
 # Helpers
 #   
-def __eq(str, x,y, tol=1e-3, debug=False): 
+def __eq(str, x,y, tol=1e-5, debug=False): 
     err = torch.abs(x-y).max()
     pass_str = "pass" if err < tol else "fail" 
     print(f"{str} : {pass_str} [err={err:0.5f}]")

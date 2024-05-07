@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 sys.path.insert(0, project_root)
 from src.common.pyutils.test_build_utils import __eq
 sys.path.append('build/lib.linux-x86_64-3.10')
-import h100_train as mod
+import h100_train as tk_train
 
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -30,14 +30,14 @@ def pytorch_test(Q, K, V, dO):
 def h100_fwd_kernel_test(Q, K, V, dO):
     o = torch.zeros_like(Q)
     l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=Q.dtype)
-    mod.attention_forward(Q, K, V, o, l_vec)
+    tk_train.attention_train_forward(Q, K, V, o, l_vec)
 
     d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=Q.dtype)
     qg = torch.zeros_like(Q)
     kg = torch.zeros_like(K)
     vg = torch.zeros_like(V)
 
-    mod.attention_backward(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg)
+    tk_train.attention_train_backward(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg)
 
     return o, qg, kg, vg
 
@@ -72,7 +72,10 @@ configurations = [
     (2, 8, 256),
     (4, 8, 512),
     (8, 8, 1024),
-    (16, 8, 2048)
+    (16, 8, 2048),
+    (16, 8, 4096),
+    (16, 8, 8192),
+    (16, 8, 16384)
 ]
 for b, h, n in configurations:
     check_correctness(b, h, n)

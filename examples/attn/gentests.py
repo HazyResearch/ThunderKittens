@@ -1,50 +1,81 @@
 import torch
+from tqdm import trange
 import numpy as np
 import sys
-import math
 from einops import rearrange, repeat
-from tqdm import trange
+import math
 
-# Configuration
-B, H = 1, 1
-N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
-D = int(sys.argv[3]) if len(sys.argv) > 3 else 128
+# only generate a single batch/head of data, which makes file loading much faster.
+# it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
+B = 1
+H = 1
+N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
+D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
+
 softmax_scale = 1 / math.sqrt(D)
-
-# Forward function
 def forward(Q, K, V):
-    attention_logits = torch.einsum("bhnd,bhmd->bhnm", Q, K) * softmax_scale
-    attention = torch.softmax(attention_logits, dim=-1)
-    output = torch.einsum("bhnm,bhmd->bhnd", attention, V)
-    return output
+    A0 = torch.einsum("bhnd,bhmd->bhnm",Q, K) * softmax_scale
+    
+    numerator  = torch.exp(A0) 
+    denominator = torch.exp(A0).sum(dim=-1, keepdim=True)
+    
+    A = numerator / denominator
+    
+    y  = torch.einsum("bhnm,bhmd->bhnd",A,V)
+    return y
 
-# Backward function
 def backward(Q, K, V, grad_output):
-    attention_logits = torch.einsum("bhnd,bhmd->bhnm", Q, K) * softmax_scale
-    attention = torch.softmax(attention_logits, dim=-1)
+    running_Q_grad = torch.zeros_like(Q)
+    running_K_grad = torch.zeros_like(K)
+    running_V_grad = torch.zeros_like(V)
     
-    grad_V = torch.einsum("bhnm,bhnd->bhmd", attention, grad_output)
+    A0 = torch.einsum("bhnd,bhmd->bhnm",Q, K) * softmax_scale
+    numerator  = torch.exp(A0) 
+    denominator = torch.exp(A0).sum(dim=-1, keepdim=True)
+    A = numerator / denominator
+        
+    running_V_grad += torch.einsum("bhnm,bhnd->bhmd", A, grad_output)
+    
     dL_dA = torch.einsum("bhnd,bhmd->bhnm", grad_output, V)
-    dL_dAttention = attention * (dL_dA - (dL_dA * attention).sum(dim=-1, keepdim=True))
+    dL_dA0 = A * (dL_dA - (dL_dA * A).sum(dim=-1, keepdim=True))
+    dL_dA0 *= softmax_scale 
     
-    grad_Q = torch.einsum("bhnm,bhmd->bhnd", dL_dAttention * softmax_scale, K)
-    grad_K = torch.einsum("bhnm,bhnd->bhmd", dL_dAttention * softmax_scale, Q)
-    
-    return grad_Q, grad_K, grad_V
+    running_Q_grad += torch.einsum("bhnm,bhmd->bhnd", dL_dA0, K)
+    running_K_grad += torch.einsum("bhnm,bhnd->bhmd", dL_dA0, Q)
 
-# Test configurations
+    return running_Q_grad, running_K_grad, running_V_grad
+
 TESTNAME = sys.argv[1]
+
 if TESTNAME == 'ones':
-    q = k = v = grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    q           = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    k           = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    v           = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'randn':
     torch.random.manual_seed(42)
-    q = k = v = grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    q           = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    k           = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    v           = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'qk_test':
-    eye_template = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1) * 10
-    q = k = v = grad_output = eye_template.to(dtype=torch.bfloat16, device='cuda')
+    q = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
+    q = q.to(dtype=torch.bfloat16, device='cuda')
+    
+    k = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
+    k = k.to(dtype=torch.bfloat16, device='cuda')
+    
+    v = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
+    v = v.to(dtype=torch.bfloat16, device='cuda')
+    
+    grad_output = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
+    grad_output = grad_output.to(dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'v_orientation':
-    v = (torch.arange(D, dtype=torch.bfloat16, device='cuda') / D).reshape((1,1,1,-1)).repeat(B, H, N, 1)
-    q = k = grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    v = (torch.arange(D, dtype=torch.bfloat16, device='cuda')/D).reshape((1,1,1,-1)).repeat(B, H, N, 1)
+    
+    grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 else:
     print('Invalid test name')
     sys.exit(0)
@@ -55,12 +86,10 @@ l_vec = l_vec - max_vec
 l_vec = torch.exp(l_vec)
 l_vec = l_vec.sum(dim=-1, keepdim=True)
 
-# Actual forward and backward
+l_vec = max_vec + torch.log(l_vec)
+
 o = forward(q, k, v)
 q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
-
-# Intermediate values
-l_vec = max_vec + torch.log(l_vec)
 
 d_vec = torch.mul(grad_output, o)
 d_vec = d_vec.sum(dim=-1, keepdim=True)
@@ -112,15 +141,15 @@ with open(fn, 'w') as f:
         f.write(' ')
         
 print(f'Run the harness like `./attn_bwd {fn}`')
-    
         
-############################################################
-## BENCHMARKING
-############################################################
+# time
+
 N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
-H = 16
+H = 32
 B = 16
+# H = 2048 // D
+# B = 16384 // N
 
 torch.use_deterministic_algorithms(False)
 
@@ -168,6 +197,7 @@ times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
 time_us = np.mean(times) * 1000
 print(f'Average time for forward pass in us: {time_us:.2f}')
 print(f'Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, D, H, False, "fwd"), time_us):.2f}')
+
 print("-" * 60)
 print(f'Timing backwards pass for B={B}, H={H}, N={N}, D={D}')
 
@@ -233,6 +263,7 @@ time_us = np.mean(times) * 1000
 
 print(f'Average time for backward pass in us: {time_us:.2f}')
 print(f'Average efficiency for backward pass in TFLOPS: {efficiency(flops(B, N, D, H, False, "bwd"), time_us):.2f}')
+
 print("-" * 60)
 print(f'Timing forward + backward pass for B={B}, H={H}, N={N}, D={D}')
 

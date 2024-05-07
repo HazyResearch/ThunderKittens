@@ -1,8 +1,8 @@
 import torch
 import sys
 import os
-import time
 from torch.cuda import Event
+from torch.autograd import Function
 import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +20,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
+class AttentionFunction(Function):
+    def forward(ctx, q, k, v):
+        
+        # assert training does not support head dim 128 yet
+        assert q.shape[2] == 64, "TK train currently supports head dim 64 only"
+        
+        outputs = torch.zeros_like(v)
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        
+        tk.attention_forward(q, k, v, outputs, l_vec)
+        
+        ctx.save_for_backward(q, k, v, outputs, l_vec)
+        
+        return outputs
+
 class CustomAttention(nn.Module):
     def __init__(self, b, h, n, d):
         super(CustomAttention, self).__init__()
@@ -34,12 +49,11 @@ class CustomAttention(nn.Module):
         k = rearrange(k, 'b n (h d) -> b h n d', h=self.h).to(dtype=torch.bfloat16).contiguous()
         v = rearrange(v, 'b n (h d) -> b h n d', h=self.h).to(dtype=torch.bfloat16).contiguous()
         
-        o = torch.zeros_like(v)
-        tk.attention_forward(q, k, v, o)
+        output = AttentionFunction.apply(q, k, v)
         
-        output = rearrange(o, 'b h n d -> b n (h d)')
+        output = rearrange(output, 'b h n d -> b n (h d)')
         return output
-
+    
 def flops(batch, seqlen, headdim, nheads, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
     f = 4 * batch * seqlen**2 * nheads * headdim // (2 if causal else 1)
@@ -62,29 +76,30 @@ def measure_performance(b, h, n, d):
     k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
     v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
     
-    q.requires_grad = False
-    k.requires_grad = False
-    v.requires_grad = False
+    q.grad = None
+    k.grad = None
+    v.grad = None
+    
+    o = torch.zeros_like(v)
+    
+    o.grad = None
+    
+    torch.cuda.synchronize()
 
     # Warm up
     for _ in range(10):
-        o = torch.zeros_like(v)
         tk.attention_forward(q, k, v, o)
-
+        
+    
+    torch.cuda.synchronize()
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
     
-    for i in range(100):        
-        o = torch.zeros_like(v)
-        
-        o.requires_grad = False
-        
-        torch.cuda.synchronize()  # Wait for the events to be recorded!
-
+    for i in range(100):
         # Timing the forward pass
         start_events[i].record()
         
-        
+        torch.cuda.synchronize()  # Wait for the events to be recorded!
         tk.attention_forward(q, k, v, o)
         torch.cuda.synchronize()  # Wait for the events to be recorded!
         
@@ -102,7 +117,7 @@ def measure_performance(b, h, n, d):
     print(f"______________________________________________________")
 
 # Test configurations
-configs = [(16, 32, 1024 * 4, 64), (16, 16, 1024 * 8, 128)]
+configs = [(32, 16, 1024 * 4, 64), (32, 16, 1024 * 32, 128)]
 for config in configs:
     measure_performance(*config)
 
@@ -111,13 +126,12 @@ for config in configs:
 #     # Parameters
 #     b, h, n, d = 2, 8, 256, 64  # batch size, heads, sequence length, dimension
 #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    
 #     # Initialize model and tensors
 #     model = CustomAttention(b, h, n, d).to(device)
 #     q = torch.randn(b, n, h * d, device=device, dtype=torch.bfloat16)
 #     k = torch.randn(b, n, h * d, device=device, dtype=torch.bfloat16)
 #     v = torch.randn(b, n, h * d, device=device, dtype=torch.bfloat16)
-
+    
 #     # Forward pass
 #     output = model(q, k, v)
-#     print("Attention computation successful, output shape:", output.shape)

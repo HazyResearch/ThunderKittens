@@ -137,7 +137,6 @@ void fwd_attend_ker_dim128(int N, const CUtensorMap* tma_q, const CUtensorMap* t
     st_bf<4, 8, layout_q>          (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 8, layout_q>,          NUM_WARPGROUPS>();
     st_bf<4, 8, layout_k>          (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 8, layout_k>, 2,       NUM_WORKERS_KV>();
     st_bf<4, 8, layout_v>          (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 8, layout_v>, 2,       NUM_WORKERS_KV>();
-    st_bf<4, 8, layout_o>::col_vec (&l_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 8, layout_o>::col_vec, NUM_WARPGROUPS>();
 
     int tic = 0, toc = 1;
  
@@ -245,8 +244,6 @@ void fwd_attend_ker_dim128(int N, const CUtensorMap* tma_q, const CUtensorMap* t
     tma::store_async_wait();
 }
 
-// #include "harness_h100_fwd.impl"
-
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
@@ -272,43 +269,46 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     // make sure sequence length is multiple of 128 for now
     TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "Please pad sequence length to be multiple of 128");
 
+    // make sure D = 64 or 128
+    TORCH_CHECK(D == 64 || D == 128, "Currently, only D = 64 or 128 is supported");
+
     // convert to bf16
     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
 
-    bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
-    bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
-    bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
     bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
-    unsigned long mem_size = 227000;
-    dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
-
-    TORCH_CHECK(D == 64 || D == 128, "Only D=64 and D=128 supported for now");
-
     if (D == 64) {
-        cudaFuncSetAttribute(fwd_attend_ker_dim64, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-
         CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_q>>(q_bf, (batch*heads*N)/(4 * 16));
         CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<8, 4, layout_k>>(k_bf, (batch*heads*N)/(8 * 16));
         CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<8, 4, layout_v>>(v_bf, (batch*heads*N)/(8 * 16));
         CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_o>>(o_bf, (batch*heads*N)/(4 * 16));
 
+        unsigned long mem_size = 112000;
+        cudaFuncSetAttribute(fwd_attend_ker_dim64, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+        dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+
         fwd_attend_ker_dim64<<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
-
-    if (D == 128) {
-        cudaFuncSetAttribute(fwd_attend_ker_dim128, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-
+    else {
         CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, layout_q>>(q_bf, (batch*heads*N)/(4 * 16));
         CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, layout_k>>(k_bf, (batch*heads*N)/(4 * 16));
         CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, layout_v>>(v_bf, (batch*heads*N)/(4 * 16));
         CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, layout_o>>(o_bf, (batch*heads*N)/(4 * 16));
 
+        unsigned long mem_size = 112000;
+        cudaFuncSetAttribute(fwd_attend_ker_dim128, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+        dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+
         fwd_attend_ker_dim128<<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
-
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    
+    CHECK_CUDA_ERROR(cudaGetLastError());
 }
