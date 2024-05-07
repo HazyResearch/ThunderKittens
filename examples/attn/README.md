@@ -18,7 +18,7 @@ python gentests.py randn INSERT_ATTN_N INSERT_ATTN_D
 
 ## Configuration
 
-Configure the parameters `ATTN_B`, `ATTN_H`, `ATTN_N`, `ATTN_D` in the implementation files:
+Configure the parameters `ATTN_B`, `ATTN_H`, `ATTN_N`, `ATTN_D` in the implementation files (ATTN_D = 64, 128 supported for inference, ATTN_D = 64 supported for training):
 
 - For inference: Modify `harness_h100_fwd.impl`
 - For training (forward + backward): Modify `harness_h100_bwd.impl`
@@ -132,7 +132,7 @@ To verify the correctness of the implementations:
 
 ## Performance Measurement
 
-To measure the approximate performance of the implementations:
+To measure the approximate performance of the implementations (ATTN_D = 64, 128 supported for inference, ATTN_D = 64 supported for training):
 
 - For inference:
   ```bash
