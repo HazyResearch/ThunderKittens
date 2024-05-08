@@ -88,4 +88,4 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     }
 }
 
-#include "harness_h100_fwd.impl"
+#include "harness_4090_fwd.impl"
