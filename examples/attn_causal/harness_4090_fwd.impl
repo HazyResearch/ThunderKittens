@@ -126,6 +126,18 @@ int main(int argc, char **argv) {
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
 
+    // compute efficiency in TFLOPS
+    // flops = 2 * b * n * n * h * d
+
+    // compute efficiency in TFLOPS
+    // flops = 2 * b * n * n * h * d (handle float overloads)
+    double flops = 2.0 * ATTN_B * ATTN_N * ATTN_N * ATTN_H * ATTN_D;
+    double elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER;
+    double elapsed_s = elapsed_ms * 1e-6;
+    double tflops = flops / elapsed_s * 1e-12;
+
+    std::cout << "Efficiency: " << tflops << " TFLOPS" << std::endl;
+
     cudaFree(d_q);
     cudaFree(d_k);
     cudaFree(d_v);
