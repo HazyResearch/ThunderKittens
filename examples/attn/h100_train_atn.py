@@ -230,7 +230,7 @@ def measure_performance_bwd_fwd(b, h, n, d):
     print(f"______________________________________________________")
 
 # Test configurations
-configs = [(32, 16, 1024 * 4, 64)]
+configs = [(32, 16, 1024 * 8, 64)]
 for config in configs:
     measure_performance_bwd_only(*config)
     measure_performance_bwd_fwd(*config)
