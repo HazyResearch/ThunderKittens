@@ -2,7 +2,8 @@
 
 #define NUM_WORKERS 16
 using namespace kittens;
-__global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
+__global__ __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
+void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
 
     auto warpid        = kittens::warpid();
     auto block_start   = blockIdx.x*(n*64);
@@ -42,18 +43,18 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
             __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
 
-            for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
-                
+            for(int subtile = 0; 
+                subtile <= (qo_index - (kv_idx*NUM_WORKERS)) && subtile < NUM_WORKERS; 
+                subtile++) 
+            {
                 load(k_reg, k_smem[subtile]);
-
+                
                 zero(att_block);
                 mma_ABt(att_block, q_reg, k_reg, att_block);
 
-                if ((kv_idx*NUM_WORKERS + subtile) == qo_index) {
+                if ((kv_idx*NUM_WORKERS + subtile) == qo_index) 
+                {
                     make_causal(att_block, att_block, -INFINITY);
-                }
-                if ((kv_idx*NUM_WORKERS + subtile) > qo_index) {
-                    neg_infty(att_block);
                 }
 
                 copy(norm_vec_last, norm_vec);
@@ -62,7 +63,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
                 sub_row(att_block, att_block, max_vec);
                 exp(att_block, att_block);
-            
+
                 sub(max_vec_last, max_vec_last, max_vec);
                 exp(max_vec_last, max_vec_last);
                 mul(norm_vec, norm_vec, max_vec_last);

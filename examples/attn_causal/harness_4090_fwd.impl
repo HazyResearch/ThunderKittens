@@ -6,7 +6,7 @@ constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
 constexpr int ATTN_N = 1024 * 4;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 10;
+constexpr int ITER   = 30;
 
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY / 1; // have the flag tell us
     
     cudaFuncSetAttribute(
         attend_ker,
