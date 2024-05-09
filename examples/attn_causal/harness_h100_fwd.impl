@@ -2,13 +2,13 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024 * 4;
-constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 30;
+constexpr int ATTN_B = 32; 
+constexpr int ATTN_H = 16; 
+constexpr int ATTN_N = 4096; 
+constexpr int ATTN_D = 64;
 
-#define BLOCK_SIZE (32*NUM_WORKERS)
+constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -28,6 +28,29 @@ inline void __cudaCheckError( const char *file, const int line ) {
                  file, line, cudaGetErrorString( err ) );
         exit( -1 );
     }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
 }
 
 int main(int argc, char **argv) {
@@ -82,20 +105,35 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<4, 64/16, layout_q>>(d_q, ATTN_B*ATTN_H*ATTN_N/(4 * 16));
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<4, 64/16, layout_k>>(d_k, ATTN_B*ATTN_H*ATTN_N/(4 * 16));
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<4, 64/16, layout_v>>(d_v, ATTN_B*ATTN_H*ATTN_N/(4 * 16));
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf<4, 64/16, layout_o>>(d_o, ATTN_B*ATTN_H*ATTN_N/(4 * 16));
+
+    std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY / 1; // have the flag tell us
+    unsigned long mem_size = 112000; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(
-        attend_ker,
+        fwd_attend_ker_dim64,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
+    std::cout << "Set max dynamic memory!" << std::endl;
 
+    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
-    std::cout << "Starting kernel\n";
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {    
+        fwd_attend_ker_dim64<<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker<<<ATTN_B*ATTN_H, BLOCK_SIZE, mem_size>>>(ATTN_N, 64, d_q, d_k, d_v, d_o);
+        fwd_attend_ker_dim64<<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -126,17 +164,10 @@ int main(int argc, char **argv) {
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
 
-    // compute efficiency in TFLOPS
-    // flops = 2 * b * n * n * h * d
-
-    // compute efficiency in TFLOPS
-    // flops = 2 * b * n * n * h * d (handle float overloads)
-    double flops = 2.0 * ATTN_B * ATTN_N * ATTN_N * ATTN_H * ATTN_D;
-    double elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER;
-    double elapsed_s = elapsed_ms * 1e-6;
-    double tflops = flops / elapsed_s * 1e-12;
-
-    std::cout << "Efficiency: " << tflops << " TFLOPS" << std::endl;
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, true, "fwd");
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);
