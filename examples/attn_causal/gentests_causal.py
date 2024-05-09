@@ -13,33 +13,60 @@ D = int(sys.argv[2])
 TESTNAME = sys.argv[3] if len(sys.argv) > 3 else 'randn'
 
 if TESTNAME == 'ones':
-    q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    v = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+    q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    v = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'randn':
     torch.random.manual_seed(42)
-    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-elif TESTNAME == 'qk_test':
-    q = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
-    k = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
-    v = torch.eye(D).reshape((1,1,D,D)).repeat(B, H, N//D, 1)*10
+    q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    grad_output = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'v_orientation':
-    q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-    v = (torch.arange(D, dtype=torch.bfloat16, device='cuda')/D).reshape((1,1,1,-1)).repeat(B, H, N, 1)
+    q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    v = (torch.arange(D, dtype=torch.bfloat16, device='cuda')/D).reshape((1,1,1,-1)).repeat(B, H, N, 1).requires_grad_()
+    grad_output = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 else:
     print('Invalid test name')
     sys.exit(0)
 
+A = torch.einsum('bhnd,bhmd->bhnm', q.clone(), k.clone()) * (D**-0.5)
+mask = torch.ones((N, N), dtype=torch.bool, device='cuda').triu(1)
+A = A.masked_fill(mask, float('-inf'))
+max_vec = A.max(dim=-1, keepdim=True).values
+A = A - max_vec
+A = torch.exp(A)
+l_vec = A.sum(dim=-1, keepdim=True)
+l_vec = max_vec + torch.log(l_vec)
+
 o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+o.backward(grad_output)
+q_grad = q.grad
+k_grad = k.grad
+v_grad = v.grad
+
+d_vec = torch.mul(o, grad_output)
+d_vec = d_vec.sum(dim=-1, keepdim=True)
 
 with open(f'{TESTNAME}_causal_{N}N_{D}D.txt', 'w') as f:
-    qf = q.to(torch.float32).flatten().cpu().numpy()
-    kf = k.to(torch.float32).flatten().cpu().numpy()
-    vf = v.to(torch.float32).flatten().cpu().numpy()
-    of = o.to(torch.float32).flatten().cpu().numpy()
+    # inputs
+    qf = q.to(torch.float32).flatten().detach().cpu().numpy()
+    kf = k.to(torch.float32).flatten().detach().cpu().numpy()
+    vf = v.to(torch.float32).flatten().detach().cpu().numpy()
+    of = o.to(torch.float32).flatten().detach().cpu().numpy()
+    grad_outputf = grad_output.to(torch.float32).flatten().detach().cpu().numpy()
+    
+    # intermediate
+    l_vecf = l_vec.to(torch.float32).flatten().detach().cpu().numpy()
+    d_vecf = d_vec.to(torch.float32).flatten().detach().cpu().numpy()
+    
+    # outputs
+    q_grad = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    k_grad = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    v_grad = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
         f.write(' ')
@@ -52,6 +79,22 @@ with open(f'{TESTNAME}_causal_{N}N_{D}D.txt', 'w') as f:
     for i in trange(B*H*N*D):
         f.write(repr(of[i]))
         f.write(' ')
+    for i in trange(B*H*N):
+        f.write(repr(l_vecf[i]))
+        f.write(' ')
+    for i in trange(B*H*N*D):
+        f.write(repr(grad_outputf[i]))
+        f.write(' ')
+    for i in trange(B*H*N*D):
+        f.write(repr(q_grad[i]))
+        f.write(' ')
+    for i in trange(B*H*N*D):
+        f.write(repr(k_grad[i]))
+        f.write(' ')
+    for i in trange(B*H*N*D):
+        f.write(repr(v_grad[i]))
+        f.write(' ')
+        
 
 print(f'Run the harness like `cat {TESTNAME}.txt | ./harness`')
 

@@ -21,6 +21,8 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-conste
 	TARGET=attn_causal
 	SRC=h100_fwd.cu
 	else ifeq ($(PURPOSE),training)
+	TARGET=attn_causal
+	SRC=h100_train.cu
 	endif
 endif
 
