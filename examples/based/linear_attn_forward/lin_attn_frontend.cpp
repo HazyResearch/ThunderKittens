@@ -8,7 +8,7 @@
 #include <cuda_runtime.h>
 
 
-extern void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
+extern void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor kv_state);
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
