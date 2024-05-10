@@ -2,6 +2,7 @@ import torch
 from tqdm import trange
 import numpy as np
 import sys
+import math
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
@@ -32,13 +33,17 @@ else:
     print('Invalid test name')
     sys.exit(0)
 
-A = torch.einsum('bhnd,bhmd->bhnm', q.clone(), k.clone()) * (D**-0.5)
-mask = torch.ones((N, N), dtype=torch.bool, device='cuda').triu(1)
-A = A.masked_fill(mask, float('-inf'))
-max_vec = A.max(dim=-1, keepdim=True).values
-A = A - max_vec
-A = torch.exp(A)
-l_vec = A.sum(dim=-1, keepdim=True)
+softmax_scale = 1 / math.sqrt(D)
+l_vec = torch.einsum("bhnd,bhmd->bhnm", q.clone(), k.clone()) * softmax_scale
+
+mask = torch.triu(torch.ones(l_vec.shape[2], l_vec.shape[3]), diagonal=1).to('cuda').bool().unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
+l_vec = l_vec.masked_fill(mask, float('-inf'))
+
+max_vec = l_vec.max(dim=-1, keepdim=True).values
+l_vec = l_vec - max_vec
+l_vec = torch.exp(l_vec)
+l_vec = l_vec.sum(dim=-1, keepdim=True)
+
 l_vec = max_vec + torch.log(l_vec)
 
 o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
@@ -121,9 +126,13 @@ with torch.backends.cuda.sdp_kernel(
     enable_math=False, 
     enable_mem_efficient=False
 ):
-    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
-    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
-    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    
+    q.grad = None
+    k.grad = None
+    v.grad = None
 
     # warmup
     for _ in range(10):

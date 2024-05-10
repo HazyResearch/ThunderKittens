@@ -8,11 +8,56 @@
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
 
 #define qo_height 4
-#define kv_height 8
+#define kv_height 4
 #define NUM_WORKERS_KV 1
 #define tile_width 64/16
 
 using namespace kittens;
+
+template<ducks::rt::row_layout RT>
+__device__ static inline void wg_make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+
+            if(j < ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // below the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j > ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // above the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = packed_val;
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
+                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                else {
+                    dst.tiles[i][j].data[0].x = val;
+                    dst.tiles[i][j].data[3].x = val;
+                }
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                else {
+                    dst.tiles[i][j].data[0].y = val;
+                    dst.tiles[i][j].data[3].y = val;
+                }
+            }
+        }
+    }
+}
 
 using layout_q = ducks::st_layout::wgmma_swizzle;
 using layout_k = ducks::st_layout::wgmma_swizzle;
@@ -24,21 +69,23 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
-    st_bf<qo_height, tile_width, layout_q>          (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>,          NUM_WARPGROUPS>();
-    st_bf<kv_height, tile_width, layout_k>          (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2,       NUM_WORKERS_KV>();
-    st_bf<kv_height, tile_width, layout_v>          (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2,       NUM_WORKERS_KV>();
-    st_bf<qo_height, tile_width, layout_o>::col_vec (&l_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_o>::col_vec, NUM_WARPGROUPS>();
+    st_bf<4, 4, layout_q>          (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 4, layout_q>,          NUM_WARPGROUPS>();
+    st_bf<4, 4, layout_k>          (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 4, layout_k>, 2,       NUM_WORKERS_KV>();
+    st_bf<4, 4, layout_v>          (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 4, layout_v>, 2,       NUM_WORKERS_KV>();
+    st_bf<4, 4, layout_o>::col_vec (&l_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 4, layout_o>::col_vec, NUM_WARPGROUPS>();
 
     int tic = 0, toc = 1;
  
-    rt_fl<1, kv_height> att_block;
-    rt_bf<1, kv_height> att_block_mma;
-    rt_fl<1, tile_width> o_prev;
-    rt_fl<1, kv_height>::col_vec max_vec_last, max_vec;
-    rt_fl<1, kv_height>::col_vec norm_vec_last, norm_vec;
+    rt_fl<1, 4> att_block;
+    rt_bf<1, 4> att_block_mma;
+    rt_fl<1, 4> o_prev;
+    rt_fl<1, 4>::col_vec max_vec_last, max_vec;
+    rt_fl<1, 4>::col_vec norm_vec_last, norm_vec;
 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
+
+    int qo_index    = (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
 
     const int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
@@ -48,8 +95,8 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     int kv_phasebit = 0;
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<st_bf<qo_height, tile_width, layout_q>, NUM_WARPGROUPS>(qsmem_barrier, 1);
-        tma::init_barrier<st_bf<kv_height, tile_width, layout_k>, NUM_WORKERS_KV*2>(kvsmem_barrier, 1); 
+        tma::init_barrier<st_bf<4, 4, layout_q>, NUM_WARPGROUPS>(qsmem_barrier, 1);
+        tma::init_barrier<st_bf<4, 4, layout_k>, NUM_WORKERS_KV*2>(kvsmem_barrier, 1); 
     }
 
     if (warpid == 0) {
@@ -74,15 +121,15 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
 
     warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f));
 
-    for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
+    for (auto kv_idx = 0; kv_idx <= qo_index; kv_idx++, tic ^= 1, toc ^= 1) {
         tma::arrive_and_wait(kvsmem_barrier, kv_phasebit);
         kv_phasebit ^= 1;
 
         __syncthreads();
         if (warpid == 0) {
-            tma::set_bytes(kvsmem_barrier, 2 * NUM_WORKERS_KV * k_smem[0][0].num_elements * sizeof(bf16));
-
             if (kv_idx + 1 < kv_blocks) {
+                tma::set_bytes(kvsmem_barrier, 2 * NUM_WORKERS_KV * k_smem[0][0].num_elements * sizeof(bf16));
+
                 for (int w = 0; w < NUM_WORKERS_KV; w++) {        
                     int tile_idx = (blockIdx.y * NUM_WORKERS_KV * kv_blocks) + ((kv_idx + 1) * NUM_WORKERS_KV) + w; 
                     tma::load_async((k_smem[toc][w]), tma_k, kvsmem_barrier, tile_idx); 
@@ -99,6 +146,10 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
         copy(max_vec_last,  max_vec);
 
         warpgroup::mma_async_wait();
+
+        if (kv_idx == qo_index) {
+            wg_make_causal(att_block, att_block, -INFINITY); 
+        }
 
         row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
         sub_row(att_block, att_block, max_vec);
@@ -290,11 +341,11 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
         for (int w = 0; w < NUM_WARPGROUPS_BWD_QO; w++) {
             int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + (0 * NUM_WARPGROUPS_BWD_QO) + w;
 
-            tma::load_async((q_smem [tic][w]),    tma_q,     qo_b, tile_idx); 
-            tma::load_async((og_smem[tic][w]),    tma_og,    qo_b, tile_idx);
+            tma::load_async((q_smem [tic][w]),  tma_q,     qo_b, tile_idx); 
+            tma::load_async((og_smem[tic][w]),  tma_og,    qo_b, tile_idx);
 
-            tma::load_async((l_smem[tic][w]),     tma_l_vec, vec_b, tile_idx);
-            tma::load_async((d_smem[tic][w]),     tma_d_vec, vec_b, tile_idx);
+            tma::load_async((l_smem[tic][w]),   tma_l_vec, vec_b, tile_idx);
+            tma::load_async((d_smem[tic][w]),   tma_d_vec, vec_b, tile_idx);
         } 
     }
 

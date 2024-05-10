@@ -8,6 +8,51 @@
 
 using namespace kittens;
 
+template<ducks::rt::row_layout RT>
+__device__ static inline void wg_make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+
+            if(j < ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // below the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j > ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // above the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = packed_val;
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
+                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                else {
+                    dst.tiles[i][j].data[0].x = val;
+                    dst.tiles[i][j].data[3].x = val;
+                }
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                else {
+                    dst.tiles[i][j].data[0].y = val;
+                    dst.tiles[i][j].data[3].y = val;
+                }
+            }
+        }
+    }
+}
+
 using layout_q = kittens::ducks::st_layout::wgmma_swizzle; 
 using layout_k = kittens::ducks::st_layout::wgmma_swizzle; 
 using layout_v = kittens::ducks::st_layout::wgmma_interleave; 

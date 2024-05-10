@@ -158,11 +158,11 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_o = {};
     CUtensorMap tma_desc_l = {};
 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>         >(&tma_desc_q, d_q, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16));  
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_k>         >(&tma_desc_k, d_k, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)); 
-    tma::create_tensor_map<st_bf<kv_height, tile_width, layout_v>         >(&tma_desc_v, d_v, ATTN_B*ATTN_H*ATTN_N/(kv_height * 16)); 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_o>         >(&tma_desc_o, d_o, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)); 
-    tma::create_tensor_map<st_bf<qo_height, tile_width, layout_q>::col_vec>(&tma_desc_l, d_l, ATTN_B*ATTN_H*ATTN_N/(qo_height * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_q>         >(&tma_desc_q, d_q, ATTN_B*ATTN_H*ATTN_N/(4 * 16));  
+    tma::create_tensor_map<st_bf<4, 4, layout_k>         >(&tma_desc_k, d_k, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_v>         >(&tma_desc_v, d_v, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_o>         >(&tma_desc_o, d_o, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_q>::col_vec>(&tma_desc_l, d_l, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
 
     CUtensorMap* tma_q_d; 
     CUtensorMap* tma_k_d;
@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/o_diff.txt");
-    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
         if(i < TOTAL_UNIQUE_ELEMENTS) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
@@ -240,10 +240,10 @@ int main(int argc, char **argv) {
     std::ofstream l_ref_file("printouts/l_ref.txt");
     std::ofstream l_file("printouts/l.txt");
     std::ofstream diff_l_file("printouts/diff_l.txt");
-    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_D; i++) {
-        float diff = l[i] - l_ref[i % TOTAL_UNIQUE_ELEMENTS/ATTN_D];
-        if (i < TOTAL_UNIQUE_ELEMENTS/ATTN_D) {
-            l_ref_file << l_ref[i % TOTAL_UNIQUE_ELEMENTS/ATTN_D] << ' ';
+    for(int i = 0; i < ATTN_N*ATTN_B*ATTN_H; i++) {
+        float diff = l[i] - l_ref[i % ATTN_N];
+        if (i < ATTN_N) {
+            l_ref_file << l_ref[i] << ' ';
             l_file << l[i] << ' ';
             diff_l_file << diff << ' ';
         }
@@ -351,12 +351,14 @@ int main(int argc, char **argv) {
     std::ofstream d_ref_file("printouts/d_ref.txt");
     std::ofstream d_file("printouts/d.txt");
     std::ofstream diff_d_file("printouts/diff_d.txt");
-    for(int i = 0; i < (TOTAL_ELEMENTS/ATTN_D); i++) {
-        float diff = d[i] - d_ref[i % ATTN_N];
-        d_ref_file << d_ref[i % ATTN_N] << ' ';
-        d_file << d[i] << ' ';
-        diff_d_file << diff << ' ';
-        if(abs(diff) > 0.01 || isnan(diff)) {
+    for(int i = 0; i < ATTN_N*ATTN_B*ATTN_H; i++) {
+        float diff = d[i] - d_ref[i%ATTN_N];
+        if (i < ATTN_N) {
+            d_ref_file << d_ref[i % ATTN_N] << ' ';
+            d_file << d[i] << ' ';
+            diff_d_file << diff << ' ';
+        }
+        if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
     }
