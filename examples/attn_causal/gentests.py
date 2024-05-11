@@ -148,8 +148,6 @@ N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
 H = 32
 B = 16
-# H = 2048 // D
-# B = 16384 // N
 
 torch.use_deterministic_algorithms(False)
 

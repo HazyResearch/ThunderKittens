@@ -243,7 +243,9 @@ using layout_tma_swi   = ducks::st_layout::swizzle;
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
+// #define KV_BLOCKS ((4096)/(WORKERS_BWD*kittens::TILE_DIM))
 #define KV_BLOCKS 2
+// make this 2
 
 __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 2)
 void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 

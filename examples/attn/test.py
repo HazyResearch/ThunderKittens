@@ -146,8 +146,8 @@ print(f'Run the harness like `./attn_bwd {fn}`')
 
 N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
-H = 40
-B = 60
+H = 32
+B = 16
 # H = 2048 // D
 # B = 16384 // N
 
@@ -231,7 +231,7 @@ with torch.backends.cuda.sdp_kernel(
     
     # Prepare for timing
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
-    end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
 
     # Time the backward pass
 
