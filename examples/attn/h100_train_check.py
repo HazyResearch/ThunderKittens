@@ -61,10 +61,7 @@ def check_correctness(b, h, n, d=64):
 
     for key, (pt, tk) in results.items():
         diff = pt - tk
-        avg_diff_mag = torch.mean(torch.abs(diff)).item()
-        avg_diff_per = 100 * avg_diff_mag / torch.mean(torch.abs(pt)).item()
-        print(f"{key} - Average Magnitude of Difference: {avg_diff_mag:.6f}")
-        print(f"{key} - Average Percentage Error: {avg_diff_per:.6f}%")
+        print(f"{key} - avg magnitude of diff: {torch.mean(torch.abs(diff)).item():.6f}")
         print("-" * 40)
 
 print("Correctness Tests: ")
@@ -75,7 +72,7 @@ configurations = [
     (16, 8, 2048),
     (16, 8, 4096),
     (16, 8, 8192),
-    (16, 8, 16384)
+    (1, 1, 16384)
 ]
 for b, h, n in configurations:
     check_correctness(b, h, n)

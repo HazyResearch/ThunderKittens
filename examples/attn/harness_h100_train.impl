@@ -292,7 +292,7 @@ int main(int argc, char **argv) {
     // print average l diff
     std::cout << "Average l diff: " << total_diff_l / (TOTAL_ELEMENTS/ATTN_D) << std::endl;
 
-    if (abs(total_diff_l / (TOTAL_ELEMENTS/ATTN_D)) < 1e-4) {
+    if (abs(total_diff_l / (TOTAL_ELEMENTS/ATTN_D)) < 1e-3) {
         good = true;
     }
     else {

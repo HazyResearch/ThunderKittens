@@ -142,9 +142,9 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        o[i] = __bfloat162float(o_bf[i]);
-    }
+    // for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+    //     o[i] = __bfloat162float(o_bf[i]);
+    // }
 
     bool good = true;
     float total_diff = 0;
@@ -152,7 +152,8 @@ int main(int argc, char **argv) {
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
+        // float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
+        float diff = __bfloat162float(o_bf[i] - __float2bfloat16(o_ref[i % TOTAL_UNIQUE_ELEMENTS])); 
         if (i < TOTAL_UNIQUE_ELEMENTS) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
             o_file << o[i] << ' ';
@@ -165,7 +166,7 @@ int main(int argc, char **argv) {
     }
 
     // print out average difference
-    std::cout << "o avg diff: " << total_diff / TOTAL_ELEMENTS << std::endl;
+    std::cout << "o avg diff: " << (total_diff / TOTAL_ELEMENTS) << std::endl;
 
     if (abs(total_diff / TOTAL_ELEMENTS) < 1e-4) {
         good = true; 

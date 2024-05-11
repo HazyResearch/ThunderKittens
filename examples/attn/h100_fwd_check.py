@@ -41,8 +41,7 @@ def check_correctness(b, h, n, d):
     avg_diff_mag = torch.mean(torch.abs(diff)).item()
     avg_diff_per = 100 * avg_diff_mag / torch.mean(torch.abs(result_pytorch)).item()
     
-    print(f"Attention output - average difference magnitude: {avg_diff_mag:.6f}")
-    print(f"Attention output - average difference percentage: {avg_diff_per:.6f}%")
+    print(f"Attention output - avg magnitude of diff: {avg_diff_mag:.6f}")
     print("-" * 40)
 
 print("Correctness Tests: ")

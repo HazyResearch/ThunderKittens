@@ -378,7 +378,6 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
             if (qo_idx > 0 || kv_idx > 0) {
                 tma::store_async_wait(); 
             }
-
             
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, q_smem[tic][0], k_smem[warpgroupid]);
@@ -431,6 +430,7 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
                 
             warpgroup::mma_async_wait();
             warpgroup::store(qg_smem[tic][0][warpgroupid], qg_reg);
+            __syncthreads();
             
             if (warpid % 4 == 0) {
                 int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + (qo_idx * NUM_WARPGROUPS_BWD_QO) + warpgroupid; 

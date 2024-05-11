@@ -38,7 +38,7 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    const int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
+    int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
     __shared__ uint64_t qsmem_barrier, kvsmem_barrier;//, vsmem_barrier;
 
@@ -278,8 +278,8 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
 
     if (threadIdx.x == 0) {
         tma::init_barrier<q_smem_tile,  NUM_WARPGROUPS_BWD_QO * 2>(qo_b,  1); // q, og
-        tma::init_barrier<k_smem_tile , NUM_WARPGROUPS_BWD    * 2>(kv_b,  1); // k, v
-        tma::init_barrier<l_smem_tile , NUM_WARPGROUPS_BWD_QO * 2>(vec_b, 1); // l, d
+        tma::init_barrier<k_smem_tile,  NUM_WARPGROUPS_BWD    * 2>(kv_b,  1); // k, v
+        tma::init_barrier<l_smem_tile,  NUM_WARPGROUPS_BWD_QO * 2>(vec_b, 1); // l, d
     } 
 
     if (warpid == 0) {
@@ -416,6 +416,7 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
             
             warpgroup::mma_async_wait();
             warpgroup::store(qg_smem[tic][0][warpgroupid], qg_reg);
+            __syncthreads();
 
             if (warpid % 4 == 0) {
                 int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + (qo_idx * NUM_WARPGROUPS_BWD_QO) + warpgroupid; 
@@ -530,10 +531,10 @@ void attention_train_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     const bf16* o_bf  = reinterpret_cast<const bf16*>(o_ptr);
     const bf16* l_bf  = reinterpret_cast<const bf16*>(l_ptr);
     const bf16* og_bf = reinterpret_cast<const bf16*>(og_ptr);
-    bf16* d_bf  = reinterpret_cast<bf16*>(d_ptr);
-    bf16* qg_bf = reinterpret_cast<bf16*>(qg_ptr);
-    bf16* kg_bf = reinterpret_cast<bf16*>(kg_ptr);
-    bf16* vg_bf = reinterpret_cast<bf16*>(vg_ptr);
+    bf16* d_bf        = reinterpret_cast<bf16*>(d_ptr);
+    bf16* qg_bf       = reinterpret_cast<bf16*>(qg_ptr);
+    bf16* kg_bf       = reinterpret_cast<bf16*>(kg_ptr);
+    bf16* vg_bf       = reinterpret_cast<bf16*>(vg_ptr);
 
     CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(o_bf, (batch*heads*N)/(4*16)); 
     CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec  >(d_bf, (batch*heads*N)/(4*16));
@@ -559,11 +560,11 @@ void attention_train_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     cudaFuncSetAttribute(
         attend_ker_bwd_train,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        100000
+        112000
     );
 
     dim3 grid_2(N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), batch*heads, 1);
-    attend_ker_bwd_train<<<grid_2, (kittens::WARP_THREADS*WORKERS_BWD), 100000>>>(N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
+    attend_ker_bwd_train<<<grid_2, (kittens::WARP_THREADS*WORKERS_BWD), 112000>>>(N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }

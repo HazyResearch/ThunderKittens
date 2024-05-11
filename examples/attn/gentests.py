@@ -68,12 +68,6 @@ q_grad = q.grad
 k_grad = k.grad
 v_grad = v.grad
 
-# print acceptable error = 1% of avg magnitude of o, q_grad, k_grad, v_grad
-print(f'Acceptable error for o: {o.abs().mean().item() * 0.01}')
-print(f'Acceptable error for q_grad: {q_grad.abs().mean().item() * 0.01}')
-print(f'Acceptable error for k_grad: {k_grad.abs().mean().item() * 0.01}')
-print(f'Acceptable error for v_grad: {v_grad.abs().mean().item() * 0.01}')
-
 d_vec = torch.mul(grad_output, o)
 d_vec = d_vec.sum(dim=-1, keepdim=True)
 
