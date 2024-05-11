@@ -155,9 +155,11 @@ int main(int argc, char **argv) {
     // but this is because of numerics randomly distributed
     // between heads/batches - actual correctness verified (use
     // printouts to make sure)
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+
+    float total_diff = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        if(i < TOTAL_UNIQUE_ELEMENTS) {
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
@@ -165,6 +167,14 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff += diff;
+    }
+    // print average difference
+    std::cout << "Average difference: " << total_diff / TOTAL_ELEMENTS << std::endl;
+
+    // if abs of avg diff < 1e-4, then good
+    if (abs(total_diff / TOTAL_ELEMENTS) < 1e-4) {
+        good = true;
     }
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;

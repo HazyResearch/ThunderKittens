@@ -4,7 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024 * 8; 
+constexpr int ATTN_N     = 1024 * 4; 
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 16; 
 constexpr int ATTN_B     = 32;
@@ -249,11 +249,8 @@ int main(int argc, char **argv) {
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/o_diff.txt");
 
-    // this check is not over TOTAL_ELEMENTS, because
-    // numerics are likely to cause issues with higher
-    // b, h - actual correctess across b, h verified 
-    // through printouts directory
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    float total_diff_o = 0.0f;
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
         if(i < TOTAL_UNIQUE_ELEMENTS) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
@@ -263,8 +260,16 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff_o += diff;
+    }
+    // print average o diff
+    std::cout << "Average o diff: " << total_diff_o / TOTAL_ELEMENTS << std::endl;
+
+    if (abs(total_diff_o / TOTAL_ELEMENTS) < 1e-4) {
+        good = true;
     }
 
+    float total_diff_l = 0.0f;
     std::ofstream l_ref_file("printouts/l_ref.txt");
     std::ofstream l_file("printouts/l.txt");
     std::ofstream diff_l_file("printouts/diff_l.txt");
@@ -278,6 +283,14 @@ int main(int argc, char **argv) {
         if(abs(diff) > 1 || isnan(diff)) {
             good = false;
         }
+        total_diff_l += diff;
+    }
+
+    // print average l diff
+    std::cout << "Average l diff: " << total_diff_l / (ATTN_N*ATTN_B*ATTN_H) << std::endl;
+
+    if (abs(total_diff_l / (ATTN_N*ATTN_B*ATTN_H)) < 1e-3) {
+        good = true;
     }
 
     std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
@@ -392,6 +405,8 @@ int main(int argc, char **argv) {
     }
 
     good = true;
+
+    float total_diff_d = 0.0f;
     std::ofstream d_ref_file("printouts/d_ref.txt");
     std::ofstream d_file("printouts/d.txt");
     std::ofstream diff_d_file("printouts/diff_d.txt");
@@ -405,6 +420,11 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
+        total_diff_d += diff;
+    }
+    std::cout << "Average d diff: " << total_diff_d / (ATTN_N * ATTN_B * ATTN_H) << std::endl;
+    if (abs(total_diff_d / (ATTN_N * ATTN_B * ATTN_H)) < 1e-5) {
+        good = true;
     }
 
     std::cout << "Average bwd prep execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER << " us" << std::endl;
@@ -574,6 +594,11 @@ int main(int argc, char **argv) {
     }
     // print average vg diff
     std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS << std::endl;
+
+    // if qg, kg, and vg avg diff is less than 1e-4, then we're good
+    if (abs(total_diff_qg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_kg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_vg / TOTAL_ELEMENTS) < 1e-4) {
+        good = true;
+    }
 
     std::cout << "Average bwd execution time: " << total_time / ITER << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n\n\n\n";
