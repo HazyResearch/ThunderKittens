@@ -1,8 +1,8 @@
 # GPU Selection: 4090, A100, H100
 GPU_TARGET=H100
 
-# PURPOSE=inference
-PURPOSE=training
+PURPOSE=inference
+# PURPOSE=training
 
 # Compiler
 NVCC=nvcc

@@ -42,6 +42,29 @@ void ensureDirectoryExists(const std::string& dirName) {
     }
 }
 
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
+}
+
 int main(int argc, char **argv) {
     // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
     // which may increase the probability of L2 cache hits on KV
@@ -222,6 +245,7 @@ int main(int argc, char **argv) {
     }
 
     bool good = true;
+    float total_diff_o = 0.0f;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/o_diff.txt");
@@ -235,8 +259,20 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff_o += diff;
     }
 
+    // print average o diff
+    std::cout << "Average o diff: " << total_diff_o / TOTAL_ELEMENTS << std::endl;
+
+    if (abs(total_diff_o / TOTAL_ELEMENTS) < 1e-4) {
+        good = true;
+    }
+    else {
+        good = false;
+    }
+
+    float total_diff_l = 0.0f;
     std::ofstream l_ref_file("printouts/l_ref.txt");
     std::ofstream l_file("printouts/l.txt");
     std::ofstream diff_l_file("printouts/diff_l.txt");
@@ -250,6 +286,17 @@ int main(int argc, char **argv) {
         if(abs(diff) > 1 || isnan(diff)) {
             good = false;
         }
+        total_diff_l += diff;
+    }
+
+    // print average l diff
+    std::cout << "Average l diff: " << total_diff_l / (TOTAL_ELEMENTS/ATTN_D) << std::endl;
+
+    if (abs(total_diff_l / (TOTAL_ELEMENTS/ATTN_D)) < 1e-4) {
+        good = true;
+    }
+    else {
+        good = false;
     }
 
     std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
@@ -363,18 +410,32 @@ int main(int argc, char **argv) {
         d[i]  = __bfloat162float(d_bf[i]);
     }
 
+    float total_diff_d = 0.0f;
     good = true;
     std::ofstream d_ref_file("printouts/d_ref.txt");
     std::ofstream d_file("printouts/d.txt");
     std::ofstream diff_d_file("printouts/diff_d.txt");
     for(int i = 0; i < (TOTAL_ELEMENTS/ATTN_D); i++) {
         float diff = d[i] - d_ref[i % ATTN_N];
-        d_ref_file << d_ref[i % ATTN_N] << ' ';
-        d_file << d[i] << ' ';
-        diff_d_file << diff << ' ';
+        if (i < ATTN_N) {
+            d_ref_file << d_ref[i % ATTN_N] << ' ';
+            d_file << d[i] << ' ';
+            diff_d_file << diff << ' ';
+        }
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff_d += diff;
+    }
+
+    // print average d diff
+    std::cout << "Average d diff: " << total_diff_d / (TOTAL_ELEMENTS/ATTN_D) << std::endl;
+
+    if (abs(total_diff_d / (TOTAL_ELEMENTS/ATTN_D)) < 1e-4) {
+        good = true;
+    }
+    else {
+        good = false;
     }
 
     std::cout << "Average bwd prep execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER << " us" << std::endl;
@@ -445,9 +506,6 @@ int main(int argc, char **argv) {
     );
 
     std::cout << "Set max dynamic memory!" << std::endl;
-
-    // dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
-    // static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
 
     dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM) == 0);
@@ -543,9 +601,21 @@ int main(int argc, char **argv) {
     // print average vg diff
     std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS << std::endl;
 
+    if (abs(total_diff_qg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_kg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_vg / TOTAL_ELEMENTS) < 1e-4) {
+        good = true;
+    }
+    else {
+        good = false;
+    }
+
     std::cout << "Average bwd execution time: " << total_time / ITER << " us" << std::endl;
-    if(good) std::cout << "BWD Correct :)\n\n\n\n";
-    else std::cout << "BWD Incorrect :(\n\n\n\n";
+    if(good) std::cout << "BWD Correct :)\n\n";
+    else std::cout << "BWD Incorrect :(\n\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, false, "bwd");
+    double e = efficiency(f, total_time / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);

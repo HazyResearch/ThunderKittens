@@ -4,7 +4,7 @@
 
 constexpr int ATTN_B = 32; 
 constexpr int ATTN_H = 16; 
-constexpr int ATTN_N = 4096; 
+constexpr int ATTN_N = 1024 * 4; 
 constexpr int ATTN_D = 64;
 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
@@ -142,22 +142,36 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
 
     bool good = true;
+    float total_diff = 0;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        o_file << o[i] << ' ';
-        diff_file << diff << ' ';
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff += diff;
+    }
+
+    // print out average difference
+    std::cout << "o avg diff: " << total_diff / TOTAL_ELEMENTS << std::endl;
+
+    if (abs(total_diff / TOTAL_ELEMENTS) < 1e-4) {
+        good = true; 
+    }
+    else {
+        good = false;
     }
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;

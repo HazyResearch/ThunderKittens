@@ -13,37 +13,6 @@ N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
 
 softmax_scale = 1 / math.sqrt(D)
-def forward(Q, K, V):
-    A0 = torch.einsum("bhnd,bhmd->bhnm",Q, K) * softmax_scale
-    
-    numerator  = torch.exp(A0) 
-    denominator = torch.exp(A0).sum(dim=-1, keepdim=True)
-    
-    A = numerator / denominator
-    
-    y  = torch.einsum("bhnm,bhmd->bhnd",A,V)
-    return y
-
-def backward(Q, K, V, grad_output):
-    running_Q_grad = torch.zeros_like(Q)
-    running_K_grad = torch.zeros_like(K)
-    running_V_grad = torch.zeros_like(V)
-    
-    A0 = torch.einsum("bhnd,bhmd->bhnm",Q, K) * softmax_scale
-    numerator  = torch.exp(A0) 
-    denominator = torch.exp(A0).sum(dim=-1, keepdim=True)
-    A = numerator / denominator
-        
-    running_V_grad += torch.einsum("bhnm,bhnd->bhmd", A, grad_output)
-    
-    dL_dA = torch.einsum("bhnd,bhmd->bhnm", grad_output, V)
-    dL_dA0 = A * (dL_dA - (dL_dA * A).sum(dim=-1, keepdim=True))
-    dL_dA0 *= softmax_scale 
-    
-    running_Q_grad += torch.einsum("bhnm,bhmd->bhnd", dL_dA0, K)
-    running_K_grad += torch.einsum("bhnm,bhnd->bhmd", dL_dA0, Q)
-
-    return running_Q_grad, running_K_grad, running_V_grad
 
 TESTNAME = sys.argv[1]
 
@@ -88,8 +57,22 @@ l_vec = l_vec.sum(dim=-1, keepdim=True)
 
 l_vec = max_vec + torch.log(l_vec)
 
-o = forward(q, k, v)
-q_grad, k_grad, v_grad = backward(q, k, v, grad_output)
+q.requires_grad_()
+k.requires_grad_()
+v.requires_grad_()
+
+o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
+o.backward(grad_output)
+
+q_grad = q.grad
+k_grad = k.grad
+v_grad = v.grad
+
+# print acceptable error = 1% of avg magnitude of o, q_grad, k_grad, v_grad
+print(f'Acceptable error for o: {o.abs().mean().item() * 0.01}')
+print(f'Acceptable error for q_grad: {q_grad.abs().mean().item() * 0.01}')
+print(f'Acceptable error for k_grad: {k_grad.abs().mean().item() * 0.01}')
+print(f'Acceptable error for v_grad: {v_grad.abs().mean().item() * 0.01}')
 
 d_vec = torch.mul(grad_output, o)
 d_vec = d_vec.sum(dim=-1, keepdim=True)
@@ -97,20 +80,19 @@ d_vec = d_vec.sum(dim=-1, keepdim=True)
 fn = f'{TESTNAME}_{N}_{D}.txt'
 with open(fn, 'w') as f:
     # inputs
-    qf = q.to(torch.float32).flatten().cpu().numpy()
-    kf = k.to(torch.float32).flatten().cpu().numpy()
-    vf = v.to(torch.float32).flatten().cpu().numpy()
-    of = o.to(torch.float32).flatten().cpu().numpy()
-    grad_outputf = grad_output.to(torch.float32).flatten().cpu().numpy()
+    qf = q.to(torch.float32).flatten().detach().cpu().numpy()
+    kf = k.to(torch.float32).flatten().detach().cpu().numpy()
+    vf = v.to(torch.float32).flatten().detach().cpu().numpy()
+    of = o.to(torch.float32).flatten().detach().cpu().numpy()
+    grad_outputf = grad_output.to(torch.float32).flatten().detach().cpu().numpy()
     
     # intermediate
-    l_vecf = l_vec.to(torch.float32).flatten().cpu().numpy()
-    d_vecf = d_vec.to(torch.float32).flatten().cpu().numpy()
+    l_vecf = l_vec.to(torch.float32).flatten().detach().cpu().numpy()
     
     # outputs
-    q_grad = q_grad.to(torch.float32).flatten().cpu().numpy()
-    k_grad = k_grad.to(torch.float32).flatten().cpu().numpy()
-    v_grad = v_grad.to(torch.float32).flatten().cpu().numpy()
+    q_grad = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    k_grad = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    v_grad = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
     
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
@@ -146,8 +128,8 @@ print(f'Run the harness like `./attn_bwd {fn}`')
 
 N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 64
-H = 40
-B = 60
+H = 16
+B = 32
 # H = 2048 // D
 # B = 16384 // N
 
