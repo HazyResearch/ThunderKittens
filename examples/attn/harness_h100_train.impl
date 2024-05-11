@@ -308,10 +308,26 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice); // qg will be produced too, but we need to zero it out!
     // kg will be produced
     // vg will be produced
+    
+    CUtensorMap tma_desc_b_o = {};
+    CUtensorMap tma_desc_b_d = {};  
+    CUtensorMap tma_desc_b_og = {};
 
-    CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(d_b_o, (ATTN_B*ATTN_H*ATTN_N)/(4*16)); 
-    CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec  >(d_b_d, (ATTN_B*ATTN_H*ATTN_N)/(4*16));
-    CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(d_b_og,(ATTN_B*ATTN_H*ATTN_N)/(4*16));
+    tma::create_tensor_map<st_bf<th, tw, layout_nrow>         >(&tma_desc_b_o, d_b_o, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
+    tma::create_tensor_map<st_bf<th, tw, layout_nrow>::col_vec>(&tma_desc_b_d, d_b_d, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
+    tma::create_tensor_map<st_bf<th, tw, layout_nrow>         >(&tma_desc_b_og, d_b_og, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
+
+    CUtensorMap* tma_b_o_d;
+    CUtensorMap* tma_b_d_d;
+    CUtensorMap* tma_b_og_d; 
+
+    cudaMalloc(&tma_b_o_d, sizeof(CUtensorMap));;
+    cudaMalloc(&tma_b_d_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_og_d, sizeof(CUtensorMap));
+
+    cudaMemcpy(tma_b_o_d, &tma_desc_b_o, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_d_d, &tma_desc_b_d, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_og_d, &tma_desc_b_og, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
 
     std::cout << "Allocated and set memory on GPU for backward prep!" << std::endl;
 
@@ -327,13 +343,13 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
+        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep kernel" << std::endl;
     const auto start_bwd = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
+        attend_ker_prep_train<<<grid_bwd, (32*WORKERS), mem_size>>>(tma_b_o_d, tma_b_d_d, tma_b_og_d);
     }
     cudaDeviceSynchronize();
     const auto finish_bwd = std::chrono::high_resolution_clock::now();
@@ -370,33 +386,76 @@ int main(int argc, char **argv) {
         d_bf[i] = __float2bfloat16(d_ref[i % ATTN_N]);
     }
 
-    CUtensorMap* tma_b_q_d  = tma::allocate_and_create_tensor_map<q_smem_tile>(d_b_q,   (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16));
-    CUtensorMap* tma_b_k_d  = tma::allocate_and_create_tensor_map<k_smem_tile>(d_b_k,   (ATTN_B*ATTN_H*ATTN_N)/(tile_h    * 16));
-    CUtensorMap* tma_b_v_d  = tma::allocate_and_create_tensor_map<v_smem_tile>(d_b_v,   (ATTN_B*ATTN_H*ATTN_N)/(tile_h    * 16));
-    CUtensorMap* tma_b_l_d  = tma::allocate_and_create_tensor_map<l_smem_tile>(d_b_l,   (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16));
-    CUtensorMap* tma_n_d_d  = tma::allocate_and_create_tensor_map<d_smem_tile>(d_b_d,   (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16));
-    CUtensorMap* tma_n_og_d = tma::allocate_and_create_tensor_map<og_smem_tile>(d_b_og, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16));
-    CUtensorMap* tma_b_qg_d = tma::allocate_and_create_tensor_map<qg_smem_tile>(d_b_qg, (ATTN_B*ATTN_H*ATTN_N)/(tile_h_qo * 16));
-    CUtensorMap* tma_b_kg_d = tma::allocate_and_create_tensor_map<k_smem_tile>(d_b_kg,  (ATTN_B*ATTN_H*ATTN_N)/(tile_h    * 16));
-    CUtensorMap* tma_b_vg_d = tma::allocate_and_create_tensor_map<v_smem_tile>(d_b_og,  (ATTN_B*ATTN_H*ATTN_N)/(tile_h    * 16));
+    CUtensorMap tma_desc_b_q  = {};
+    CUtensorMap tma_desc_b_k  = {};
+    CUtensorMap tma_desc_b_v  = {};
+    CUtensorMap tma_desc_b_qg = {};
+    CUtensorMap tma_desc_b_kg = {};
+    CUtensorMap tma_desc_b_vg = {};
+    CUtensorMap tma_desc_n_og = {};
+    CUtensorMap tma_desc_b_l  = {};
+    CUtensorMap tma_desc_n_d  = {};
+
+    tma::create_tensor_map<q_smem_tile> (&tma_desc_b_q,   d_b_q,  ATTN_B*ATTN_H*ATTN_N/(tile_h_qo * 16));
+    tma::create_tensor_map<k_smem_tile> (&tma_desc_b_k,   d_b_k,  ATTN_B*ATTN_H*ATTN_N/(tile_h    * 16));
+    tma::create_tensor_map<v_smem_tile> (&tma_desc_b_v,   d_b_v,  ATTN_B*ATTN_H*ATTN_N/(tile_h    * 16));
+    tma::create_tensor_map<qg_smem_tile>(&tma_desc_b_qg,  d_b_qg, ATTN_B*ATTN_H*ATTN_N/(tile_h_qo * 16));
+    tma::create_tensor_map<k_smem_tile> (&tma_desc_b_kg,  d_b_kg, ATTN_B*ATTN_H*ATTN_N/(tile_h    * 16));
+    tma::create_tensor_map<v_smem_tile> (&tma_desc_b_vg,  d_b_vg, ATTN_B*ATTN_H*ATTN_N/(tile_h    * 16));
+    tma::create_tensor_map<og_smem_tile>(&tma_desc_n_og,  d_b_og, ATTN_B*ATTN_H*ATTN_N/(tile_h_qo * 16));
+    tma::create_tensor_map<l_smem_tile> (&tma_desc_b_l,   d_b_l,  ATTN_B*ATTN_H*ATTN_N/(tile_h_qo * 16));
+    tma::create_tensor_map<d_smem_tile> (&tma_desc_n_d,   d_b_d,  ATTN_B*ATTN_H*ATTN_N/(tile_h_qo * 16));
+
+    CUtensorMap* tma_b_q_d;
+    CUtensorMap* tma_b_k_d;
+    CUtensorMap* tma_b_v_d;
+    CUtensorMap* tma_b_qg_d;
+    CUtensorMap* tma_b_kg_d;
+    CUtensorMap* tma_b_vg_d;
+    CUtensorMap* tma_n_og_d; 
+    CUtensorMap* tma_b_l_d;
+    CUtensorMap* tma_n_d_d;
+
+    cudaMalloc(&tma_b_q_d,  sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_k_d,  sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_v_d,  sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_qg_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_kg_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_vg_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_n_og_d, sizeof(CUtensorMap));
+    cudaMalloc(&tma_b_l_d,  sizeof(CUtensorMap));
+    cudaMalloc(&tma_n_d_d,  sizeof(CUtensorMap));
+
+    cudaMemcpy(tma_b_q_d,  &tma_desc_b_q,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_k_d,  &tma_desc_b_k,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_v_d,  &tma_desc_b_v,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_qg_d, &tma_desc_b_qg,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_kg_d, &tma_desc_b_kg,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_vg_d, &tma_desc_b_vg,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_n_og_d, &tma_desc_n_og,  sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_b_l_d,  &tma_desc_b_l,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    cudaMemcpy(tma_n_d_d,  &tma_desc_n_d,   sizeof(CUtensorMap), cudaMemcpyHostToDevice);
 
     std::cout << "Allocated and set memory on GPU for backward!" << std::endl;
 
     cudaFuncSetAttribute(
         attend_ker_bwd_train,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        100000
+        112000
     );
 
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    // dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
+    // static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
+
+    dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM) == 0);
 
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
-        attend_ker_bwd_train<<<grid_2, (32*WORKERS_BWD), 100000>>>(ATTN_N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
+        attend_ker_bwd_train<<<grid_bwd2, (32*WORKERS_BWD), 112000>>>(ATTN_N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
@@ -404,12 +463,9 @@ int main(int argc, char **argv) {
     
     for(int i = 0; i < ITER; i++) {
         cudaMemcpy(d_b_qg, qg_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-        
         const auto start_bwd2 = std::chrono::high_resolution_clock::now();
-        
-        attend_ker_bwd_train<<<grid_2, (32*WORKERS_BWD), 100000>>>(ATTN_N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
+        attend_ker_bwd_train<<<grid_bwd2, (32*WORKERS_BWD), 112000>>>(ATTN_N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d);
         cudaDeviceSynchronize();
-        
         const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
     }
@@ -428,6 +484,10 @@ int main(int argc, char **argv) {
         vg[i] = __bfloat162float(vg_bf[i]);
     }
 
+    float total_diff_qg = 0.0f;
+    float total_diff_kg = 0.0f;
+    float total_diff_vg = 0.0f;
+
     good = true;
     std::ofstream qg_ref_file("printouts/qg_ref.txt");
     std::ofstream qg_file("printouts/qg.txt");
@@ -442,7 +502,10 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
+        total_diff_qg += diff;
     }
+    // print average qg diff
+    std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS << std::endl;
 
     std::ofstream kg_ref_file("printouts/kg_ref.txt");
     std::ofstream kg_file("printouts/kg.txt");
@@ -457,7 +520,10 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
+        total_diff_kg += diff;
     }
+    // print average kg diff
+    std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS << std::endl;
 
     std::ofstream vg_ref_file("printouts/vg_ref.txt");
     std::ofstream vg_file("printouts/vg.txt");
@@ -472,11 +538,62 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
+        total_diff_vg += diff;
     }
+    // print average vg diff
+    std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS << std::endl;
 
     std::cout << "Average bwd execution time: " << total_time / ITER << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n\n\n\n";
     else std::cout << "BWD Incorrect :(\n\n\n\n";
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+    cudaFree(d_l);
+    cudaFree(d_b_q);
+    cudaFree(d_b_k);
+    cudaFree(d_b_v);
+    cudaFree(d_b_o);
+    cudaFree(d_b_l);
+    cudaFree(d_b_og);
+    cudaFree(d_b_qg);
+    cudaFree(d_b_kg);
+    cudaFree(d_b_vg);
+    cudaFree(tma_q_d);
+    cudaFree(tma_k_d);
+    cudaFree(tma_v_d);
+    cudaFree(tma_o_d);
+    cudaFree(tma_l_d);
+    cudaFree(tma_b_q_d);
+    cudaFree(tma_b_k_d);
+    cudaFree(tma_b_v_d);
+    cudaFree(tma_b_o_d);
+    cudaFree(tma_b_l_d);
+    cudaFree(tma_b_og_d);
+    cudaFree(tma_b_qg_d);
+    cudaFree(tma_b_kg_d);
+    cudaFree(tma_b_vg_d);
+
+    cudaFree(d_b_q);
+    cudaFree(d_b_k);
+    cudaFree(d_b_v);
+    cudaFree(d_b_o);
+    cudaFree(d_b_l);
+    cudaFree(d_b_og);
+    cudaFree(d_b_qg);
+    cudaFree(d_b_kg);
+    cudaFree(d_b_vg);
+    cudaFree(tma_b_q_d);
+    cudaFree(tma_b_k_d);
+    cudaFree(tma_b_v_d);
+    cudaFree(tma_b_o_d);
+    cudaFree(tma_b_l_d);
+    cudaFree(tma_b_og_d);
+    cudaFree(tma_b_qg_d);
+    cudaFree(tma_b_kg_d);
+    cudaFree(tma_b_vg_d);
 
     delete[] q, k, v, o_ref, og, qg_ref, kg_ref, vg_ref, d_ref;
     delete[] q_bf, k_bf, v_bf, o_bf, l_bf, d_bf; 
