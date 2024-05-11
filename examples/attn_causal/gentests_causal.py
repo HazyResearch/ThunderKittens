@@ -57,6 +57,8 @@ d_vec = d_vec.sum(dim=-1, keepdim=True)
 
 # print out avg magnitude of q_grad, k_grad, v_grad
 # print out acceptable error given it should be max 1% of the value
+print(f'o error: {o.abs().mean() * 0.01}')
+print(f'l_vec error: {l_vec.abs().mean() * 0.01}')
 print(f'q_grad error: {q_grad.abs().mean() * 0.01}')
 print(f'k_grad error: {k_grad.abs().mean() * 0.01}')
 print(f'v_grad error: {v_grad.abs().mean() * 0.01}')

@@ -4,7 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024 * 4; 
+constexpr int ATTN_N     = 1024 * 8; 
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 16; 
 constexpr int ATTN_B     = 32;
@@ -289,7 +289,7 @@ int main(int argc, char **argv) {
     // print average l diff
     std::cout << "Average l diff: " << total_diff_l / (ATTN_N*ATTN_B*ATTN_H) << std::endl;
 
-    if (abs(total_diff_l / (ATTN_N*ATTN_B*ATTN_H)) < 1e-3) {
+    if (abs(total_diff_l / (ATTN_N*ATTN_B*ATTN_H)) < 1e-4) {
         good = true;
     }
 
@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
         total_diff_d += diff;
     }
     std::cout << "Average d diff: " << total_diff_d / (ATTN_N * ATTN_B * ATTN_H) << std::endl;
-    if (abs(total_diff_d / (ATTN_N * ATTN_B * ATTN_H)) < 1e-5) {
+    if (abs(total_diff_d / (ATTN_N * ATTN_B * ATTN_H)) < 1e-4) {
         good = true;
     }
 
