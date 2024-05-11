@@ -55,6 +55,13 @@ v_grad = v.grad
 d_vec = torch.mul(o, grad_output)
 d_vec = d_vec.sum(dim=-1, keepdim=True)
 
+# print out avg magnitude of q_grad, k_grad, v_grad
+# print out acceptable error given it should be max 1% of the value
+print(f'q_grad error: {q_grad.abs().mean() * 0.01}')
+print(f'k_grad error: {k_grad.abs().mean() * 0.01}')
+print(f'v_grad error: {v_grad.abs().mean() * 0.01}')
+
+
 with open(f'{TESTNAME}_causal_{N}N_{D}D.txt', 'w') as f:
     # inputs
     qf = q.to(torch.float32).flatten().detach().cpu().numpy()

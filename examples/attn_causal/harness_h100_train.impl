@@ -6,7 +6,7 @@
 
 constexpr int ATTN_N     = ATTN_n; 
 constexpr int ATTN_D     = 64;
-constexpr int ATTN_H     = 32; 
+constexpr int ATTN_H     = 16; 
 constexpr int ATTN_B     = 16;
 
 constexpr int ITER = 30;
@@ -40,6 +40,29 @@ void ensureDirectoryExists(const std::string& dirName) {
     } else {
         std::cout << "\n\nDirectory " << dirName << " already exists.\n\n" << std::endl;
     }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
 }
 
 int main(int argc, char **argv) {
@@ -553,6 +576,11 @@ int main(int argc, char **argv) {
     std::cout << "Average bwd execution time: " << total_time / ITER << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n\n\n\n";
     else std::cout << "BWD Incorrect :(\n\n\n\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, true, "bwd");
+    double e = efficiency(f, total_time / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);
