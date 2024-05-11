@@ -4,10 +4,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = ATTN_n; 
+constexpr int ATTN_N     = 1024 * 8; 
 constexpr int ATTN_D     = 64;
 constexpr int ATTN_H     = 16; 
-constexpr int ATTN_B     = 16;
+constexpr int ATTN_B     = 32;
 
 constexpr int ITER = 30;
 
@@ -478,6 +478,8 @@ int main(int argc, char **argv) {
 
     // dim3 grid_bwd2(1, ATTN_B*ATTN_H, 1);
     // static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
+
+    #define KV_BLOCKS (1)
 
     dim3 grid_bwd2(ATTN_N/(KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
     static_assert(ATTN_N % (KV_BLOCKS*WORKERS_BWD*kittens::TILE_DIM) == 0);

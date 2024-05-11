@@ -165,3 +165,53 @@ print(f'Average time for forward pass in us: {time_us:.2f}')
 print(f'Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, D, H, True, "fwd"), time_us):.2f}')
 
 print("-" * 60)
+print(f'Timing backward pass for for B={B}, H={H}, N={N}, D={D}')
+with torch.backends.cuda.sdp_kernel(
+    enable_flash=True, 
+    enable_math=False, 
+    enable_mem_efficient=False
+):
+    q = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    k = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    v = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda').requires_grad_()
+    
+    grad_output = torch.randn((B, H, N, D), dtype=torch.float16, device='cuda')
+    
+    # warmup
+    for _ in range(10):
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        
+        o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+        o.backward(grad_output)
+    
+    
+    # Prepare for timing
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(30)]
+    
+    # Time the backward pass
+    
+    for i in range(30):
+        q.grad = None
+        k.grad = None
+        v.grad = None
+        grad_output.grad = None
+        
+        o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+        
+        start_events[i].record()
+        torch.cuda.synchronize()
+        o.backward(grad_output)
+        torch.cuda.synchronize()
+        end_events[i].record()
+    
+torch.cuda.synchronize()
+times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+time_us = np.mean(times) * 1000
+print(f'Average time for backward pass in us: {time_us:.2f}')
+print(f'Average efficiency for backward pass in TFLOPS: {efficiency(flops(B, N, D, H, True, "bwd"), time_us):.2f}')
+
+print("-" * 60)
