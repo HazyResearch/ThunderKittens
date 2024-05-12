@@ -16,7 +16,7 @@ ThunderKittens is built around three key principles:
 3. Speed. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 2 implementation speaks for this point.
 
 <div align="center" >
-    <img src="fa2-tk.png" height=350 alt="Flash Attention 2, but with kittens!" style="margin-bottom:px"/> 
+    <img src="attn.png" height=350 alt="Flash Attention 2, but with kittens!" style="margin-bottom:px"/> 
 </div>
 
 ThunderKittens is built from the hardware up -- we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
