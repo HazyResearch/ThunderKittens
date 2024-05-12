@@ -19,11 +19,6 @@ $$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
 And output computation becomes: 
 $$y_i = \frac{\phi(q_i)s_i}{\phi(q_i)z_i}$$
 
-Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^{i} \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^{i} \phi(k_j)^T$ be our "K-state". The update rule becomes:
-$$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
-And output computation becomes: 
-$$y_i = \frac{\phi(q_i)s_i}{\phi(q_i)z_i}$$
-
 In Based, our feature map computes a 2nd order Taylor approximation to the $\exp$ function:
 $$\exp(x) \approx 1 + x + x^2/2$$
 We compute a *concatenation* of the 0th, 1st, and 2nd order terms: 
