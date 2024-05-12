@@ -11,7 +11,7 @@ def make_causal(X):
     return X
 
 
-def based_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps=1e-6):
+def based_step_ref(kv_state, k_state, q, k, v, eps=1e-6):
     """
     Argument:
         kv_state: (batch, d_model, dstate)
@@ -36,7 +36,7 @@ def based_test(dt, device='cuda', benchmark=True):
     itype = dt
     batch_size = 16
     d_model = 64
-    d_state = 256
+    d_state = 320
 
     # prepare inputs 
     torch.random.manual_seed(0)
@@ -52,8 +52,7 @@ def based_test(dt, device='cuda', benchmark=True):
     k_state_ref  = k_state.detach().clone()
     out_ref, den_ref    = based_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q)
     out_tc       = torch.zeros_like(v)
-    denom = torch.zeros(batch_size*heads, 1, device=device, dtype=itype)/d_model
-    mod.based_step(q, k, v, kv_state_t, k_state, out_tc, denom)
+    mod.based_step(q, k, v, kv_state_t, k_state, out_tc)
     _kv_state = kv_state_t.transpose(1,2) 
 
     # Overall correctness

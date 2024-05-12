@@ -1,5 +1,4 @@
-#include "src/kittens.cuh"
-#include <cassert>
+# include "src/kittens.cuh"
 
 #define NUM_WORKERS (16) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -66,7 +65,7 @@ __device__ inline void tile_reduce(ST &dst, const ST (&src)[N_TILES]) {
     #pragma unroll
     for(int j = 0; j < RESPONSIBLE_ELEMENTS; j++) {
         int idx = threadIdx.x + j*STRIDE;
-        dst.data[idx] = __float2bfloat16(acc[j]); // sets
+        dst.data[idx] = __float2bfloat16(acc[j]); // set
     }
 }
 
@@ -95,11 +94,8 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
     }
 }
 
-
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o, bf16* __kv_state) {
-
-    assert(n >= 1024); // Assumes n >= 1024.
+void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -108,7 +104,6 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     const bf16 *k_g   = reinterpret_cast<const bf16*>(__k)+blockIdx.x*(n*D_QK);
     const bf16 *v_g   = reinterpret_cast<const bf16*>(__v)+blockIdx.x*(n*D_VO);
           bf16 *o_g   = reinterpret_cast<bf16*>      (__o)+blockIdx.x*(n*D_VO);
-          bf16 *kv_g  = reinterpret_cast<bf16*>      (__kv_state)+blockIdx.x*(D_QK*D_QK*D_VO); // 256x64
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -127,7 +122,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 
     rt_fl_1x4<> a2; // a2 gets propagated through here.
 
-    sv_bf_4 a0_total = al.allocate<sv_bf_4>();
+    sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
     if(warpid == 0) {
         zero(a0_total);
@@ -239,10 +234,6 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         if(warpid < ACTIVE_TILES) {
             store(o_g + cur_idx * o_s[warpid].num_elements, o_s[warpid], D_VO);
         }
-
-        // store the kv state (a2) to global memory. 
-        // each warp has a differen part of the kv state
-        store(kv_g + warpid*a2.num_elements, a2, D_VO); 
         __syncthreads();
     }
 }
@@ -251,8 +242,8 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
 // #include "harness.impl" // (comment out when using the code below)
 
 // For binding to PyTorch (comment out include for harness.imple when using the code below)
-#include "src/common/pyutils/torch_helpers.cuh"
-#include <iostream>
+# include "src/common/pyutils/torch_helpers.cuh"
+# include <iostream>
 void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
     // std::cout << "Entered Based handler" << std::endl;
     CHECK_INPUT(q);
@@ -303,7 +294,6 @@ void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tens
 
     // std::cout << "Launched kernel" << std::endl;
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-
     // std::cout << "Exiting" << std::endl;
 }
 

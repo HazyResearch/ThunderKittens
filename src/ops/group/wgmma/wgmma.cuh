@@ -67,11 +67,11 @@ __device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d
         }
     }
 }
-template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
+template<int N_DIV_4, int K, int M, ducks::wgmma::transposed L_B>
 __device__ static inline void mm_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
                               const st_bf<K, M, L_B>                         &b) {
-    mm_AB<N_DIV_4, K, M, L_B, 0>(d, a, b);
+    mma_AB<N_DIV_4, K, M, L_B, 0>(d, a, b);
 }
 
 template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B, int accumulate=1>
