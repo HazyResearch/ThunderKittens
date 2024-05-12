@@ -8,11 +8,11 @@ You can checkout these resources to learn more about the Based architecture: [Co
 ## Overview of kernel
 Based introduces a fast implementation of linear attention.
 
-Standard attention computes an $O(N^2)$ matrix of query and key interactions $\exp(q_i^Tk_j/\sqrt{d})$. The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product: 
+Standard attention computes an \(O(N^2)\) matrix of query and key interactions \(\exp(q_i^Tk_j/\sqrt{d})\). The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product:
 
 $$y_i = \sum_{j=1}^i \frac{\exp(q_i^Tk_j/\sqrt{d})v_j}{ \sum_{n=1}^{i} \exp(q_i^Tk_n/\sqrt{d})} \rightarrow y_i = \sum_{j=1}^i \frac{\phi(q_i)\phi(k_j)v_j}{\sum_{n=1}^{i} \phi(q_i)\phi(k_n)}$$
 
-where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $O(n^2d)$).
+where \(\phi\) is a *feature map* that transforms the keys and queries. This is akin to a kernel trick where we want \(\exp(qk^T) \approx \phi(q)\phi(k)^T\). Letting the sequence length be \(n\), model dimension \(d\) and *feature dimension* after applying \(\phi\) be \(D\), note that we can now multiply keys and values first in \(O(ndD)\) (instead of queries and keys in \(O(n^2d)\)).
 
 Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^{i} \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^{i} \phi(k_j)^T$ be our "K-state". The update rule becomes:
 $$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
