@@ -38,7 +38,6 @@ def jit_build(name, debug=False, gpu_type='4090'):
 
 def cuda_extension(name, debug, gpu_type): 
     _cuda_flags  = [
-                    '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', 
                     '--use_fast_math',
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
