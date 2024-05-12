@@ -36,8 +36,10 @@ make clean && make && ./debug_linear_attend randn_all.txt
 Testing in PyTorch. Below, you can install for the 4090 or H100 depending on your hardware:
 ```
 cd examples/based/linear_attn_forward/4090
+# or cd examples/based/linear_attn_forward/H100
 # Ensure that the based_tk_fwd function and its imports are uncommented
 # Ensure harness.impl is commented out
+
 python setup.py install # ensure that you have run ```source env.src''' prior to this
 python lin_attn_profile.py
 ```
@@ -48,7 +50,11 @@ python lin_attn_profile.py
 ```
 cd examples/based/linear_attn_forward/4090
 python setup.py install # ensure that you have run ```source env.src''' prior to this
-python lin_attn_profile.py
+python lin_attn_profile.py --device 4090
+
+cd examples/based/linear_attn_forward/H100
+python setup.py install # ensure that you have run ```source env.src''' prior to this
+python lin_attn_profile.py --device H100
 ```
 
 

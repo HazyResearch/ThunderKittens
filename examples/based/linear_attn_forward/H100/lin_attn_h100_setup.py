@@ -1,7 +1,7 @@
 # This is the commands for the pytorch jit...
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import torch
-name = "lin_attn"
+name = "lin_attn_h100"
 gpu = 'H100'
 assert(gpu in ['4090', 'A100', 'H100'])
 

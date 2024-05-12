@@ -41,7 +41,6 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*ATTN_D*ATTN_D_SMALL*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_D*ATTN_D_SMALL*ATTN_D_SMALL;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS_QK];
@@ -52,7 +51,6 @@ int main(int argc, char **argv) {
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *v_bf = new bf16[TOTAL_ELEMENTS_VO];
     bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
-    bf16 *kv_bf = new bf16[TOTAL_ELEMENTS_KV];
     float *o = new float[TOTAL_ELEMENTS_VO];
 
     if(argc > 1) {

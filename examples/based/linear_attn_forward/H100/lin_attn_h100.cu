@@ -1,4 +1,6 @@
-# include "src/kittens.cuh"
+#include "src/kittens.cuh"
+#include <cuda/pipeline>
+#include <cooperative_groups.h>
 
 #define NUM_WORKERS (4) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -6,6 +8,8 @@
 #define D_VO (64) // hardcoded but can be changed with some effort
 
 using namespace kittens;
+
+
 // cumulative sum of v onto a0_total
 template<kittens::ducks::st::all ST>
 __device__ void accumulate_a0(sv_bf<ST::width> &a0_total, const ST &v) {
@@ -75,7 +79,7 @@ __device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, c
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 2)
-void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o) {//, CUtensorMap* __kv_state) {
+void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o) {
 
     int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
@@ -169,7 +173,7 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
         for(int j = 0; j < 4; j++) {
             auto &attn_subtile = reinterpret_cast<rt_bf_1x1<>&>(local_attn_bf.tiles[0][j]);
             if (j>warpid) zero(attn_subtile);
-            else if (j==warpid) make_causal(attn_subtile, attn_subtile);
+            else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<bf16>::zero());
         }
 
         warpgroup::mma_fence(o); // av matmul fence
@@ -238,5 +242,58 @@ void based_linear_attention(int n, CUtensorMap* tma_q, CUtensorMap* tma_k, CUten
     tma::store_async_wait();
 }
 
-#include "harness.impl"
 
+// For testing cpp 
+// #include "harness.impl"
+
+
+// For PyTorch
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+
+    auto batch   = q.size(0);
+    auto heads   = q.size(1);
+    auto N       = q.size(2);
+    auto D       = q.size(3);
+
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
+
+    // make sure sequence length is multiple of 128 for now
+    TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "Please pad sequence length to be multiple of 128");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
+    bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+
+    CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>(q_bf, (batch*heads*N)/(4 * 16)); 
+    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(k_bf, (batch*heads*N)/(4 * 16)); 
+    CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(v_bf, (batch*heads*N)/(4 * 16)); 
+    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(v_bf, (batch*heads*N)/(4 * 16)); 
+    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(o_bf, (batch*heads*N)/(4 * 16)); 
+
+    unsigned long mem_size = 112000;
+    cudaFuncSetAttribute(based_linear_attention, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+
+    dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
+    based_linear_attention<<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d);
+    
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}

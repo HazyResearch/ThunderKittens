@@ -9,6 +9,21 @@
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
 
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads) {
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    return f;
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
+}
+
+
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();
@@ -41,7 +56,6 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*ATTN_D*ATTN_D_SMALL*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_D*ATTN_D_SMALL*ATTN_D_SMALL;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS_QK];
@@ -150,6 +164,11 @@ int main(int argc, char **argv) {
 
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H);
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);
