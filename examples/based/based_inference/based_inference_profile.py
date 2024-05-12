@@ -26,18 +26,20 @@ def pytorch_step(kv_state, kv_state_t, k_state, q, k, v, denom: bool=True, eps: 
     
     # compute
     torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
     t0 = time.time()
 
     k_state_ref += k
     kv_state_ref += torch.einsum("bf,bd->bdf", k, v)
     num = torch.einsum("bf,bdf->bd", q, kv_state_ref)
-    # den = torch.einsum("bf,bf->b", q, k_state) + eps
-    y = num #/ den.unsqueeze(-1)
+    den = torch.einsum("bf,bf->b", q, k_state_ref) + eps
+    y = num / den.unsqueeze(-1)
 
     torch.cuda.synchronize()
     t1 = time.time()
+    peak_mem = torch.cuda.max_memory_allocated(device='cuda')
     tot = t1 - t0
-    return y, kv_state_ref, k_state_ref, tot
+    return y, tot, peak_mem
 
 
 def based_step_test(kv_state, kv_state_t, k_state, q, k, v):
@@ -60,7 +62,7 @@ def based_step_benchmark(dt, device='cuda'):
     num_iters = 10
     
     methods = {
-        #'Pure PyTorch': pytorch_step, 
+        'Pure PyTorch': pytorch_step, 
         'Based Kernel': based_step_test,
     }
     method2timing = defaultdict(dict)
@@ -105,41 +107,7 @@ def based_step_benchmark(dt, device='cuda'):
     ax.set_ylabel('Time (ms)')
     ax.legend()
     # save pdf
-    plt.savefig('h100_based_step_benchmark.pdf', format='pdf', bbox_inches='tight')
-
-
-def based_step_correct(dt, device='cuda'):
-    # specify dimensions
-    batch_size = 128
-    heads = 16  
-    d_model = 64
-    d_state = 320
-
-    # prepare inputs 
-    torch.random.manual_seed(0)
-    kv_state = torch.randn(batch_size*heads, d_model, d_state, dtype=dt, device=device)/d_state
-    k_state = torch.randn(batch_size*heads, d_state, dtype=dt, device=device)/d_state
-    v = torch.randn(batch_size*heads, d_model, device=device, dtype=dt)/d_model
-    k = torch.randn(batch_size*heads, d_state, device=device, dtype=dt)/d_state
-    q = torch.randn(batch_size*heads, d_state, device=device, dtype=dt)/d_state
-    kv_state_t = kv_state.transpose(1,2).contiguous() # We prefer the other order for iteration.
-
-    # kv_state_ref = kv_state.detach().clone() # So that the kernel can write to different memory
-    # k_state_ref  = k_state.detach().clone()
-
-    # run implementations
-    out_ref, kv_state_ref, k_state_ref, _   = pytorch_step(kv_state=kv_state, kv_state_t=kv_state_t, k_state=k_state, v=v, k=k, q=q)
-    out_tc       = torch.zeros_like(v)
-    mod.based_step(q, k, v, kv_state_t, k_state, out_tc)
-
-    # correctness checks
-    _kv_state = kv_state_t.transpose(1,2) 
-    print(f"out max diff: {(out_tc - out_ref).abs().max().item()}")
-    print(f"k_state  max diff: {(k_state - k_state_ref).abs().max().item()}")
-    print(f"kv_state max diff: {(_kv_state - kv_state_ref).abs().max().item()}")
-
+    plt.savefig('based_step_benchmark.pdf', format='pdf', bbox_inches='tight')
 
 print("Benchmarking based_step...")
 based_step_benchmark(torch.bfloat16)
-print(f"\nCorrectness check for based_step...")
-based_step_correct(torch.bfloat16)

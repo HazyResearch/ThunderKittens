@@ -12,7 +12,7 @@
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x);
 
 extern void based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out, torch::Tensor denom);
+            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "Test handler for based_step"; 

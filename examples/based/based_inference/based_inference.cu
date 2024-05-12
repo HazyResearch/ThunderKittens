@@ -1,7 +1,7 @@
 #include <iostream>
 #include <math.h>
 #include <assert.h>
-#include <mma_AB.h>
+#include <mma.h>
 using namespace nvcuda;
 
 # include "src/kittens.cuh" // needs to come before torch_helpers, since torch_helpers relies on kittens.
@@ -15,7 +15,7 @@ using namespace nvcuda;
 using namespace kittens;
 
 const int d_model =  64; 
-const int d_state = 256;
+const int d_state = 320;
 const int workers = 8;
 
 template<typename H> __device__ float4* _f4p(H *x)  { return (float4* ) x;}
@@ -27,7 +27,7 @@ template<> __device__ inline __nv_bfloat16 __typeconvert<float,__nv_bfloat16>(fl
 
 template <typename H, typename T>
 __global__
-void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out, T* __denom) { 
+void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out) { 
 
     auto block_start = blockIdx.x;
     auto warpid = kittens::warpid();
@@ -214,7 +214,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
 void 
 based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out, torch::Tensor denom) {
+            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -241,5 +241,5 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     based_simple_ker<H,T><<<batch,threads,0,stream>>>(
                 q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(),
                 kv_state.data_ptr<T>(), k_state.data_ptr<T>(),
-                out.data_ptr<T>(), denom.data_ptr<T>());
+                out.data_ptr<T>());
 }
