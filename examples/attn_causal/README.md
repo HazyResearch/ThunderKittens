@@ -13,7 +13,7 @@ Before running the harness, select the purpose of the run:
 Run the following command to generate the `.txt` files required for running the harness. Replace `INSERT_ATTN_N` and `INSERT_ATTN_D` with the desired dimensions:
 
 ```bash
-python gentests.py randn INSERT_ATTN_N INSERT_ATTN_D
+python gentests_causal.py INSERT_ATTN_N INSERT_ATTN_D randn
 ```
 
 ## Configuration
@@ -27,10 +27,10 @@ If defined at the top of the corresponding .cu file, make sure to comment out `T
 
 ## Execution
 
-To compile and run the harness with `randn_4096_64.txt` (ATTN_N = 4096, ATTN_D = 64) for example, use the following commands:
+To compile and run the harness with `randn_causal_4096_64.txt` (ATTN_N = 4096, ATTN_D = 64) for example, use the following commands:
 
 ```bash
-make clean && make && ./attn randn_4096_64.txt
+make clean && make && ./attn randn_causal_4096_64.txt
 ```
 
 ## Output Verification 
@@ -38,7 +38,7 @@ make clean && make && ./attn randn_4096_64.txt
 Though the C++ harness provides an approximate view of correctness with its smiley face, numerics in floating point arithmetic on the GPU can sometimes arise: to manually check the reference output, generated output, and diff: 
 
 - Create a folder called `printouts` in the same directory as the `.cu` file you are executing
-- Running `./attn randn_INSERT_INSERT.txt` will now dump .txt files of reference, generation, and diff in the `printouts` directory
+- Running `./attn randn_causal_INSERT_INSERT.txt` will now dump .txt files of reference, generation, and diff in the `printouts` directory
 
 # TK Kernels + PyTorch Bindings/Demo Steps
 
