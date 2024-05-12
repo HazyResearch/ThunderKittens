@@ -10,7 +10,7 @@ Based introduces a fast implementation of linear attention.
 
 Standard attention computes an $O(N^2)$ matrix of query and key interactions $\exp(q_i^Tk_j/\sqrt{d})$. The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product: 
 
-![equation](https://latex.codecogs.com/svg.image?y_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cexp(q_i%5ET%20k_j/%5Csqrt%7Bd%7D)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cexp(q_i%5ET%20k_n/%5Csqrt%7Bd%7D)%7D%5Cquad%5Crightarrow%5Cquad%20y_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cphi(q_i)%5Cphi(k_j)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cphi(q_i)%5Cphi(k_n)%7D)
+![equation](https://latex.codecogs.com/svg.image?y_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cexp(q_i%5ET%20k_j/%5Csqrt%7Bd%7D)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cexp(q_i%5ET%20k_n/%5Csqrt%7Bd%7D)%7D%5Cquad%5Crightarrow%5Cquad%20y_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cphi(q_i)%5Cphi(k_j)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cphi(q_i)%5Cphi(k_n)%7D?bg=white)
 
 where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $O(n^2d)$).
 
