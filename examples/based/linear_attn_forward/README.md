@@ -21,8 +21,8 @@ $$y_i = \frac{\phi(q_i)s_i}{\phi(q_i)z_i}$$
 
 In Based, our feature map computes a 2nd order Taylor approximation to the $\exp$ function:
 $$\exp(x) \approx 1 + x + x^2/2$$
-We compute: 
-$\phi(q) = 
+We compute a *concatenation* of the 0th, 1st, and 2nd order terms: 
+$$\phi(q_i)^T\phi(k_j) = 1 + q_i^Tk_j + \frac{(q_i^Tk_j)^2}{2}$$
 We use a feature dimension of $16$ when projecting queries and keys, so the resulting shape of $\phi(q), \phi(k)$ has dimension $273 = 1 + 16 + 16^2$. we need careful memory management to compute this feature map and outputs efficiently on hardware!
 
 Details of this prefill kernel are provided in [Algorithm 1 of the Based paper](https://arxiv.org/pdf/2402.18668). We provide a high level description here as well. We compute $y_i$ using a combination of the *parallel* and *recurrent* views. Now letting $y_i$ be a $16 \times 16$ *chunk* of tokens, focusing on the numerator:
