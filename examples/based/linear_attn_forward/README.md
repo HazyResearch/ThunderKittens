@@ -2,21 +2,19 @@
 
 Here we provide details to test and benchmark the Based kernel's *forward pass / inference prefill*. Note this kernel assumes feature dimension 16. 
 
-Please checkout these resources to learn more about the Based architecture:
-- [Code](https://github.com/HazyResearch/based)
-- [Paper](https://arxiv.org/abs/2402.18668)
+You can checkout these resources to learn more about the Based architecture: [Code](https://github.com/HazyResearch/based), [Paper](https://arxiv.org/abs/2402.18668)
 
 
-**Overview of kernel**
+## Overview of kernel
 Based introduces a fast implementation of linear attention.
 
 Standard attention computes an $O(N^2)$ matrix of query and key interactions $\exp(q_i^Tk_j/\sqrt{d})$. The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product: 
 
-$$y_i = \sum_{j=1}^i \frac{\exp(q_i^Tk_j/\sqrt{d})v_j}{\sum_{n=1}^i \exp(q_i^Tk_n/\sqrt{d})} \rightarrow y_i = \sum_{j=1}^i \frac{\phi(q_i)\phi(k_j)v_j}{\sum_{n=1}^i \phi(q_i)\phi(k_n)}$$
+$$y_i = \sum_{j=1}^i \frac{\exp(q_i^Tk_j/\sqrt{d})v_j}{ \sum_{n=1}^{i} \exp(q_i^Tk_n/\sqrt{d})} \rightarrow y_i = \sum_{j=1}^i \frac{\phi(q_i)\phi(k_j)v_j}{\sum_{n=1}^{i} \phi(q_i)\phi(k_n)}$$
 
 where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $O(n^2d)$).
 
-Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^i \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^i \phi(k_j)^T$ be our "K-state". The update rule becomes:
+Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^{i} \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^{i} \phi(k_j)^T$ be our "K-state". The update rule becomes:
 $$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
 And output computation becomes: 
 $$y_i = \frac{\phi(q_i)s_i}{\phi(q_i)z_i}$$
@@ -34,7 +32,8 @@ $$y_i = (\phi(q_i)^T\phi(k_i))v_i + \phi(q_i)\sum_{j=1}^{i-1}\phi(k_j)^Tv_j$$
 The left-hand term requires causal computation on the tile, but the right-hand term is a simple matrix multiply (cuasality has already been handled)! We partition across workers to store state $s$ in registers throughput! After streaming each chunk of tokens and computing chunks of output as shown above, we update the state. 
 
 
-**Baselines.** We consider four baselines. You can toggle which ones you consider in ```lin_attn_profile.py```. 
+## Baselines 
+We consider four baselines. You can toggle which ones you consider in ```lin_attn_profile.py```. 
 1. Pure PyTorch
 
 2. Fast Transformers causal dot product kernel: 
@@ -54,8 +53,8 @@ pip install -U git+https://github.com/sustcsonglin/flash-linear-attention
 pip install flash-attn ==2.5
 ```
 
-
-**Testing** We provide a lightweight test harness in C++ and in PyTorch. 
+## Testing 
+We provide a lightweight test harness in C++ and in PyTorch. 
 Testing in C++. First, go to the Makefile and select the correct GPU option for your hardware. To run the test:
 ```
 python generate_tests.py randn_all
@@ -76,7 +75,8 @@ python lin_attn_profile.py
 *Note* that the test may output an error, which we observe is due to numerical differences in the computation approaches as opposed to correctness.
 
 
-**Benchmarking.** We provide scripts to compare the above baseline methods against the ThunderKittens kernels. 
+## Benchmarking
+We provide scripts to compare the above baseline methods against the ThunderKittens kernels. 
 ```
 cd examples/based/linear_attn_forward/4090
 python setup.py install # ensure that you have run ```source env.src''' prior to this
