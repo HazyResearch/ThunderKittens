@@ -3,7 +3,7 @@
 Here we provide instructions to test and benchmark the Based kernel. 
 
 
-**Baselines.** We consider four baselines:
+**Baselines.** We consider four baselines. You can toggle which ones you consider in ```lin_attn_profile.py```. 
 1. Pure PyTorch
 
 2. Fast Transformers causal dot product kernel: 
@@ -24,19 +24,18 @@ pip install flash-attn ==2.5
 ```
 
 
-**Testing** We provide a test harness in C++ and in PyTorch. 
+**Testing** We provide a lightweight test harness in C++ and in PyTorch. 
 Testing in C++. First, go to the Makefile and select the correct GPU option for your hardware. To run the test:
 ```
 python generate_tests.py randn_all
-# Ensure that the based_tk_fwd function and its imports are commented out
-# Ensure harness.impl is being imported
+# Ensure that the based_tk_fwd function and its imports are commented out in 4090/lin_attn.cu and H100/lin_attn_h100.cu
+# Ensure harness.impl is being imported (line is uncommented)
 make clean && make && ./debug_linear_attend randn_all.txt
 ```
 
-Testing in PyTorch. Below, you can install for the 4090 or H100 depending on your hardware:
+Testing in PyTorch. Below, shows how you can install the TK kernel for the 4090:
 ```
 cd examples/based/linear_attn_forward/4090
-# or cd examples/based/linear_attn_forward/H100
 # Ensure that the based_tk_fwd function and its imports are uncommented
 # Ensure harness.impl is commented out
 
@@ -46,17 +45,14 @@ python lin_attn_profile.py
 *Note* that the test may output an error, which we observe is due to numerical differences in the computation approaches as opposed to correctness.
 
 
-**Benchmarking.** We provide scripts to compare these methods on the H100 and 4090. 
+**Benchmarking.** We provide scripts to compare the above baseline methods against the ThunderKittens kernels. 
 ```
 cd examples/based/linear_attn_forward/4090
 python setup.py install # ensure that you have run ```source env.src''' prior to this
-python lin_attn_profile.py --device 4090
-
-cd examples/based/linear_attn_forward/H100
-python setup.py install # ensure that you have run ```source env.src''' prior to this
-python lin_attn_profile.py --device H100
+python lin_attn_profile.py 
 ```
 
+We also include functions to compute the TFLOPs in the ```harness.impl``` files and in the ```lin_attn_profile.py``` file. 
 
 
 

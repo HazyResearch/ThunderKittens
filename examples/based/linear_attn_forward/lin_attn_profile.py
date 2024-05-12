@@ -19,15 +19,6 @@ except:
     mod = None
     print("Could not import TK based_4090 kernel")
 
-try:
-    sys.path.append("H100")
-    import lin_attn_h100 as mod_h100
-    print(f"Successfully imported TK based_H100 kernel")
-except:
-    mod_h100 = None
-    print("Could not import TK based_H100 kernel")
-
-
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from statistics import median
@@ -240,7 +231,8 @@ def fast_transformer_test(dt, q, k, v, d, verbose=True, **kwargs):
         torch.cuda.synchronize()
         t1 = time.time()
         tot = t1-t0
-    except:
+    except Exception as e:
+        print(f"Error: {e}")
         tot = -1
         y = None
     return y, tot
@@ -301,14 +293,16 @@ def fla_fused_chunk_test(dt, q, k, v, d, verbose=True, **kwargs):
 def based_kernel_test(dt, Q, K, V, d, verbose=True, device='4090'):
     o   = torch.zeros_like(V)
 
+    if device == '4090': 
+        tk_fn = mod.based_fwd_tk
+    else:
+        raise ValueError(f"Invalid device: {device}")
+
     try:
         torch.cuda.synchronize()
         t0 = time.time()
 
-        if device == '4090': 
-            mod.based_fwd_tk(Q,K,V, o)
-        elif device == 'H100':
-            mod_h100.based_fwd_tk(Q,K,V, o)
+        tk_fn(Q,K,V, o)
 
         torch.cuda.synchronize()
         o += torch.zeros_like(o) # trigger an error if one exists
@@ -328,7 +322,7 @@ def linear_attn_forward_benchmark_batch(dt, methods, device, verbose=False, use_
     method2timing = defaultdict(dict)
     for b in [1, 2, 4, 8, 16, 32, 128, 256]:
         h = 16
-        n = 1024 
+        n = 8192 
         d = 16
         dv = 64
         print(f"{b=}, {n=}, {d=}, {h=}")
@@ -409,6 +403,58 @@ def linear_attn_correct(dt, device):
     __eq("PyTorch - Based TK", pytorch_test_v2_result[0], based_kernel_test_result[0], debug=False)
 
 
+############## Efficiency Measurements #############
+
+def get_flops(batch, seqlen, headdim, nheads, featuredim):
+    expanded_dim = featuredim * featuredim + featuredim + 1
+
+    f = 2 * batch * seqlen * nheads * expanded_dim
+
+    # (k * v)
+    f += batch * seqlen * nheads * headdim * expanded_dim
+    # (cumsum)
+    f +=  batch * seqlen * nheads * headdim * expanded_dim
+    # (q * (k * v))
+    f += batch * seqlen * nheads * headdim * expanded_dim
+    # .sum(dim=-1)
+    f += batch * seqlen * nheads * headdim * expanded_dim
+
+    return f
+
+#  Function to calculate the efficiency in teraflops
+def efficiency(flops, time):
+    # Convert flop to teraflops and time to milliseconds
+    tflops = flops / 1e12
+    time_ms = time / 1e6
+    return tflops / time_ms
+
+
+def measure_efficiency(dt, methods, device, verbose=False, use_ones=False, profile=False):
+    num_iters = 100
+    method2timing = defaultdict(dict)
+    
+    n = 2048
+    b = 8
+    h = 16
+    d = 16
+    dv = 64
+    print(f"{b=}, {n=}, {d=}, {h=}")
+
+    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+
+    lst = [fast_transformer_test(dt, Q, K, V, d, device=device) for _ in range(num_iters)]
+    lst_time = [x[-1] for x in lst]
+    _time = median(lst_time)
+
+    flops = get_flops(b, n, dv, h, d)
+    microseconds = _time * 1000000
+    eff = efficiency(flops, microseconds)
+
+    print(f"Efficiency: {eff:.2f} TFLOPS")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Linear Attention Forward Benchmark')
     parser.add_argument('--device', type=str, default='4090', help='Device to benchmark on')
@@ -416,7 +462,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    assert args.device in ['4090', 'H100'], "Invalid device"
+    assert args.device in ['4090'], "Invalid device"
 
     print(f"Storing results at 'results/'")
     os.makedirs('results', exist_ok=True)
@@ -430,7 +476,7 @@ if __name__ == "__main__":
 
             # Triton Based
             # 'Based Fla Fused Chunk': fla_fused_chunk_test,
-            # 'Based Fla Parallel': fla_parallel_based_test,
+            'Based Fla Parallel': fla_parallel_based_test,
 
             # Triton Gated Linear Attention
             # 'GLA Chunk': fla_gla_chunk_test,
@@ -440,6 +486,7 @@ if __name__ == "__main__":
             # FA2
             'Flash Attention': flash_attention_test,
         }
+
     linear_attn_forward_benchmark_batch(torch.bfloat16, methods, args.device, verbose=False)
     linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, args.device, verbose=False)
 

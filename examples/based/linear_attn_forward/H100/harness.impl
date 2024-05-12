@@ -2,14 +2,12 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 128
+#define ATTN_B 32
 #define ATTN_H 16
-#define ATTN_N 8192
+#define ATTN_N 4096
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
-
-// Function to calculate the number of floating-point operations
 // Function to calculate the number of floating-point operations
 long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) {
     long long expanded_dim = featuredim * featuredim + featuredim + 1;
@@ -18,15 +16,14 @@ long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) 
     long long f = 2 * batch * static_cast<long long>(seqlen) * nheads * expanded_dim;
 
     // (k * v)
-    f += 2 * batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
     // (cumsum)
-    f += 2 * batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    f +=  batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
     // (q * (k * v))
-    f += 2 * batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
     // .sum(dim=-1)
-    f += 2 * batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
 
-    // long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
     return f;
 }
 
@@ -68,7 +65,6 @@ int main(int argc, char **argv) {
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H*ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*ATTN_D*ATTN_D_SMALL*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
 
