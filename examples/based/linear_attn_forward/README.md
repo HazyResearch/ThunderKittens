@@ -7,6 +7,33 @@ Please checkout these resources to learn more about the Based architecture:
 - [Paper](https://arxiv.org/abs/2402.18668)
 
 
+**Overview of kernel**
+Based introduces a fast implementation of linear attention.
+
+Standard attention computes an $O(N^2)$ matrix of query and key interactions $\exp(q_i^Tk_j/\sqrt{d})$. The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product: 
+
+$$y_i = \sum_{j=1}^i \frac{\exp(q_i^Tk_j/\sqrt{d})v_j}{\sum_{n=1}^i \exp(q_i^Tk_n/\sqrt{d})} \rightarrow y_i = \sum_{j=1}^i \frac{\phi(q_i)\phi(k_j)v_j}{\sum_{n=1}^i \phi(q_i)\phi(k_n)}$$
+
+where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $O(n^2d)$).
+
+Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^i \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^i \phi(k_j)^T$ be our "K-state". The update rule becomes:
+$$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
+And output computation becomes: 
+$$y_i = \frac{\phi(q_i)s_i}{\phi(q_i)z_i}$$
+
+In Based, our feature map computes a 2nd order Taylor approximation to the $\exp$ function:
+$$\exp(x) \approx 1 + x + x^2/2$$
+We compute: 
+$\phi(q) = 
+We use a feature dimension of $16$ when projecting queries and keys, so the resulting shape of $\phi(q), \phi(k)$ has dimension $273 = 1 + 16 + 16^2$. we need careful memory management to compute this feature map and outputs efficiently on hardware!
+
+Details of this prefill kernel are provided in [Algorithm 1 of the Based paper](https://arxiv.org/pdf/2402.18668). We provide a high level description here as well. We compute $y_i$ using a combination of the *parallel* and *recurrent* views. Now letting $y_i$ be a $16 \times 16$ *chunk* of tokens, focusing on the numerator:
+
+$$y_i = (\phi(q_i)^T\phi(k_i))v_i + \phi(q_i)\sum_{j=1}^{i-1}\phi(k_j)^Tv_j$$
+
+The left-hand term requires causal computation on the tile, but the right-hand term is a simple matrix multiply (cuasality has already been handled)! We partition across workers to store state $s$ in registers throughput! After streaming each chunk of tokens and computing chunks of output as shown above, we update the state. 
+
+
 **Baselines.** We consider four baselines. You can toggle which ones you consider in ```lin_attn_profile.py```. 
 1. Pure PyTorch
 
