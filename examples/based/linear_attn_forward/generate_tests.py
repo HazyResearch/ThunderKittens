@@ -7,7 +7,7 @@ import sys
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 1024
+N = 4096
 D = 16
 DV = 64
 
@@ -63,7 +63,6 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     kf = k.to(torch.float32).flatten().cpu().numpy()
     vf = v.to(torch.float32).flatten().cpu().numpy()
     of = o.to(torch.float32).flatten().cpu().numpy()
-    kv_statef = kv_state.to(torch.float32).flatten().cpu().numpy()
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
         f.write(' ')
@@ -75,8 +74,5 @@ with open(f'{TESTNAME}.txt', 'w') as f:
         f.write(' ')
     for i in trange(B*H*N*DV):
         f.write(repr(of[i]))
-        f.write(' ')
-    for i in trange(B*H*D*D*DV):
-        f.write(repr(kv_statef[i]))
         f.write(' ')
 

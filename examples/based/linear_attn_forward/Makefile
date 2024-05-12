@@ -1,5 +1,5 @@
 # GPU Selection: Set to either 4090 or H100
-GPU_TARGET=4090
+GPU_TARGET=H100
 
 # Compiler
 NVCC=nvcc
@@ -8,15 +8,15 @@ NVCC=nvcc
 ifeq ($(GPU_TARGET),4090)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_4090 -arch=sm_89 -lcuda -lcudadevrt -lcudart_static -lcublas -I${THUNDERKITTENS_ROOT} # 4090
 TARGET=debug_linear_attend # 4090
-SRC=lin_attn.cu # 4090
+SRC=4090/lin_attn.cu # 4090
 else ifeq ($(GPU_TARGET),A100)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_A100 -arch=sm_80 -lcuda -lcudadevrt -lcudart_static -lcublas -I${THUNDERKITTENS_ROOT} # H100
 TARGET=debug_linear_attend # A100
-SRC=lin_attn.cu # A100
+SRC=4090/lin_attn.cu # A100
 else ifeq ($(GPU_TARGET),H100)
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static -lcublas -I${THUNDERKITTENS_ROOT} # H100
 TARGET=debug_linear_attend # H100
-SRC=lin_attn.cu # H100
+SRC=H100/lin_attn.cu # H100
 endif
 
 # Default target
