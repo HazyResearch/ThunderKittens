@@ -1,10 +1,9 @@
 # This is the commands for the pytorch jit...
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import torch
-name = "linear_attend_causal_reg"
-
-gpu = "H100"
-assert(gpu in ['4090', 'H100'])
+name = "hedgehog"
+gpu = 'A100'
+assert(gpu in ['4090', 'A100', 'H100'])
 
 import test_build_utils as tbu
 from setuptools import setup
@@ -16,3 +15,4 @@ setup(name=f"{name}",
       ext_modules=[cuda_ext], 
       cmdclass={'build_ext': BuildExtension})
 if(debug): print(f"WARNING DEBUG IS TRUE")
+

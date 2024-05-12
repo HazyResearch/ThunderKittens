@@ -135,10 +135,23 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
+// Joyously stolen from https://github.com/NVIDIA/cutlass/blob/5c447dd84f8ae0e1d48ff9a2eae26ce8c4958101/include/cute/container/alignment.hpp#L51
+#if defined(__CUDACC__)
+#define KITTENS_ALIGN_AS(n) __align__(n)
+#else
+#define KITTENS_ALIGN_AS(n) alignas(n)
+#endif
+
+#ifdef KITTENS_HOPPER
+#define KITTENS_DEFAULT_ALIGN KITTENS_ALIGN_AS(128)
+#else
+#define KITTENS_DEFAULT_ALIGN KITTENS_ALIGN_AS(16)
+#endif
+
 /**
  * @brief Dummy structure for alignment purposes. Needed for WGMMA and TMA calls.
  */
-struct alignas(256) alignment_dummy { int dummy; };
+struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
 /**
  * @brief Very simple allocator for dynamic shared memory. Advances pointer and tracks alignments.
  * @tparam default_alignment The default alignment this allocator will enforce. If <=0 (default -1) it will not align.

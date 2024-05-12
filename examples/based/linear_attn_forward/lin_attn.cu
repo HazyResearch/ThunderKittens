@@ -1,4 +1,5 @@
-# include "src/kittens.cuh"
+#include "src/kittens.cuh"
+#include <cassert>
 
 #define NUM_WORKERS (16) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -65,7 +66,7 @@ __device__ inline void tile_reduce(ST &dst, const ST (&src)[N_TILES]) {
     #pragma unroll
     for(int j = 0; j < RESPONSIBLE_ELEMENTS; j++) {
         int idx = threadIdx.x + j*STRIDE;
-        dst.data[idx] = acc[j]; // set
+        dst.data[idx] = __float2bfloat16(acc[j]); // sets
     }
 }
 
@@ -94,8 +95,11 @@ __device__ static void mul_slice(rt_bf_1x1<> &reg) {
     }
 }
 
+
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o) {
+void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16* __v, bf16* __o, bf16* __kv_state) {
+
+    assert(n >= 1024); // Assumes n >= 1024.
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
@@ -104,6 +108,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     const bf16 *k_g   = reinterpret_cast<const bf16*>(__k)+blockIdx.x*(n*D_QK);
     const bf16 *v_g   = reinterpret_cast<const bf16*>(__v)+blockIdx.x*(n*D_VO);
           bf16 *o_g   = reinterpret_cast<bf16*>      (__o)+blockIdx.x*(n*D_VO);
+          bf16 *kv_g  = reinterpret_cast<bf16*>      (__kv_state)+blockIdx.x*(D_QK*D_QK*D_VO); // 256x64
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -120,7 +125,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
     st_bf_1x4<layout> (&a2_o_accumulate)[NUM_WORKERS]    = al.allocate<st_bf_1x4<layout>, NUM_WORKERS>(); // 32768 bytes
     int total_block_idx = 0;
 
-    rt_fl_1x4 a2; // a2 gets propagated through here.
+    rt_fl_1x4<> a2; // a2 gets propagated through here.
 
     sv_bf_4 a0_total = al.allocate<sv_bf_4>();
 
@@ -170,7 +175,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
             add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
             // END comment-out for removing T2 (debug)
             copy(local_attn_bf, temp_attn_accum); // now stored.
-            make_causal(local_attn_bf, local_attn_bf);
+            make_causal(local_attn_bf, local_attn_bf, kittens::base_types::constants<bf16>::zero());
 
             load(v, v_s[warpid]);
             auto &v_col = swap_layout_inplace(v); // prepare for MMA
@@ -187,7 +192,7 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         cumsum_inplace<NUM_WORKERS>(a1_s, total_block_idx);
         __syncthreads();
         if(warpid < ACTIVE_TILES) {
-            rt_bf_1x4 a1;
+            rt_bf_1x4<> a1;
             load(q, q_s[warpid]); // load q again
             load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
             auto &a1_col = swap_layout_inplace(a1); // prepare for MMA
@@ -234,7 +239,71 @@ void based_linear_attention(int n, const bf16* __q, const bf16* __k, const bf16*
         if(warpid < ACTIVE_TILES) {
             store(o_g + cur_idx * o_s[warpid].num_elements, o_s[warpid], D_VO);
         }
+
+        // store the kv state (a2) to global memory. 
+        // each warp has a differen part of the kv state
+        store(kv_g + warpid*a2.num_elements, a2, D_VO); 
+        __syncthreads();
     }
 }
 
-#include "harness.impl"
+// For testing via C++
+// #include "harness.impl" // (comment out when using the code below)
+
+// For binding to PyTorch (comment out include for harness.imple when using the code below)
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void based_fwd_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+    // std::cout << "Entered Based handler" << std::endl;
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(o);
+    
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n     = q.size(2);
+    bool k_same = true, o_same = true;
+    for(auto i = 0; i < 4; i++) { 
+        k_same &= q.size(i) == k.size(i);
+        o_same &= v.size(i) == o.size(i);
+    }
+    
+    // This is just a restriction of what we're doing now...
+    TORCH_CHECK(k_same, "Q and K should be same size");
+    TORCH_CHECK(o_same, "V and O should be same size");
+    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "Q is a Bfloat");
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "K is a Bfloat");
+    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "V is a Bfloat");
+    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "O is a Bfloat");
+    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "The number of elements should be divisible the number of workers times stored fragments");
+
+    // convert to bf16
+    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+
+    const bf16* q_bf = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* k_bf = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
+          bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
+
+    // std::cout << "Checks and casts" << std::endl;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    cudaFuncSetAttribute(
+        based_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    // std::cout << "Set dynamic memory" << std::endl;
+    based_linear_attention<<<batch*heads,threads,mem_size>>>(n, q_bf, k_bf, v_bf, o_bf);
+
+    // std::cout << "Launched kernel" << std::endl;
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+
+    // std::cout << "Exiting" << std::endl;
+}
+

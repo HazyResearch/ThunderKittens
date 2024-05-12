@@ -39,6 +39,4 @@ __device__ static inline int groupid() { return threadIdx.x / GROUP_THREADS; }
 
 };
 
-using warpgroup = group<4>; // special scope commonly used by SM_90 and later.
-
 }

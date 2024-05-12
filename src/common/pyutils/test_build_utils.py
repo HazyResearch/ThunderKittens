@@ -36,16 +36,29 @@ def jit_build(name, debug=False, gpu_type='4090'):
             extra_cuda_cflags=_cuda_flags)
 
 
+<<<<<<< HEAD
 def cuda_extension(name, debug, gpu_type): 
+=======
+def cuda_extension(name, debug, gpu):
+    gpu_flag = {
+        '4090': '-DKITTENS_4090',
+        'A100': '-DKITTENS_A100',
+        'H100': '-DKITTENS_HOPPER',
+    }[gpu]
+>>>>>>> main
     _cuda_flags  = [
                     '--use_fast_math',
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
+<<<<<<< HEAD
                     '--expt-relaxed-constexpr',
                     '--expt-extended-lambda',
                     '-Xcompiler=-fno-strict-aliasing',
                     '-MD', '-MT', '-MF', '-x', 'cu', '-lrt', '-lpthread', '-ldl',
                     '-lcuda', '-lcudadevrt', '-lcudart_static', '-lcublas',
+=======
+                    gpu_flag,
+>>>>>>> main
                     f"-I {project_root}"
                     ]
     
