@@ -1,4 +1,9 @@
+#ifdef TORCH_COMPILE
 #include "src/kittens.cuh"
+#else
+#include "../../src/kittens.cuh"
+#endif
+
 #include <cooperative_groups.h>
 
 #define NUM_WORKERS (8)
@@ -255,11 +260,8 @@ constexpr int WORKERS_BWD_QO = 4;
 constexpr int NUM_WARPGROUPS_BWD    = (WORKERS_BWD/(kittens::WARPGROUP_WARPS));
 constexpr int NUM_WARPGROUPS_BWD_QO = (WORKERS_BWD_QO/(kittens::WARPGROUP_WARPS));
 
-constexpr int tile_h = 4;    // should be 1
-constexpr int tile_h_qo = 4; // should be 8
-
-static_assert(tile_h_qo % 4 == 0, "tile_h_qo must be a multiple of 4");
-static_assert(tile_h % 4 == 0, "tile_h must be a multiple of 4");
+constexpr int tile_h = 4;   
+constexpr int tile_h_qo = 4;
 
 constexpr int tile_w = 64/16;
 
@@ -464,9 +466,9 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     tma::store_async_wait();
 }
 
+#ifdef TORCH_COMPILE    
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
-
 
 void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {
     CHECK_INPUT(q);
@@ -592,3 +594,6 @@ void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Te
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
+#else 
+#include "harness_h100_train.impl"
+#endif

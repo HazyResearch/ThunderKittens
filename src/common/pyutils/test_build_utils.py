@@ -30,35 +30,22 @@ def jit_build(name, debug=False, gpu_type='4090'):
         _cuda_flags.append('-DKITTENS_A100')
         _cuda_flags.append('-arch=sm_80')
         
-    if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G', '-D TORCH_USE_CUDA_DSA']
+    if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G', '-D TORCH_USE_CUDA_DSA', '-DTORCH_COMPILE']
     return load(name=f"{name}", sources=_sources(name), 
             extra_cflags=[],
             extra_cuda_cflags=_cuda_flags)
 
 
-<<<<<<< HEAD
 def cuda_extension(name, debug, gpu_type): 
-=======
-def cuda_extension(name, debug, gpu):
-    gpu_flag = {
-        '4090': '-DKITTENS_4090',
-        'A100': '-DKITTENS_A100',
-        'H100': '-DKITTENS_HOPPER',
-    }[gpu]
->>>>>>> main
     _cuda_flags  = [
                     '--use_fast_math',
                     '--generate-line-info', 
                     '--restrict', '-std=c++20',
-<<<<<<< HEAD
                     '--expt-relaxed-constexpr',
                     '--expt-extended-lambda',
                     '-Xcompiler=-fno-strict-aliasing',
                     '-MD', '-MT', '-MF', '-x', 'cu', '-lrt', '-lpthread', '-ldl',
                     '-lcuda', '-lcudadevrt', '-lcudart_static', '-lcublas',
-=======
-                    gpu_flag,
->>>>>>> main
                     f"-I {project_root}"
                     ]
     

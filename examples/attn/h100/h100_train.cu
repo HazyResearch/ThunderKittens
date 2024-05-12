@@ -1,5 +1,8 @@
-
+#ifdef TORCH_COMPILE
 #include "src/kittens.cuh"
+#else
+#include "../../../src/kittens.cuh"
+#endif
 #include <cooperative_groups.h>
 
 #define NUM_WORKERS 8
@@ -441,6 +444,7 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     tma::store_async_wait();
 }
 
+#ifdef TORCH_COMPILE
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
@@ -568,3 +572,6 @@ void attention_train_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
+#else
+#include "harness_h100_train.impl"
+#endif

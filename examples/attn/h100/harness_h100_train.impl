@@ -360,9 +360,9 @@ int main(int argc, char **argv) {
     CUtensorMap tma_desc_b_d = {};  
     CUtensorMap tma_desc_b_og = {};
 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>         >(&tma_desc_b_o, d_b_o, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>::col_vec>(&tma_desc_b_d, d_b_d, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
-    tma::create_tensor_map<st_bf<th, tw, layout_nrow>         >(&tma_desc_b_og, d_b_og, ATTN_B*ATTN_H*ATTN_N/(th * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>         >(&tma_desc_b_o, d_b_o, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>::col_vec>(&tma_desc_b_d, d_b_d, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
+    tma::create_tensor_map<st_bf<4, 4, layout_nrow>         >(&tma_desc_b_og, d_b_og, ATTN_B*ATTN_H*ATTN_N/(4 * 16)); 
 
     CUtensorMap* tma_b_o_d;
     CUtensorMap* tma_b_d_d;
@@ -385,8 +385,8 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*th), ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*th) == 0);
+    dim3 grid_bwd(ATTN_N/(WORKERS*kittens::TILE_DIM*4), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (WORKERS*kittens::TILE_DIM*4) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {
