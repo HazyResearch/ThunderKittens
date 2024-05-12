@@ -1,4 +1,4 @@
-![alt text](https://github.com/HazyResearch/ThunderKittens/edit/main/examples/attn/h100/image.jpg?raw=true)
+![alt text](https://github.com/HazyResearch/ThunderKittens/blob/main/examples/attn/h100/image.jpg?raw=true)
 
 # TK Kernels + C++ Harness Steps
 
