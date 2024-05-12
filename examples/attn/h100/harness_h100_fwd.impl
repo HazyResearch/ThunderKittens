@@ -1,0 +1,195 @@
+#include <iostream>
+#include <string>
+#include <fstream>
+
+constexpr int ATTN_B     = 16;
+constexpr int ATTN_H     = 16;
+constexpr int ATTN_N     = 4096;
+constexpr int ATTN_D     = 64;
+constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
+constexpr int ITER = 30;
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
+}
+
+int main(int argc, char **argv) {
+    // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
+    // which may increase the probability of L2 cache hits on KV
+
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
+
+    float *q = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *k = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *v = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+
+    bf16 *q_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *k_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *v_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS];
+    float *o = new float[TOTAL_ELEMENTS];
+
+    std::ifstream infile(argv[1]);
+
+    std::cout << "Starting to enter!" << std::endl;
+
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> q[i];
+    std::cout << "Finished loading Q" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> k[i];
+    std::cout << "Finished loading K" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v[i];
+    std::cout << "Finished loading V" << std::endl;
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> o_ref[i];
+    std::cout << "Finished loading O_REF" << std::endl;
+
+    std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+
+    // replicate into heads
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
+        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
+        v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
+    }
+
+    bf16 *d_q, *d_k, *d_v, *d_o;
+    cudaMalloc(&d_q, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_k, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_v, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS * sizeof(bf16));
+
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_q>>(d_q, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_k>>(d_k, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_v>>(d_v, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_o>>(d_o, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
+
+    std::cout << "Allocated and set memory on GPU!" << std::endl;
+    
+    unsigned long mem_size = 112000; // need to launch two blocks if possible.
+    
+    cudaFuncSetAttribute(
+        fwd_attend_ker_dim<64>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    std::cout << "Set max dynamic memory!" << std::endl;
+
+    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
+    cudaDeviceSynchronize();
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {    
+        fwd_attend_ker_dim<64><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Starting kernel" << std::endl;
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        fwd_attend_ker_dim<64><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+    }
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+    
+    // check correctness
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    // for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+    //     o[i] = __bfloat162float(o_bf[i]);
+    // }
+
+    bool good = true;
+    float total_diff = 0;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+        // float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
+        float diff = __bfloat162float(o_bf[i] - __float2bfloat16(o_ref[i % TOTAL_UNIQUE_ELEMENTS])); 
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.01 || isnan(diff)) {
+            good = false;
+        }
+        total_diff += diff;
+    }
+
+    // print out average difference
+    std::cout << "o avg diff: " << (total_diff / TOTAL_ELEMENTS) << std::endl;
+
+    if (abs(total_diff / TOTAL_ELEMENTS) < 1e-4) {
+        good = true; 
+    }
+    else {
+        good = false;
+    }
+
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    if(good) std::cout << "Correct :)\n";
+    else std::cout << "Incorrect :(\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, false, "fwd");
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+
+    delete[] q, k, v, o, o_ref;
+    delete[] q_bf, k_bf, v_bf, o_bf;
+
+    return 0;
+}

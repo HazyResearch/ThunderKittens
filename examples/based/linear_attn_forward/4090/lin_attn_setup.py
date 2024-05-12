@@ -5,6 +5,9 @@ name = "lin_attn"
 gpu = '4090'
 assert(gpu in ['4090', 'A100', 'H100'])
 
+gpu = "H100"
+assert(gpu in ['4090', 'H100'])
+
 import test_build_utils as tbu
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension

@@ -2,7 +2,8 @@
 
 #define NUM_WORKERS 16
 using namespace kittens;
-__global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
+__global__ __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
+void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
 
     auto warpid        = kittens::warpid();
     auto block_start   = blockIdx.x*(n*64);
@@ -15,18 +16,21 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     st_bf_1x4<ducks::st_layout::swizzle> (&k_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::swizzle>, NUM_WORKERS>();
     st_bf_1x4<ducks::st_layout::swizzle> (&v_smem)[NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::swizzle>, NUM_WORKERS>();
 
-    rt_bf_1x4<> q_reg, k_reg, v_reg;
-    rt_fl_1x1<> att_block;
-    rt_bf_1x1<> att_block_mma;
-    rt_fl_1x4<> o_prev;
-    rt_fl_1x1<>::col_vec max_vec_last, max_vec;
-    rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
+    rt_bf<1, 4> q_reg, k_reg, v_reg;
+    rt_fl<1, 1> att_block;
+    rt_bf<1, 1> att_block_mma;
+    rt_fl<1, 4> o_prev;
+    rt_fl<1, 1>::col_vec max_vec_last, max_vec;
+    rt_fl<1, 1>::col_vec norm_vec_last, norm_vec;
     
-    int qo_blocks = n / (q_reg.rows*NUM_WORKERS), kv_blocks = n / (q_reg.rows*NUM_WORKERS);
+    int qo_blocks = n / (q_reg.rows*NUM_WORKERS); 
+    int kv_blocks = n / (q_reg.rows*NUM_WORKERS);
 
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
-        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
+        int qo_index = q_blk*NUM_WORKERS + warpid;
+
+        load(q_reg, _q + (qo_index)*q_reg.num_elements, q_reg.cols);
         mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
 
         neg_infty(max_vec); // zero registers for the Q chunk
@@ -39,12 +43,19 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
             load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
             __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
 
-            for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
-
+            for(int subtile = 0; 
+                subtile <= (qo_index - (kv_idx*NUM_WORKERS)) && subtile < NUM_WORKERS; 
+                subtile++) 
+            {
                 load(k_reg, k_smem[subtile]);
-
+                
                 zero(att_block);
                 mma_ABt(att_block, q_reg, k_reg, att_block);
+
+                if ((kv_idx*NUM_WORKERS + subtile) == qo_index) 
+                {
+                    make_causal(att_block, att_block, -INFINITY);
+                }
 
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
@@ -66,7 +77,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 copy(att_block_mma, att_block); // convert to bf16 for mma_AB
 
                 load(v_reg, v_smem[subtile]);
-                rt_bf_1x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
+                rt_bf<1, 4, ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
                 mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma_AB'ing onto it
                 mma_AB(o_prev, att_block_mma, v_reg_col, o_prev);
@@ -78,4 +89,4 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     }
 }
 
-#include "harness.impl"
+#include "harness_4090_fwd.impl"
