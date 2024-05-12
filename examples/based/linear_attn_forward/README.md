@@ -12,7 +12,7 @@ Standard attention computes an $O(N^2)$ matrix of query and key interactions $\e
 
 ![equation](https://latex.codecogs.com/png.image?%5Cinline%20%5Chuge%20%5Cdpi%7B110%7D%5Cbg%7Bwhite%7Dy_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cexp(q_i%5ET%20k_j/%5Csqrt%7Bd%7D)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cexp(q_i%5ET%20k_n/%5Csqrt%7Bd%7D)%7D%5Crightarrow%20y_i=%5Csum_%7Bj=1%7D%5Ei%5Cfrac%7B%5Cphi(q_i)%5Cphi(k_j)v_j%7D%7B%5Csum_%7Bn=1%7D%5E%7Bi%7D%5Cphi(q_i)%5Cphi(k_n))
 
-where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $O(n^2d)$).
+where $\phi$ is a *feature map* that transforms the keys and queries. This is like a kernel trick where we want $\exp(qk^T) \approx \phi(q)\phi(k)^T$. Letting the sequence length be $n$, model dimension $d$ and *feature dimension* after applying $\phi$ be $D$, note that we can now multiply keys and values first in $O(ndD)$ (instead of queries and keys in $$O(n^2d)$$).
 
 Another nice property of linear attention is that we can compute the outputs $y_i$ using a [recursive computation](https://arxiv.org/abs/2006.16236). We'll let $s_i = \sum_{j}^{i} \phi(k_j)^Tv_j$ be our "KV-state" and $z_i \sum_{j=1}^{i} \phi(k_j)^T$ be our "K-state". The update rule becomes:
 $$s_i = s_{i-1} + \phi(k_i)^Tv_i, z_i = z_{i-1} + \phi(k_i)^T$$
