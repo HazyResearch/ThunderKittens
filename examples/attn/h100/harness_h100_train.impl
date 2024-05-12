@@ -4,8 +4,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-constexpr int ATTN_N     = 1024 * 16; 
-constexpr int ATTN_D     = 64;
+constexpr int ATTN_N     = 1024 * 4; 
+constexpr int ATTN_D     = 64; // hardcoded in the kernel
 constexpr int ATTN_H     = 32; 
 constexpr int ATTN_B     = 16; 
 

@@ -1,3 +1,5 @@
+// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
+
 #ifdef TORCH_COMPILE
 #include "src/kittens.cuh"
 #else
@@ -41,7 +43,7 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
  
     rt_fl<1, kv_height> att_block;
     rt_bf<1, kv_height> att_block_mma;
-    rt_fl<1, qo_height> o_prev;
+    rt_fl<1, tile_width> o_prev;
     col_vec<rt_fl<1, kv_height>> max_vec_last, max_vec;
     col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
 

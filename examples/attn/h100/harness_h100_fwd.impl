@@ -5,7 +5,7 @@
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
 constexpr int ATTN_N     = 4096;
-constexpr int ATTN_D     = 64;
+constexpr int ATTN_D     = 64; // hardcoded into this harness
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 constexpr int ITER = 30;
 

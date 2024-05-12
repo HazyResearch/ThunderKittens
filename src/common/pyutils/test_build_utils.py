@@ -30,7 +30,7 @@ def jit_build(name, debug=False, gpu_type='4090'):
         _cuda_flags.append('-DKITTENS_A100')
         _cuda_flags.append('-arch=sm_80')
         
-    if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G', '-D TORCH_USE_CUDA_DSA', '-DTORCH_COMPILE']
+    if(debug): _cuda_flags += ['-D__DEBUG_PRINT', '-g', '-G', '-D TORCH_USE_CUDA_DSA']
     return load(name=f"{name}", sources=_sources(name), 
             extra_cflags=[],
             extra_cuda_cflags=_cuda_flags)

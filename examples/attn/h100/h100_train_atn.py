@@ -8,7 +8,6 @@ import numpy as np
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 sys.path.insert(0, project_root)
-from src.common.pyutils.test_build_utils import __eq
 sys.path.append('build/lib.linux-x86_64-3.10')
 import h100_train as tk_train
 
@@ -230,11 +229,11 @@ def measure_performance_bwd_fwd(b, h, n, d):
     print(f"______________________________________________________")
 
 # Test configurations
-configs = [(32, 16, 1024, 64), 
-           (32, 16, 2048, 64),
-           (32, 16, 4096, 64),
-            (32, 16, 8192, 64),
-            (32, 16, 16384, 64)]
+configs = [(16, 16, 1024, 64), 
+           (16, 16, 2048, 64),
+           (16, 16, 4096, 64),
+            (16, 16, 8192, 64),
+            (16, 16, 16384, 64)]
 for config in configs:
     measure_performance_bwd_only(*config)
     measure_performance_bwd_fwd(*config)
