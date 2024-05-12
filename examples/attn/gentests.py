@@ -121,7 +121,7 @@ print(f'Run the harness like `./attn_bwd {fn}`')
 # time
 
 N = 1024 if len(sys.argv) <= 2 else int(sys.argv[2])
-D = 64
+D = 128
 H = 16
 B = 32
 # H = 2048 // D
