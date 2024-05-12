@@ -11,13 +11,17 @@
 ThunderKittens is a framework to make it easy to write fast deep learning kernels in CUDA (and, soon, ROCm and others, too!)
 
 ThunderKittens is built around three key principles:
-1. Speed. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood.
-2. Simplicity. ThunderKittens is stupidly simple to write.
-3. Extensibility. ThunderKittens embeds itself natively, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
+1. Simplicity. ThunderKittens is stupidly simple to write.
+2. Extensibility. ThunderKittens embeds itself natively, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
+3. Speed. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 2 implementation speaks for this point.
+
+<div align="center" >
+    <img src="attn.png" height=600 alt="Flash Attention 2, but with kittens!" style="margin-bottom:px"/> 
+</div>
 
 ThunderKittens is built from the hardware up -- we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
 
-ThunderKittens solves a few key problems that enable high utilization on modern hardware.
+ThunderKittens makes a few tricky things easy that enable high utilization on modern hardware.
 1. Tensor cores. ThunderKittens can call fast tensor core functions, including asynchronous WGMMA calls on H100 GPUs.
 2. Shared Memory. I got ninety-nine problems but a bank conflict ain’t one.
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
@@ -28,14 +32,12 @@ ThunderKittens solves a few key problems that enable high utilization on modern 
 Here’s an example of what flash attention for an RTX 4090 looks like written in ThunderKittens.
 
 ```Cuda
-#include "kittens.cuh"
-
 #define NUM_WORKERS 16
 using namespace kittens;
-__global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
+__global__ void attend_ker(int n, const bf16* __restrict__ __q__, const bf16* __restrict__ __k__, const bf16* __restrict__ __v__, bf16* __o__) {
 
-    auto warpid        = threadIdx.x / 32;
-    auto block_start   = blockIdx.x*(n*d);
+    auto warpid        = kittens::warpid();
+    auto block_start   = blockIdx.x*(n*64);
     const bf16 *_q = __q__ + block_start, *_k = __k__ + block_start, *_v = __v__ + block_start;
           bf16 *_o = __o__ + block_start;
 
@@ -53,10 +55,10 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
     rt_fl_1x1<>::col_vec norm_vec_last, norm_vec;
     
     int qo_blocks = n / (q_reg.rows*NUM_WORKERS), kv_blocks = n / (q_reg.rows*NUM_WORKERS);
-    
+
     for(auto q_blk = 0; q_blk < qo_blocks; q_blk++) {
 
-        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.rows*d, d);
+        load(q_reg, _q + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
         mul(q_reg, q_reg, __float2bfloat16(0.125f)); // temperature adjustment
 
         neg_infty(max_vec); // zero registers for the Q chunk
@@ -65,8 +67,8 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
 
         for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++) {
 
-            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.rows*d, d);
-            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.rows*d, d);
+            load(v_smem[warpid], _v + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
+            load(k_smem[warpid], _k + (kv_idx*NUM_WORKERS + warpid)*q_reg.num_elements, q_reg.cols);
             __syncthreads(); // we need to make sure all memory is loaded before we can begin the compute phase
 
             for(int subtile = 0; subtile < NUM_WORKERS; subtile++) {
@@ -74,7 +76,7 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 load(k_reg, k_smem[subtile]);
 
                 zero(att_block);
-                dot(att_block, q_reg, k_reg, att_block);
+                mma_ABt(att_block, q_reg, k_reg, att_block);
 
                 copy(norm_vec_last, norm_vec);
                 copy(max_vec_last,  max_vec);
@@ -93,23 +95,58 @@ __global__ void attend_ker(int n, int d, const bf16* __restrict__ __q__, const b
                 mul(norm_vec_last, norm_vec_last, max_vec_last);
                 div(norm_vec_last, norm_vec_last, norm_vec);
 
-                copy(att_block_mma, att_block); // convert to bf16 for mma
+                copy(att_block_mma, att_block); // convert to bf16 for mma_AB
 
                 load(v_reg, v_smem[subtile]);
                 rt_bf_1x4<ducks::rt_layout::col> &v_reg_col = swap_layout_inplace(v_reg); // this is a reference and the call has invalidated v_reg
 
-                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-                mma(o_prev, att_block_mma, v_reg_col, o_prev);
+                mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma_AB'ing onto it
+                mma_AB(o_prev, att_block_mma, v_reg_col, o_prev);
             }
             __syncthreads(); // we need to make sure all warps are done before we can start loading the next kv chunk
         }
 
-        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.rows*d, o_prev, d); // write out o
+        store(_o + (q_blk*NUM_WORKERS + warpid)*q_reg.num_elements, o_prev, q_reg.cols); // write out o.
     }
 }
 ```
 
 Altogether, this is 58 lines of code (not counting whitespace), and achieves about 122 TFLOPs on an RTX 4090. (74% of theoretical max.) We’ll go through some of these primitives more carefully in the next section, the ThunderKittens manual.
+
+## Installation
+
+To use Thunderkittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
+
+But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
+ - CUDA 12.3+. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines due to a bug in those earlier versions of CUDA.
+ - (Extensive) C++20 use -- TK runs on concepts.
+
+```
+sudo apt update
+sudo apt install gcc-10 g++-10
+
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10
+
+sudo apt update
+sudo apt install clang-10
+```
+
+If you can't find nvcc, or you experience issues where your environment is pointing to the wrong CUDA version:
+```
+export CUDA_HOME=/usr/local/cuda-12/
+export PATH=${CUDA_HOME}/bin:${PATH} 
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+```
+
+Finally, thanks to Jordan Juravskey for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+
+## Tests
+
+To validate your install, and run TK's fairly comprehensive unit testing suite, simply run `make -j` in the tests folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
+
+## Examples
+
+To compile examples, run `source env.src` from the root directory before going into the examples directory. (Many of the examples use the `$THUNDERKITTENS_ROOT` environment variable to orient themselves and find the src directory.
 
 ## ThunderKittens Manual
 
@@ -122,12 +159,12 @@ Despite its simplicity, there are still a few sharp edges that you might encount
 
 ### NVIDIA’s Programming Model
 
-To understand ThunderKittens, it will help to begin by understanding a bit of how NVIDIA’s programming model works, as NVIDIA provides a few different “scopes” to think about when writing parallel code.
+To understand ThunderKittens, it will help to begin by reviewing a bit of how NVIDIA’s programming model works, as NVIDIA provides a few different “scopes” to think about when writing parallel code.
 1. Thread -- this is the level of doing work on an individual bit of data, like a floating point multiplication. A thread has up to 256 32-bit registers it can access every cycle.
 2. Warp -- 32 threads make a warp. This is the level at which instructions are issued by the hardware. It’s also the base (and default) scope from which ThunderKittens operates; most ThunderKittens programming happens here.
 3. Warpgroup -- 4 warps make a warpgroup. This is the level from which asynchronous warpgroup matrix multiply-accumulate instructions are issued. (We really wish we could ignore this level, but you unfortunately need it for the H100.) Correspondingly, many matrix multiply and memory operations are supported at the warpgroup level.
-4. Block -- N warps make a block, which is the level that shares “shared memory” in the CUDA programming model. In ThunderKittens, N is usually 8. ThunderKittens also supports some shared memory operations at the block level.
-5. Grid -- M blocks make a grid, where M should be equal to (or slightly less) than a multiple of the number of SMs on the GPU to avoid tail effects.
+4. Block -- N warps make a block, which is the level that shares “shared memory” in the CUDA programming model. In ThunderKittens, N is often 8.
+5. Grid -- M blocks make a grid, where M should be equal to (or slightly less) than a multiple of the number of SMs on the GPU to avoid tail effects. ThunderKittens does not touch the grid scope except through helping initialize TMA descriptors.
 
 “Register” objects exist at the level of warps -- their contents is split amongst the threads of the warp. Register objects include:
 - Register tiles, declared as the `kittens::rt` struct in `src/register_tile/rt.cuh`. Kittens provides a few useful wrappers -- for example, a 32x16 row-layout bfloat16 register tile can be declared as `kittens::rt_bf_2x1;` -- row-layout is implicit by default.
@@ -148,9 +185,9 @@ If you are being told an operation that you think exists doesn't exist, double-c
 
 ### Scopes
 
-By default, ThunderKittens operations exist at the warp-level. In other words, each function expects to be called by only a single warp, and that single warp will do all of the work of the function. If multiple warps are assigned to the same work, undefined behavior will result. (And if the operation involves memory movement, it is likely to be completely catastrophic.) In general, you should expect your programming pattern to involve calculating a `warpid` at the beginning of the kernel, and assigning tasks to data based on that id.
+By default, ThunderKittens operations exist at the warp-level. In other words, each function expects to be called by only a single warp, and that single warp will do all of the work of the function. If multiple warps are assigned to the same work, undefined behavior will result. (And if the operation involves memory movement, it is likely to be completely catastrophic.) In general, you should expect your programming pattern to involve instantiating a `warpid` at the beginning of the kernel with `kittens::warpid()`, and assigning tasks to data based on that id.
 
-However, not all ThunderKittens functions operate at the warp level. Many important operations, like TMA loads and stores, distributed memory access, and WGMMA instructions operate at different levels. Fortunately, each scope other than warp scope has its own namespace, so that it is difficult to accidentally use the wrong scope. To make it easier, we also replicate many functions at these other scopes, too, for your convenience.
+However, not all ThunderKittens functions operate at the warp level. Many important operations, particularly WGMMA instructions, require collaborative groups of warps. These operations exist in the templated `kittens::group<collaborative size>`. For example, wgmma instructions are available through `kittens::group<4>::mma_AB` (or `kittens::warpgroup::mma_AB`, which is an alias.) Groups of warps can also collaboratively load shared memory or do reductions in shared memory
 
 ### Other Restrictions
 
