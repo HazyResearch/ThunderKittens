@@ -3,12 +3,16 @@ import sys
 import os
 import time
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-sys.path.insert(0, project_root)
+# These installs are for pulling in the TK source
+sys.path.append('../../../')
 from src.common.pyutils.test_build_utils import __eq
 sys.path.append('build/lib.linux-x86_64-cpython-311')
-import hedgehog as mod
+
+try:
+    import hedgehog as mod
+    print(f"Succesfully imported hedgehog kernel")
+except:
+    print(f"Failed to import hedgehog kernel")
 
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -18,9 +22,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-
-sys.path.append("/var/cr05_data/sim_data/code/release/based/train/")
-from csrc.causal_dot_prod import causal_dot_product
+try:
+    sys.path.append("../based/linear_attn_forward/")
+    from csrc.causal_dot_prod import causal_dot_product
+    print(f"Succesfully imported based kernel")
+except:
+    print(f"Failed to import based kernel")
 
 
 def pytorch_test(dt, Q, K, V):

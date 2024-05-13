@@ -2,11 +2,9 @@
 
 Here we provide details to test and benchmark the Based kernel's *forward pass / inference prefill*. Note this kernel assumes feature dimension 16. 
 
-Using TK, we achieve a fast implementation of linear attention for the Based architecture! You can checkout these resources to learn more about the Based architecture: [Code](https://github.com/HazyResearch/based), [Paper](https://arxiv.org/abs/2402.18668).
-
 
 ## Overview of kernel
-Based introduces a fast implementation of linear attention.
+Using TK, we achieve a fast implementation of linear attention for the Based architecture! You can checkout these resources to learn more about the Based architecture: [Code](https://github.com/HazyResearch/based), [Paper](https://arxiv.org/abs/2402.18668). 
 
 Standard attention computes an $O(N^2)$ matrix of query and key interactions $\exp(q_i^Tk_j/\sqrt{d})$. The idea in [linear attention](https://arxiv.org/abs/2006.16236) is to remove the softmax around the query-key dot product: 
 
@@ -29,7 +27,26 @@ Details of this prefill kernel are provided in [Algorithm 1 of the Based paper](
 
 $$y_i = (\phi(q_i)^T\phi(k_i))v_i + \phi(q_i)\sum_{j=1}^{i-1}\phi(k_j)^Tv_j$$
 
-The left-hand term requires causal computation on the tile, but the right-hand term is a simple matrix multiply (cuasality has already been handled)! We partition across workers to store state $s$ in registers throughput! After streaming each chunk of tokens and computing chunks of output as shown above, we update the state. 
+The left-hand term computes the parallel view (multiplying queries and keys first), then applies causal masking on the tile, and muiltiplies by values. This is handled in the kernel as follows:
+```
+load(q, q_s[warpid]);
+load(k, k_s[warpid]);
+
+zero(local_attn);
+mma_ABt(local_attn, q, k, local_attn);
+make_causal(local_attn_bf, local_attn_bf, kittens::base_types::constants<bf16>::zero());
+
+load(v, v_s[warpid]);
+auto &v_col = swap_layout_inplace(v); // prepare for MMA
+
+zero(o);
+mma_AB(o, local_attn_bf, v_col, o);
+```
+The right-hand term is a simple matrix multiply (cuasality has already been handled from previous iterations over chunks of the sequence)! We partition across workers to store state $s$ in registers throughput! After streaming each chunk of tokens and computing chunks of output as shown above, we update the state: 
+```
+// Updating the KV state using the keys and values for the current chunk
+mma_AB(a2, kt, v_col, a2); // accumulate onto a2
+```
 
 
 ## Baselines 
