@@ -87,6 +87,11 @@ def efficiency(flop, time):
     time = time / 1e6
     return flop / time
 
+x = torch.empty(int(100 * (1024 ** 2)), dtype=torch.int8, device='cuda')
+
+def flush_cache():
+    x.zero_()
+    
 def measure_performance_bwd_only(b, h, n, d):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert device.type == 'cuda', "CUDA not available"
@@ -112,33 +117,47 @@ def measure_performance_bwd_only(b, h, n, d):
 
     # Warm up
     for _ in range(10):
-        tk_train.attention_train_backward_causal(q, k, v, o, l_vec, d_vec, o_grad, q_grad, k_grad, v_grad)
+        q = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
         
-    
-    torch.cuda.synchronize()
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    
-    for i in range(100):        
         l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
         d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
         
+        o_grad = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
         q_grad = torch.zeros_like(q)
         k_grad = torch.zeros_like(k)
         v_grad = torch.zeros_like(v)
         
-        q.grad = None
-        k.grad = None
-        v.grad = None
-        o.grad = None
+        o = torch.zeros_like(v)
+    
+        flush_cache()
+        torch.cuda._sleep(1_000_000)
         
-        l_vec.grad = None
-        d_vec.grad = None
+        tk_train.attention_train_backward_causal(q, k, v, o, l_vec, d_vec, o_grad, q_grad, k_grad, v_grad)
         
-        o_grad.grad = None
-        q_grad.grad = None
-        k_grad.grad = None
-        v_grad.grad = None
+    
+    torch.cuda.synchronize()
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+    
+    for i in range(10):  
+        q = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        
+        o_grad = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        q_grad = torch.zeros_like(q)
+        k_grad = torch.zeros_like(k)
+        v_grad = torch.zeros_like(v)
+        
+        o = torch.zeros_like(v)
+             
+        flush_cache()
+        torch.cuda._sleep(1_000_000)
 
         # Timing the forward pass
         start_events[i].record()
@@ -186,15 +205,6 @@ def measure_performance_bwd_fwd(b, h, n, d):
 
     # Warm up
     for _ in range(10):
-        tk_train.attention_train_forward_causal(q, k, v, o, l_vec)
-        tk_train.attention_train_backward_causal(q, k, v, o, l_vec, d_vec, o_grad, q_grad, k_grad, v_grad)
-        
-    
-    torch.cuda.synchronize()
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    
-    for i in range(100):        
         q = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
         k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
         v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
@@ -206,6 +216,37 @@ def measure_performance_bwd_fwd(b, h, n, d):
         q_grad = torch.zeros_like(q)
         k_grad = torch.zeros_like(k)
         v_grad = torch.zeros_like(v)
+        
+        o = torch.zeros_like(v)
+    
+        flush_cache()
+        torch.cuda._sleep(1_000_000)
+        
+        tk_train.attention_train_forward_causal(q, k, v, o, l_vec)
+        tk_train.attention_train_backward_causal(q, k, v, o, l_vec, d_vec, o_grad, q_grad, k_grad, v_grad)
+        
+    
+    torch.cuda.synchronize()
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+    
+    for i in range(10):
+        q = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        k = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        v = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        
+        o_grad = torch.randn(b, h, n, d, device=device, dtype=torch.bfloat16).contiguous()
+        q_grad = torch.zeros_like(q)
+        k_grad = torch.zeros_like(k)
+        v_grad = torch.zeros_like(v)
+        
+        o = torch.zeros_like(v)
+            
+        flush_cache()
+        torch.cuda._sleep(1_000_000)
 
         # Timing the forward pass
         start_events[i].record()
@@ -230,11 +271,12 @@ def measure_performance_bwd_fwd(b, h, n, d):
     print(f"______________________________________________________")
 
 # Test configurations
-configs = [(32, 16, 1024, 64), 
-           (32, 16, 2048, 64),
-           (32, 16, 4096, 64),
-            (32, 16, 8192, 64),
-            (32, 16, 16384, 64)]
+configs = [(32, 32, 1024, 64),
+           (32, 32, 2048, 64),
+           (32, 32, 4096, 64),
+           (32, 32, 8192, 64),
+           (32, 32, 16384, 64)]
+
 for config in configs:
     measure_performance_bwd_only(*config)
     measure_performance_bwd_fwd(*config)
