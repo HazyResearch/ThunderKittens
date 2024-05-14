@@ -27,7 +27,7 @@ ThunderKittens makes a few tricky things easy that enable high utilization on mo
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
 4. Distributed Shared Memory. L2 is _so_ last year.
 
-*Example: A Simple Atention Kernel*
+*Example: A Simple Attention Kernel*
 
 Here’s an example of what a simple FlashAttention-2 kernel for an RTX 4090 looks like written in ThunderKittens.
 
