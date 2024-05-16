@@ -118,6 +118,7 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 
 template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float2, _height, _width, layout>;
 template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16_2, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half_2, _height, _width, layout>;
 
 // layout, type, and size wrappers
 // sizes are chosen with the assumption that you aren't going to want to fit more than
@@ -164,5 +165,26 @@ template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = r
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt_bf<4, 2, layout>;
 /// 32 registers used
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt_bf<8, 1, layout>;
+
+///  4 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x1 = rt_hf<1, 1, layout>;
+///  8 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x2 = rt_hf<1, 2, layout>;
+/// 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x4 = rt_hf<1, 4, layout>;
+/// 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x8 = rt_hf<1, 8, layout>;
+///  8 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x1 = rt_hf<2, 1, layout>;
+/// 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x2 = rt_hf<2, 2, layout>;
+/// 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x4 = rt_hf<2, 4, layout>;
+/// 16 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_4x1 = rt_hf<4, 1, layout>;
+/// 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_4x2 = rt_hf<4, 2, layout>;
+/// 32 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_8x1 = rt_hf<8, 1, layout>;
 
 } // namespace kittens

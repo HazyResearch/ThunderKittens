@@ -101,6 +101,18 @@ template<> struct constants<bf16_2> {
     static __device__ inline constexpr bf16_2 pos_infty() { return bf16_2{constants<bf16>::pos_infty(), constants<bf16>::pos_infty()}; }
     static __device__ inline constexpr bf16_2 neg_infty() { return bf16_2{constants<bf16>::neg_infty(), constants<bf16>::neg_infty()}; }
 };
+template<> struct constants<half> {
+    static __device__ inline constexpr half zero()      { return std::bit_cast<__half>(uint16_t(0x0000)); }
+    static __device__ inline constexpr half one()       { return std::bit_cast<__half>(uint16_t(0x3C00)); }
+    static __device__ inline constexpr half pos_infty() { return std::bit_cast<__half>(uint16_t(0x7C00)); }
+    static __device__ inline constexpr half neg_infty() { return std::bit_cast<__half>(uint16_t(0xFC00)); }
+};
+template<> struct constants<half_2> {
+    static __device__ inline constexpr half_2 zero()      { return half_2{constants<half>::zero(),      constants<half>::zero()};      }
+    static __device__ inline constexpr half_2 one()       { return half_2{constants<half>::one(),       constants<half>::one()};       }
+    static __device__ inline constexpr half_2 pos_infty() { return half_2{constants<half>::pos_infty(), constants<half>::pos_infty()}; }
+    static __device__ inline constexpr half_2 neg_infty() { return half_2{constants<half>::neg_infty(), constants<half>::neg_infty()}; }
+};
 
 /**
  * @brief Provides information about packing of elements for a given type.
