@@ -448,7 +448,7 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
         if (warpid % 4 == 0) {
             int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + (qo_idx * NUM_WARPGROUPS_BWD_QO) + warpgroupid; 
             for (int idx = 0; idx < NUM_WARPGROUPS_BWD; idx++) {
-                tma::store_sum_async(tma_qg, (qg_smem[tic][warpgroupid][idx]), tile_idx); 
+                tma::store_add_async(tma_qg, (qg_smem[tic][warpgroupid][idx]), tile_idx); 
             }
             tma::store_commit_group();
         }

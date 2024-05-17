@@ -153,6 +153,230 @@ __device__ static inline void store_async(void *dst_tma_map, const SV &src, int 
 }
 
 /**
+* @brief Asynchronously performs an add reduction and stores the result into global memory.
+*
+* This function performs an asynchronous add reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_add_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an and reduction and stores the result into global memory.
+*
+* This function performs an asynchronous and reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_and_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.and.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an or reduction and stores the result into global memory.
+*
+* This function performs an asynchronous or reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_or_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.or.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an xor reduction and stores the result into global memory.
+*
+* This function performs an asynchronous xor reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_xor_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.xor.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an inc reduction and stores the result into global memory.
+*
+* This function performs an asynchronous inc reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_inc_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.inc.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an dec reduction and stores the result into global memory.
+*
+* This function performs an asynchronous dec reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_dec_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.dec.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an min reduction and stores the result into global memory.
+*
+* This function performs an asynchronous min reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_min_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.min.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
+* @brief Asynchronously performs an max reduction and stores the result into global memory.
+*
+* This function performs an asynchronous max reduction operation using CUDA's cp.reduce.async.bulk.tensor instruction.
+*
+* @tparam SV A shared vector type with a TMA-compatible layout
+* @param[out] dst_tma_map The destination tensormap address in global memory
+* @param[in] src The source shared memory vector.
+* @param[in] vec_idx The index of the vector destination.
+*/
+template<ducks::sv::all SV>
+__device__ static inline void store_max_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+
+        int32_t crd0 = vec_idx * (src.length);
+        
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.max.tile.bulk_group"
+            " [%0, {%2}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "memory"
+        );
+    }
+}
+
+/**
  * @brief Asynchronously loads data from global memory into a shared memory vector.
  *
  * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
