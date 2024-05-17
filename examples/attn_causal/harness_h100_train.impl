@@ -260,7 +260,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
-        total_diff_o += diff;
+        total_diff_o += abs(diff);
     }
     // print average o diff
     std::cout << "Average o diff: " << total_diff_o / TOTAL_ELEMENTS << std::endl;
@@ -283,7 +283,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 1 || isnan(diff)) {
             good = false;
         }
-        total_diff_l += diff;
+        total_diff_l += abs(diff);
     }
 
     // print average l diff
@@ -420,7 +420,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_d += diff;
+        total_diff_d += abs(diff);
     }
     std::cout << "Average d diff: " << total_diff_d / (ATTN_N * ATTN_B * ATTN_H) << std::endl;
     if (abs(total_diff_d / (ATTN_N * ATTN_B * ATTN_H)) < 1e-4) {
@@ -509,7 +509,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_qg += diff;
+        total_diff_qg += abs(diff); 
     }
     // print average qg diff
     std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS << std::endl;
@@ -527,7 +527,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_kg += diff;
+        total_diff_kg += abs(diff); 
     }
     // print average kg diff
     std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS << std::endl;
@@ -545,13 +545,13 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_vg += diff;
+        total_diff_vg += abs(diff);
     }
     // print average vg diff
     std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS << std::endl;
 
-    // if qg, kg, and vg avg diff is less than 1e-4, then we're good
-    if (abs(total_diff_qg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_kg / TOTAL_ELEMENTS) < 1e-4 && abs(total_diff_vg / TOTAL_ELEMENTS) < 1e-4) {
+    // if qg, kg, and vg avg diff is less than 1e-3, then we're good
+    if (abs(total_diff_qg / TOTAL_ELEMENTS) < 1e-3 && abs(total_diff_kg / TOTAL_ELEMENTS) < 1e-3 && abs(total_diff_vg / TOTAL_ELEMENTS) < 1e-3) {
         good = true;
     }
 

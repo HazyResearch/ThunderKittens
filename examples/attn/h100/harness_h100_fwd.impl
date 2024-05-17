@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
-        total_diff += diff;
+        total_diff += abs(diff);
     }
 
     // print out average difference
