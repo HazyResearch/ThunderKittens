@@ -68,8 +68,8 @@ struct tma_wrapper_1d {
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // initialize TMA descriptors
-            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st_bf<S, S>>, 4>(d_i);
-            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st_bf<S, S>>, 4>(d_o);
+            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st_bf<S, S>>>(d_i, 4);
+            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st_bf<S, S>>>(d_o, 4);
             // run kernel
             cudaFuncSetAttribute(
                 tma_global_wrapper_1d<test, S, NUM_WORKERS, args...>,

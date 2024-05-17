@@ -50,6 +50,37 @@ struct test_store { // load normally, store with TMA
         kittens::tma::store_async_wait<0>();
     }
 };
+struct test_store_add_reduce {
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    static inline const std::string test_identifier = "tma_store_add_reduce";
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // i_ref is reduced onto output
+        for (int i = 0; i < o_ref.size(); i++) {
+            o_ref[i] = i_ref[i] + i_ref[i]; 
+        }
+    }
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L>
+    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+        kittens::st_bf<H, W, L> (&shared_tile)[2][2] = al.allocate<kittens::st_bf<H, W, L>, 2, 2>();
+        kittens::load(shared_tile[0][0], input, 2*W*16);
+        kittens::load(shared_tile[0][1], input + shared_tile[0][0].cols, 2*W*16);
+        kittens::load(shared_tile[1][0], input + 2*shared_tile[0][0].num_elements, 2*W*16);
+        kittens::load(shared_tile[1][1], input + 2*shared_tile[0][0].num_elements + shared_tile[0][0].cols, 2*W*16);
+        __syncwarp();
+        for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+            kittens::tma::store_add_async(tma_desc_output, shared_tile[i][j], i, j);
+        }
+        kittens::tma::store_commit_group();
+        __syncwarp();
+        for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+            kittens::tma::store_add_async(tma_desc_output, shared_tile[i][j], i, j);
+        }
+        kittens::tma::store_commit_group();
+        kittens::tma::store_async_wait<0>();
+    }
+};
 
 template<typename Ker, int H, int W, int NW, typename... args>
 static __global__ void tma_global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
@@ -66,10 +97,12 @@ struct tma_wrapper_2d {
             kittens::bf16 *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
-            initialize<initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
+
+            initialize<initializers::RANDOM>(&d_i, &d_o, i_ref, o_ref); 
+            
             // initialize TMA descriptors
-            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_i);
-            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>, 2, 2>(d_o);
+            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>>(d_i, 2, 2);
+            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st_bf<H, W, L>>(d_o, 2, 2);
             // run kernel
             cudaFuncSetAttribute(
                 tma_global_wrapper_2d<test, H, W, NUM_WORKERS, L, args...>,
@@ -111,8 +144,9 @@ void warp::memory::tile::tma::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    tma_sweep_st_layout_size_2d_warp<test_load,  SIZE, SIZE>::run(results);
-    tma_sweep_st_layout_size_2d_warp<test_store, SIZE, SIZE>::run(results);
+    tma_sweep_st_layout_size_2d_warp<test_load,             SIZE, SIZE>::run(results);
+    tma_sweep_st_layout_size_2d_warp<test_store,            SIZE, SIZE>::run(results);
+    tma_sweep_st_layout_size_2d_warp<test_store_add_reduce, SIZE, SIZE>::run(results);
 }
 
 #endif
