@@ -50,6 +50,37 @@ struct test_store { // load normally, store with TMA
         kittens::tma::store_async_wait<0>();
     }
 };
+struct test_store_add_reduce {
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    static inline const std::string test_identifier = "tma_store_add_reduce_vec";
+    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // i_ref is reduced onto output
+        for (int i = 0; i < o_ref.size(); i++) {
+            o_ref[i] = i_ref[i] + i_ref[i]; 
+        }
+    }
+    template<int S, int NW>
+    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::row_vec<kittens::st_bf<S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st_bf<S, S>>, 4>();
+        
+        kittens::load(shared_vec[0], input);
+        kittens::load(shared_vec[1], input + shared_vec[0].length);
+        kittens::load(shared_vec[2], input + 2*shared_vec[0].length);
+        kittens::load(shared_vec[3], input + 3*shared_vec[0].length);
+        __syncwarp();
+        for(int i = 0; i < 4; i++) {
+            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
+        }
+        kittens::tma::store_commit_group();
+        for(int i = 0; i < 4; i++) {
+            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
+        }
+        kittens::tma::store_commit_group();
+        kittens::tma::store_async_wait<0>();
+    }
+};
 
 template<typename Ker, int S, int NW, typename... args>
 static __global__ void tma_global_wrapper_1d(const kittens::bf16 *input, kittens::bf16 *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
@@ -100,8 +131,9 @@ void warp::memory::vec::tma::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    tma_sweep_size_1d_warp<test_load,  SIZE>::run(results);
-    tma_sweep_size_1d_warp<test_store, SIZE>::run(results);
+    tma_sweep_size_1d_warp<test_load,             SIZE>::run(results);
+    tma_sweep_size_1d_warp<test_store,            SIZE>::run(results);
+    tma_sweep_size_1d_warp<test_store_add_reduce, SIZE>::run(results);
 }
 
 #endif
