@@ -16,8 +16,6 @@ __global__ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B,
     const int block_row = blockIdx.y*WG_PER_BLOCK;
     const int block_col = blockIdx.x;
     const int wg = kittens::warpid() / 4;
-    const int wg_row = block_row + wg;
-    const int wg_col = block_col;
 
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -67,7 +65,7 @@ __global__ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B,
     __syncthreads();
 
     if (kittens::warpid()%4 == 0) {
-        tma::store_async(C, c_smem[wg], wg_row, wg_col);
+        tma::store_async(C, c_smem[wg], block_row + wg, block_col);
         tma::store_commit_group();
     }
     tma::store_async_wait();
