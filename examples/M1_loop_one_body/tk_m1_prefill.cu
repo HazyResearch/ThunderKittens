@@ -25,11 +25,11 @@ void prefill_ker(
         const T* __XA, const T* __XB, const T* __XC,
         T* __Output
 ) {
-    H *_W1       = reinterpret_cast<H*>(__W1)+blockIdx.x*(HF*HF);
-    const H *_XA       = reinterpret_cast<const H*>(__XA)+blockIdx.x*(CS*HF);
-    const H *_XB       = reinterpret_cast<const H*>(__XB)+blockIdx.x*(CS*HF);
-    const H *_XC       = reinterpret_cast<const H*>(__XC)+blockIdx.x*(CS*HF);
-    H *_Output = reinterpret_cast<H*>(__Output)+blockIdx.x*(CS*HF);
+    H *_W1       = reinterpret_cast<H*>(__W1) + blockIdx.x*(HF*HF);
+    const H *_XA       = reinterpret_cast<const H*>(__XA) + blockIdx.x*(CS*HF);
+    const H *_XB       = reinterpret_cast<const H*>(__XB) + blockIdx.x*(CS*HF);
+    const H *_XC       = reinterpret_cast<const H*>(__XC) + blockIdx.x*(CS*HF);
+    H *_Output = reinterpret_cast<H*>(__Output) + blockIdx.x*(CS*HF);
 
     /*********
     REGISTER
@@ -43,11 +43,13 @@ void prefill_ker(
     rt_bf<1, 4> Z1_reg;
 
     rt_bf<1, 4> Output_reg;
-    rt_fl<1, 4> Output_fl_reg;
     rt_fl<1, 4> Z1_bar_term_1_fl_reg;
+    rt_bf<1, 4> Z1_bar_term_1_reg;
     rt_fl<1, 4> Z1_bar_term_2_fl_reg;
+    rt_bf<1, 4> Z1_bar_term_2_reg;
     rt_fl<1, 1> Attn1_fl_reg;
     rt_bf<1, 1> Attn1_reg;
+
 
     load(W1_reg, _W1, W1_reg.cols);
     load(XB_reg, _XB, XB_reg.cols);
@@ -69,13 +71,13 @@ void prefill_ker(
 
     zero(Z1_bar_term_1_fl_reg);
     mma_AB(Z1_bar_term_1_fl_reg, XC_reg, W1_reg, Z1_bar_term_1_fl_reg); // [N,K] r, [K,M] c -> [N,M] r
+    copy(Z1_bar_term_1_reg, Z1_bar_term_1_fl_reg);
 
     zero(Z1_bar_term_2_fl_reg);
     mma_AB(Z1_bar_term_2_fl_reg, Attn1_reg, Z1_col_reg, Z1_bar_term_2_fl_reg);  // [K,K] r, [K,f] c -> [K,f] r
+    copy(Z1_bar_term_2_reg, Z1_bar_term_2_fl_reg);
 
-    
-    sub(Output_fl_reg, Z1_bar_term_1_fl_reg, Z1_bar_term_2_fl_reg);
-    copy(Output_reg, Output_fl_reg);
+    sub(Output_reg, Z1_bar_term_1_reg, Z1_bar_term_2_reg);
 
     store(_Output, Output_reg, Output_reg.cols);
 
