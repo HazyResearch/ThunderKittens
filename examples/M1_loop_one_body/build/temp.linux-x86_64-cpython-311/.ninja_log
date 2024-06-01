@@ -1,0 +1,4 @@
+# ninja log v5
+1	18552	1717203049678746023	/home/ubuntu/xinhaoli/ThunderKittens/examples/M1_loop_one_body/build/temp.linux-x86_64-cpython-311/tk_m1_prefill_frontend.o	cb7c82d2e05e372d
+0	53383	1717203084483459422	/home/ubuntu/xinhaoli/ThunderKittens/examples/M1_loop_one_body/build/temp.linux-x86_64-cpython-311/tk_m1_prefill.o	c7400f3af75c781f
+19	48343	1717278868714468271	/home/ubuntu/xinhaoli/ThunderKittens/examples/M1_loop_one_body/build/temp.linux-x86_64-cpython-311/tk_m1_prefill.o	8f795423d82a742d

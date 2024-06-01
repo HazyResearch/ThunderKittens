@@ -1,7 +1,9 @@
 #include <iostream>
 #include <math.h>
 #include <assert.h>
-#include <mma_AB.h>
+#include <cuda_runtime_api.h>
+#include <mma.h>
+#include <cuda_fp16.h>
 using namespace nvcuda;
 
 # include "src/kittens.cuh"
