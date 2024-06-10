@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
 
     if(good) std::cout << "Correct :)\n";
-    else std::cout << "Incorrect :(\n";
+    else std::cout     << "Incorrect :(\n";
 
     // calculate efficiency
     long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, ATTN_D_SMALL);
