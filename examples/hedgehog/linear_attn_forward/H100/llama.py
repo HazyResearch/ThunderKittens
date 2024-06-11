@@ -16,9 +16,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../"))
 sys.path.insert(0, project_root)
-sys.path.append('build/lib.linux-x86_64-3.10')
-
-print(sys.path)
+sys.path.append('build/lib.linux-x86_64-cpython-312')
 
 import lin_attn_h100 as tk_kernel
 
@@ -45,9 +43,9 @@ v = (torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda'))
 # k = torch.abs(k)
 # v = torch.abs(v)
 
-q = q/(float(D)**.5)
-k = k/(float(D)**.5)
-v = v/(float(D)**.5)
+# q = q/(float(D)**.5)
+# k = k/(float(D)**.5)
+# v = v/(float(D)**.5)
 
 kv_state = (torch.zeros((B, H, D*2, D), dtype=torch.bfloat16, device='cuda'))
 o = torch.zeros((B, H, N, D), dtype=torch.bfloat16, device='cuda')
@@ -56,7 +54,7 @@ def linear_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, kv_state
     
     causal = True
         
-    tk_kernel.hh_lin_tk(q, k, v, o, kv_state)
+    tk_kernel.hh_lin_tk_smd(q, k, v, o, kv_state)
         
     return o, kv_state, None
 
