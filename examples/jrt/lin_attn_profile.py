@@ -20,6 +20,7 @@ loaded_correctly = []
 try:
     sys.path.append("../linear_attn_forward/H100")
     import lin_attn as mod
+    import lin_attn_4090 as mod_4090
     print(f"Successfully imported TK based_H100 kernel")
 except:
     loaded_correctly.append('Based TK')
@@ -386,7 +387,7 @@ def linear_attn_forward_benchmark_seqlen(dt, methods, verbose=False, use_ones=Fa
 
 def linear_attn_correct(dt):
     b = 4
-    n = 1024
+    n = 2048
     h = 16
     d = 16
     dv = 64
@@ -402,7 +403,8 @@ def linear_attn_correct(dt):
 
     print(f"Note we find numerical differences upon inspecting the tensor outputs:")
     __eq("PyTorch v1 - PyTorch v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
-    __eq("PyTorch - Based TK", pytorch_test_v2_result[0], based_kernel_test_result[0], debug=False)
+    __eq("PyTorch v2 - Based TK", pytorch_test_v2_result[0], based_kernel_test_result[0], debug=False)
+    __eq("PyTorch v1 - Based TK", pytorch_test_result[0], based_kernel_test_result[0], debug=False)
 
 
 def jrt_linear_attn_correct(dt):
@@ -503,8 +505,8 @@ if __name__ == "__main__":
             'Fast Transformer CUDA': fast_transformer_test, 
         }
 
-    linear_attn_forward_benchmark_batch(torch.bfloat16, methods, verbose=False)
-    linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, verbose=False)
+    # linear_attn_forward_benchmark_batch(torch.bfloat16, methods, verbose=False)
+    # linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, verbose=False)
 
     print("Correctness test...")
     linear_attn_correct(torch.bfloat16)
