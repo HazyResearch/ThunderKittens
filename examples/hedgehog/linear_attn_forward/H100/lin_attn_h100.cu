@@ -36,18 +36,18 @@ __device__ inline void cumulative_add(ST &dst, const ST &inc) {
     }
 }
 
-template<ducks::sv::all SV, ducks::st::all ST, int N>
-__device__ inline void get_last_row(SV &dst, const ST (&src)[N]) {
-    // src is of shape (H x W)[N]
-    // dst is of shape 1 X (W * N)
-    static_assert(SV::length == ST::cols * N, "Destination vector must have W * N columns");
+// template<ducks::sv::all SV, ducks::st::all ST, int N>
+// __device__ inline void get_last_row(SV &dst, const ST (&src)[N]) {
+//     // src is of shape (H x W)[N]
+//     // dst is of shape 1 X (W * N)
+//     static_assert(SV::length == ST::cols * N, "Destination vector must have W * N columns");
 
-    for (auto i = 0; i < N; i++) {
-        for (auto j = 0; j < ST::cols; j++) {
-            dst.data[i * ST::cols + j] = src[i].data[(ST::rows - 1) * ST::cols + j];
-        }
-    }
-}
+//     for (auto i = 0; i < N; i++) {
+//         for (auto j = 0; j < ST::cols; j++) {
+//             dst.data[i * ST::cols + j] = src[i].data[(ST::rows - 1) * ST::cols + j];
+//         }
+//     }
+// }
 
 #define ATTN_D 128
 #define ATTN_F 256

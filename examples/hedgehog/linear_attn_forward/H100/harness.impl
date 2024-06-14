@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 1
-#define ATTN_H 1
+#define ATTN_B 4
+#define ATTN_H 32
 #define ATTN_N (4096)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
