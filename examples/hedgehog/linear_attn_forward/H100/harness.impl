@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 4
-#define ATTN_H 32
+#define ATTN_B 1
+#define ATTN_H 1
 #define ATTN_N (4096)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -33,32 +33,32 @@ int main(int argc, char **argv) {
     std::cout << "Entered main!" << std::endl;
 
     // create dummy variables that are the right size
-    constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H* ATTN_N*ATTN_D;
-    constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H* ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H* ATTN_N*ATTN_D*2; 
+    constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H* ATTN_N*ATTN_D*2; 
     constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*(ATTN_F*ATTN_D);
-    constexpr int TOTAL_ELEMENTS_K  = ATTN_B*ATTN_H*(1     *ATTN_F);
+    // constexpr int TOTAL_ELEMENTS_K  = ATTN_B*ATTN_H*(1     *ATTN_F);
 
-    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D*2; 
+    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D; 
     constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_F*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_K  = 1 * ATTN_F;
+    // constexpr int TOTAL_UNIQUE_ELEMENTS_K  = 1 * ATTN_F;
 
     float *q            = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k            = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *v            = new float[TOTAL_UNIQUE_ELEMENTS_VO];
     float *o_ref        = new float[TOTAL_UNIQUE_ELEMENTS_VO];
-    // float *kv_state_ref = new float[TOTAL_UNIQUE_ELEMENTS_KV];
+    float *kv_state_ref = new float[TOTAL_UNIQUE_ELEMENTS_KV];
     // float *k_state_ref  = new float[TOTAL_UNIQUE_ELEMENTS_K];
 
     bf16 *q_bf        = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *k_bf        = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *v_bf        = new bf16[TOTAL_ELEMENTS_VO];
     bf16 *o_bf        = new bf16[TOTAL_ELEMENTS_VO]; // to be filled
-    // bf16 *kv_state_bf = new bf16[TOTAL_ELEMENTS_KV]; // to be filled
+    bf16 *kv_state_bf = new bf16[TOTAL_ELEMENTS_KV]; // to be filled
     // bf16 *k_state_bf  = new bf16[TOTAL_ELEMENTS_K];  // to be filled
     
     float *o        = new float[TOTAL_ELEMENTS_VO];  // on host, after kernel
-    // float *kv_state = new float[TOTAL_ELEMENTS_KV];  // on host, after kernel
+    float *kv_state = new float[TOTAL_ELEMENTS_KV];  // on host, after kernel
     // float *k_state  = new float[TOTAL_ELEMENTS_K];   // on host, after kernel
 
     if(argc > 1) {
@@ -74,8 +74,8 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading V" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) infile >> o_ref[i];
         std::cout << "Finished loading O_REF" << std::endl;
-        // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_KV; i++) infile >> kv_state_ref[i];
-        // std::cout << "Finished loading KV_STATE_REF" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_KV; i++) infile >> kv_state_ref[i];
+        std::cout << "Finished loading KV_STATE_REF" << std::endl;
         // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_K; i++) infile >> k_state_ref[i];
         // std::cout << "Finished loading K_STATE_REF" << std::endl;
 
@@ -95,9 +95,9 @@ int main(int argc, char **argv) {
     for (int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o_bf[i] = __float2bfloat16(0.0f); 
     }
-    // for (int i = 0 ; i < TOTAL_ELEMENTS_KV; i++) {
-    //     kv_state_bf[i] = __float2bfloat16(0.0f);
-    // }
+    for (int i = 0 ; i < TOTAL_ELEMENTS_KV; i++) {
+        kv_state_bf[i] = __float2bfloat16(0.0f);
+    }
     // for (int i = 0 ; i < TOTAL_ELEMENTS_K; i++) {
     //     k_state_bf[i] = __float2bfloat16(0.0f);
     // }
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_k,        TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v,        TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o,        TOTAL_ELEMENTS_VO * sizeof(bf16));
-    // cudaMalloc(&d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16));
+    cudaMalloc(&d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16));
     // cudaMalloc(&d_k_state,  TOTAL_ELEMENTS_K  * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -119,11 +119,11 @@ int main(int argc, char **argv) {
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
 
-    CUtensorMap* tma_q_d  = tma::allocate_and_create_tensor_map<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>   (d_q,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D/(16 * 4)); 
-    CUtensorMap* tma_k_d  = tma::allocate_and_create_tensor_map<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>(d_k,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D/(16 * 4));
+    CUtensorMap* tma_q_d  = tma::allocate_and_create_tensor_map<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>   (d_q,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D*2/(16 * 4)); 
+    CUtensorMap* tma_k_d  = tma::allocate_and_create_tensor_map<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>(d_k,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D*2/(16 * 4));
     CUtensorMap* tma_v_d  = tma::allocate_and_create_tensor_map<st_bf<4, 8, kittens::ducks::st_layout::wgmma_interleave>>(d_v,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D/(16 * 8));
     CUtensorMap* tma_o_d  = tma::allocate_and_create_tensor_map<st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>>   (d_o,        (ATTN_B*ATTN_H*ATTN_N/(16 * 4)), ATTN_D/(16 * 8));
-    // CUtensorMap* tma_kv_d = tma::allocate_and_create_tensor_map<st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>>   (d_kv_state, (ATTN_B*ATTN_H*ATTN_F/(16 * 4)), ATTN_D/(16 * 8));
+    CUtensorMap* tma_kv_d = tma::allocate_and_create_tensor_map<st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>>   (d_kv_state, (ATTN_B*ATTN_H*ATTN_F/(16 * 4)), ATTN_D/(16 * 8));
     // CUtensorMap* tma_ks_d = tma::allocate_and_create_tensor_map<row_vec<st_bf<4, 4*4>>>                                  (d_k_state,  (ATTN_B*ATTN_H*     1/(   1  ))); 
     
     using T = kittens::bf16;
@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        hedgehog_linear_attention_smd<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+        hedgehog_linear_attention_smd<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_kv_d, tma_o_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -149,15 +149,15 @@ int main(int argc, char **argv) {
     
     // Check output
     cudaMemcpy(o_bf,        d_o,        TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(kv_state_bf, d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kv_state_bf, d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyDeviceToHost);
     // cudaMemcpy(k_state_bf,  d_k_state,  TOTAL_ELEMENTS_K  * sizeof(bf16), cudaMemcpyDeviceToHost);
     
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
-    // for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-    //     kv_state[i] = __bfloat162float(kv_state_bf[i]);
-    // }
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        kv_state[i] = __bfloat162float(kv_state_bf[i]);
+    }
     // for (int i = 0; i < TOTAL_ELEMENTS_K; i++) {
     //     k_state[i] = __bfloat162float(k_state_bf[i]);
     // }
@@ -187,26 +187,26 @@ int main(int argc, char **argv) {
         total_o_diff += abs(diff); 
     }
 
-    // bool good_kv = true;
-    // std::ofstream kv_state_file("printouts/kv_state.txt");
-    // std::ofstream kv_state_ref_file("printouts/kv_state_ref.txt");
-    // std::ofstream kv_state_diff_file("printouts/kv_state_diff.txt");
+    bool good_kv = true;
+    std::ofstream kv_state_file("printouts/kv_state.txt");
+    std::ofstream kv_state_ref_file("printouts/kv_state_ref.txt");
+    std::ofstream kv_state_diff_file("printouts/kv_state_diff.txt");
 
-    // float total_diff = 0; 
+    float total_diff = 0; 
 
-    // for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-    //     float diff = kv_state[i] - kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV];
-    //     if(i < TOTAL_UNIQUE_ELEMENTS_KV) {
-    //         kv_state_ref_file << kv_state_ref[i] << ' ';
-    //         kv_state_file << kv_state[i] << ' ';
-    //         kv_state_diff_file << diff << ' ';
-    //     } 
-    //     if(abs(diff) > 0.05 || isnan(diff)) {
-    //         good_kv = false;
-    //     }
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        float diff = kv_state[i] - kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV];
+        if(i < TOTAL_UNIQUE_ELEMENTS_KV) {
+            kv_state_ref_file << kv_state_ref[i] << ' ';
+            kv_state_file << kv_state[i] << ' ';
+            kv_state_diff_file << diff << ' ';
+        } 
+        if(abs(diff) > 0.05 || isnan(diff)) {
+            good_kv = false;
+        }
 
-    //     total_diff += abs(diff); 
-    // }
+        total_diff += abs(diff); 
+    }
 
     // bool good_k = true;
     // std::ofstream k_state_file("printouts/k_state.txt");
@@ -234,11 +234,11 @@ int main(int argc, char **argv) {
     else std::cout << "Incorrect :(\n";
 
     std::cout << "avg o diff  " << (total_o_diff/TOTAL_ELEMENTS_VO) << std::endl; 
-    // std::cout << "avg kv diff  " << (total_diff/TOTAL_ELEMENTS_KV) << std::endl; 
+    std::cout << "avg kv diff  " << (total_diff/TOTAL_ELEMENTS_KV) << std::endl; 
     // std::cout << "avg k diff  " << (total_diff_k/TOTAL_ELEMENTS_K) << std::endl;
 
-    // if(good_kv) std::cout << "KV state correct :)\n";
-    // else std::cout << "KV state incorrect :(\n";
+    if(good_kv) std::cout << "KV state correct :)\n";
+    else std::cout << "KV state incorrect :(\n";
 
     // if (good_k) std::cout << "K state correct :)\n";
     // else std::cout << "K state incorrect :(\n";
@@ -248,7 +248,6 @@ int main(int argc, char **argv) {
     cudaFree(d_v);
     cudaFree(d_o);
     cudaFree(d_kv_state);
-    cudaFree(d_k_state);
 
     delete[] q, k, v, o, o_ref; 
     delete[] q_bf, k_bf, v_bf, o_bf; 

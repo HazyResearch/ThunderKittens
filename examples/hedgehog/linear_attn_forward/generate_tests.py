@@ -64,9 +64,6 @@ def pytorch_test(Q, K, V):
     #     torch.exp(K - k_max), torch.exp(-K + k_min)
     # ], dim=-1)
     
-    Q = pytorch_softmax_gt(Q)
-    K = pytorch_softmax_gt(K)
-    
     causal = True
     
     a = torch.einsum('bhmd,bhnd->bhmn', Q, K)  # note we don't scale, tho we could
@@ -82,9 +79,8 @@ def pytorch_test(Q, K, V):
     out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
     
     kv_state = torch.einsum('bhlf,bhld->bhfd', K, V).detach()
-    k_state  = K.sum(dim=-2, keepdim=True).detach()
     
-    return out, kv_state, k_state
+    return out, kv_state, None
 
 # add padding to Q, K, V, and O to make multiple of 64
 N = (N + 63) // 64 * 64
@@ -93,15 +89,15 @@ q = F.pad(q, (0, 0, 0, N - q.size(2)), value=0)
 k = F.pad(k, (0, 0, 0, N - k.size(2)), value=0)
 v = F.pad(v, (0, 0, 0, N - v.size(2)), value=0)
 
-o, kv_state, k_state = pytorch_test(q, k, v)
+q = pytorch_softmax_gt(q)
+k = pytorch_softmax_gt(k)
+o, kv_state, _ = pytorch_test(q, k, v)
 
 avg_o = torch.mean(torch.abs(o))
 avg_kv = torch.mean(torch.abs(kv_state))
-avg_k  = torch.mean(torch.abs(k_state))
 
 print(f"1/100 of Avg mag of o: {avg_o.item()/100}")
 print(f"1/100 of Avg mag of kv: {avg_kv.item()/100}")
-print(f"1/100 of Avg mag of k: {avg_k.item()/100}")
 
 print("-" * 80)
 # print B, H, N, D
@@ -117,7 +113,6 @@ print(f'k: {k.shape} {k.dtype}')
 print(f'v: {v.shape} {v.dtype}')
 print(f'o: {o.shape} {o.dtype}')
 print(f'kv_state: {kv_state.shape} {kv_state.dtype}')
-print(f'k_state: {k_state.shape} {k_state.dtype}')
 
 print("-" * 80)
 with open(f'randn.txt', 'w') as f:
@@ -125,13 +120,13 @@ with open(f'randn.txt', 'w') as f:
     kf = k.to(torch.float32).flatten().cpu().numpy()
     vf = v.to(torch.float32).flatten().cpu().numpy()
     of = o.to(torch.float32).flatten().cpu().numpy()
-    # kv = kv_state.to(torch.float32).flatten().cpu().numpy()
+    kv = kv_state.to(torch.float32).flatten().cpu().numpy()
     # ksf = k_state.to(torch.float32).flatten().cpu().numpy()
     
-    for i in trange(B*H*N*D):
+    for i in trange(B*H*N*D*2):
         f.write(repr(qf[i]))
         f.write(' ')
-    for i in trange(B*H*N*D):
+    for i in trange(B*H*N*D*2):
         f.write(repr(kf[i]))
         f.write(' ')
     for i in trange(B*H*N*D):
@@ -140,9 +135,9 @@ with open(f'randn.txt', 'w') as f:
     for i in trange(B*H*N*D):
         f.write(repr(of[i]))
         f.write(' ')
-    # for i in trange(B*H*2*D*D):
-    #     f.write(repr(kv[i]))
-    #     f.write(' ')
+    for i in trange(B*H*2*D*D):
+        f.write(repr(kv[i]))
+        f.write(' ')
     # for i in trange(B*H*1*2*D):
     #     f.write(repr(ksf[i]))
     #     f.write(' ')

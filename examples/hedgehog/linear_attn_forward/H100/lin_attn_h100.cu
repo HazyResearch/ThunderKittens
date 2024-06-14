@@ -1,5 +1,10 @@
 // #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
 
+// if you are using torch_compile, make sure to 
+// update pytorch wrapper at the bottom of this file
+// depending on if inputs to kernel are expected to be 
+// feature mapped or not
+
 #ifdef TORCH_COMPILE
 #include "src/kittens.cuh"
 #else
@@ -49,7 +54,7 @@ __device__ inline void cumulative_add(ST &dst, const ST &inc) {
 //     }
 // }
 
-#define ATTN_D 128
+#define ATTN_D (128) // alr feature mapped
 #define ATTN_F 256
 
 // __global__ __launch_bounds__(NUM_THREADS, 1)
@@ -283,8 +288,8 @@ __device__ inline void cumulative_add(ST &dst, const ST &inc) {
 // }
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, 
-                                                CUtensorMap* tma_o)
+void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v,
+                                                CUtensorMap* tma_kv, CUtensorMap* tma_o)
 {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -307,13 +312,13 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
     if (warpid == 0) {
         tma::init_barrier(qkv_barrier, 1);
         tma::set_bytes(qkv_barrier, 
-            size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>*2 + 
-            size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>*2 + 
+            size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>*4 + 
+            size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>*4 + 
             size_bytes<st_bf<4, 8, kittens::ducks::st_layout::wgmma_interleave>>
         );
 
         int tile_idx = (blockIdx.x * blocks) + 0; 
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 4; i++) {
             tma::load_async(q_smem[tic][i], tma_q, qkv_barrier, tile_idx, i); 
             tma::load_async(k_smem[tic][i], tma_k, qkv_barrier, tile_idx, i); 
         }
@@ -353,116 +358,116 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
 
         if (warpid == 0 && block < blocks - 1) {
             tma::set_bytes(qkv_barrier, 
-                size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>*2 + 
-                size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>*2 + 
+                size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>*4 + 
+                size_bytes<st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>*4 + 
                 size_bytes<st_bf<4, 8, kittens::ducks::st_layout::wgmma_interleave>>
             );
 
             int tile_idx = (blockIdx.x * blocks) + block + 1;
 
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < 4; i++) {
                 tma::load_async(q_smem[toc][i], tma_q, qkv_barrier, tile_idx, i); 
                 tma::load_async(k_smem[toc][i], tma_k, qkv_barrier, tile_idx, i); 
             }
             tma::load_async(v_smem[toc][0], tma_v, qkv_barrier, tile_idx);
         }
 
-        // ******* apply feature map ******** // 
+        // // ******* apply feature map ******** // 
         
-        // do q first
-        warpgroup::mul(q_smem[tic][2], q_smem[tic][0], __float2bfloat16(-1.0f));
-        warpgroup::mul(q_smem[tic][3], q_smem[tic][1], __float2bfloat16(-1.0f));
-        __syncthreads();
+        // // do q first
+        // warpgroup::mul(q_smem[tic][2], q_smem[tic][0], __float2bfloat16(-1.0f));
+        // warpgroup::mul(q_smem[tic][3], q_smem[tic][1], __float2bfloat16(-1.0f));
+        // __syncthreads();
         
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            warpgroup::load(q_fm_reg[rt], q_smem[tic][rt]);
-            row_max(max_fm_vec, q_fm_reg[rt], max_fm_vec);
-            row_min(min_fm_vec, q_fm_reg[rt], min_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     warpgroup::load(q_fm_reg[rt], q_smem[tic][rt]);
+        //     row_max(max_fm_vec, q_fm_reg[rt], max_fm_vec);
+        //     row_min(min_fm_vec, q_fm_reg[rt], min_fm_vec);
+        // }
 
-        zero(sum_fm_vec);
+        // zero(sum_fm_vec);
 
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            sub_row(q_fm_reg[rt], q_fm_reg[rt], max_fm_vec);
-            exp(q_fm_reg[rt], q_fm_reg[rt]);
-            row_sum(sum_fm_vec, q_fm_reg[rt], sum_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     sub_row(q_fm_reg[rt], q_fm_reg[rt], max_fm_vec);
+        //     exp(q_fm_reg[rt], q_fm_reg[rt]);
+        //     row_sum(sum_fm_vec, q_fm_reg[rt], sum_fm_vec);
+        // }
 
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            div_row(q_fm_reg[rt], q_fm_reg[rt], sum_fm_vec);
-            warpgroup::store(q_smem[tic][rt], q_fm_reg[rt]);
-        }
-        __syncthreads();
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     div_row(q_fm_reg[rt], q_fm_reg[rt], sum_fm_vec);
+        //     warpgroup::store(q_smem[tic][rt], q_fm_reg[rt]);
+        // }
+        // __syncthreads();
 
-        zero(sum_fm_vec);
+        // zero(sum_fm_vec);
 
-        #pragma unroll
-        for (int rt = 2; rt < 4; rt++) {
-            warpgroup::load(q_fm_reg[rt - 2], q_smem[tic][rt]);
-            add_row(q_fm_reg[rt - 2], q_fm_reg[rt - 2], min_fm_vec);
-            exp(q_fm_reg[rt - 2], q_fm_reg[rt - 2]);
-            row_sum(sum_fm_vec, q_fm_reg[rt - 2], sum_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 2; rt < 4; rt++) {
+        //     warpgroup::load(q_fm_reg[rt - 2], q_smem[tic][rt]);
+        //     add_row(q_fm_reg[rt - 2], q_fm_reg[rt - 2], min_fm_vec);
+        //     exp(q_fm_reg[rt - 2], q_fm_reg[rt - 2]);
+        //     row_sum(sum_fm_vec, q_fm_reg[rt - 2], sum_fm_vec);
+        // }
 
-        #pragma unroll
-        for (int rt = 2; rt < 4; rt++) {
-            div_row(q_fm_reg[rt - 2], q_fm_reg[rt - 2], sum_fm_vec);
-            warpgroup::store(q_smem[tic][rt], q_fm_reg[rt - 2]);
-        }
-        __syncthreads();
+        // #pragma unroll
+        // for (int rt = 2; rt < 4; rt++) {
+        //     div_row(q_fm_reg[rt - 2], q_fm_reg[rt - 2], sum_fm_vec);
+        //     warpgroup::store(q_smem[tic][rt], q_fm_reg[rt - 2]);
+        // }
+        // __syncthreads();
 
-        // now do exactly the same for k
-        neg_infty(max_fm_vec);
-        pos_infty(min_fm_vec);
+        // // now do exactly the same for k
+        // neg_infty(max_fm_vec);
+        // pos_infty(min_fm_vec);
 
-        // do q first
-        warpgroup::mul(k_smem[tic][2], k_smem[tic][0], __float2bfloat16(-1.0f));
-        warpgroup::mul(k_smem[tic][3], k_smem[tic][1], __float2bfloat16(-1.0f));
-        __syncthreads();
+        // // do q first
+        // warpgroup::mul(k_smem[tic][2], k_smem[tic][0], __float2bfloat16(-1.0f));
+        // warpgroup::mul(k_smem[tic][3], k_smem[tic][1], __float2bfloat16(-1.0f));
+        // __syncthreads();
 
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            warpgroup::load(k_fm_reg[rt], k_smem[tic][rt]);
-            row_max(max_fm_vec, k_fm_reg[rt], max_fm_vec);
-            row_min(min_fm_vec, k_fm_reg[rt], min_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     warpgroup::load(k_fm_reg[rt], k_smem[tic][rt]);
+        //     row_max(max_fm_vec, k_fm_reg[rt], max_fm_vec);
+        //     row_min(min_fm_vec, k_fm_reg[rt], min_fm_vec);
+        // }
 
-        zero(sum_fm_vec);
+        // zero(sum_fm_vec);
 
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            sub_row(k_fm_reg[rt], k_fm_reg[rt], max_fm_vec);
-            exp(k_fm_reg[rt], k_fm_reg[rt]);
-            row_sum(sum_fm_vec, k_fm_reg[rt], sum_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     sub_row(k_fm_reg[rt], k_fm_reg[rt], max_fm_vec);
+        //     exp(k_fm_reg[rt], k_fm_reg[rt]);
+        //     row_sum(sum_fm_vec, k_fm_reg[rt], sum_fm_vec);
+        // }
 
-        #pragma unroll
-        for (int rt = 0; rt < 2; rt++) {
-            div_row(k_fm_reg[rt], k_fm_reg[rt], sum_fm_vec);
-            warpgroup::store(k_smem[tic][rt], k_fm_reg[rt]);
-        }
-        __syncthreads();
+        // #pragma unroll
+        // for (int rt = 0; rt < 2; rt++) {
+        //     div_row(k_fm_reg[rt], k_fm_reg[rt], sum_fm_vec);
+        //     warpgroup::store(k_smem[tic][rt], k_fm_reg[rt]);
+        // }
+        // __syncthreads();
 
-        zero(sum_fm_vec);
+        // zero(sum_fm_vec);
 
-        #pragma unroll
-        for (int rt = 2; rt < 4; rt++) {
-            warpgroup::load(k_fm_reg[rt - 2], k_smem[tic][rt]);
-            add_row(k_fm_reg[rt - 2], k_fm_reg[rt - 2], min_fm_vec);
-            exp(k_fm_reg[rt - 2], k_fm_reg[rt - 2]);
-            row_sum(sum_fm_vec, k_fm_reg[rt - 2], sum_fm_vec);
-        }
+        // #pragma unroll
+        // for (int rt = 2; rt < 4; rt++) {
+        //     warpgroup::load(k_fm_reg[rt - 2], k_smem[tic][rt]);
+        //     add_row(k_fm_reg[rt - 2], k_fm_reg[rt - 2], min_fm_vec);
+        //     exp(k_fm_reg[rt - 2], k_fm_reg[rt - 2]);
+        //     row_sum(sum_fm_vec, k_fm_reg[rt - 2], sum_fm_vec);
+        // }
 
-        #pragma unroll
-        for (int rt = 2; rt < 4; rt++) {
-            div_row(k_fm_reg[rt - 2], k_fm_reg[rt - 2], sum_fm_vec);
-            warpgroup::store(k_smem[tic][rt], k_fm_reg[rt - 2]);
-        }
-        __syncthreads();
-        // ******* feature map done ******** // 
+        // #pragma unroll
+        // for (int rt = 2; rt < 4; rt++) {
+        //     div_row(k_fm_reg[rt - 2], k_fm_reg[rt - 2], sum_fm_vec);
+        //     warpgroup::store(k_smem[tic][rt], k_fm_reg[rt - 2]);
+        // }
+        // __syncthreads();
+        // // ******* feature map done ******** // 
         zero(local_attn); 
         for (int j = 0; j < 4; j++) {
             warpgroup::mma_fence(local_attn); 
@@ -543,18 +548,18 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
     //     tma::store_commit_group(); 
     // }
 
-    // for (int rt = 0; rt < 4; rt++) {
-    //     auto &kv_smem_2 = reinterpret_cast<st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>&>(kv_smem);
-    //     warpgroup::store(kv_smem_2, local_kv[rt]); 
-    //     __syncthreads();
+    for (int rt = 0; rt < 4; rt++) {
+        auto &kv_smem_2 = reinterpret_cast<st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>&>(kv_smem);
+        warpgroup::store(kv_smem_2, local_kv[rt]); 
+        __syncthreads();
 
-    //     if (warpid == 0) {
-    //         int tile_idx = (blockIdx.x * 4) + rt; 
-    //         tma::store_async(tma_kv, kv_smem_2, tile_idx); 
-    //         tma::store_commit_group(); 
-    //     }
-    //     tma::store_async_wait();
-    // }
+        if (warpid == 0) {
+            int tile_idx = (blockIdx.x * 4) + rt; 
+            tma::store_async(tma_kv, kv_smem_2, tile_idx); 
+            tma::store_commit_group(); 
+        }
+        tma::store_async_wait();
+    }
 }
 
 #ifdef TORCH_COMPILE
@@ -674,21 +679,21 @@ void hh_lin_tk_smd(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Ten
     TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
     TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
-    // TORCH_CHECK(kv.scalar_type() == c10::ScalarType::BFloat16, "kv must be bf16");
+    TORCH_CHECK(kv.scalar_type() == c10::ScalarType::BFloat16, "kv must be bf16");
     // TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "ks must be bf16");
     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
 
     c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
-    // c10::BFloat16 *kv_ptr = kv.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_ptr = kv.data_ptr<c10::BFloat16>();
     // c10::BFloat16 *ks_ptr = ks.data_ptr<c10::BFloat16>();
     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
 
     const bf16* d_q = reinterpret_cast<const bf16*>(q_ptr); 
     const bf16* d_k = reinterpret_cast<const bf16*>(k_ptr);  
     const bf16* d_v = reinterpret_cast<const bf16*>(v_ptr);  
-    // bf16* d_kv_state = reinterpret_cast<bf16*>(kv_ptr);  
+    bf16* d_kv_state = reinterpret_cast<bf16*>(kv_ptr);  
     // bf16* d_k_state  = reinterpret_cast<bf16*>(ks_ptr);
     bf16* d_o = reinterpret_cast<bf16*>(o_ptr);
 
