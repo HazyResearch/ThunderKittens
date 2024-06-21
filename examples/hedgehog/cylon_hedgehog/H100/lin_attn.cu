@@ -136,128 +136,130 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
         rt_fl<1, 4>::col_vec sliding_norm_vec;
         zero(sliding_o);
         zero(sliding_norm_vec);
-        if(warpgroupid == 0) {
+        add(sliding_norm_vec, sliding_norm_vec, 1e-6); // TODO kill
+        // if(warpgroupid == 0) {
 
-            rt_fl<1, 4> att_block[2];
-            rt_bf<1, 4> att_block_bf[2];
-            rt_fl<1, 4>::col_vec max_vec;
+        //     rt_fl<1, 4> att_block[2];
+        //     rt_bf<1, 4> att_block_bf[2];
+        //     rt_fl<1, 4>::col_vec max_vec;
 
-            neg_infty(max_vec); // zero registers for the Q chunk
+        //     neg_infty(max_vec); // zero registers for the Q chunk
 
-            for(int subtile = 0; subtile < 2; subtile++) {
-                if (block + subtile >= 1) { // ensure tile has been loaded by now.
-                    warpgroup::mma_fence(att_block[subtile]);
-                    warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
-                    warpgroup::mma_commit_group();
-                }
-                else {
-                    neg_infty(att_block[subtile]); // initial blocks must be zero
-                }
-            }
-            warpgroup::mma_async_wait();
-            // make last block causal
-            #pragma unroll
-            for(int j = 0; j < 4; j++) {
-                auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block[1].tiles[0][j]);
-                if (j>warpid) neg_infty(attn_subtile);
-                else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
-            }
-            // now do the softmax. first we subtract max for numerical stability. then exp.
-            #pragma unroll
-            for(int subtile = 0; subtile < 2; subtile++) {
-                mul(att_block[subtile], att_block[subtile], 0.125); // temperature adjustment.
-                row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
-            }
-            #pragma unroll
-            for(int subtile = 0; subtile < 2; subtile++) {
-                sub_row(att_block[subtile], att_block[subtile], max_vec);
-                exp(att_block[subtile], att_block[subtile]);
-                mul(att_block[subtile], att_block[subtile], beta);
-            }
-            // now we sum so that we can divide (normalize) later
-            #pragma unroll
-            for(int subtile = 0; subtile < 2; subtile++) {
-                row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
-                copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
-            }
-            for(int subtile = 0; subtile < 2; subtile++) {
-                warpgroup::mma_fence(sliding_o);
-                warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
-                warpgroup::mma_commit_group();
-            }
-            warpgroup::mma_async_wait();
-        }
+        //     for(int subtile = 0; subtile < 2; subtile++) {
+        //         if (block + subtile >= 1) { // ensure tile has been loaded by now.
+        //             warpgroup::mma_fence(att_block[subtile]);
+        //             warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
+        //             warpgroup::mma_commit_group();
+        //         }
+        //         else {
+        //             neg_infty(att_block[subtile]); // initial blocks must be zero
+        //         }
+        //     }
+        //     warpgroup::mma_async_wait();
+        //     // make last block causal
+        //     #pragma unroll
+        //     for(int j = 0; j < 4; j++) {
+        //         auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block[1].tiles[0][j]);
+        //         if (j>warpid) neg_infty(attn_subtile);
+        //         else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
+        //     }
+        //     // now do the softmax. first we subtract max for numerical stability. then exp.
+        //     #pragma unroll
+        //     for(int subtile = 0; subtile < 2; subtile++) {
+        //         mul(att_block[subtile], att_block[subtile], 0.125); // temperature adjustment.
+        //         row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
+        //     }
+        //     #pragma unroll
+        //     for(int subtile = 0; subtile < 2; subtile++) {
+        //         sub_row(att_block[subtile], att_block[subtile], max_vec);
+        //         exp(att_block[subtile], att_block[subtile]);
+        //         mul(att_block[subtile], att_block[subtile], beta);
+        //     }
+        //     // now we sum so that we can divide (normalize) later
+        //     #pragma unroll
+        //     for(int subtile = 0; subtile < 2; subtile++) {
+        //         row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
+        //         copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
+        //     }
+        //     for(int subtile = 0; subtile < 2; subtile++) {
+        //         warpgroup::mma_fence(sliding_o);
+        //         warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
+        //         warpgroup::mma_commit_group();
+        //     }
+        //     warpgroup::mma_async_wait();
+        // }
         __syncthreads();
 
         rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
         rt_fl<1, 4>::col_vec linear_norm_vec;
         zero(linear_o);
         zero(linear_norm_vec);
-        // if(block >= 2) { // if not in at least the third block, no need for linear attention.
+        if(block >= 1) { // if not in at least the third block, no need for linear attention.
 
-        //     // ******* linear attn ******** // 
+            // ******* linear attn ******** // 
 
-        //     // matmul to generate linear_q before softmax
+            // matmul to generate linear_q before softmax
 
-        //     rt_fl<1, 4> linear_q;
-        //     rt_bf<1, 4> linear_q_bf;
+            rt_fl<1, 4> linear_q;
+            rt_bf<1, 4> linear_q_bf;
 
-        //     warpgroup::mma_fence(linear_q);
-        //     warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
-        //     warpgroup::mma_commit_group();
-        //     warpgroup::mma_async_wait(); // q is now projected-
-        //     mul(linear_q, linear_q, warpgroupid ? alpha : -1.f*alpha);
-        //     // now we need to run q through a local softmax to featurize
-        //     softmax_featuremap_inplace(linear_q);
-        //     copy(linear_q_bf, linear_q); // now to bf16
+            warpgroup::mma_fence(linear_q);
+            warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait(); // q is now projected-
+            if(warpgroupid) mul(linear_q, linear_q, -1.f);
+            // now we need to run q through a local softmax to featurize
+            softmax_featuremap_inplace(linear_q);
+            mul(linear_q, linear_q, alpha);
+            copy(linear_q_bf, linear_q); // now to bf16
 
-        //     // copy the local KV cache into shared memory to shared memory and do matmul
-        //     warpgroup::store(kv_smem[warpgroupid], local_kv);
-        //     __syncthreads(); // this should probably be a cooperative group of just the 4 warps
-        //     warpgroup::mma_fence(linear_o);
-        //     warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
-        //     warpgroup::mma_commit_group();
-        //     warpgroup::mma_async_wait();
+            // copy the local KV cache into shared memory to shared memory and do matmul
+            warpgroup::store(kv_smem[warpgroupid], local_kv);
+            __syncthreads(); // this should probably be a cooperative group of just the 4 warps
+            warpgroup::mma_fence(linear_o);
+            warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait();
 
-        //     // next we need to go figure out the norm.
-        //     // first we load sum(k) from smem to registers.
-        //     row_vec<rt_bf<1,4>> cumsum_k_reg;
-        //     load(cumsum_k_reg, cumsum_k_smem[warpgroupid]);
-        //     // now we can project this up into a register tile
-        //     // we're broadcasting along the column axis (filling all rows with the same value)
-        //     rt_bf<1,4> cumsum_k_reg_tile;
-        //     broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
-        //     // next we matmul! this gives us a tile.
-        //     rt_fl_1x1<> norm_tile;
-        //     zero(norm_tile);
-        //     mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
-        //     row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ
-        //     // ^ note this incorporates alpha since it was premultiplied onto linear_q!
+            // next we need to go figure out the norm.
+            // first we load sum(k) from smem to registers.
+            row_vec<rt_bf<1,4>> cumsum_k_reg;
+            load(cumsum_k_reg, cumsum_k_smem[warpgroupid]);
+            // now we can project this up into a register tile
+            // we're broadcasting along the column axis (filling all rows with the same value)
+            rt_bf<1,4> cumsum_k_reg_tile;
+            broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
+            // next we matmul! this gives us a tile.
+            rt_fl_1x1<> norm_tile;
+            zero(norm_tile);
+            mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
+            row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ
+            // ^ note this incorporates alpha since it was premultiplied onto linear_q!
             
-        //     // now accumulate KV onto the matmul for the future.
-        //     rt_fl<1, 4> linear_k;
+            // now accumulate KV onto the matmul for the future.
+            rt_fl<1, 4> linear_k;
 
-        //     // matmul to generate linear_k before softmax
-        //     warpgroup::mma_fence(linear_k);
-        //     warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
-        //     warpgroup::mma_commit_group();
-        //     warpgroup::mma_async_wait(); // q is now projected
-        //     if(warpgroupid) {
-        //         mul(linear_k, linear_k, -1.f);
-        //     }
-        //     // now we need to run q through a local softmax to featurize
-        //     softmax_featuremap_inplace(linear_k);
+            // matmul to generate linear_k before softmax
+            warpgroup::mma_fence(linear_k);
+            warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait(); // q is now projected
+            if(warpgroupid) mul(linear_k, linear_k, -1.f);
+            // now we need to run q through a local softmax to featurize
+            softmax_featuremap_inplace(linear_k);
 
-        //     // copy the local KV cache into shared memory & do matmul
-        //     warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
-        //     __syncthreads();
-        //     warpgroup::mma_fence(local_kv);
-        //     warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[tic]);
-        //     warpgroup::mma_commit_group();
-        //     warpgroup::mma_async_wait();
+            // copy the local KV cache into shared memory & do matmul
+            warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
+            __syncthreads();
+            warpgroup::mma_fence(local_kv);
+            warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[tic]);
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait();
 
-        //     cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
-        // }
+            __syncthreads();
+            cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
+            __syncthreads();
+        }
 
         // next step is to sum two norm vecs
         add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
@@ -279,6 +281,12 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             warpgroup::store(o_smem, sliding_o);
         }
         __syncthreads();
+
+        // if(warpgroupid == 0) {
+        //     div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
+        //     warpgroup::store(o_smem, sliding_o);
+        // }
+        // __syncthreads();
         if(warpid == 0) {
             tma::store_async(tma_o, o_smem, blockIdx.x*blocks + block);
             tma::store_commit_group();

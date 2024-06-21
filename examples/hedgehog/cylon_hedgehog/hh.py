@@ -9,24 +9,55 @@ import torch.nn.functional as F
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 4096
 D_QK = 128
 D_VO = 128
 
 # accept arg for N 
 N = int(sys.argv[1])
 
+testname = 'randn' if len(sys.argv) < 3 else sys.argv[2]
+
 torch.random.manual_seed(32)
-q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda'))
+if testname == 'randn':
+    q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
+    qmap = (torch.randn((D_QK, 64), dtype=torch.bfloat16, device='cuda'))
+    kmap = (torch.randn((D_QK, 64), dtype=torch.bfloat16, device='cuda'))
+elif testname == 'ones':
+    q = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
+    k = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
+    v = (torch.ones((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
+    qmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+    kmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+elif testname == 'qk_test':
+    q = torch.eye(D_QK).reshape((1,1,D_QK,D_QK)).repeat(B, H, N//D_QK, 1)*10
+    q = q.to(dtype=torch.bfloat16, device='cuda')
+    k = torch.eye(D_QK).reshape((1,1,D_QK,D_QK)).repeat(B, H, N//D_QK, 1)*10
+    k = k.to(dtype=torch.bfloat16, device='cuda')
+    v = torch.eye(D_VO).reshape((1,1,D_VO,D_VO)).repeat(B, H, N//D_VO, 1)*10
+    v = v.to(dtype=torch.bfloat16, device='cuda')
+    qmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+    kmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+elif testname == 'v_or':
+    q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
+    k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
+    v = (torch.arange(D_VO*2, dtype=torch.bfloat16, device='cuda')/D_VO).reshape((1,1,2,-1)).repeat(B, H, N//2, 1) / 5
+    qmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+    kmap = (torch.ones((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
+else:
+    print('bad testname')
+    sys.exit(0)
 
-qmap = (torch.randn((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-kmap = (torch.randn((D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
 
-def pytorch_softmax_gt(x, map_mat):
+def pytorch_softmax_gt(x, map_mat, label=None):
 
     x = torch.einsum('bhmd,dn->bhmn', x, map_mat)
+
+    if label is not None:
+        with open(label, 'w') as f:
+            for row in x[0,0,0:256]:
+                f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:256].tolist())) + '\n')
     
     x_pos = x
     x_neg = -x
@@ -35,7 +66,7 @@ def pytorch_softmax_gt(x, map_mat):
     x_neg_max = torch.amax(x_neg, dim=-1, keepdim=True)
     
     x_pos = x_pos - x_pos_max
-    x_neg = x_neg + x_neg_max
+    x_neg = x_neg - x_neg_max
     
     x_pos_num = torch.exp(x_pos)
     x_pos_den = torch.sum(torch.exp(x_pos), dim=-1, keepdim=True)
@@ -63,7 +94,7 @@ if False: # if you want to debug / visualize these masks
             f.write(' '.join(map(lambda k: '#' if k else ',', row[:384].tolist())) + '\n')
 exp_mask = 100*exp_mask - 100 # we actually want to effectively subtract infinity instead with this mask, since it should happen pre-exp
 
-def pytorch_test(Q, K, V, Qmap, Kmap, alpha=0.6, beta=1.4):
+def pytorch_test(Q, K, V, Qmap, Kmap, alpha=1.4, beta=0.6):
     
     Qs = pytorch_softmax_gt(Q, Qmap)
     Ks = pytorch_softmax_gt(K, Kmap)
@@ -75,13 +106,22 @@ def pytorch_test(Q, K, V, Qmap, Kmap, alpha=0.6, beta=1.4):
     a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
     a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
     # mask
-    a_lin *= lin_mask[:a_lin.shape[0], :a_lin.shape[1]] * alpha # zero out unwanted entries
-    a_exp += exp_mask[:a_exp.shape[0], :a_exp.shape[1]] # subtract infinity off of unwanted entries
+    a_lin *= lin_mask[:a_lin.shape[2], :a_lin.shape[3]] * alpha # zero out unwanted entries
+    a_exp += exp_mask[:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
     a_exp -= a_exp.max(dim=-1, keepdim=True).values
-    a_exp = torch.exp(a_exp * 0.125) * beta # run the exp
+    a_exp = torch.exp(a_exp * 0.125) * beta
+    with open('a_exp.txt', 'w') as f:
+        for row in a_exp[0,0,0:512]:
+            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:512].tolist())) + '\n')
+    with open('a_lin.txt', 'w') as f:
+        for row in a_lin[0,0,0:512]:
+            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:512].tolist())) + '\n')
 
-    a = a_exp # + a_lin
-    a = (a / (a.sum(dim=-1, keepdim=True))).to(torch.bfloat16) # normalize
+    a = a_lin # TODO a_exp + a_lin
+    a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
+    with open('a.txt', 'w') as f:
+        for row in a[0,0,0:256]:
+            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:256].tolist())) + '\n')
     
     out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
     
@@ -127,7 +167,7 @@ print(f'kv_state: {kv_state.shape} {kv_state.dtype}')
 print(f'k_state: {k_state.shape} {k_state.dtype}')
 
 print("-" * 80)
-with open(f'randn.txt', 'w') as f:
+with open(f'{testname}_{N}.txt', 'w') as f:
     qmap = qmap.to(torch.float32).flatten().cpu().numpy()
     kmap = kmap.to(torch.float32).flatten().cpu().numpy()
     qf = q.to(torch.float32).flatten().cpu().numpy()
@@ -139,26 +179,32 @@ with open(f'randn.txt', 'w') as f:
 
     print('ALERT: ALPHA AND BETA ARE NOT 1 IN THIS DEMO')
     
+    print('QMAP', qmap.shape, D_QK*64)
     for i in trange(D_QK*64):
         f.write(repr(qmap[i]))
         f.write(' ')
     f.write('\n')
+    print('KMAP', kmap.shape, D_QK*64)
     for i in trange(D_QK*64):
         f.write(repr(kmap[i]))
         f.write(' ')
     f.write('\n')
+    print('QF', qf.shape, B*H*N*D_QK)
     for i in trange(B*H*N*D_QK):
         f.write(repr(qf[i]))
         f.write(' ')
     f.write('\n')
+    print('KF', kf.shape, B*H*N*D_QK)
     for i in trange(B*H*N*D_QK):
         f.write(repr(kf[i]))
         f.write(' ')
     f.write('\n')
+    print('VF', vf.shape, B*H*N*D_VO)
     for i in trange(B*H*N*D_VO):
         f.write(repr(vf[i]))
         f.write(' ')
     f.write('\n')
+    print('OF', of.shape, B*H*N*D_VO)
     for i in trange(B*H*N*D_VO):
         f.write(repr(of[i]))
         f.write(' ')
