@@ -49,8 +49,33 @@ mma_AB(a2, kt, v_col, a2); // accumulate onto a2
 ```
 
 
-## Baselines 
-We consider four baselines. You can toggle which ones you consider in ```lin_attn_profile.py```. 
+## Testing Correctness
+
+We provide a lightweight test harness in C++ and in PyTorch. 
+Testing in C++. First, go to the Makefile and select the correct GPU option for your hardware. To run the test:
+```
+python generate_tests.py randn_all
+# 1. ensure that the based_tk_fwd function and its imports are commented out in 4090/lin_attn.cu and H100/lin_attn.cu
+# 2. ensure harness.impl is being imported (line is uncommented) in that .cu file
+# 3. in the Makefile, select the correct device option
+make clean && make && ./debug_linear_attend randn_all.txt
+```
+
+Testing in PyTorch. Below, shows how you can install the TK kernel for the H100. The file checks that the output and the kv state are correctly computed and saved.
+```
+# 1. ensure that the based_tk_fwd function and its imports are uncommented (this is our PyTorch hook!) in H100/lin_attn.cu
+# 2. ensure harness.impl is commented out in H100/lin_attn.cu (we don't want to use it!)
+
+cd examples/based/linear_attn_forward/H100
+python lin_attn_setup.py install     # ensure that you have run ```source env.src''' prior to this
+cd ..
+python test_correctness.py   
+```
+*Note* that the test may output 'fail', which we observe is due to numerical errors. A good way to confirm is to inspect the Tensors. 
+
+
+## Benchmarking
+We consider four baselines for benchmarking. You can toggle which ones you want to compare to in ```lin_attn_profile.py```. 
 1. Pure PyTorch
 
 2. Fast Transformers causal dot product kernel: 
@@ -70,29 +95,7 @@ pip install -U git+https://github.com/sustcsonglin/flash-linear-attention
 pip install flash-attn ==2.5
 ```
 
-## Testing 
-We provide a lightweight test harness in C++ and in PyTorch. 
-Testing in C++. First, go to the Makefile and select the correct GPU option for your hardware. To run the test:
-```
-python generate_tests.py randn_all
-# Ensure that the based_tk_fwd function and its imports are commented out in 4090/lin_attn.cu and H100/lin_attn_h100.cu
-# Ensure harness.impl is being imported (line is uncommented)
-make clean && make && ./debug_linear_attend randn_all.txt
-```
 
-Testing in PyTorch. Below, shows how you can install the TK kernel for the 4090:
-```
-cd examples/based/linear_attn_forward/4090
-# Ensure that the based_tk_fwd function and its imports are uncommented
-# Ensure harness.impl is commented out
-
-python setup.py install # ensure that you have run ```source env.src''' prior to this
-python lin_attn_profile.py
-```
-*Note* that the test may output an error, which we observe is due to numerical differences in the computation approaches as opposed to correctness.
-
-
-## Benchmarking
 We provide scripts to compare the above baseline methods against the ThunderKittens kernels. 
 ```
 cd examples/based/linear_attn_forward/4090

@@ -8,22 +8,19 @@
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
+#define add_scale 1
+#define output_state 1
+
 // Function to calculate the number of floating-point operations
 long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) {
     long long expanded_dim = featuredim * featuredim + featuredim + 1;
 
     // feature map
     long long f = 2 * batch * static_cast<long long>(seqlen) * nheads * expanded_dim;
-
-    // (k * v)
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
-    // (cumsum)
-    f +=  batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
-    // (q * (k * v))
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
-    // .sum(dim=-1)
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
-
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // (k * v)
+    f +=  batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim; // (cumsum)
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // (q * (k * v))
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // .sum(dim=-1)
     return f;
 }
 
@@ -68,6 +65,11 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
 
+    // kv state
+    constexpr int TOTAL_ELEMENTS_KV_A2 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D_SMALL*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV_A1 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV_A0 = ATTN_B*ATTN_H*1*ATTN_D;
+    
     float *q = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *v = new float[TOTAL_UNIQUE_ELEMENTS_VO];
@@ -108,11 +110,14 @@ int main(int argc, char **argv) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
     }
 
-    bf16 *d_q, *d_k, *d_v, *d_o;
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_a2, *d_kv_a1, *d_kv_a0;
     cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_kv_a2, TOTAL_ELEMENTS_KV_A2 * sizeof(bf16));
+    cudaMalloc(&d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16));
+    cudaMalloc(&d_kv_a0, TOTAL_ELEMENTS_KV_A0 * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -123,6 +128,11 @@ int main(int argc, char **argv) {
     CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
     CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(d_v, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
     CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(d_o, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+
+    // kv state tensor maps
+    CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, ATTN_B*ATTN_H*(D_QK*D_QK));
+    CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, ATTN_B*ATTN_H*(D_QK));
+    CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a1, ATTN_B*ATTN_H*(1));
 
     cudaDeviceSynchronize();
     CudaCheckError();
@@ -143,14 +153,14 @@ int main(int argc, char **argv) {
     CudaCheckError();
     std::cout << "Warmup!\n";
     for(int i = 0; i < 1; i++) {
-        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d); ;
+        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, add_scale, output_state, tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d); 
     }
     cudaDeviceSynchronize();
     CudaCheckError();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d); 
+        based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, add_scale, output_state, tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -170,7 +180,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+    for(int i = 0; i < 8192; i++) { 
         float diff = o[i % TOTAL_UNIQUE_ELEMENTS_VO] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
         // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
         if(i < TOTAL_UNIQUE_ELEMENTS_VO) {
@@ -182,6 +192,7 @@ int main(int argc, char **argv) {
             good = false;
         }
     }
+    printf("Checked 8192 of %d total elements\n", TOTAL_ELEMENTS_VO);
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
 
@@ -202,6 +213,9 @@ int main(int argc, char **argv) {
     cudaFree(tma_v_d);
     cudaFree(tma_v_3_d);
     cudaFree(tma_o_d);
+    cudaFree(tma_kv_a0_d);
+    cudaFree(tma_kv_a1_d);
+    cudaFree(tma_kv_a2_d);
 
     delete[] q, k, v, o, o_ref;
     delete[] q_bf, k_bf, v_bf, o_bf;

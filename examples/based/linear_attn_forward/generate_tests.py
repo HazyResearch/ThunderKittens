@@ -2,6 +2,7 @@ import torch
 from tqdm import trange
 import numpy as np
 import sys
+import math
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
@@ -10,6 +11,8 @@ H = 1
 N = 4096
 D = 16
 DV = 64
+
+add_scale = True
 
 TESTNAME = sys.argv[1]
 
@@ -42,19 +45,20 @@ def pytorch_test(Q, K, V, TESTNAME='all'):
     T0  = V.cumsum(dim=2).to(torch.bfloat16).to(torch.float32)
 
     A2 = torch.einsum("bhnd,bhnf,bhne->bhndef",K,V,K).cumsum(dim=2)
-    last_kv_state = A2[:, :, -1]
     
     o = 0
     if 't0' in TESTNAME or 'all' in TESTNAME:
         o += T0
         print('Adding T0')
     if 't1' in TESTNAME or 'all' in TESTNAME:
-        o += T1
+        if add_scale: o += T1 / (math.sqrt(16))
+        else: o += T1
         print('Adding T1')
     if 't2' in TESTNAME or 'all' in TESTNAME:
-        o += T2/2
+        if add_scale:  o += T2/(2*16)
+        else:  o += T2/2
         print('Adding T2/2')
-    return o.to(torch.bfloat16), last_kv_state.to(torch.bfloat16)
+    return o.to(torch.bfloat16)
 
 o, kv_state = pytorch_test(q, k, v, TESTNAME)
 

@@ -157,9 +157,10 @@ class TaylorExp(nn.Module):
     """
     def __init__(self, input_dim: int, head_dim_idx: int = -1, **kwargs: any):
         super().__init__()
-        self.r2  = 1 #math.sqrt(2)
-        self.rd  = 2 #math.sqrt(input_dim)
-        self.rrd = 1 #math.sqrt(self.rd)
+        import math
+        self.r2  = math.sqrt(2)
+        self.rd  = math.sqrt(input_dim)
+        self.rrd = math.sqrt(self.rd)
         self.head_dim_idx = head_dim_idx
         
     def forward(self, x: torch.Tensor):
@@ -170,6 +171,8 @@ class TaylorExp(nn.Module):
 
 
 def pytorch_test(dt, Q, K, V, d, verbose=True, **kwargs):
+    b, h, n, D = Q.shape
+    import math
     try:
         torch.cuda.synchronize()
         t0 = time.time()
@@ -180,7 +183,7 @@ def pytorch_test(dt, Q, K, V, d, verbose=True, **kwargs):
         T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
         T1 = torch.einsum("bhnm,bhme->bhne", T1a, V)  
         T0  = V.cumsum(dim=2)
-        y  = T0 + T1 + T2/2
+        y  = T0 + T1/math.sqrt(D) + T2/(2*D)
 
         torch.cuda.synchronize()
         t1 = time.time()
@@ -278,7 +281,7 @@ def fla_fused_chunk_test(dt, q, k, v, d, verbose=True, **kwargs):
         torch.cuda.synchronize()
         t0 = time.time()
 
-        y = fused_chunk_based(q, k, v, False, False)
+        y = fused_chunk_based(q, k, v, use_scale=True, use_normalize=False)
 
         torch.cuda.synchronize()
         t1 = time.time()
@@ -382,27 +385,6 @@ def linear_attn_forward_benchmark_seqlen(dt, methods, device, verbose=False, use
     plt.savefig(f'results/{device}-lin-attn-fwd_benchmark_seqlen-B{b}.pdf', format='pdf', bbox_inches='tight') 
 
 
-def linear_attn_correct(dt, device):
-    b = 4
-    n = 1024
-    h = 16
-    d = 16
-    dv = 64
-    print(f"{b=}, {n=}, {d=}, {h=}")
-
-    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
-
-    pytorch_test_result = pytorch_test(dt, Q, K, V, d)
-    pytorch_test_v2_result = pytorch_test_v2(dt, Q, K, V, d) 
-    based_kernel_test_result = based_kernel_test(dt, Q, K, V, d, device=device)
-
-    print(f"Note we find numerical differences upon inspecting the tensor outputs:")
-    __eq("PyTorch v1 - PyTorch v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
-    __eq("PyTorch - Based TK", pytorch_test_v2_result[0], based_kernel_test_result[0], debug=False)
-
-
 ############## Efficiency Measurements #############
 
 def get_flops(batch, seqlen, headdim, nheads, featuredim):
@@ -440,9 +422,9 @@ def measure_efficiency(dt, methods, device, verbose=False, use_ones=False, profi
     dv = 64
     print(f"{b=}, {n=}, {d=}, {h=}")
 
-    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')#/d
+    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')#/d
+    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')#/dv
 
     lst = [fast_transformer_test(dt, Q, K, V, d, device=device) for _ in range(num_iters)]
     lst_time = [x[-1] for x in lst]
@@ -489,8 +471,3 @@ if __name__ == "__main__":
 
     linear_attn_forward_benchmark_batch(torch.bfloat16, methods, args.device, verbose=False)
     linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, args.device, verbose=False)
-
-    print("Correctness test...")
-    linear_attn_correct(torch.bfloat16, args.device)
-
-
