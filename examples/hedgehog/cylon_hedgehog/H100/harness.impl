@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 4
-#define ATTN_H 32
+#define ATTN_B 128
+#define ATTN_H 1
 #define ATTN_N (4096)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -33,19 +33,23 @@ int main(int argc, char **argv) {
     std::cout << "Entered main!" << std::endl;
 
     // create dummy variables that are the right size
-    constexpr int QK_MAP = ATTN_D*ATTN_D / 2;
+    constexpr int TOTAL_ELEMENTS_QK_MAP = ATTN_H * ATTN_D*ATTN_D / 2;
     constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
     constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
     constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*(ATTN_F*ATTN_D);
     constexpr int TOTAL_ELEMENTS_K  = ATTN_B*ATTN_H*(1     *ATTN_F);
 
-    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_F*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_K  = 1 * ATTN_F;
+    constexpr LOAD_HEADS = 4;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK_MAP = LOAD_HEADS * ATTN_D*ATTN_D / 2;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = LOAD_HEADS * ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = LOAD_HEADS * ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = LOAD_HEADS * ATTN_F*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_K  = LOAD_HEADS * * ATTN_F;
 
-    float *qmap         = new float[QK_MAP];
-    float *kmap         = new float[QK_MAP];
+    float *alphas       = new float[ATTN_H];
+    float *betas        = new float[ATTN_H];
+    float *qmap         = new float[TOTAL_UNIQUE_ELEMENTS_QK_MAP];
+    float *kmap         = new float[TOTAL_UNIQUE_ELEMENTS_QK_MAP];
     float *q            = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *k            = new float[TOTAL_UNIQUE_ELEMENTS_QK];
     float *v            = new float[TOTAL_UNIQUE_ELEMENTS_VO];
@@ -53,8 +57,8 @@ int main(int argc, char **argv) {
     // float *kv_state_ref = new float[TOTAL_UNIQUE_ELEMENTS_KV];
     // float *k_state_ref  = new float[TOTAL_UNIQUE_ELEMENTS_K];
 
-    bf16 *qmap_bf     = new bf16[QK_MAP];
-    bf16 *kmap_bf     = new bf16[QK_MAP];
+    bf16 *qmap_bf     = new bf16[TOTAL_ELEMENTS_QK_MAP];
+    bf16 *kmap_bf     = new bf16[TOTAL_ELEMENTS_QK_MAP];
     bf16 *q_bf        = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *k_bf        = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *v_bf        = new bf16[TOTAL_ELEMENTS_VO];
@@ -71,10 +75,16 @@ int main(int argc, char **argv) {
 
         std::cout << "Starting to enter!" << std::endl;
 
-        for(int i = 0; i < QK_MAP; i++) infile >> qmap[i];
-        std::cout << "Finished loading " << QK_MAP << "elements of QMAP" << std::endl;
-        for(int i = 0; i < QK_MAP; i++) infile >> kmap[i];
-        std::cout << "Finished loading " << QK_MAP << "elements of KMAP" << std::endl;
+        for(int i = 0; i < LOAD_HEADS; i++) infile >> alphas[i];
+        std::cout << "Finished loading " << LOAD_HEADS << "elements of alphas" << std::endl;
+        for(int i = 0; i < LOAD_HEADS; i++) infile >> betas[i];
+        std::cout << "Finished loading " << LOAD_HEADS << "elements of betas" << std::endl;
+
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK_MAP; i++) infile >> qmap[i];
+        std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_QK_MAP << "elements of QMAP" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK_MAP; i++) infile >> kmap[i];
+        std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_QK_MAP << "elements of KMAP" << std::endl;
+
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK; i++) infile >> q[i];
         std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_QK << " elements of Q" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK; i++) infile >> k[i];
@@ -83,6 +93,7 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_VO << " elements of V" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) infile >> o_ref[i];
         std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_VO << " elements of O_REF" << std::endl;
+
         // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_KV; i++) infile >> kv_state_ref[i];
         // std::cout << "Finished loading " << TOTAL_UNIQUE_ELEMENTS_KV << " elements of KV_STATE_REF" << std::endl;
         // for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_K; i++) infile >> k_state_ref[i];
@@ -99,9 +110,13 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
     }
-    for(int i = 0; i < QK_MAP; i++) {
-        qmap_bf[i] = __float2bfloat16(qmap[i]);
-        kmap_bf[i] = __float2bfloat16(kmap[i]);
+    for(int i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) {
+        qmap_bf[i] = __float2bfloat16(qmap[i % TOTAL_UNIQUE_ELEMENTS_QK_MAP]);
+        kmap_bf[i] = __float2bfloat16(kmap[i % TOTAL_UNIQUE_ELEMENTS_QK_MAP]);
+    }
+    for(int i = LOAD_HEADS; i < ATTN_H; i++) {
+        alphas[i] = alphas[i % LOAD_HEADS];
+        betas[i] = betas[i % LOAD_HEADS];
     }
 
     // outputs, zeroed
@@ -116,8 +131,11 @@ int main(int argc, char **argv) {
     // }
 
     bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_state, *d_k_state, *d_qmap, *d_kmap;
-    cudaMalloc(&d_qmap,     QK_MAP * sizeof(bf16));
-    cudaMalloc(&d_kmap,     QK_MAP * sizeof(bf16));
+    float *alphas_d, *betas_d;
+    cudaMalloc(&alphas_d, ATTN_H * sizeof(float));
+    cudaMalloc(&betas_d, ATTN_H * sizeof(float));
+    cudaMalloc(&d_qmap,     TOTAL_ELEMENTS_QK_MAP * sizeof(bf16));
+    cudaMalloc(&d_kmap,     TOTAL_ELEMENTS_QK_MAP * sizeof(bf16));
     cudaMalloc(&d_q,        TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k,        TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v,        TOTAL_ELEMENTS_VO * sizeof(bf16));
@@ -125,8 +143,10 @@ int main(int argc, char **argv) {
     // cudaMalloc(&d_kv_state, TOTAL_ELEMENTS_KV * sizeof(bf16));
     // cudaMalloc(&d_k_state,  TOTAL_ELEMENTS_K  * sizeof(bf16));
 
-    cudaMemcpy(d_qmap, qmap_bf, QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_kmap, kmap_bf, QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(alphas_d, alphas, LOAD_HEADS * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(betas_d, betas, LOAD_HEADS * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_qmap, qmap_bf, TOTAL_ELEMENTS_QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kmap, kmap_bf, TOTAL_ELEMENTS_QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -160,7 +180,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel with " << ATTN_B*ATTN_H << " blocks and " << NUM_THREADS << " threads\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        hedgehog_linear_attention_smd<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_qmap_d, tma_kmap_d, 1.4, 0.6); 
+        hedgehog_linear_attention_smd<<<dim3(ATTN_H,ATTN_B),NUM_THREADS,mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_qmap_d, tma_kmap_d, alphas_d, betas_d); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -197,6 +217,11 @@ int main(int argc, char **argv) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
+            if(i % 64 == 63) {
+                o_ref_file << std::endl;
+                o_file << std::endl;
+                diff_file << std::endl;
+            }
         }
         if(abs(diff) > 0.05 || isnan(diff)) {
             good = false;

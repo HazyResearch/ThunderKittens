@@ -55,10 +55,14 @@ __global__ __launch_bounds__(NUM_THREADS, 1)
 void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, 
                                                 CUtensorMap* tma_o,
                                                 const CUtensorMap* tma_qmap, const CUtensorMap* tma_kmap,
-                                                float alpha, float beta)  { // alpha is for linear component, beta is for sliding window component
+                                                float *alphas, float *betas)  { // alpha is for linear component, beta is for sliding window component
 
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
+
+    const int batch_id = blockIdx.y;
+    const int head_id = blockIdx.x;
+    const int batch_head_id = batch_id*gridDim.x + head_id;
 
     q_tile (&q_smem) [2] = al.allocate<q_tile, 2>(); // 32k, (tic/toc)*16k
     k_tile (&k_smem) [3] = al.allocate<k_tile, 3>(); // 48k, (3-ring)*(64x128)
@@ -75,6 +79,8 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
 
     st_bf<4, 4, wgmma_interleave_l> (*k_scratch_smem)     = reinterpret_cast<st_bf<4, 4, wgmma_interleave_l>*>(&kv_smem[0].data[0]);
 
+    float alpha = alphas[head_id];
+    float beta = betas[head_id];
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid >= 4;
@@ -95,21 +101,23 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             size_bytes<typeof(qf_map)> +
             size_bytes<typeof(kf_map)>
         );
-        int tile_idx = (blockIdx.x * blocks) + 0;
+        int tile_idx = (batch_head_id * blocks) + 0;
         // first thing we need to do is load the QK map
-        tma::load_async(qf_map, tma_qmap, qkv_barrier, 0);
-        tma::load_async(kf_map, tma_kmap, qkv_barrier, 0);
+        tma::load_async(qf_map, tma_qmap, qkv_barrier, head_id); // need to load the right head
+        tma::load_async(kf_map, tma_kmap, qkv_barrier, head_id);
         // now we also load the first data we need
         tma::load_async(q_smem[tic],       tma_q, qkv_barrier, tile_idx);
         tma::load_async(k_smem[ring_id+1], tma_k, qkv_barrier, tile_idx);
         tma::load_async(v_smem[ring_id+1], tma_v, qkv_barrier, tile_idx);
     }
-    __syncthreads();
 
     rt_fl<1, 8> local_kv; // this is going to be split across the two warpgroups involved.
 
     zero(local_kv);
+    warpgroup::zero(v_smem[ring_id]);
     warpgroup::zero(cumsum_k_smem[warpgroupid]);
+
+    __syncthreads();
 
     for (int block = 0; block < blocks; block++, tic^=1, toc^=1, ring_id=(ring_id+1)%3) {
 
@@ -123,7 +131,7 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
                 size_bytes<typeof(v_smem[0])>
             );
 
-            int tile_idx = (blockIdx.x * blocks) + block + 1;
+            int tile_idx = (batch_head_id * blocks) + block + 1;
             tma::load_async(q_smem[toc],           tma_q, qkv_barrier, tile_idx); 
             tma::load_async(k_smem[(ring_id+2)%3], tma_k, qkv_barrier, tile_idx); 
             tma::load_async(v_smem[(ring_id+2)%3], tma_v, qkv_barrier, tile_idx);
@@ -136,58 +144,59 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
         rt_fl<1, 4>::col_vec sliding_norm_vec;
         zero(sliding_o);
         zero(sliding_norm_vec);
-        add(sliding_norm_vec, sliding_norm_vec, 1e-6); // TODO kill
-        // if(warpgroupid == 0) {
+        if(warpgroupid == 0) {
 
-        //     rt_fl<1, 4> att_block[2];
-        //     rt_bf<1, 4> att_block_bf[2];
-        //     rt_fl<1, 4>::col_vec max_vec;
+            // ******* sliding window attn ******* // 
 
-        //     neg_infty(max_vec); // zero registers for the Q chunk
+            rt_fl<1, 4> att_block[2];
+            rt_bf<1, 4> att_block_bf[2];
+            rt_fl<1, 4>::col_vec max_vec;
 
-        //     for(int subtile = 0; subtile < 2; subtile++) {
-        //         if (block + subtile >= 1) { // ensure tile has been loaded by now.
-        //             warpgroup::mma_fence(att_block[subtile]);
-        //             warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
-        //             warpgroup::mma_commit_group();
-        //         }
-        //         else {
-        //             neg_infty(att_block[subtile]); // initial blocks must be zero
-        //         }
-        //     }
-        //     warpgroup::mma_async_wait();
-        //     // make last block causal
-        //     #pragma unroll
-        //     for(int j = 0; j < 4; j++) {
-        //         auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block[1].tiles[0][j]);
-        //         if (j>warpid) neg_infty(attn_subtile);
-        //         else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
-        //     }
-        //     // now do the softmax. first we subtract max for numerical stability. then exp.
-        //     #pragma unroll
-        //     for(int subtile = 0; subtile < 2; subtile++) {
-        //         mul(att_block[subtile], att_block[subtile], 0.125); // temperature adjustment.
-        //         row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
-        //     }
-        //     #pragma unroll
-        //     for(int subtile = 0; subtile < 2; subtile++) {
-        //         sub_row(att_block[subtile], att_block[subtile], max_vec);
-        //         exp(att_block[subtile], att_block[subtile]);
-        //         mul(att_block[subtile], att_block[subtile], beta);
-        //     }
-        //     // now we sum so that we can divide (normalize) later
-        //     #pragma unroll
-        //     for(int subtile = 0; subtile < 2; subtile++) {
-        //         row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
-        //         copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
-        //     }
-        //     for(int subtile = 0; subtile < 2; subtile++) {
-        //         warpgroup::mma_fence(sliding_o);
-        //         warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
-        //         warpgroup::mma_commit_group();
-        //     }
-        //     warpgroup::mma_async_wait();
-        // }
+            neg_infty(max_vec); // zero registers for the Q chunk
+
+            for(int subtile = 0; subtile < 2; subtile++) {
+                if (block + subtile >= 1) { // ensure tile has been loaded by now.
+                    warpgroup::mma_fence(att_block[subtile]);
+                    warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
+                    warpgroup::mma_commit_group();
+                }
+                else {
+                    neg_infty(att_block[subtile]); // initial blocks must be zero
+                }
+            }
+            warpgroup::mma_async_wait();
+            // make last block causal
+            #pragma unroll
+            for(int j = 0; j < 4; j++) {
+                auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block[1].tiles[0][j]);
+                if (j>warpid) neg_infty(attn_subtile);
+                else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
+            }
+            // now do the softmax. first we subtract max for numerical stability. then exp.
+            #pragma unroll
+            for(int subtile = 0; subtile < 2; subtile++) {
+                mul(att_block[subtile], att_block[subtile], 0.08838834764); // temperature adjustment.
+                row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
+            }
+            #pragma unroll
+            for(int subtile = 0; subtile < 2; subtile++) {
+                sub_row(att_block[subtile], att_block[subtile], max_vec);
+                exp(att_block[subtile], att_block[subtile]);
+                mul(att_block[subtile], att_block[subtile], beta);
+            }
+            // now we sum so that we can divide (normalize) later
+            #pragma unroll
+            for(int subtile = 0; subtile < 2; subtile++) {
+                row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
+                copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
+            }
+            for(int subtile = 0; subtile < 2; subtile++) {
+                warpgroup::mma_fence(sliding_o);
+                warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
+                warpgroup::mma_commit_group();
+            }
+            warpgroup::mma_async_wait();
+        }
         __syncthreads();
 
         rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
@@ -252,7 +261,7 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
             __syncthreads();
             warpgroup::mma_fence(local_kv);
-            warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[tic]);
+            warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
 
@@ -288,7 +297,7 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
         // }
         // __syncthreads();
         if(warpid == 0) {
-            tma::store_async(tma_o, o_smem, blockIdx.x*blocks + block);
+            tma::store_async(tma_o, o_smem, batch_head_id*blocks + block);
             tma::store_commit_group();
         }
         tma::store_async_wait();

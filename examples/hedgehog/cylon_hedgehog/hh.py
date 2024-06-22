@@ -17,6 +17,9 @@ N = int(sys.argv[1])
 
 testname = 'randn' if len(sys.argv) < 3 else sys.argv[2]
 
+alphas = torch.rand((H,), dtype=torch.bfloat16, device='cuda')
+betas = torch.rand((H,), dtype=torch.bfloat16, device='cuda')
+
 torch.random.manual_seed(32)
 if testname == 'randn':
     q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
@@ -81,20 +84,21 @@ def pytorch_softmax_gt(x, map_mat, label=None):
     
     return x
 
-generator_mat = torch.block_diag(*[torch.ones((64,64), device='cuda')]*64) # 4096 x 4096 should be big enough for most porpoises
+generator_mat = torch.block_diag(*[torch.ones((64,64), device='cuda')]*128) # 4096 x 4096 should be big enough for most porpoises
 generator_mat += torch.roll(generator_mat, -64, -1) # this adds the terracing
-lin_mask = torch.tril(1-generator_mat)
-exp_mask = torch.tril(generator_mat)
-if False: # if you want to debug / visualize these masks
+lin_mask = torch.tril(1-generator_mat).reshape((1,1,8192,8192))
+exp_mask = torch.tril(generator_mat).reshape((1,1,8192,8192))
+if True: # if you want to debug / visualize these masks
     with open('lin_mask.txt', 'w') as f:
         for row in lin_mask[:384]:
             f.write(' '.join(map(lambda k: '#' if k else ',', row[:384].tolist())) + '\n')
     with open('exp_mask.txt', 'w') as f:
         for row in exp_mask[:384]:
             f.write(' '.join(map(lambda k: '#' if k else ',', row[:384].tolist())) + '\n')
-exp_mask = 100*exp_mask - 100 # we actually want to effectively subtract infinity instead with this mask, since it should happen pre-exp
+exp_mask = 10000*exp_mask - 10000 # we actually want to effectively subtract infinity instead with this mask, since it should happen pre-exp
+print(exp_mask[0])
 
-def pytorch_test(Q, K, V, Qmap, Kmap, alpha=1.4, beta=0.6):
+def pytorch_test(Q, K, V, Qmap, Kmap, alphas, betas):
     
     Qs = pytorch_softmax_gt(Q, Qmap)
     Ks = pytorch_softmax_gt(K, Kmap)
@@ -106,22 +110,23 @@ def pytorch_test(Q, K, V, Qmap, Kmap, alpha=1.4, beta=0.6):
     a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
     a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
     # mask
-    a_lin *= lin_mask[:a_lin.shape[2], :a_lin.shape[3]] * alpha # zero out unwanted entries
-    a_exp += exp_mask[:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
-    a_exp -= a_exp.max(dim=-1, keepdim=True).values
-    a_exp = torch.exp(a_exp * 0.125) * beta
+    a_lin *= lin_mask[0,0,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # zero out unwanted entries
+    print(a_exp.shape)
+    a_exp += exp_mask[0,0,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
+    a_exp -= a_exp.amax(dim=-1, keepdim=True)
+    a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
     with open('a_exp.txt', 'w') as f:
         for row in a_exp[0,0,0:512]:
-            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:512].tolist())) + '\n')
+            f.write(' '.join(map(lambda k: f"{k:7.4f}" if round(k,4)!=0 else '-'*7, row[:512].tolist())) + '\n')
     with open('a_lin.txt', 'w') as f:
         for row in a_lin[0,0,0:512]:
-            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:512].tolist())) + '\n')
+            f.write(' '.join(map(lambda k: f"{k:7.4f}" if round(k,4)!=0 else '-'*7, row[:512].tolist())) + '\n')
 
-    a = a_lin # TODO a_exp + a_lin
+    a = a_exp + a_lin
     a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
     with open('a.txt', 'w') as f:
         for row in a[0,0,0:256]:
-            f.write(' '.join(map(lambda k: f"{k:8.4f}", row[:256].tolist())) + '\n')
+            f.write(' '.join(map(lambda k: f"{k:7.4f}" if round(k,4)!=0 else '-'*7, row[:256].tolist())) + '\n')
     
     out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
     
@@ -137,7 +142,7 @@ q = F.pad(q, (0, 0, 0, N - q.size(2)), value=0)
 k = F.pad(k, (0, 0, 0, N - k.size(2)), value=0)
 v = F.pad(v, (0, 0, 0, N - v.size(2)), value=0)
 
-o, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap)
+o, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
 
 print(o[:,:,:,:5])
 
@@ -168,6 +173,8 @@ print(f'k_state: {k_state.shape} {k_state.dtype}')
 
 print("-" * 80)
 with open(f'{testname}_{N}.txt', 'w') as f:
+    alpha = alphas.to(torch.float32).flatten().cpu().numpy()
+    betas = betas.to(torch.float32).flatten().cpu().numpy()
     qmap = qmap.to(torch.float32).flatten().cpu().numpy()
     kmap = kmap.to(torch.float32).flatten().cpu().numpy()
     qf = q.to(torch.float32).flatten().cpu().numpy()
@@ -176,9 +183,17 @@ with open(f'{testname}_{N}.txt', 'w') as f:
     of = o.to(torch.float32).flatten().cpu().numpy()
     # kv = kv_state.to(torch.float32).flatten().cpu().numpy()
     # ksf = k_state.to(torch.float32).flatten().cpu().numpy()
-
-    print('ALERT: ALPHA AND BETA ARE NOT 1 IN THIS DEMO')
     
+    print('ALPHAS', alphas.shape, H)
+    for i in trange(H):
+        f.write(repr(alphas[i]))
+        f.write(' ')
+    f.write('\n')
+    print('BETAS', betas.shape, H)
+    for i in trange(H):
+        f.write(repr(betas[i]))
+        f.write(' ')
+    f.write('\n')
     print('QMAP', qmap.shape, D_QK*64)
     for i in trange(D_QK*64):
         f.write(repr(qmap[i]))
