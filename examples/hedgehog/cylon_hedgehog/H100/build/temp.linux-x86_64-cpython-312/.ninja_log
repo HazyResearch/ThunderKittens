@@ -1,4 +1,0 @@
-# ninja log v5
-1	17567	1719454857196557730	/home/bfs/ThunderKittens/examples/hedgehog/cylon_hedgehog/H100/build/temp.linux-x86_64-cpython-312/hh_fused_frontend.o	2ac4f7ad21041c4b
-28	55892	1719455432393168604	/home/bfs/ThunderKittens/examples/hedgehog/cylon_hedgehog/H100/build/temp.linux-x86_64-cpython-312/hh_fused.o	73ad10a1667cadc
-553	61573	1719455839499461731	/home/bfs/ThunderKittens/examples/hedgehog/cylon_hedgehog/H100/build/temp.linux-x86_64-cpython-312/hh_fused.o	73ad10a1667cadc
