@@ -8,7 +8,7 @@ import torch.nn.functional as F
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
-H = 1
+H = 4
 D_QK = 128
 D_VO = 128
 
@@ -23,18 +23,18 @@ betas = torch.rand((H,), dtype=torch.bfloat16, device='cuda')
 
 torch.random.manual_seed(32)
 if testname == 'randn':
-    q = (torch.randn((B, 1, N, D_QK), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1))
-    k = (torch.randn((B, 1, N, D_QK), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1))
-    v = (torch.randn((B, 1, N, D_VO), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1)) / 5
-    qmap = (torch.randn((1, D_QK, 64), dtype=torch.bfloat16, device='cuda')).repeat((H,1,1))
-    kmap = (torch.randn((1, D_QK, 64), dtype=torch.bfloat16, device='cuda')).repeat((H,1,1))
-    alphas = torch.rand((1,), dtype=torch.bfloat16, device='cuda').repeat((H,))*30
-    betas = torch.rand((1,), dtype=torch.bfloat16, device='cuda').repeat((H,))
-    # q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-    # k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-    # v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
-    # qmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
-    # kmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
+    # q = (torch.randn((B, 1, N, D_QK), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1))
+    # k = (torch.randn((B, 1, N, D_QK), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1))
+    # v = (torch.randn((B, 1, N, D_VO), dtype=torch.bfloat16, device='cuda')).repeat((1,H,1,1)) / 5
+    # qmap = (torch.randn((1, D_QK, 64), dtype=torch.bfloat16, device='cuda')).repeat((H,1,1))
+    # kmap = (torch.randn((1, D_QK, 64), dtype=torch.bfloat16, device='cuda')).repeat((H,1,1))
+    # alphas = torch.rand((1,), dtype=torch.bfloat16, device='cuda').repeat((H,))*30
+    # betas = torch.rand((1,), dtype=torch.bfloat16, device='cuda').repeat((H,))
+    q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
+    qmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
+    kmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
 elif testname == 'ones':
     q = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
     k = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
@@ -59,7 +59,7 @@ elif testname == 'v_or':
 elif testname == 'dbg':
     q = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
     k = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-    v = (torch.ones((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
+    v = (torch.ones((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 10
     qmap = (torch.eye(64, dtype=torch.bfloat16, device='cuda')).repeat((H,2,1))
     kmap = (torch.eye(64, dtype=torch.bfloat16, device='cuda')).repeat((H,2,1))
 else:

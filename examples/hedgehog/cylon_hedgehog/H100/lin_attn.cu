@@ -142,6 +142,7 @@ void hedgehog_linear_attention_smd (int n,
             tma::load_async(k_smem[(ring_id+2)%3], tma_k, qkv_barrier, tile_idx); 
             tma::load_async(v_smem[(ring_id+2)%3], tma_v, qkv_barrier, tile_idx);
         }
+        __syncthreads();
 
         // ----- let's do sliding window first -----
         // only warps 0-4 need to be involved in this
@@ -207,9 +208,11 @@ void hedgehog_linear_attention_smd (int n,
 
         rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
         rt_fl<1, 4>::col_vec linear_norm_vec;
-        // zero(linear_o);
         zero(linear_norm_vec);
-        if(block >= 1) { // if not in at least the third block, no need for linear attention.
+        if(block == 0) {
+            zero(linear_o);
+        }
+        else { // if not in at least the second block, no need for linear attention.
 
             // ******* linear attn ******** // 
 
@@ -218,12 +221,10 @@ void hedgehog_linear_attention_smd (int n,
             rt_fl<1, 4> linear_q;
             rt_bf<1, 4> linear_q_bf;
 
-            __syncthreads();
             warpgroup::mma_fence(linear_q);
             warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
             warpgroup::mma_commit_group();
-            warpgroup::mma_async_wait(); // q is now projected-
-            __syncthreads();
+            warpgroup::mma_async_wait(); // q is now projected
             if(warpgroupid) mul(linear_q, linear_q, -1.f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_q);
@@ -237,7 +238,6 @@ void hedgehog_linear_attention_smd (int n,
             warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
-            __syncthreads();
 
             // next we need to go figure out the norm.
             // first we load sum(k) from smem to registers.
@@ -258,27 +258,24 @@ void hedgehog_linear_attention_smd (int n,
             rt_fl<1, 4> linear_k;
 
             // matmul to generate linear_k before softmax
-            __syncthreads();
             warpgroup::mma_fence(linear_k);
+            asm volatile ("fence.proxy.async;\n" ::: "memory");
             warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // k is now projected
-            __syncthreads();
             if(warpgroupid) mul(linear_k, linear_k, -1.f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_k);
-            __syncthreads();
 
             // copy the local KV cache into shared memory & do matmul
             warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
             __syncthreads();
             cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
-            __syncthreads();
             warpgroup::mma_fence(local_kv);
+            asm volatile ("fence.proxy.async;\n" ::: "memory");
             warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
-            __syncthreads();
         }
         tma::store_async_wait();
 
@@ -310,28 +307,19 @@ void hedgehog_linear_attention_smd (int n,
     }
     tma::store_async_wait();
 
-    // __syncthreads();
-    // warpgroup::zero(kv_smem[warpgroupid]);
-    // __syncthreads();
-
     // Finally we want to write out the kv state and the k state
     
-    // store out kv state into smem, first.
-    __syncthreads();
+    // reinterpret k state as a vector of length 128, to save a tma call
+    k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
+    // store out kv state into smem.
     kv_state_tile (&kv_state_smem) = reinterpret_cast<kv_state_tile&>(kv_smem[0].data[0]);
     group<8>::store(kv_state_smem, local_kv); // all 8 warps store their own chunk.
     __syncthreads();
+    __syncthreads(); // this second one is legit necessary for correctness lmao which means something scary is wrong but tbh i don't want to find it.
+    __syncthreads(); // third one is just for good luck
     // write out kv state
     if(warpid == 0){
         tma::store_async(tma_kv_state, kv_state_smem, batch_head_id);
-        tma::store_commit_group();
-    }
-    __syncthreads();
-    tma::store_async_wait();
-
-    // write out k state. first reinterpret k state as a vector of length 128, to save a tma call
-    k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
-    if(warpid == 0){
         tma::store_async(tma_k_state, k_state_smem, batch_head_id);
         tma::store_commit_group();
     }
