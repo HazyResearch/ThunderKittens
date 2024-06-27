@@ -8,7 +8,7 @@ import torch.nn.functional as F
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
-H = 4
+H = 1
 D_QK = 128
 D_VO = 128
 
@@ -18,8 +18,8 @@ assert(N%64==0)
 
 testname = 'randn' if len(sys.argv) < 3 else sys.argv[2]
 
-alphas = torch.rand((H,), dtype=torch.bfloat16, device='cuda')*3
-betas = torch.rand((H,), dtype=torch.bfloat16, device='cuda')
+alphas = torch.rand((H,), dtype=torch.float32, device='cuda')*3
+betas = torch.rand((H,), dtype=torch.float32, device='cuda')
 
 torch.random.manual_seed(32)
 if testname == 'randn':
@@ -145,7 +145,7 @@ def pytorch_test(Q, K, V, Qmap, Kmap, alphas, betas):
     out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
     
     kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).detach().to(torch.bfloat16)
-    k_state  = Ks[:,:,:-64,:].sum(dim=-2, keepdim=True).detach().to(torch.bfloat16)
+    k_state  = Ks[:,:,:-64,:].sum(dim=-2).detach().to(torch.bfloat16)
     
     return out, kv_state, k_state
 
@@ -157,6 +157,21 @@ k = F.pad(k, (0, 0, 0, N - k.size(2)), value=0)
 v = F.pad(v, (0, 0, 0, N - v.size(2)), value=0)
 
 o, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
+
+if True:
+    import sys
+    sys.path.append('H100/build/lib.linux-x86_64-cpython-312')
+    import hh_fused
+    print(dir(hh_fused))
+    o2 = torch.zeros_like(o)
+    kv_state2 = torch.zeros_like(kv_state)
+    k_state2 = torch.zeros_like(k_state)
+    print('q_shape', q.shape)
+    print(k_state2.shape)
+    hh_fused.hh_lin_tk_smd(q, k, v, o2, k_state2, kv_state2, qmap, kmap, alphas, betas)
+    print('Avg O diff:', torch.mean(torch.abs(o2.to(torch.float32) - o.to(torch.float32))))
+    print('Avg kv_state diff:', torch.mean(torch.abs(kv_state2.to(torch.float32) - kv_state.to(torch.float32))))
+    print('Avg k_state diff:', torch.mean(torch.abs(k_state2.to(torch.float32) - k_state.to(torch.float32))))
 
 print(o[:,:,:,:5])
 

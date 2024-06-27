@@ -1,13 +1,10 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
+#define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
 
 #ifdef TORCH_COMPILE
 #include "src/kittens.cuh"
 #else
 #include "../../../../src/kittens.cuh"
 #endif
-
-#include <cooperative_groups.h>
-#include <cuda/pipeline>
 
 #define NUM_WORKERS (8)
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -22,12 +19,12 @@ __device__ inline void cumulative_add(SV &dst, const ST &src) {
     static_assert(ST::cols == SV::length);
     int lane = threadIdx.x % 128;
     if(lane < ST::cols) {
-        float f = dst[lane];
+        float f = __bfloat162float(dst[lane]);
         // acc equal to the last row of dst
         for (auto i = 0; i < ST::rows; i++) {
             f += __bfloat162float(src[{i, lane}]);
         }
-        dst[lane] = f;
+        dst[lane] = __float2bfloat16(f);
     }
 }
 
@@ -61,7 +58,7 @@ void hedgehog_linear_attention_smd (int n,
                                     CUtensorMap* tma_o, // outputs of O state for each query
                                     CUtensorMap* tma_k_state, CUtensorMap* tma_kv_state, // global outputs of K state and KV state
                                     const CUtensorMap* tma_qmap, const CUtensorMap* tma_kmap,
-                                    float *alphas, float *betas)  { // alpha is for linear component, beta is for sliding window component. Array, per head.
+                                    const float *alphas, const float *betas)  { // alpha is for linear component, beta is for sliding window component. Array, per head.
 
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -331,82 +328,107 @@ void hedgehog_linear_attention_smd (int n,
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
-void hh_lin_tk_smd(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+void hh_lin_tk_smd(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o,
+    torch::Tensor k_state, torch::Tensor kv_state,
+    torch::Tensor q_map, torch::Tensor k_map,
+    torch::Tensor alphas, torch::Tensor betas
+) {
+    // get general parameters to check
+    TORCH_CHECK(q.dim() == 4, "q must have 4 dimensions (B,H,N,D)");
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N = q.size(2);
+    TORCH_CHECK(N>0 && N%64 == 0, "N must be a multiple of 64");
+    auto D = q.size(3);
+    TORCH_CHECK(D == 128, "D must be 128");
 
+    std::cout << "batch: " << batch << " heads: " << heads << " N: " << N << " D: " << D << std::endl;
+
+    // check K, V, O dimensions, too.
+    TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && v.size(2) == N && k.size(3) == D, "k must be (B,H,N,128)");
+    TORCH_CHECK(v.dim() == 4 && v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D, "v must be (B,H,N,128)");
+    TORCH_CHECK(o.dim() == 4 && o.size(0) == batch && o.size(1) == heads && o.size(2) == N && o.size(3) == D, "o must be (B,H,N,128)");
+
+    // Check the rest of Q,K,V,O attributes
     CHECK_INPUT(q); 
     CHECK_INPUT(k); 
     CHECK_INPUT(v); 
-    CHECK_INPUT(o); 
+    CHECK_INPUT(o);
+    TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
+    TORCH_CHECK(o.scalar_type() == torch::kBFloat16, "o must be bf16");
 
-    auto batch = q.size(0); 
-    auto heads = q.size(1); 
-    auto N  = q.size(2); 
+    // check k_state, kv_state inputs
+    CHECK_INPUT(k_state);
+    CHECK_INPUT(kv_state);
+    TORCH_CHECK(k_state.dim() == 3 && k_state.size(0) == batch && k_state.size(1) == heads && k_state.size(2) == 128, "k_state must be (B,H,128)");
+    TORCH_CHECK(kv_state.dim() == 4 && kv_state.size(0) == batch && kv_state.size(1) == heads && kv_state.size(2) == 128 && kv_state.size(3) == 128, "kv_state must be (B,H,128,128)");
+    TORCH_CHECK(k_state.scalar_type() == torch::kBFloat16, "k_state must be bf16");
+    TORCH_CHECK(kv_state.scalar_type() == torch::kBFloat16, "kv_state must be bf16");
 
-    // N must be >= 64 and a multiple of 64
-    TORCH_CHECK(N >= 64, "N must be >= 64");
-    TORCH_CHECK(N % 64 == 0, "N must be a multiple of 64");
+    // check q_map, k_map inputs
+    CHECK_INPUT(q_map);
+    CHECK_INPUT(k_map);
+    TORCH_CHECK(q_map.dim() == 3 && q_map.size(0) == heads && q_map.size(1) == 128 && q_map.size(2) == 64, "q_map must have Hx128x64 shape");
+    TORCH_CHECK(k_map.dim() == 3 && k_map.size(0) == heads && k_map.size(1) == 128 && k_map.size(2) == 64, "k_map must have Hx128x64 shape");
+    TORCH_CHECK(q_map.scalar_type() == torch::kBFloat16, "q_map must be bf16");
+    TORCH_CHECK(k_map.scalar_type() == torch::kBFloat16, "k_map must be bf16");
 
-    auto q_d  = q.size(3);
-    auto k_d  = k.size(3);
-    auto v_d  = v.size(3);
-    auto o_d  = o.size(3);
+    CHECK_INPUT(alphas);
+    CHECK_INPUT(betas);
+    TORCH_CHECK(alphas.dim() == 1 && alphas.size(0) == heads, "alphas must be of shape (H,)");
+    TORCH_CHECK(betas.dim() == 1 && betas.size(0) == heads, "betas must be of shape (H,)");
+    TORCH_CHECK(alphas.scalar_type() == torch::kFloat32, "alphas must be fp32");
+    TORCH_CHECK(betas.scalar_type() == torch::kFloat32, "betas must be fp32");
 
-    // all must be == 128
-    TORCH_CHECK(q_d == k_d, "q and k must have the same dimension");
-    TORCH_CHECK(q_d == v_d, "q and v must have the same dimension");
-    TORCH_CHECK(q_d == o_d, "q and o must have the same dimension");
-    TORCH_CHECK(q_d == 128, "q, k, v must have dimension 128");
-
-    // auto kv_d_1 = kv.size(2);
-    // auto kv_d_2 = kv.size(3);
-
-    // // kv must be 256x128
-    // TORCH_CHECK(kv_d_1 == 256, "kv must have dimension 256");
-    // TORCH_CHECK(kv_d_2 == 128, "kv must have dimension 128");
-
-    // // k must be 1 x 256
-    // TORCH_CHECK(ks.size(2) == 1, "ks must have sequence length 1");
-    // TORCH_CHECK(ks.size(3) == 256, "ks must have dimension 256");
-
-    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
-    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
-    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
-    // TORCH_CHECK(kv.scalar_type() == c10::ScalarType::BFloat16, "kv must be bf16");
-    // TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "ks must be bf16");
-    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
-
-    c10::BFloat16 *q_ptr = q.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
-    // c10::BFloat16 *kv_ptr = kv.data_ptr<c10::BFloat16>();
-    // c10::BFloat16 *ks_ptr = ks.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *q_ptr        = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr        = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr        = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr        = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_state_ptr  = k_state.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_state_ptr = kv_state.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *q_map_ptr    = q_map.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_map_ptr    = k_map.data_ptr<c10::BFloat16>();
+    float *alphas_ptr    = alphas.data_ptr<float>();
+    float *betas_ptr     = betas.data_ptr<float>();
 
     const bf16* d_q = reinterpret_cast<const bf16*>(q_ptr); 
     const bf16* d_k = reinterpret_cast<const bf16*>(k_ptr);  
     const bf16* d_v = reinterpret_cast<const bf16*>(v_ptr);  
-    // bf16* d_kv_state = reinterpret_cast<bf16*>(kv_ptr);  
-    // bf16* d_k_state  = reinterpret_cast<bf16*>(ks_ptr);
     bf16* d_o = reinterpret_cast<bf16*>(o_ptr);
+    bf16* d_kv_state = reinterpret_cast<bf16*>(kv_state_ptr);  
+    bf16* d_k_state  = reinterpret_cast<bf16*>(k_state_ptr);
+    const bf16* d_q_map = reinterpret_cast<const bf16*>(q_map_ptr);
+    const bf16* d_k_map = reinterpret_cast<const bf16*>(k_map_ptr);
+    const float* d_alphas = reinterpret_cast<const float*>(alphas_ptr);
+    const float* d_betas = reinterpret_cast<const float*>(betas_ptr);
 
-    CUtensorMap* tma_q_d  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>   (d_q,        (batch*heads*N/(16 * 4)),    128/(16 * 4) ); 
-    CUtensorMap* tma_k_d  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, kittens::ducks::st_layout::wgmma_interleave>>(d_k,        (batch*heads*N/(16 * 4)),    128/(16 * 4) );
-    CUtensorMap* tma_v_d  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, kittens::ducks::st_layout::wgmma_interleave>>(d_v,        (batch*heads*N/(16 * 4)),    128/(16 * 8) );
-    CUtensorMap* tma_o_d  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>>   (d_o,        (batch*heads*N/(16 * 4)),    128/(16 * 8) );
-    // CUtensorMap* tma_kv_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 8, kittens::ducks::st_layout::wgmma_swizzle>>   (d_kv_state, (batch*heads*256/(16 * 4)),  128/(16 * 8) );
-    // CUtensorMap* tma_ks_d = tma::allocate_and_create_tensor_map<row_vec<st_bf<4, 4*4>>>                                           (d_k_state,  (batch*heads*  1/(   1  )));  
+    CUtensorMap* tma_q_map_d     = tma::allocate_and_create_tensor_map<qk_map_tile>(d_q_map, heads); 
+    CUtensorMap* tma_k_map_d     = tma::allocate_and_create_tensor_map<qk_map_tile>(d_k_map, heads);
+    CUtensorMap* tma_q_d         = tma::allocate_and_create_tensor_map<q_tile>(d_q, batch*heads*N/q_tile::rows); 
+    CUtensorMap* tma_k_d         = tma::allocate_and_create_tensor_map<k_tile>(d_k, batch*heads*N/k_tile::rows);
+    CUtensorMap* tma_v_d         = tma::allocate_and_create_tensor_map<v_tile>(d_v, batch*heads*N/v_tile::rows);
+    CUtensorMap* tma_o_d         = tma::allocate_and_create_tensor_map<o_tile>(d_o, batch*heads*N/o_tile::rows);
+    CUtensorMap* tma_k_state_d   = tma::allocate_and_create_tensor_map<k_state_vec>(d_k_state, batch*heads); 
+    CUtensorMap* tma_kv_state_d  = tma::allocate_and_create_tensor_map<kv_state_tile>(d_kv_state, batch*heads);
 
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
-
+    constexpr unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
     cudaFuncSetAttribute(
         hedgehog_linear_attention_smd,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
-    dim3 grid(batch*heads, 1, 1);
-
-    hedgehog_linear_attention_smd<<<grid, 128, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d); 
+    hedgehog_linear_attention_smd<<<dim3(heads,batch), NUM_THREADS, mem_size>>>(
+        N,
+        tma_q_d, tma_k_d, tma_v_d,
+        tma_o_d,
+        tma_k_state_d, tma_kv_state_d,
+        tma_q_map_d, tma_k_map_d,
+        d_alphas, d_betas
+    ); 
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
