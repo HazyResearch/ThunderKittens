@@ -32,13 +32,13 @@ __device__ inline void cumulative_add(SV &dst, const ST &src) {
 }
 
 template<ducks::rt::all RT>
-__device__ inline void softmax_featuremap_inplace(RT &dst) {
+__device__ inline void softmax_featuremap_inplace(RT &tile) {
     col_vec<RT> max_vec, sum_vec;
-    row_max(max_vec, dst);
-    sub_row(dst, dst, max_vec); // now in range (-infty, 0) for numerical stability
-    exp(dst, dst);
-    row_sum(sum_vec, dst);
-    div_row(dst, dst, sum_vec);
+    row_max(max_vec, tile);
+    sub_row(tile, tile, max_vec); // now in range (-infty, 0) for numerical stability
+    exp(tile, tile);
+    row_sum(sum_vec, tile);
+    div_row(tile, tile, sum_vec);
 }
 
 #define ATTN_D 128
@@ -49,20 +49,29 @@ using k_tile = st_bf<4, 8, wgmma_swizzle_l>;
 using v_tile = st_bf<4, 8, wgmma_interleave_l>;
 using o_tile = st_bf<4, 8, wgmma_swizzle_l>;
 
+using kv_state_tile = st_bf<8, 8, naive_l>;
+using k_state_vec = sv_bf_8;
+
 using qk_map_tile = st_bf<8, 4, wgmma_interleave_l>;
 
+// should be launched with a grid of size (HEADS, BATCH) and blocks of 256 threads.
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, 
-                                                CUtensorMap* tma_o,
-                                                const CUtensorMap* tma_qmap, const CUtensorMap* tma_kmap,
-                                                float *alphas, float *betas)  { // alpha is for linear component, beta is for sliding window component
+void hedgehog_linear_attention_smd (int n, 
+                                    const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, // inputs
+                                    CUtensorMap* tma_o, // outputs of O state for each query
+                                    CUtensorMap* tma_k_state, CUtensorMap* tma_kv_state, // global outputs of K state and KV state
+                                    const CUtensorMap* tma_qmap, const CUtensorMap* tma_kmap,
+                                    float *alphas, float *betas)  { // alpha is for linear component, beta is for sliding window component. Array, per head.
 
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
     const int batch_id = blockIdx.y;
-    const int head_id = blockIdx.x;
+    const int head_id  = blockIdx.x;
     const int batch_head_id = batch_id*gridDim.x + head_id;
+    // if(threadIdx.x == 0) printf("head_id: %d, batch_id: %d, batch_head_id: %d\n", head_id, batch_id, batch_head_id);
+    float alpha = alphas[head_id];
+    float beta  = betas [head_id];
 
     q_tile (&q_smem) [2] = al.allocate<q_tile, 2>(); // 32k, (tic/toc)*16k
     k_tile (&k_smem) [3] = al.allocate<k_tile, 3>(); // 48k, (3-ring)*(64x128)
@@ -72,18 +81,15 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
     qk_map_tile (&qf_map) = al.allocate<qk_map_tile>(); // 16k, for fusing featuremap computation
     qk_map_tile (&kf_map) = al.allocate<qk_map_tile>(); // 16k, for fusing featuremap computation
 
-    st_bf<4, 8, wgmma_interleave_l> (&kv_smem)        [2] = al.allocate<st_bf<4, 8, wgmma_interleave_l>, 2>(); // 32k, 64x128 featurized 
+    st_bf<4, 8, wgmma_interleave_l> (&kv_smem) [2] = al.allocate<st_bf<4, 8, wgmma_interleave_l>, 2>(); // 32k, 64x128 featurized 
     
-    row_vec<st_bf<4,4>> (&cumsum_k_smem)              [2] = al.allocate<row_vec<st_bf<4,4>>, 2>(); // smol
-    col_vec<st_bf<4,4>> (&norm_exchange)              [2] = al.allocate<col_vec<st_bf<4,4>>, 2>(); // smol
+    row_vec<st_bf<4,4>> (&cumsum_k_smem)       [2] = al.allocate<row_vec<st_bf<4,4>>, 2>(); // smol
+    col_vec<st_bf<4,4>> (&norm_exchange)       [2] = al.allocate<col_vec<st_bf<4,4>>, 2>(); // smol
 
     st_bf<4, 4, wgmma_interleave_l> (*k_scratch_smem)     = reinterpret_cast<st_bf<4, 4, wgmma_interleave_l>*>(&kv_smem[0].data[0]);
 
-    float alpha = alphas[head_id];
-    float beta = betas[head_id];
-
     int warpid = kittens::warpid();
-    int warpgroupid = warpid >= 4;
+    int warpgroupid = warpid/4;
 
     int tic = 0, toc = 1;
     int ring_id = 0;
@@ -159,12 +165,12 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
                     warpgroup::mma_fence(att_block[subtile]);
                     warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
                     warpgroup::mma_commit_group();
+                    warpgroup::mma_async_wait();
                 }
                 else {
                     neg_infty(att_block[subtile]); // initial blocks must be zero
                 }
             }
-            warpgroup::mma_async_wait();
             // make last block causal
             #pragma unroll
             for(int j = 0; j < 4; j++) {
@@ -190,8 +196,8 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
                 row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
                 copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
             }
+            warpgroup::mma_fence(sliding_o);
             for(int subtile = 0; subtile < 2; subtile++) {
-                warpgroup::mma_fence(sliding_o);
                 warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
                 warpgroup::mma_commit_group();
             }
@@ -201,7 +207,7 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
 
         rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
         rt_fl<1, 4>::col_vec linear_norm_vec;
-        zero(linear_o);
+        // zero(linear_o);
         zero(linear_norm_vec);
         if(block >= 1) { // if not in at least the third block, no need for linear attention.
 
@@ -212,10 +218,12 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             rt_fl<1, 4> linear_q;
             rt_bf<1, 4> linear_q_bf;
 
+            __syncthreads();
             warpgroup::mma_fence(linear_q);
             warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // q is now projected-
+            __syncthreads();
             if(warpgroupid) mul(linear_q, linear_q, -1.f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_q);
@@ -229,6 +237,7 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
+            __syncthreads();
 
             // next we need to go figure out the norm.
             // first we load sum(k) from smem to registers.
@@ -249,26 +258,29 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
             rt_fl<1, 4> linear_k;
 
             // matmul to generate linear_k before softmax
+            __syncthreads();
             warpgroup::mma_fence(linear_k);
             warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
             warpgroup::mma_commit_group();
-            warpgroup::mma_async_wait(); // q is now projected
+            warpgroup::mma_async_wait(); // k is now projected
+            __syncthreads();
             if(warpgroupid) mul(linear_k, linear_k, -1.f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_k);
+            __syncthreads();
 
             // copy the local KV cache into shared memory & do matmul
             warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
+            __syncthreads();
+            cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
             __syncthreads();
             warpgroup::mma_fence(local_kv);
             warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
-
-            __syncthreads();
-            cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
             __syncthreads();
         }
+        tma::store_async_wait();
 
         // next step is to sum two norm vecs
         add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
@@ -291,17 +303,40 @@ void hedgehog_linear_attention_smd(int n, const CUtensorMap* tma_q, const CUtens
         }
         __syncthreads();
 
-        // if(warpgroupid == 0) {
-        //     div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
-        //     warpgroup::store(o_smem, sliding_o);
-        // }
-        // __syncthreads();
         if(warpid == 0) {
             tma::store_async(tma_o, o_smem, batch_head_id*blocks + block);
             tma::store_commit_group();
         }
-        tma::store_async_wait();
     }
+    tma::store_async_wait();
+
+    // __syncthreads();
+    // warpgroup::zero(kv_smem[warpgroupid]);
+    // __syncthreads();
+
+    // Finally we want to write out the kv state and the k state
+    
+    // store out kv state into smem, first.
+    __syncthreads();
+    kv_state_tile (&kv_state_smem) = reinterpret_cast<kv_state_tile&>(kv_smem[0].data[0]);
+    group<8>::store(kv_state_smem, local_kv); // all 8 warps store their own chunk.
+    __syncthreads();
+    // write out kv state
+    if(warpid == 0){
+        tma::store_async(tma_kv_state, kv_state_smem, batch_head_id);
+        tma::store_commit_group();
+    }
+    __syncthreads();
+    tma::store_async_wait();
+
+    // write out k state. first reinterpret k state as a vector of length 128, to save a tma call
+    k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
+    if(warpid == 0){
+        tma::store_async(tma_k_state, k_state_smem, batch_head_id);
+        tma::store_commit_group();
+    }
+    __syncthreads();
+    tma::store_async_wait();
 }
 
 #ifdef TORCH_COMPILE
