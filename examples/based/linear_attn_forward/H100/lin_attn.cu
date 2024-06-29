@@ -153,7 +153,9 @@ void based_linear_attention(
     // k_state stuff
     row_vec<st_bf<4,1>> (&ks_smem_a1) = al.allocate<row_vec<st_bf<4,1>>>();  // 16 elements
     warpgroup::zero(ks_smem_a1);
-    row_vec<rt_fl<1,4>> ks_a2[4]; // per warp; 64 elements by [4]
+    st_bf<4,4> (&ks_smem_a2) [4] = al.allocate<st_bf<4,4>, 4>();  
+    row_vec<st_bf<1,4>> ks_a2[4]; // per warp; 64 elements by [4]
+    for (int i = 0; i < 4; i ++ ) { zero(ks_smem_a2[i]); }
 
     if(warpid == 0) { zero(a0_total); }
     warpgroup::zero(a1_trans_s);
@@ -299,11 +301,17 @@ void based_linear_attention(
             warpgroup::mma_commit_group(); // dew it
 
             // write k to smem
-            // if ( add_norm > 0) {
-            //     cumulative_add(ks_a2[t], k); // vector (1x64)
-            // }
+            if ( add_norm > 0) {
+                warpgroup::store(ks_smem_a2[t], k); // store the 16x64 k into smem per warp
+            }
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
+
+        // ks_smem_a2 has 4 x (64 x 64) in total (64 tokens x 256 feature dim)
+        for (int i = 0; i < 4; i ++) {
+            cumulative_add(ks_a2[i], ks_smem_a2[i]);
+        }
+        __syncthreads();
 
         // now we do the sum of the previous a0 onto o
         #pragma unroll
@@ -377,21 +385,11 @@ void based_linear_attention(
         __syncthreads(); 
         if (warpid == 0) { tma::store_async(tma_k_a1, k_state_smem, batch_head_id); }
 
-        // save the K state A2 
-        // tile_k_a2_2_smem (&k_state_smem) = *reinterpret_cast<tile_k_a2_2_smem*>(&ks_smem_a1.data[0]);
-        // __syncthreads();
-        // __syncthreads(); 
-        // if (warpid == 0) { tma::store_async(tma_k_a1, k_state_smem, batch_head_id); }
-
         // for (int rt = 0; rt < 4; rt++) {
-        //     auto &k_smem_2 = reinterpret_cast<row_vec<st_bv<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>&>(a2_s); // this layout is better for global HBM stores so we cast.
-        //     // mul(ks_a2[rt], ks_a2[rt], 0.70710678118); // Taylor normalization
-        //     // if (add_scale > 0) { mul(ks_a2[rt], ks_a2[rt], 0.25);  }
-        //     warpgroup::store(kv_smem_2, ks_a2[rt]); 
         //     __syncthreads();
         //     if (warpid == 0) {
         //         int tile_idx = (blockIdx.x * 4) + rt; 
-        //         tma::store_async(tma_k_a2, kv_smem_2, tile_idx); 
+        //         tma::store_async(tma_k_a2, ks_a2[rt], tile_idx); 
         //         tma::store_commit_group(); 
         //     }
         //     tma::store_async_wait();
