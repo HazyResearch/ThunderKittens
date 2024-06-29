@@ -11,6 +11,9 @@
 #define tile_kv_a1_2_smem st_bf_4x1<wgmma_swizzle_l>
 #define tile_kv_a0_2_smem sv_bf<4>
 
+#define tile_k_a2_2_smem sv_bf<16>
+#define tile_k_a1_2_smem sv_bf<1>
+
 using namespace kittens;
 
 
@@ -86,16 +89,51 @@ __device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, c
     }
 }
 
+
+template<ducks::sv::all SV, ducks::st::all ST>
+__device__ inline void cumulative_add(SV &dst, const ST &src) {
+    // this is called along a warpgroup
+    static_assert(ST::cols <= 128);
+    static_assert(ST::cols == SV::length);
+    int lane = threadIdx.x % 128;
+    if(lane < ST::cols) {
+        float f = __bfloat162float(dst[lane]);
+        // acc equal to the last row of dst
+        for (auto i = 0; i < ST::rows; i++) {
+            f += __bfloat162float(src[{i, lane}]);
+        }
+        dst[lane] = __float2bfloat16(f);
+    }
+}
+
+template<ducks::rv::all RV, ducks::rt::all RT>
+__device__ inline void cumulative_add(RV &dst, const RT &src) {
+    // this is called along a warpgroup
+    #pragma unroll
+    for(int i = 0; i < RT::height; i++) {
+        #pragma unroll
+        for(int j = 0; j < RT::width; j++) {
+            // dst[j].x += __bfloat162float(src.tiles[0][i].data[2*j].x);
+        }
+    }
+}
+
+// the overall algorithm partitions across 1 warpgroup of 4 workers.
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(
-    int n, int add_scale, int output_state, 
+    int n, int add_scale, int add_norm, int output_state, 
     CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o, 
-    CUtensorMap* tma_kv_a2, CUtensorMap* tma_kv_a1, CUtensorMap* tma_kv_a0
+    CUtensorMap* tma_kv_a2, CUtensorMap* tma_kv_a1, CUtensorMap* tma_kv_a0, 
+    CUtensorMap* tma_k_a2, CUtensorMap* tma_k_a1
 ) {
 
     int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
     int tic = 0, toc = 1;
+
+    const int batch_id = blockIdx.y;
+    const int head_id  = blockIdx.x;
+    const int batch_head_id = batch_id*gridDim.x + head_id;
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -107,21 +145,21 @@ void based_linear_attention(
     st_bf_4x4<swizzle_l>          (&o_s)  [2]   = al.allocate<st_bf_4x4<swizzle_l>,          2>(); // 16384 bytes
 
     rt_fl_1x1<> a1_trans; // transposed chunk of a1.
-    rt_fl_1x4<> a2[4]; // a2 gets propagated through here.
+    rt_fl_1x4<> a2[4];    // a2 gets propagated through here.
     st_bf_4x1<wgmma_swizzle_l>    (&a1_trans_s) = al.allocate<st_bf_4x1<wgmma_swizzle_l>    >(); // 2048 bytes
     st_bf_4x4<wgmma_interleave_l> (&a2_s)       = al.allocate<st_bf_4x4<wgmma_interleave_l> >(); // 8192 bytes
-
     sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
-    if(warpid == 0) {
-        zero(a0_total);
-    }
+    // k_state stuff
+    row_vec<st_bf<4,1>> (&ks_smem_a1) = al.allocate<row_vec<st_bf<4,1>>>();  // 16 elements
+    warpgroup::zero(ks_smem_a1);
+    row_vec<rt_fl<1,4>> ks_a2[4]; // per warp; 64 elements by [4]
+
+    if(warpid == 0) { zero(a0_total); }
     warpgroup::zero(a1_trans_s);
     zero(a1_trans); // everyone zeroes a2.
     #pragma unroll
-    for(int i = 0; i < 4; i++) {
-        zero(a2[i]); // everyone zeroes a2.
-    }
+    for(int i = 0; i < 4; i++) { zero(a2[i]); } // everyone zeroes a2.
 
     int n_blocks = n / (q_s[0].rows);
 
@@ -144,6 +182,8 @@ void based_linear_attention(
     }
 
     for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
+        // esach iteration, we handle 64 tokens x 16 feature dim (k, q).
+
         rt_bf_1x4<> local_attn_bf; // 4 registers each -- 16
         rt_fl_1x4<> local_attn, temp_attn_accum; // 32 registers each -- 64
         rt_fl_1x4<> o; // 32 registers each -- 64
@@ -167,15 +207,15 @@ void based_linear_attention(
 
         // we start by doing the very local computations. Then, we'll follow up later with the rest.
         warpgroup::mma_fence(local_attn); // qk matmul fence
+
+        // SA: note that local_attn rt shape is 1x4 since it's done by a warpgroup. 
+        // even though you might think 4x4 since q_s x k_s is (4x1) x (1x4). 
         warpgroup::mm_ABt(local_attn, q_s[tic], k_s[tic]); // clear registers -- note mm_ABt, not mma_ABt.
         warpgroup::mma_commit_group(); // dew it
         warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
 
         // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
-        if (add_scale > 0) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 1.");}
-            mul(local_attn, local_attn, 0.25f);                 // divide by sqrt(d)
-        }
+        if (add_scale > 0) { mul(local_attn, local_attn, 0.25f); } // divide by sqrt(d)
         copy(temp_attn_accum, local_attn);
         // BEGIN comment-out for removing T2 (debug)
         mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it; note this converts sqrt(d) to d
@@ -200,31 +240,54 @@ void based_linear_attention(
         warpgroup::mma_ABt(o, q_s[tic], a1_trans_s);        // incorporate a1 onto o
         warpgroup::mma_commit_group();                      // dew it
         
-        warpgroup::mma_AtB(a1_trans, v_s_2[tic], k_s[tic]); // we now have 4 1x4 registers that need to eventually be summed.
+        warpgroup::mma_AtB(a1_trans, v_s_2[tic], k_s[tic]); // now 4 1x4 registers that need to eventually be summed.
         warpgroup::mma_commit_group(); // dew it
         warpgroup::mma_async_wait();   // tmp
         warpgroup::store(a1_trans_s, a1_trans);
 
+        // k-state a1
+        rt_bf<1, 1> q_a1_reg; // these are 1x4 in the other code
+        col_vec<rt_fl_1x1<>> total_norm_a1;
+        rt_fl<1, 1>::col_vec linear_norm_vec;
+        zero(total_norm_a1);
+        if ( add_norm > 0) {
+            __syncthreads();
+            cumulative_add(ks_smem_a1, k_s[tic]); // vector (1x1), tile (4x1; why 4?)
+            __syncthreads();
+
+            row_vec<rt_bf<1,1>> cumsum_k_a1_reg;  // 16 vector
+            rt_bf<1,1> cumsum_k_a1_reg_tile;      // 16 x 16 tile
+            load(cumsum_k_a1_reg, ks_smem_a1);
+            broadcast_col(cumsum_k_a1_reg_tile, cumsum_k_a1_reg);
+
+            rt_fl_1x1<> norm_tile;
+            zero(norm_tile);
+            warpgroup::load(q_a1_reg, q_s[tic]);  // due to warpgroup load, can write to 1x1
+            mma_ABt(norm_tile, q_a1_reg, cumsum_k_a1_reg_tile, norm_tile);  
+            row_max(linear_norm_vec, norm_tile); 
+        }
+
+        // 2nd order taylor
         rt_bf_1x1<> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
         warpgroup::load(q_src, q_s[tic]);
         mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here.
-        if (add_scale > 0) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 2.");}
-            mul(q_src, q_src, __float2bfloat16(0.25));          // divide by sqrt(d=16) for A2 here.
-        }
+        if (add_scale > 0) { mul(q_src, q_src, __float2bfloat16(0.25)); } // divide by sqrt(d=16) for A2 here.
         rt_bf_4x1<> k_src_tmp;
         rt_bf_1x4<> k_src;
         load(k_src_tmp, k_s[tic]);
         transpose_sep(k_src, k_src_tmp); // transpose K into Kt
-
-        // 2nd order taylor
+        
         // about 75% of execution time is in this loop
         #pragma unroll
         for(int t = 0; t < 4; t++) {
             rt_bf_1x4<> q, k;
+
+            // feature expansion for 4 of the 16 dimensions per warp
             mul_slice_row(q, q_src, t*4);
             mul_slice_col(k, k_src, t*4+warpid);
-            warpgroup::store(a2_s, a2[t]); // take previous one and move up to smem for wgmma.
+
+            // take previous one and move up to smem for wgmma.
+            warpgroup::store(a2_s, a2[t]); 
             __syncthreads();
 
             warpgroup::mma_fence(o); // av matmul fence
@@ -234,7 +297,11 @@ void based_linear_attention(
             
             warpgroup::mma_AB(a2[t], k, v_s[tic]); // incorporate KtV onto a2
             warpgroup::mma_commit_group(); // dew it
-            
+
+            // write k to smem
+            // if ( add_norm > 0) {
+            //     cumulative_add(ks_a2[t], k); // vector (1x64)
+            // }
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
 
@@ -267,18 +334,13 @@ void based_linear_attention(
     }
 
     if (output_state > 0) {
-        // if (warpid == 0 && threadIdx.x == 0) {printf("output state");}
-
         // save the KV state (A2)
         for (int rt = 0; rt < 4; rt++) {
             // The reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
             // Instead, it tells the compiler to treat the memory location of a2_s as if it were a reference to st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>.
             auto &kv_smem_2 = reinterpret_cast<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>&>(a2_s); // this layout is better for global HBM stores so we cast.
             mul(a2[rt], a2[rt], 0.70710678118); // Taylor normalization
-            if (add_scale > 0) {
-                // if (warpid==0 and threadIdx.x==0) {printf("scale 3.");}
-                mul(a2[rt], a2[rt], 0.25);
-            }
+            if (add_scale > 0) { mul(a2[rt], a2[rt], 0.25);  }
             warpgroup::store(kv_smem_2, a2[rt]); 
             __syncthreads();
             if (warpid == 0) {
@@ -291,13 +353,10 @@ void based_linear_attention(
 
         // save the KV state A1
         auto &kv_smem_1 = reinterpret_cast<st_bf<4, 1, kittens::ducks::st_layout::wgmma_swizzle>&>(a1_trans_s);
-        if (add_scale > 0 ) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 4.");} 
-            mul(a1_trans, a1_trans, 0.5);       // divides by math.sqrt(math.sqrt(D_QK))
-        }
-        warpgroup::store(kv_smem_1,a1_trans);   // from individual warps to shared address
+        if (add_scale > 0 ) { mul(a1_trans, a1_trans, 0.5); } // divides by math.sqrt(math.sqrt(D_QK))
+        warpgroup::store(kv_smem_1, a1_trans);                // from individual warps to shared address
         __syncthreads();
-        if (warpid == 0) {      // one warp takes care of the write to HBM
+        if (warpid == 0) {                                    // one warp takes care of the write to HBM
             int tile_idx = (blockIdx.x); 
             tma::store_async(tma_kv_a1, kv_smem_1, tile_idx); 
             tma::store_commit_group(); 
@@ -312,89 +371,114 @@ void based_linear_attention(
         }
         tma::store_async_wait();
 
+        // save the K state A1 
+        tile_k_a1_2_smem (&k_state_smem) = *reinterpret_cast<tile_k_a1_2_smem*>(&ks_smem_a1.data[0]);
+        __syncthreads();
+        __syncthreads(); 
+        if (warpid == 0) { tma::store_async(tma_k_a1, k_state_smem, batch_head_id); }
+
+        // save the K state A2 
+        // tile_k_a2_2_smem (&k_state_smem) = *reinterpret_cast<tile_k_a2_2_smem*>(&ks_smem_a1.data[0]);
+        // __syncthreads();
+        // __syncthreads(); 
+        // if (warpid == 0) { tma::store_async(tma_k_a1, k_state_smem, batch_head_id); }
+
+        // for (int rt = 0; rt < 4; rt++) {
+        //     auto &k_smem_2 = reinterpret_cast<row_vec<st_bv<4, 4, kittens::ducks::st_layout::wgmma_swizzle>>&>(a2_s); // this layout is better for global HBM stores so we cast.
+        //     // mul(ks_a2[rt], ks_a2[rt], 0.70710678118); // Taylor normalization
+        //     // if (add_scale > 0) { mul(ks_a2[rt], ks_a2[rt], 0.25);  }
+        //     warpgroup::store(kv_smem_2, ks_a2[rt]); 
+        //     __syncthreads();
+        //     if (warpid == 0) {
+        //         int tile_idx = (blockIdx.x * 4) + rt; 
+        //         tma::store_async(tma_k_a2, kv_smem_2, tile_idx); 
+        //         tma::store_commit_group(); 
+        //     }
+        //     tma::store_async_wait();
+        // }
     }
 }
 
-// #include "harness.impl"
+#include "harness.impl"
 
-#include "src/common/pyutils/torch_helpers.cuh"
-#include <iostream>
-void based_fwd_tk(
-    int add_scale, int output_state,
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
-    torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0
-) {
-    CHECK_INPUT(q);
-    CHECK_INPUT(k);
-    CHECK_INPUT(v);
-    CHECK_INPUT(o);
-    CHECK_INPUT(kv_a2);
-    CHECK_INPUT(kv_a1);
-    CHECK_INPUT(kv_a0);
+// #include "src/common/pyutils/torch_helpers.cuh"
+// #include <iostream>
+// void based_fwd_tk(
+//     int add_scale, int output_state,
+//     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
+//     torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0
+// ) {
+//     CHECK_INPUT(q);
+//     CHECK_INPUT(k);
+//     CHECK_INPUT(v);
+//     CHECK_INPUT(o);
+//     CHECK_INPUT(kv_a2);
+//     CHECK_INPUT(kv_a1);
+//     CHECK_INPUT(kv_a0);
 
-    auto batch   = q.size(0);
-    auto heads   = q.size(1);
-    auto threads = NUM_THREADS; 
-    auto n       = q.size(2); 
+//     auto batch   = q.size(0);
+//     auto heads   = q.size(1);
+//     auto threads = NUM_THREADS; 
+//     auto n       = q.size(2); 
 
-    bool k_same  = true; 
-    bool o_same  = true; 
-    for (auto i = 0; i < 4; i++) {
-        k_same &= q.size(i) == k.size(i);
-        o_same &= v.size(i) == o.size(i);
-    }
+//     bool k_same  = true; 
+//     bool o_same  = true; 
+//     for (auto i = 0; i < 4; i++) {
+//         k_same &= q.size(i) == k.size(i);
+//         o_same &= v.size(i) == o.size(i);
+//     }
 
-    TORCH_CHECK(k_same, "q and k must have the same shape");
-    TORCH_CHECK(o_same, "v and o must have the same shape");
-    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
-    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
-    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
-    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
-    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "n must be divisible by 64");
+//     TORCH_CHECK(k_same, "q and k must have the same shape");
+//     TORCH_CHECK(o_same, "v and o must have the same shape");
+//     TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
+//     TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
+//     TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
+//     TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
+//     TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "n must be divisible by 64");
 
-    // convert to bf16
-    c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
-    c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
-    c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
-    c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a2_ptr    = kv_a2.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a1_ptr    = kv_a1.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a0_ptr    = kv_a0.data_ptr<c10::BFloat16>();
+//     // convert to bf16
+//     c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
+//     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
+//     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
+//     c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
+//     c10::BFloat16 *kv_a2_ptr    = kv_a2.data_ptr<c10::BFloat16>();
+//     c10::BFloat16 *kv_a1_ptr    = kv_a1.data_ptr<c10::BFloat16>();
+//     c10::BFloat16 *kv_a0_ptr    = kv_a0.data_ptr<c10::BFloat16>();
 
-    const bf16* d_q  = reinterpret_cast<const bf16*>(q_ptr);
-    const bf16* d_k  = reinterpret_cast<const bf16*>(k_ptr);
-    const bf16* d_v  = reinterpret_cast<const bf16*>(v_ptr);
-          bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
-          bf16* d_kv_a2 = reinterpret_cast<bf16*>(kv_a2_ptr);
-          bf16* d_kv_a1 = reinterpret_cast<bf16*>(kv_a1_ptr); 
-          bf16* d_kv_a0 = reinterpret_cast<bf16*>(kv_a0_ptr);
+//     const bf16* d_q  = reinterpret_cast<const bf16*>(q_ptr);
+//     const bf16* d_k  = reinterpret_cast<const bf16*>(k_ptr);
+//     const bf16* d_v  = reinterpret_cast<const bf16*>(v_ptr);
+//           bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
+//           bf16* d_kv_a2 = reinterpret_cast<bf16*>(kv_a2_ptr);
+//           bf16* d_kv_a1 = reinterpret_cast<bf16*>(kv_a1_ptr); 
+//           bf16* d_kv_a0 = reinterpret_cast<bf16*>(kv_a0_ptr);
 
-    CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>   (d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (batch*heads*n)/(kittens::st_bf_4x4<wgmma_interleave_l>::rows)); 
-    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, batch*heads*(D_QK*D_QK));
-    CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, batch*heads*(D_QK));
-    CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a0, batch*heads);
+//     CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>   (d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+//     CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+//     CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (batch*heads*n)/(kittens::st_bf_4x4<wgmma_interleave_l>::rows)); 
+//     CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+//     CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+//     CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, batch*heads*(D_QK*D_QK));
+//     CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, batch*heads*(D_QK));
+//     CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a0, batch*heads);
 
-    unsigned long mem_size = 98000; 
+//     unsigned long mem_size = 98000; 
     
-    using T = kittens::bf16;
-    using H = kittens::bf16;
+//     using T = kittens::bf16;
+//     using H = kittens::bf16;
 
-    cudaFuncSetAttribute(
-        based_linear_attention,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    ); 
+//     cudaFuncSetAttribute(
+//         based_linear_attention,
+//         cudaFuncAttributeMaxDynamicSharedMemorySize,
+//         mem_size
+//     ); 
 
-    based_linear_attention<<<batch*heads, threads, mem_size>>>(
-        n, add_scale, output_state, 
-        tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
-        tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d
-    );
+//     based_linear_attention<<<batch*heads, threads, mem_size>>>(
+//         n, add_scale, output_state, 
+//         tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
+//         tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d
+//     );
 
-    CHECK_CUDA_ERROR(cudaGetLastError());
-}
+//     CHECK_CUDA_ERROR(cudaGetLastError());
+// }
 

@@ -3,6 +3,7 @@ from tqdm import trange
 import numpy as np
 import sys
 import math
+from einops import rearrange 
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
@@ -11,8 +12,6 @@ H = 1
 N = 4096
 D = 16
 DV = 64
-
-add_scale = True
 
 TESTNAME = sys.argv[1]
 
@@ -29,7 +28,9 @@ else:
     print('Invalid test name')
     sys.exit(0)
 
-def pytorch_test(Q, K, V, TESTNAME='all'):
+def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
+
+    B, H, L, D = Q.shape
 
     def make_causal(X):
         (b,h,n,m) = X.shape
@@ -37,36 +38,58 @@ def pytorch_test(Q, K, V, TESTNAME='all'):
         X[mask] = 0.
         return X
 
-    O   = torch.einsum("bhnd,bhmd->bhnm", Q, K)**2
+    O   = torch.einsum("bhnd,bhmd->bhnm", Q.to(torch.float32), K.to(torch.float32))**2
     O2  = make_causal(O)
-    T2  = torch.einsum("bhnm,bhmd->bhnd", O2, V).to(torch.bfloat16).to(torch.float32)
-    T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
-    T1 = torch.einsum("bhnm,bhme->bhne", T1a, V).to(torch.bfloat16).to(torch.float32)
+    T2  = torch.einsum("bhnm,bhmd->bhnd", O2.to(torch.float32), V.to(torch.float32)).to(torch.bfloat16).to(torch.float32)
+    T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q.to(torch.float32), K.to(torch.float32)))
+    T1 = torch.einsum("bhnm,bhme->bhne", T1a.to(torch.float32), V.to(torch.float32)).to(torch.bfloat16).to(torch.float32)
     T0  = V.cumsum(dim=2).to(torch.bfloat16).to(torch.float32)
 
-    A2 = torch.einsum("bhnd,bhnf,bhne->bhndef",K,V,K).cumsum(dim=2)
+    rd = math.sqrt(D) if add_scale else 1 
+    rrd = math.sqrt(rd) if add_scale else 1
+    r2 = math.sqrt(2) if add_scale else 1
+
+    # Denominator
+    K0 = torch.ones(Q[..., :1].to(torch.float32).shape).to(Q.device)
+    Q2 = torch.einsum("bhnd,bhne->bhnde", Q.to(torch.float32), Q.to(torch.float32)) / (rd * r2)
+    K2 = torch.einsum("bhnd,bhne->bhnde", K.to(torch.float32), K.to(torch.float32)) / (rd * r2)
+    k_state_a2 = K2.to(torch.float32).cumsum(dim=2)
+    D2 = torch.einsum("bhnde,bhnde->bhn", Q2.to(torch.float32), k_state_a2) 
+    k_state_a1 =  K.to(torch.float32).cumsum(dim=2)
+    D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32), k_state_a1)/ ((rrd) ** 2)
+    D0 =  K0.to(torch.float32).cumsum(dim=2).squeeze(-1)
     
     o = 0
-    if 't0' in TESTNAME or 'all' in TESTNAME:
-        o += T0
-        print('Adding T0')
-    if 't1' in TESTNAME or 'all' in TESTNAME:
-        if add_scale: o += T1 / (math.sqrt(16))
-        else: o += T1
-        print('Adding T1')
-    if 't2' in TESTNAME or 'all' in TESTNAME:
-        if add_scale:  o += T2/(2*16)
-        else:  o += T2/2
-        print('Adding T2/2')
-    return o.to(torch.bfloat16)
+    den = 0 
+    if add_norm: 
+        den += D0.to(torch.bfloat16).to(torch.float32)
+    o += T0.to(torch.bfloat16).to(torch.float32)
 
-o, kv_state = pytorch_test(q, k, v, TESTNAME)
+    if add_norm: 
+        den += D1.to(torch.bfloat16).to(torch.float32)
+    o += T1.to(torch.bfloat16).to(torch.float32) / (rrd * rrd)
+    
+    if add_norm: 
+        den += D2.to(torch.bfloat16).to(torch.float32)
+    o += T2.to(torch.bfloat16).to(torch.float32) / (rd * r2 * rd * r2)
+
+    if add_norm:
+        eps = 1e-12
+        o = o / (den.unsqueeze(-1) + eps)
+
+    k_state_a2 = rearrange(k_state_a2, 'b h n d e -> b h n (d e)')
+    return o.to(torch.bfloat16), k_state_a2[:,:,-1], k_state_a1[:,:,-1], D0[:,:,-1]
+
+o, k_a2, k_a1, k_a0 = pytorch_test(q, k, v, TESTNAME)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy()
     kf = k.to(torch.float32).flatten().cpu().numpy()
     vf = v.to(torch.float32).flatten().cpu().numpy()
     of = o.to(torch.float32).flatten().cpu().numpy()
+    k_a2f = k_a2.to(torch.float32).flatten().cpu().numpy()
+    k_a1f = k_a1.to(torch.float32).flatten().cpu().numpy()
+    k_a0f = k_a0.to(torch.float32).flatten().cpu().numpy()
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
         f.write(' ')
@@ -78,5 +101,11 @@ with open(f'{TESTNAME}.txt', 'w') as f:
         f.write(' ')
     for i in trange(B*H*N*DV):
         f.write(repr(of[i]))
+        f.write(' ')
+    for i in trange(B*H*D):
+        f.write(repr(k_a1f[i]))
+        f.write(' ')
+    for i in trange(B*H*D*D):
+        f.write(repr(k_a2f[i]))
         f.write(' ')
 
