@@ -8,8 +8,8 @@
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
-#define add_scale 1
-#define add_norm  0
+#define add_scale 0
+#define add_norm  1
 #define output_state 1
 
 // Function to calculate the number of floating-point operations
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 222000; //98000;  // have the flag tell us
+    unsigned long mem_size = 98000;  // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
@@ -267,7 +267,10 @@ int main(int argc, char **argv) {
     std::cout << "K A1 | avg_diff=" << (total_k_diff/TOTAL_ELEMENTS_K_A1) << std::endl;
 
     cudaMemcpy(k_a2_bf, d_k_a2, TOTAL_ELEMENTS_K_A2 * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) { k_a2_state[i] = __bfloat162float(k_a2_bf[i]); }
+    for(int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) { 
+        k_a2_state[i] = __bfloat162float(k_a2_bf[i]);
+        // std::cout << k_a2_state[i] << std::endl;
+    }
     std::ofstream k_state_file_a2("printouts/k_a2_state.txt");
     std::ofstream k_state_ref_file_a2("printouts/k_a2_state_ref.txt");
     std::ofstream k_state_diff_file_a2("printouts/k_a2_state_diff.txt");
@@ -275,13 +278,13 @@ int main(int argc, char **argv) {
     for (int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) {
         float diff = k_a2_state[i] - k_a2_ref[i % TOTAL_UNIQUE_ELEMENTS_K_A2];
         if (i < TOTAL_UNIQUE_ELEMENTS_K_A2) {
-    //         k_state_ref_file_a2 << k_a2_ref[i] << ' ';
-    //         k_state_ref_file_a2 << k_a2_state[i] << ' ';
-    //         k_state_diff_file_a2 << diff << ' ';
-    //         total_k_diff_a2 += abs(diff);
+            k_state_ref_file_a2 << k_a2_ref[i] << ' ';
+            k_state_file_a2 << k_a2_state[i] << ' ';
+            k_state_diff_file_a2 << diff << ' ';
+            total_k_diff_a2 += abs(diff);
         }
     }
-    // std::cout << "K A2 | avg_diff=" << (total_k_diff_a2/TOTAL_ELEMENTS_K_A2) << std::endl;
+    std::cout << "K A2 | avg_diff=" << (total_k_diff_a2/TOTAL_ELEMENTS_K_A2) << std::endl;
 
     // calculate efficiency
     long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, ATTN_D_SMALL);

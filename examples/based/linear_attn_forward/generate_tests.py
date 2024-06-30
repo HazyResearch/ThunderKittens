@@ -28,7 +28,7 @@ else:
     print('Invalid test name')
     sys.exit(0)
 
-def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
+def pytorch_test(Q, K, V, add_scale = False, add_norm = True, TESTNAME='all'):
 
     B, H, L, D = Q.shape
 
@@ -58,6 +58,8 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     k_state_a1 =  K.to(torch.float32).cumsum(dim=2)
     D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32), k_state_a1)/ ((rrd) ** 2)
     D0 =  K0.to(torch.float32).cumsum(dim=2).squeeze(-1)
+
+    breakpoint()
     
     o = 0
     den = 0 
@@ -80,7 +82,7 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     k_state_a2 = rearrange(k_state_a2, 'b h n d e -> b h n (d e)')
     return o.to(torch.bfloat16), k_state_a2[:,:,-1], k_state_a1[:,:,-1], D0[:,:,-1]
 
-o, k_a2, k_a1, k_a0 = pytorch_test(q, k, v, TESTNAME)
+o, k_a2, k_a1, k_a0 = pytorch_test(q, k, v, TESTNAME=TESTNAME)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy()
