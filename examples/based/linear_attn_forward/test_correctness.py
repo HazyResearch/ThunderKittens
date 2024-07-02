@@ -129,12 +129,14 @@ def pytorch_test_v1(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
     K0 = torch.ones(Q[..., :1].shape).to(Q.device)
     D0 =  K0.to(torch.float32).cumsum(dim=2).squeeze()
 
+    breakpoint()
+
     numerators = [T0, T1, T2]
     denominators = [D0, D1, D2]
     numerator = sum(numerators)
     denominator = sum(denominators) 
     if add_norm: 
-        y = numerator / ( denominator.unsqueeze(-1) + eps)
+        y = numerator / ( denominator.unsqueeze(-1) + eps )
     else:
         y = numerator
 
@@ -272,6 +274,7 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
         kv_state_a2,kv_state_a1,kv_state_a0,
         k_state_a2, k_state_a1
     )
+    
     o += torch.zeros_like(o) # trigger an error if one exists
     kv_state_a2 = kv_state_a2.transpose(2,3)
     return o, kv_state_a2, kv_state_a1, kv_state_a0, k_state_a2, k_state_a1, k_state_a0
@@ -292,8 +295,8 @@ def linear_attn_correct(dt):
     print(f"{b=}, {n=}, {d=}, {h=}")
 
     Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    K   = torch.ones(b,h,n,d, dtype=dt, device='cuda')/d
-    V   = torch.ones(b,h,n,dv, dtype=dt, device='cuda')/dv
+    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
 
     tk_outputs = None 
     fla_parallel_out = None
@@ -358,6 +361,7 @@ def linear_attn_correct(dt):
         __eq("PyTorch v1 D2 - PyTorch v3 D2", k_a2_v1, k_a2_v3, debug=False)
         if tk_outputs is not None: 
             __eq("PyTorch v1 D2 - PyTorch tk D2", k_a2_v1, k_a2_tk, debug=False) # SA: currently has sporadic nans
+            __eq("PyTorch v1 D2 [0,0] - PyTorch tk D2 [0,0]", k_a2_v1[0,0], k_a2_tk[0,0], debug=False)
 
         print("\nChecking K States (D1)")
         print(f"{k_a1_v1.shape=}, {k_a1_v3.shape=}")

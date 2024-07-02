@@ -144,6 +144,8 @@ template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x1 = r
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x2 = rt_fl<4, 2, layout>;
 /// 64 registers used
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_8x1 = rt_fl<8, 1, layout>;
+/// 128 registers used
+template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x4 = rt_fl<4, 4, layout>;
 
 ///  4 registers used
 template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x1 = rt_bf<1, 1, layout>;
