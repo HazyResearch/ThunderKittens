@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
     // debug norms
     CUtensorMap* tma_norm_a1  = tma::allocate_and_create_tensor_map<tile_norm_a1_2_smem>(d_norm_a1, ATTN_B*ATTN_H*ATTN_N);
     CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<tile_cumsum_k_a1>(d_cumsum_k_a1, (ATTN_B*ATTN_H*ATTN_N)/(1*D_QK));  
-    // CUtensorMap* tma_norm_a2  = tma::allocate_and_create_tensor_map<tile_norm_a2_2_smem>(d_norm_a2, ATTN_B*ATTN_H*ATTN_N);
+    CUtensorMap* tma_norm_a2  = tma::allocate_and_create_tensor_map<tile_norm_a2_2_smem>(d_norm_a2, ATTN_B*ATTN_H*ATTN_N);
     CUtensorMap* tma_cumsum_k_a2 = tma::allocate_and_create_tensor_map<tile_cumsum_k_a2>(d_cumsum_k_a2, (ATTN_B*ATTN_H*ATTN_N)/(1*D_QK*D_QK));
     CUtensorMap* tma_cumsum_k_a0 = tma::allocate_and_create_tensor_map<tile_cumsum_k_a0>(d_cumsum_k_a0, (ATTN_B*ATTN_H*ATTN_N)/1);
 
@@ -246,7 +246,8 @@ int main(int argc, char **argv) {
             tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d, 
             tma_k_a2_d, tma_k_a1_d,
             tma_norm_a1, tma_cumsum_k_a1, 
-            tma_cumsum_k_a0 //, tma_cumsum_k_a2
+            tma_cumsum_k_a0, 
+            tma_norm_a2, tma_cumsum_k_a2
         );  
     }
     cudaDeviceSynchronize();
@@ -285,98 +286,118 @@ int main(int argc, char **argv) {
     // check k-state
     std::cout << std::endl;
     if (add_norm > 0) {
-        cudaMemcpy(k_a1_bf, d_k_a1, TOTAL_ELEMENTS_K_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_K_A1; i++) { k_a1_state[i] = __bfloat162float(k_a1_bf[i]); }
-        std::ofstream k_state_file("printouts/k_a1_state.txt");
-        std::ofstream k_state_ref_file("printouts/k_a1_state_ref.txt");
-        std::ofstream k_state_diff_file("printouts/k_a1_state_diff.txt");
-        float total_k_diff=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_K_A1; i++) {
-            float diff = k_a1_state[i] - k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_K_A1];
-            if (i < TOTAL_UNIQUE_ELEMENTS_K_A1) {
-                // std::cout << "K  | avg_diff=" << diff << std::endl;
-                k_state_ref_file << k_a1_ref[i] << ' ';
-                k_state_file << k_a1_state[i] << ' ';
-                k_state_diff_file << diff << ' ';
-                total_k_diff += abs(diff);
+        // cudaMemcpy(k_a1_bf, d_k_a1, TOTAL_ELEMENTS_K_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        // for(int i = 0; i < TOTAL_ELEMENTS_K_A1; i++) { k_a1_state[i] = __bfloat162float(k_a1_bf[i]); }
+        // std::ofstream k_state_file("printouts/k_a1_state.txt");
+        // std::ofstream k_state_ref_file("printouts/k_a1_state_ref.txt");
+        // std::ofstream k_state_diff_file("printouts/k_a1_state_diff.txt");
+        // float total_k_diff=0;
+        // for (int i = 0; i < TOTAL_ELEMENTS_K_A1; i++) {
+        //     float diff = k_a1_state[i] - k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_K_A1];
+        //     if (i < TOTAL_UNIQUE_ELEMENTS_K_A1) {
+        //         // std::cout << "K  | avg_diff=" << diff << std::endl;
+        //         k_state_ref_file << k_a1_ref[i] << ' ';
+        //         k_state_file << k_a1_state[i] << ' ';
+        //         k_state_diff_file << diff << ' ';
+        //         total_k_diff += abs(diff);
+        //     }
+        // }
+        // std::cout << "K-State A1 | avg_diff=" << (total_k_diff/TOTAL_ELEMENTS_K_A1) << std::endl;
+
+        // cudaMemcpy(k_a2_bf, d_k_a2, TOTAL_ELEMENTS_K_A2 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        // for(int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) { 
+        //     k_a2_state[i] = __bfloat162float(k_a2_bf[i]);
+        //     // if (i < 10) {  std::cout << k_a2_state[i] << std::endl;  }
+        // }
+        // std::ofstream k_state_file_a2("printouts/k_a2_state.txt");
+        // std::ofstream k_state_ref_file_a2("printouts/k_a2_state_ref.txt");
+        // std::ofstream k_state_diff_file_a2("printouts/k_a2_state_diff.txt");
+        // float total_k_diff_a2=0;
+        // for (int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) {
+        //     float diff = k_a2_state[i] - k_a2_ref[i % TOTAL_UNIQUE_ELEMENTS_K_A2];
+        //     if (i < TOTAL_UNIQUE_ELEMENTS_K_A2) {
+        //         k_state_ref_file_a2 << k_a2_ref[i] << ' ';
+        //         k_state_file_a2 << k_a2_state[i] << ' ';
+        //         k_state_diff_file_a2 << diff << ' ';
+        //         total_k_diff_a2 += abs(diff);
+        //     }
+        // }
+        // std::cout << "K-State A2 | avg_diff=" << (total_k_diff_a2/TOTAL_ELEMENTS_K_A2) << std::endl;
+
+        // std::cout << " " << std::endl;
+
+        // // norm a1
+        // cudaMemcpy(norm_a1_bf, d_norm_a1, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        // for(int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) { norm_a1[i] = __bfloat162float(norm_a1_bf[i]); }
+        // std::ofstream norm_a1_file("printouts/norm_a1.txt");
+        // std::ofstream norm_a1_ref_file("printouts/norm_a1_ref.txt");
+        // std::ofstream norm_a1_diff_file("printouts/norm_a1_diff.txt");
+        // float total_norm_a1_diff=0;
+        // for (int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) {
+        //     float diff = norm_a1[i] - norm_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_NORM_A1];
+        //     if (i < TOTAL_UNIQUE_ELEMENTS_NORM_A1) {
+        //         norm_a1_ref_file << norm_a1_ref[i] << ' ';
+        //         norm_a1_file << norm_a1[i] << ' ';
+        //         norm_a1_diff_file << diff << ' ';
+        //         total_norm_a1_diff += abs(diff);
+        //     }
+        // }
+        // std::cout << "Norm A1 | avg_diff=" << (total_norm_a1_diff/TOTAL_ELEMENTS_NORM_A1) << std::endl;
+
+        // norm a2
+        cudaMemcpy(norm_a2_bf, d_norm_a2, TOTAL_ELEMENTS_NORM_A2 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_A2; i++) { norm_a2[i] = __bfloat162float(norm_a2_bf[i]); }
+        std::ofstream norm_a2_file("printouts/norm_a2.txt");
+        std::ofstream norm_a2_ref_file("printouts/norm_a2_ref.txt");
+        std::ofstream norm_a2_diff_file("printouts/norm_a2_diff.txt");
+        float total_norm_a2_diff=0;
+        for (int i = 0; i < TOTAL_ELEMENTS_NORM_A2; i++) {
+            float diff = norm_a2[i] - norm_a2_ref[i % TOTAL_UNIQUE_ELEMENTS_NORM_A2];
+            if (i < TOTAL_UNIQUE_ELEMENTS_NORM_A2) {
+                norm_a2_ref_file << norm_a2_ref[i] << ' ';
+                norm_a2_file << norm_a2[i] << ' ';
+                norm_a2_diff_file << diff << ' ';
+                total_norm_a2_diff += abs(diff);
             }
         }
-        std::cout << "K A1 | avg_diff=" << (total_k_diff/TOTAL_ELEMENTS_K_A1) << std::endl;
+        std::cout << "Norm A2 | avg_diff=" << (total_norm_a2_diff/TOTAL_ELEMENTS_NORM_A2) << std::endl;
+        std::cout << " " << std::endl;
 
-        cudaMemcpy(k_a2_bf, d_k_a2, TOTAL_ELEMENTS_K_A2 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) { 
-            k_a2_state[i] = __bfloat162float(k_a2_bf[i]);
-            // if (i < 10) {  std::cout << k_a2_state[i] << std::endl;  }
-        }
-        std::ofstream k_state_file_a2("printouts/k_a2_state.txt");
-        std::ofstream k_state_ref_file_a2("printouts/k_a2_state_ref.txt");
-        std::ofstream k_state_diff_file_a2("printouts/k_a2_state_diff.txt");
-        float total_k_diff_a2=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_K_A2; i++) {
-            float diff = k_a2_state[i] - k_a2_ref[i % TOTAL_UNIQUE_ELEMENTS_K_A2];
-            if (i < TOTAL_UNIQUE_ELEMENTS_K_A2) {
-                k_state_ref_file_a2 << k_a2_ref[i] << ' ';
-                k_state_file_a2 << k_a2_state[i] << ' ';
-                k_state_diff_file_a2 << diff << ' ';
-                total_k_diff_a2 += abs(diff);
-            }
-        }
-        std::cout << "K A2 | avg_diff=" << (total_k_diff_a2/TOTAL_ELEMENTS_K_A2) << std::endl;
+        // // k0 cumsum 
+        // cudaMemcpy(cumsum_k_a0_bf, d_cumsum_k_a0, TOTAL_ELEMENTS_CUMSUM_K0 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        // for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K0; i++) { cumsum_k_a0[i] = __bfloat162float(cumsum_k_a0_bf[i]); }
+        // std::ofstream cumsum_k_a0_file("printouts/cumsum_k_a0.txt");
+        // std::ofstream cumsum_k_a0_ref_file("printouts/cumsum_k_a0_ref.txt");
+        // std::ofstream cumsum_k_a0_diff_file("printouts/cumsum_k_a0_diff.txt");
+        // float total_cumsum_k_a0_diff=0;
+        // for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K0; i++) {
+        //     float diff = cumsum_k_a0[i] - cumsum_k_a0_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0];
+        //     if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0) {
+        //         cumsum_k_a0_ref_file << cumsum_k_a0_ref[i] << ' ';
+        //         cumsum_k_a0_file << cumsum_k_a0[i] << ' ';
+        //         cumsum_k_a0_diff_file << diff << ' ';
+        //         total_cumsum_k_a0_diff += abs(diff);
+        //     }
+        // }
+        // std::cout << "Cumsum K A0 | avg_diff=" << (total_cumsum_k_a0_diff/TOTAL_ELEMENTS_CUMSUM_K0) << std::endl;
 
-        // k1 cumsum 
-        cudaMemcpy(cumsum_k_a1_bf, d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) { cumsum_k_a1[i] = __bfloat162float(cumsum_k_a1_bf[i]); }
-        std::ofstream cumsum_k_a1_file("printouts/cumsum_k_a1.txt");
-        std::ofstream cumsum_k_a1_ref_file("printouts/cumsum_k_a1_ref.txt");
-        std::ofstream cumsum_k_a1_diff_file("printouts/cumsum_k_a1_diff.txt");
-        float total_cumsum_k_a1_diff=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) {
-            float diff = cumsum_k_a1[i] - cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
-            if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1) {
-                cumsum_k_a1_ref_file << cumsum_k_a1_ref[i] << ' ';
-                cumsum_k_a1_file << cumsum_k_a1[i] << ' ';
-                cumsum_k_a1_diff_file << diff << ' ';
-                total_cumsum_k_a1_diff += abs(diff);
-            }
-        }
-        std::cout << "Cumsum K A1 | avg_diff=" << (total_cumsum_k_a1_diff/TOTAL_ELEMENTS_CUMSUM_K1) << std::endl;
-
-        // norm a1
-        cudaMemcpy(norm_a1_bf, d_norm_a1, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) { norm_a1[i] = __bfloat162float(norm_a1_bf[i]); }
-        std::ofstream norm_a1_file("printouts/norm_a1.txt");
-        std::ofstream norm_a1_ref_file("printouts/norm_a1_ref.txt");
-        std::ofstream norm_a1_diff_file("printouts/norm_a1_diff.txt");
-        float total_norm_a1_diff=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) {
-            float diff = norm_a1[i] - norm_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_NORM_A1];
-            if (i < TOTAL_UNIQUE_ELEMENTS_NORM_A1) {
-                norm_a1_ref_file << norm_a1_ref[i] << ' ';
-                norm_a1_file << norm_a1[i] << ' ';
-                norm_a1_diff_file << diff << ' ';
-                total_norm_a1_diff += abs(diff);
-            }
-        }
-        std::cout << "Norm A1 | avg_diff=" << (total_norm_a1_diff/TOTAL_ELEMENTS_NORM_A1) << std::endl;
-
-        // k0 cumsum 
-        cudaMemcpy(cumsum_k_a0_bf, d_cumsum_k_a0, TOTAL_ELEMENTS_CUMSUM_K0 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K0; i++) { cumsum_k_a0[i] = __bfloat162float(cumsum_k_a0_bf[i]); }
-        std::ofstream cumsum_k_a0_file("printouts/cumsum_k_a0.txt");
-        std::ofstream cumsum_k_a0_ref_file("printouts/cumsum_k_a0_ref.txt");
-        std::ofstream cumsum_k_a0_diff_file("printouts/cumsum_k_a0_diff.txt");
-        float total_cumsum_k_a0_diff=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K0; i++) {
-            float diff = cumsum_k_a0[i] - cumsum_k_a0_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0];
-            if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0) {
-                cumsum_k_a0_ref_file << cumsum_k_a0_ref[i] << ' ';
-                cumsum_k_a0_file << cumsum_k_a0[i] << ' ';
-                cumsum_k_a0_diff_file << diff << ' ';
-                total_cumsum_k_a0_diff += abs(diff);
-            }
-        }
-        std::cout << "Cumsum K A0 | avg_diff=" << (total_cumsum_k_a0_diff/TOTAL_ELEMENTS_CUMSUM_K0) << std::endl;
-
+        // // k1 cumsum 
+        // cudaMemcpy(cumsum_k_a1_bf, d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        // for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) { cumsum_k_a1[i] = __bfloat162float(cumsum_k_a1_bf[i]); }
+        // std::ofstream cumsum_k_a1_file("printouts/cumsum_k_a1.txt");
+        // std::ofstream cumsum_k_a1_ref_file("printouts/cumsum_k_a1_ref.txt");
+        // std::ofstream cumsum_k_a1_diff_file("printouts/cumsum_k_a1_diff.txt");
+        // float total_cumsum_k_a1_diff=0;
+        // for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) {
+        //     float diff = cumsum_k_a1[i] - cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
+        //     if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1) {
+        //         cumsum_k_a1_ref_file << cumsum_k_a1_ref[i] << ' ';
+        //         cumsum_k_a1_file << cumsum_k_a1[i] << ' ';
+        //         cumsum_k_a1_diff_file << diff << ' ';
+        //         total_cumsum_k_a1_diff += abs(diff);
+        //     }
+        // }
+        // std::cout << "Cumsum K A1 | avg_diff=" << (total_cumsum_k_a1_diff/TOTAL_ELEMENTS_CUMSUM_K1) << std::endl;
 
         // k2 cumsum 
         cudaMemcpy(cumsum_k_a2_bf, d_cumsum_k_a2, TOTAL_ELEMENTS_CUMSUM_K2 * sizeof(bf16), cudaMemcpyDeviceToHost);
