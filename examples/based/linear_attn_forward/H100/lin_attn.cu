@@ -334,6 +334,7 @@ void based_linear_attention(
         
         // about 75% of execution time is in this loop
         rt_bf_1x1<>::col_vec linear_norm_vec_a2; // N/4 elements over 4 warps
+        zero(linear_norm_vec_a2);
         #pragma unroll
         for(int t = 0; t < 4; t++) {
             rt_bf_1x4<> q, k;
@@ -363,6 +364,7 @@ void based_linear_attention(
                 // 4x4 smem
                 rt_bf_4x1<> k_t_den;
                 transpose_sep(k_t_den, k); 
+                zero(k_smem_a2);
                 auto k_smem_a2_subtile = subtile_inplace<4,1>(k_smem_a2, 0, warpid);   
                 store(k_smem_a2_subtile, k_t_den);
                 __syncthreads();
@@ -440,7 +442,9 @@ void based_linear_attention(
             tma::store_async(debug_norm_a2, norm_a2_s[tic], (blockIdx.x * n_blocks) + block);
             tma::store_async(debug_cumsum_k_a1, cumsum_k_a1_s[tic], (blockIdx.x * n_blocks) + block);  
             tma::store_async(debug_cumsum_k_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
-            tma::store_async(debug_cumsum_k_a2, cumsum_k_a2_s[0], (blockIdx.x * n_blocks + block));
+            for (int t = 0; t < 4; t++) {
+                tma::store_async(debug_cumsum_k_a2, cumsum_k_a2_s[t], 4*(blockIdx.x * n_blocks + block)+t);
+            }
             tma::store_commit_group();  
         }
     }
