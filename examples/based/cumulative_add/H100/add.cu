@@ -36,11 +36,7 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     using packed_type = typename base_types::packing<dtype>::unpacked_type;
     // we know that src and dst will have the same dtype and shape by definition
 
-    if ( threadIdx.x == 0 && blockIdx.x == 0 && block_idx == 0 ) { 
-        printf("Inside the cumulative_add() function.\n"); 
-    }
     const int row = laneid() / 4;
-    __syncthreads();
 
     // step 0. extract the last row of dst (tiles dst 1 to src 0 and dst 2 to src 3). 
     int leader_step_0; 
@@ -51,13 +47,11 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     rt_bf<1,1> broadcast_last_row_1, broadcast_last_row_3;
     dtype copy_accum_packed_1 = dst.tiles[0][0].data[1];
     dtype copy_accum_packed_3 = dst.tiles[0][0].data[3];
-    __syncthreads();
 
     copy_accum_packed_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_1, leader_step_0);
     last_row_1[0][0] = copy_accum_packed_1;
     broadcast_col(broadcast_last_row_1, last_row_1);
     dtype (*broadcast_last_row_1_) = reinterpret_cast<dtype*>(&broadcast_last_row_1);
-    __syncthreads();
 
     copy_accum_packed_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_3, leader_step_0);
     last_row_3[0][0] = copy_accum_packed_3;
@@ -151,12 +145,11 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     dst.tiles[0][0].data[2] = accum_packed_2;
     dst.tiles[0][0].data[1] = accum_packed_1; 
     dst.tiles[0][0].data[3] = accum_packed_3;
-    __syncthreads();
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(
-    int n, CUtensorMap* tma_k, CUtensorMap* debug_cumsum_k_a1
+    int n, int use_reg, CUtensorMap* tma_k, CUtensorMap* debug_cumsum_k_a1
 ) {
     int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
@@ -197,19 +190,20 @@ void based_linear_attention(
             tma::load_async(k_s[toc],   tma_k,   bar, next_tile_idx);
         }
 
-        rt_bf_1x1<> k_src;
-        load(k_src, k_s[tic]);
-        __syncthreads();
-        cumulative_add(k_cumsum_a1_reg, k_src, block);  // cumsum in registers
-        __syncthreads();
-        __syncthreads();
-        store(ks_smem_a1_tile, k_cumsum_a1_reg);
-        __syncthreads();
-
-        // __syncthreads(); 
-        // cumulative_add(ks_smem_a1_tile, k_s[tic]);   // cumsum in smem
-        // __syncthreads();
-        // __syncthreads(); 
+        if ( use_reg > 0 ) {
+            rt_bf_1x1<> k_src;
+            load(k_src, k_s[tic]);
+            __syncthreads();
+            cumulative_add(k_cumsum_a1_reg, k_src, block);  // cumsum in registers
+            __syncthreads();
+            store(ks_smem_a1_tile, k_cumsum_a1_reg);
+            __syncthreads();
+        } else {
+            __syncthreads(); 
+            cumulative_add(ks_smem_a1_tile, k_s[tic]);   // cumsum in smem
+            __syncthreads();
+        }
+        
         if (warpid == 0) { 
             tma::store_async(debug_cumsum_k_a1, ks_smem_a1_tile, blockIdx.x*n_blocks + block); 
             tma::store_commit_group();   

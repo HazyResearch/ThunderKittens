@@ -8,6 +8,8 @@
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
+#define use_reg 1
+
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();
@@ -94,35 +96,35 @@ int main(int argc, char **argv) {
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) { 
         based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
-            ATTN_N, tma_k_d, tma_cumsum_k_a1
+            ATTN_N, use_reg, tma_k_d, tma_cumsum_k_a1
         );  
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
-    if (1) {
-        // k1 cumsum 
-        cudaMemcpy(cumsum_k_a1_bf, d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) { 
-            cumsum_k_a1[i] = __bfloat162float(cumsum_k_a1_bf[i]);
-            // if (i < 10) {  std::cout << cumsum_k_a1[i] << std::endl;  }
-        }
-        std::ofstream cumsum_k_a1_file("printouts/cumsum_k_a1.txt");
-        std::ofstream cumsum_k_a1_ref_file("printouts/cumsum_k_a1_ref.txt");
-        std::ofstream cumsum_k_a1_diff_file("printouts/cumsum_k_a1_diff.txt");
-        float total_cumsum_k_a1_diff=0;
-        for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) {
-            float diff = cumsum_k_a1[i] - cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
-            if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1) {
-                cumsum_k_a1_ref_file << cumsum_k_a1_ref[i] << ' ';
-                cumsum_k_a1_file << cumsum_k_a1[i] << ' ';
-                cumsum_k_a1_diff_file << diff << ' ';
-                total_cumsum_k_a1_diff += abs(diff);
-            }
-        }
-        std::cout << "Cumsum K A1 | avg_diff=" << (total_cumsum_k_a1_diff/TOTAL_ELEMENTS_CUMSUM_K1) << std::endl;
+    
+    // k1 cumsum 
+    cudaMemcpy(cumsum_k_a1_bf, d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) { 
+        cumsum_k_a1[i] = __bfloat162float(cumsum_k_a1_bf[i]);
     }
+    std::ofstream cumsum_k_a1_file("printouts/cumsum_k_a1.txt");
+    std::ofstream cumsum_k_a1_ref_file("printouts/cumsum_k_a1_ref.txt");
+    std::ofstream cumsum_k_a1_diff_file("printouts/cumsum_k_a1_diff.txt");
+    float total_cumsum_k_a1_diff=0;
+    for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) {
+        float diff = cumsum_k_a1[i] - cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
+        if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1) {
+            cumsum_k_a1_ref_file << cumsum_k_a1_ref[i] << ' ';
+            cumsum_k_a1_file << cumsum_k_a1[i] << ' ';
+            cumsum_k_a1_diff_file << diff << ' ';
+            total_cumsum_k_a1_diff += abs(diff);
+        }
+    }
+    std::cout << "Cumsum avg_diff=" << (total_cumsum_k_a1_diff/TOTAL_ELEMENTS_CUMSUM_K1) << std::endl;
+    std::cout << "Timing (microsec)=" << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << std::endl;
+    std::cout << "Use_reg=" << use_reg << std::endl;
 
     // pointers
     cudaFree(d_k);
