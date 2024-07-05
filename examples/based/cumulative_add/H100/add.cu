@@ -10,6 +10,10 @@
 #define D_QK (16) // hardcoded, don't change
 #define D_VO (64) // hardcoded but can be changed with some effort
 
+#define tile_k_reg rt_bf<4,1>
+#define tile_k_reg_loads rt_bf<1,1>
+#define tile_k_s   st_bf_4x1<wgmma_interleave_l>
+
 using namespace kittens;
 
 template<ducks::st::all ST>
@@ -35,18 +39,34 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     using dtype = typename RT::dtype;
     using packed_type = typename base_types::packing<dtype>::unpacked_type;
     // we know that src and dst will have the same dtype and shape by definition
+    static_assert(dst.width == 1); // hard coded to this case
 
+    // get the leaders for different shuffles.
     const int row = laneid() / 4;
-
-    // step 0. extract the last row of dst (tiles dst 1 to src 0 and dst 2 to src 3). 
+    
     int leader_step_0; 
     if ( row % 8 < 7 ) { leader_step_0 = laneid() + 4*(7 - row);  }
     else { leader_step_0 = laneid(); }
-    __syncthreads();
-    row_vec<rt_bf<1,1>> last_row_1, last_row_3;
-    rt_bf<1,1> broadcast_last_row_1, broadcast_last_row_3;
-    dtype copy_accum_packed_1 = dst.tiles[0][0].data[1];
-    dtype copy_accum_packed_3 = dst.tiles[0][0].data[3];
+
+    const int leader_step_1 = (row % 2 == 1) ? laneid() - 4: laneid();
+
+    int leader_step_2;
+    if (row % 4 == 2 || row % 4 == 3 ) { leader_step_2 = (row % 2 == 0) ? laneid() - 4 : laneid() - 8; } 
+    else {  leader_step_2 = laneid(); }  
+
+    int leader_step_3; 
+    if ( row % 8 > 3 ) { leader_step_3 = laneid() - 4*((row % 4) + 1); } 
+    else { leader_step_3 = laneid(); }
+
+    int leader_step_4; 
+    if ( row % 8 < 7 ) { leader_step_4 = laneid() + 4*(7 - row);  }
+    else { leader_step_4 = laneid(); }
+
+    // Extract the last row of dst from the prior block.
+    row_vec<tile_k_reg_loads> last_row_1, last_row_3;
+    tile_k_reg_loads broadcast_last_row_1, broadcast_last_row_3;
+    dtype copy_accum_packed_1 = dst.tiles[dst.height-1][0].data[1];
+    dtype copy_accum_packed_3 = dst.tiles[dst.height-1][0].data[3];
 
     copy_accum_packed_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_1, leader_step_0);
     last_row_1[0][0] = copy_accum_packed_1;
@@ -59,92 +79,125 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     dtype (*broadcast_last_row_3_) = reinterpret_cast<dtype*>(&broadcast_last_row_3);
     __syncthreads();
 
-    // step 1. even row i ships its values to odd row i+1
-    const int leader = (row % 2 == 1) ? laneid() - 4: laneid();
-    dtype pull_0 = packed_shfl_sync(MASK_ALL, src.tiles[0][0].data[0], leader);
-    dtype pull_1 = packed_shfl_sync(MASK_ALL, src.tiles[0][0].data[1], leader);
-    dtype pull_2 = packed_shfl_sync(MASK_ALL, src.tiles[0][0].data[2], leader);
-    dtype pull_3 = packed_shfl_sync(MASK_ALL, src.tiles[0][0].data[3], leader);
+    // initial values
     dtype accum_packed_0 = src.tiles[0][0].data[0];
     dtype accum_packed_1 = src.tiles[0][0].data[1];
     dtype accum_packed_2 = src.tiles[0][0].data[2];
     dtype accum_packed_3 = src.tiles[0][0].data[3];
-    __syncthreads();
-    if ( row % 2 == 1) {  accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0); }
-    if ( row % 2 == 1) {  accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2); }
-    if ( row % 2 == 1) {  accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1); }
-    if ( row % 2 == 1) {  accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3); }
-    __syncthreads();
+    dtype final_0, final_1, final_2, final_3;
 
-    // step 2. each row pulls from the last row of the prior two rows cumsum
-    int leader_step_2;
-    if (row % 4 == 2 || row % 4 == 3 ) { 
-        leader_step_2 = (row % 2 == 0) ? laneid() - 4 : laneid() - 8;
-    } else {  
-        leader_step_2 = laneid();  
-    }  
-    __syncthreads();
-    dtype pull_0_ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_2);
-    dtype pull_2_ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_2);
-    dtype pull_1_ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_2);
-    dtype pull_3_ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_2);
-    if ( row % 4 == 2 || row % 4 == 3 ) {  accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0_); }
-    if ( row % 4 == 2 || row % 4 == 3 ) {  accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2_); }
-    if ( row % 4 == 2 || row % 4 == 3 ) {  accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1_); }
-    if ( row % 4 == 2 || row % 4 == 3 ) {  accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3_); }
-    __syncthreads();
+    // start the cumsum
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        
+        dtype (*broadcast_last_row_inner_1_), (*broadcast_last_row_inner_3_);
+        if (i > 0) {
+            // last row of the previous core matrix from src tiles.
+            row_vec<tile_k_reg_loads> last_row_inner_1, last_row_inner_3;
+            tile_k_reg_loads broadcast_last_row_inner_1, broadcast_last_row_inner_3;
+            dtype copy_accum_packed_inner_1 = accum_packed_1;
+            dtype copy_accum_packed_inner_3 = accum_packed_3;
 
-    // step 3: each row pulls from the last row of the prior four rows
-    int leader_step_3; 
-    if ( row % 8 > 3 ) { 
-        leader_step_3 = laneid() - 4*((row % 4) + 1);
-    } else {  
-        leader_step_3 = laneid();  
+            copy_accum_packed_inner_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_1, leader_step_0);
+            last_row_inner_1[0][0] = copy_accum_packed_inner_1;
+            broadcast_col(broadcast_last_row_inner_1, last_row_inner_1);
+            broadcast_last_row_inner_1_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_1);
+
+            copy_accum_packed_inner_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_3, leader_step_0);
+            last_row_inner_3[0][0] = copy_accum_packed_inner_3;
+            broadcast_col(broadcast_last_row_inner_3, last_row_inner_3);
+            broadcast_last_row_inner_3_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_3);
+            __syncthreads();
+
+            // add it to the starting point.
+            accum_packed_0 = src.tiles[i][0].data[0]; 
+            accum_packed_1 = src.tiles[i][0].data[1]; 
+            accum_packed_2 = src.tiles[i][0].data[2]; 
+            accum_packed_3 = src.tiles[i][0].data[3]; 
+        }
+        __syncthreads();
+
+        // step 1. even row i ships its values to odd row i+1
+        dtype pull_0 = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_1);
+        dtype pull_1 = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_1);
+        dtype pull_2 = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_1);
+        dtype pull_3 = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_1);
+        if ( row % 2 == 1) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3); 
+        }
+        __syncthreads();
+
+        // step 2. each row pulls from the last row of the prior two rows cumsum
+        dtype pull_0_ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_2);
+        dtype pull_2_ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_2);
+        dtype pull_1_ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_2);
+        dtype pull_3_ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_2);
+        if ( row % 4 == 2 || row % 4 == 3 ) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0_); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2_); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1_); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3_); 
+        }
+        __syncthreads();
+
+        // step 3: each row pulls from the last row of the prior four rows
+        dtype pull_0__ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_3);
+        dtype pull_2__ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_3);
+        dtype pull_1__ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_3);
+        dtype pull_3__ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_3);
+        if ( row % 8 > 3 ) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0__); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2__); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1__); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3__); 
+        }
+        __syncthreads();
+
+        // step 4: each core matrix sends its last row to the ``next'' core matrix (0 to 1, 2 to 3)
+        row_vec<tile_k_reg_loads> last_row_0, last_row_2;
+        tile_k_reg_loads broadcast_last_row_0, broadcast_last_row_2;
+        dtype copy_accum_packed_0 = accum_packed_0;
+        dtype copy_accum_packed_2 = accum_packed_2;
+
+        copy_accum_packed_0 = packed_shfl_sync(MASK_ALL, copy_accum_packed_0, leader_step_4);
+        last_row_0[0][0] = copy_accum_packed_0;
+        broadcast_col(broadcast_last_row_0, last_row_0);
+        dtype (*broadcast_last_row_0_) = reinterpret_cast<dtype*>(&broadcast_last_row_0);
+        accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_0_);
+
+        copy_accum_packed_2 = packed_shfl_sync(MASK_ALL, copy_accum_packed_2, leader_step_4);
+        last_row_2[0][0] = copy_accum_packed_2;
+        broadcast_col(broadcast_last_row_2, last_row_2);
+        dtype (*broadcast_last_row_2_) = reinterpret_cast<dtype*>(&broadcast_last_row_2);
+        accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_2_);
+        __syncthreads();
+
+        // Finally, save everything out.
+        final_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_1_);
+        final_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_1_);
+        final_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_3_);
+        final_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_3_);
+        if (i > 0) {
+            final_0 = base_ops::sum::op<dtype>(final_0, *broadcast_last_row_inner_1_);
+            final_1 = base_ops::sum::op<dtype>(final_1, *broadcast_last_row_inner_1_);
+            final_2 = base_ops::sum::op<dtype>(final_2, *broadcast_last_row_inner_3_);
+            final_3 = base_ops::sum::op<dtype>(final_3, *broadcast_last_row_inner_3_);
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_inner_1_);
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_inner_1_);
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_inner_3_);
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_inner_3_);
+        }
+        __syncthreads();
+        dst.tiles[i][0].data[0] = final_0;
+        dst.tiles[i][0].data[1] = final_1;
+        dst.tiles[i][0].data[2] = final_2;
+        dst.tiles[i][0].data[3] = final_3;
+        __syncthreads();
     }
-    __syncthreads();
-    dtype pull_0__ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_3);
-    dtype pull_2__ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_3);
-    dtype pull_1__ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_3);
-    dtype pull_3__ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_3);
-    if ( row % 8 > 3 ) {  accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0__); }
-    if ( row % 8 > 3 ) {  accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2__); }
-    if ( row % 8 > 3 ) {  accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1__); }
-    if ( row % 8 > 3 ) {  accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3__); }
-    __syncthreads();
 
-    // step 4: each core matrix sends its last row to the ``next'' core matrix (0 to 1, 2 to 3)
-    int leader_step_4; 
-    if ( row % 8 < 7 ) { leader_step_4 = laneid() + 4*(7 - row);  }
-    else { leader_step_4 = laneid(); }
-    // 0 to 1
-    row_vec<rt_bf<1,1>> last_row_0, last_row_2;
-    rt_bf<1,1> broadcast_last_row_0, broadcast_last_row_2;
-    dtype copy_accum_packed_0 = accum_packed_0;
-    dtype copy_accum_packed_2 = accum_packed_2;
-
-    copy_accum_packed_0 = packed_shfl_sync(MASK_ALL, copy_accum_packed_0, leader_step_4);
-    last_row_0[0][0] = copy_accum_packed_0;
-    broadcast_col(broadcast_last_row_0, last_row_0);
-    dtype (*broadcast_last_row_0_) = reinterpret_cast<dtype*>(&broadcast_last_row_0);
-    accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_0_);
-
-    copy_accum_packed_2 = packed_shfl_sync(MASK_ALL, copy_accum_packed_2, leader_step_4);
-    last_row_2[0][0] = copy_accum_packed_2;
-    broadcast_col(broadcast_last_row_2, last_row_2);
-    dtype (*broadcast_last_row_2_) = reinterpret_cast<dtype*>(&broadcast_last_row_2);
-    accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_2_);
-    __syncthreads();
-
-    accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_1_);
-    accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_1_);
-    accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_3_);
-    accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_3_);
-    __syncthreads();
-
-    dst.tiles[0][0].data[0] = accum_packed_0; 
-    dst.tiles[0][0].data[2] = accum_packed_2;
-    dst.tiles[0][0].data[1] = accum_packed_1; 
-    dst.tiles[0][0].data[3] = accum_packed_3;
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 2)
@@ -161,11 +214,11 @@ void based_linear_attention(
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
-    st_bf_1x1<wgmma_interleave_l> (&k_s) [2] = al.allocate<st_bf_1x1<wgmma_interleave_l>, 2>();       // 4096 bytes
-    st_bf_1x1<wgmma_interleave_l> (&ks_smem_a1_tile) = al.allocate<st_bf_1x1<wgmma_interleave_l>>();  // 1024 bytes
+    tile_k_s (&k_s) [2] = al.allocate<tile_k_s, 2>();       // 4096 bytes
+    tile_k_s (&ks_smem_a1_tile) = al.allocate<tile_k_s>();  // 1024 bytes
     warpgroup::zero(ks_smem_a1_tile);
 
-    rt_bf_1x1<> k_cumsum_a1_reg;
+    tile_k_reg k_cumsum_a1_reg;
     zero(k_cumsum_a1_reg);
 
     int n_blocks = n / (k_s[0].rows);
@@ -191,7 +244,7 @@ void based_linear_attention(
         }
 
         if ( use_reg > 0 ) {
-            rt_bf_1x1<> k_src;
+            tile_k_reg k_src;
             load(k_src, k_s[tic]);
             __syncthreads();
             cumulative_add(k_cumsum_a1_reg, k_src, block);  // cumsum in registers
@@ -204,7 +257,7 @@ void based_linear_attention(
             __syncthreads();
         }
         
-        if (warpid == 0) { 
+        if ( warpid == 0 ) { 
             tma::store_async(debug_cumsum_k_a1, ks_smem_a1_tile, blockIdx.x*n_blocks + block); 
             tma::store_commit_group();   
         }

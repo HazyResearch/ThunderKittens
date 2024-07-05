@@ -74,8 +74,8 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16));
 
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_1x1<wgmma_interleave_l>>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16)); 
-    CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<kittens::st_bf_1x1<wgmma_interleave_l>>(d_cumsum_k_a1, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16));  
+    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_k_s>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16)); 
+    CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<tile_k_s>(d_cumsum_k_a1, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16));  
 
     cudaDeviceSynchronize();
     CudaCheckError();
