@@ -18,8 +18,8 @@ TESTNAME = sys.argv[1]
 if TESTNAME in ['ones_all', 'ones_t0', 'ones_t1', 'ones_t0t1', 'ones_t2']:
     q = (torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')).to(torch.float32)
     k = (torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')/D).to(torch.float32)
-    tensor = torch.arange(N, dtype=torch.float32, device='cuda').repeat_interleave(D).reshape(N, D)
-    k = tensor.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
+    # tensor = torch.arange(N, dtype=torch.float32, device='cuda').repeat_interleave(D).reshape(N, D)
+    # k = tensor.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
     v = (torch.ones((B, H, N, DV), dtype=torch.bfloat16, device='cuda')/DV).to(torch.float32)
 elif TESTNAME in ['randn_all', 'randn_t0', 'randn_t1', 'randn_t0t1', 'randn_t2']:
     torch.random.manual_seed(42)
