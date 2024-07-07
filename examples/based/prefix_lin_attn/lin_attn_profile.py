@@ -11,6 +11,7 @@ from einops import rearrange
 
 # These installs are for pulling in the TK source
 sys.path.append('../../')
+sys.path.append('../../../')
 from src.common.pyutils.test_build_utils import __eq
 sys.path.append('build/lib.linux-x86_64-cpython-311')
 
@@ -20,7 +21,6 @@ loaded_correctly = []
 try:
     sys.path.append("../linear_attn_forward/H100")
     import lin_attn as mod
-    import lin_attn_4090 as mod_4090
     print(f"Successfully imported TK based_H100 kernel")
 except:
     loaded_correctly.append('Based TK')
@@ -178,36 +178,6 @@ class TaylorExp(nn.Module):
 
 
 def pytorch_test(dt, Q, K, V, d, verbose=True, **kwargs):
-    def make_causal(X):
-        (b,h,n,m) = X.shape
-        mask= ~(torch.arange(n).view(1,1,n,1) >= torch.arange(n).view(1,1,1,n)).expand(b,h,n,n)
-        X[mask] = 0.
-        return X
-
-    try:
-        torch.cuda.synchronize()
-        t0 = time.time()
-
-        O   = torch.einsum("bhnd,bhmd->bhnm", Q, K)**2
-        O2  = make_causal(O)
-        T2  = torch.einsum("bhnm,bhmd->bhnd", O2, V)
-        T1a = make_causal(torch.einsum("bhnd,bhmd->bhnm", Q, K))
-        T1 = torch.einsum("bhnm,bhme->bhne", T1a, V)  
-        T0  = V.cumsum(dim=2)
-        y  = T0 + T1 + T2/2
-
-        torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
-    except Exception as e:
-        print(f"Error: {e}") # likely OOM
-        tot = -1
-        y= None
-
-    return y, tot
-
-
-def pytorch_test_v2(dt, Q, K, V, d, verbose=True, **kwargs):
     feature_map = TaylorExp(input_dim=d)
     try:
         torch.cuda.synchronize()
@@ -269,14 +239,20 @@ def fla_parallel_based_test(dt, q, k, v, d, verbose=True, **kwargs):
     return y, tot
 
 
-def based_kernel_test(dt, Q, K, V, d, verbose=True):
+def based_kernel_test(dt, Q, K, V, d, add_scale=False,output_state=False, verbose=True):
+    b, h, n, d = Q.shape
+    dv = V.shape[-1]
     o   = torch.zeros_like(V)
+    kv_state_a2 = torch.zeros((b, h, dv, d*d), dtype=dt, device='cuda')
+    kv_state_a1 = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
+    kv_state_a0 = torch.zeros((b, h, dv), dtype=dt, device='cuda')
 
     try:
         torch.cuda.synchronize()
         t0 = time.time()
 
-        mod.based_fwd_tk(Q,K,V,o)
+        mod.based_fwd_tk(int(add_scale),int(output_state),Q,K,V,o,kv_state_a2,kv_state_a1,kv_state_a0)
+
         o += torch.zeros_like(o) # trigger an error if one exists
 
         torch.cuda.synchronize()
@@ -398,12 +374,7 @@ def linear_attn_correct(dt):
     V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
 
     pytorch_test_result = pytorch_test(dt, Q, K, V, d)
-    pytorch_test_v2_result = pytorch_test_v2(dt, Q, K, V, d) 
     based_kernel_test_result = based_kernel_test(dt, Q, K, V, d)
-
-    print(f"Note we find numerical differences upon inspecting the tensor outputs:")
-    __eq("PyTorch v1 - PyTorch v2", pytorch_test_result[0], pytorch_test_v2_result[0], debug=False)
-    __eq("PyTorch v2 - Based TK", pytorch_test_v2_result[0], based_kernel_test_result[0], debug=False)
     __eq("PyTorch v1 - Based TK", pytorch_test_result[0], based_kernel_test_result[0], debug=False)
 
 
@@ -425,9 +396,7 @@ def jrt_linear_attn_correct(dt):
 
     jrt_torch_result = jrt_pytorch_test(dt, Q, K, V, K_enc, V_enc, d)
     jrt_tk_result = jrt_based_kernel_test(dt, Q, K, V,  K_enc, V_enc, d)
-
-    print(f"Note we find numerical differences upon inspecting the tensor outputs:")
-    __eq("PyTorch - Based TK", jrt_torch_result[0], jrt_tk_result[0], debug=False)
+    __eq("PyTorch - JRT TK", jrt_torch_result[0], jrt_tk_result[0], debug=False)
 
 
 ############## Efficiency Measurements #############
@@ -436,15 +405,10 @@ def get_flops(batch, seqlen, headdim, nheads, featuredim):
     expanded_dim = featuredim * featuredim + featuredim + 1
 
     f = 2 * batch * seqlen * nheads * expanded_dim
-
-    # (k * v)
-    f += batch * seqlen * nheads * headdim * expanded_dim
-    # (cumsum)
-    f +=  batch * seqlen * nheads * headdim * expanded_dim
-    # (q * (k * v))
-    f += batch * seqlen * nheads * headdim * expanded_dim
-    # .sum(dim=-1)
-    f += batch * seqlen * nheads * headdim * expanded_dim
+    f += batch * seqlen * nheads * headdim * expanded_dim  # (k * v)
+    f +=  batch * seqlen * nheads * headdim * expanded_dim # (cumsum)
+    f += batch * seqlen * nheads * headdim * expanded_dim  # (q * (k * v))
+    f += batch * seqlen * nheads * headdim * expanded_dim  # .sum(dim=-1)
 
     return f
 
@@ -491,7 +455,7 @@ if __name__ == "__main__":
     print("Benchmarking the kernels...")
     methods = {
             # Based
-            'Based PyTorch': pytorch_test_v2,
+            'Based PyTorch': pytorch_test,
             'Based CUDA': based_kernel_test,
             'Based Triton': fla_parallel_based_test,
 
@@ -505,8 +469,8 @@ if __name__ == "__main__":
             'Fast Transformer CUDA': fast_transformer_test, 
         }
 
-    # linear_attn_forward_benchmark_batch(torch.bfloat16, methods, verbose=False)
-    # linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, verbose=False)
+    linear_attn_forward_benchmark_batch(torch.bfloat16, methods, verbose=False)
+    linear_attn_forward_benchmark_seqlen(torch.bfloat16, methods, verbose=False)
 
     print("Correctness test...")
     linear_attn_correct(torch.bfloat16)
