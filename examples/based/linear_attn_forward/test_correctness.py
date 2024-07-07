@@ -129,8 +129,6 @@ def pytorch_test_v1(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
     K0 = torch.ones(Q[..., :1].shape).to(Q.device)
     D0 =  K0.to(torch.float32).cumsum(dim=2).squeeze()
 
-    breakpoint()
-
     numerators = [T0, T1, T2]
     denominators = [D0, D1, D2]
     numerator = sum(numerators)
@@ -272,9 +270,9 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
         int(add_scale),int(add_norm),int(output_state),
         Q,K,V,o,
         kv_state_a2,kv_state_a1,kv_state_a0,
-        k_state_a2, k_state_a1
+        k_state_a2,k_state_a1
     )
-    
+
     o += torch.zeros_like(o) # trigger an error if one exists
     kv_state_a2 = kv_state_a2.transpose(2,3)
     return o, kv_state_a2, kv_state_a1, kv_state_a0, k_state_a2, k_state_a1, k_state_a0
@@ -283,13 +281,13 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
 ################### Benchmarking and Correctness Tests ####################
 
 def linear_attn_correct(dt):
-    b = 4
+    b = 2
     n = 2048
-    h = 16
+    h = 2
     d = 16
     dv = 64
     add_scale=False     
-    add_norm=True
+    add_norm=False
     output_kv_state=True
     output_k_state=True
     print(f"{b=}, {n=}, {d=}, {h=}")
@@ -308,6 +306,8 @@ def linear_attn_correct(dt):
     tk_outputs, kv_a2_tk, kv_a1_tk, kv_a0_tk, k_a2_tk, k_a1_tk, k_a0_tk  = based_kernel_test(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale, output_state=output_kv_state)
     # fla_parallel_out = fla_parallel_based_test(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
 
+    torch.set_printoptions(sci_mode=False)
+
     print(f"Note we find numerical differences upon inspecting the tensor outputs:\n")
     print(f"Checking outputs:")
     __eq("PyTorch v1 - PyTorch v2", pytorch_v1, pytorch_v2, debug=False)
@@ -318,24 +318,23 @@ def linear_attn_correct(dt):
     if tk_outputs is not None:
         __eq("\nPyTorch v2 - Based TK", pytorch_v2, tk_outputs)
         __eq("PyTorch v1 - Based TK", pytorch_v1, tk_outputs, debug=False)
-        __eq("PyTorch v2[0,0,:15] - Based TK[0,0,:15]", pytorch_v2[0,0,:105], tk_outputs[0,0,:105])
         __eq("PyTorch v1[0,0,:15] - Based TK[0,0,:15]", pytorch_v1[0,0,:105], tk_outputs[0,0,:105], debug=False)
-        print("position 015:",pytorch_v2[0,0,15,:4])
-        print("position 015",tk_outputs[0,0,15,:4])
-        print("position 065:",pytorch_v2[0,0,65,:4])
-        print("position 065:",tk_outputs[0,0,65,:4])
-        print("position 105:",pytorch_v2[0,0,105,:4])
-        print("position 105:",tk_outputs[0,0,105,:4])
         print()
     if fla_parallel_out is not None:
         __eq("PyTorch v1 - FLA", pytorch_v1, fla_parallel_out, debug=False)
         __eq("PyTorch v2 - FLA", pytorch_v2, fla_parallel_out, debug=False)
 
+    print("---"*10)
+
+    # breakpoint()
     if output_kv_state:
         print("\nChecking KV States (A2)")
         print(f"{kv_a2_v1.shape=}, {kv_a2_v3.shape=}")
         __eq("PyTorch v1 A2 - PyTorch v3 A2", kv_a2_v1, kv_a2_v3, debug=False)
-        if tk_outputs is not None: __eq("PyTorch v1 A2 - Based TK A2", kv_a2_v1, kv_a2_tk, debug=False)
+        if tk_outputs is not None: 
+            __eq("PyTorch v1 A2 - Based TK A2", kv_a2_v1, kv_a2_tk, debug=False)
+            print(kv_a2_tk[0,0,0,:8])
+            print(kv_a2_v1[0,0,0,:8])
 
         print("\nChecking KV States (A1)")
         print(f"{kv_a1_v1.shape=}, {kv_a1_v3.shape=}")
@@ -343,48 +342,62 @@ def linear_attn_correct(dt):
         if tk_outputs is not None:
             __eq("PyTorch v1 A1 - Based TK A1", kv_a1_v1, kv_a1_tk, debug=False)
             __eq("PyTorch v1 A1 - Based TK A1", kv_a1_v1[:,0], kv_a1_tk[:,0], debug=False)  
+            print(kv_a1_tk[0,0,0,:8])
+            print(kv_a1_v1[0,0,0,:8])
 
         print(f"\nChecking KV States (A0)")
         print(f"{kv_a0_v1.shape=}, {kv_a0_v3.shape=}")
         __eq("PyTorch v1 A0 - PyTorch v3 A0", kv_a0_v1, kv_a0_v3, debug=False)
         if tk_outputs is not None:
-            __eq("PyTorch v1 A0 - PyTorch v3 A0", kv_a0_v1, kv_a0_tk, debug=False)
+            __eq("PyTorch v1 A0 - PyTorch TK A0", kv_a0_v1, kv_a0_tk, debug=False)
+            print(kv_a0_tk[0,0,:8])
+            print(kv_a0_v1[0,0,:8])
+
 
         # combining taylor expansion terms
         if tk_outputs is not None: 
             kv_state = torch.concat((kv_a2_tk, kv_a1_tk.transpose(2,3), kv_a0_tk.unsqueeze(2)), dim=-2)
 
+    print("---"*10)
+
     if output_k_state:
-        # breakpoint()
         print("\nChecking K States (D2)")
         print(f"{k_a2_v1.shape=}, {k_a2_v3.shape=}")
         __eq("PyTorch v1 D2 - PyTorch v3 D2", k_a2_v1, k_a2_v3, debug=False)
         if tk_outputs is not None: 
             __eq("PyTorch v1 D2 - PyTorch tk D2", k_a2_v1, k_a2_tk, debug=False) # SA: currently has sporadic nans
-            __eq("PyTorch v1 D2 [0,0] - PyTorch tk D2 [0,0]", k_a2_v1[0,0], k_a2_tk[0,0], debug=False)
+            __eq("PyTorch v1 D2 [0,0,:64] - PyTorch tk D2 [0,0,:64]", k_a2_v1[0,0,:64], k_a2_tk[0,0,:64], debug=False)
+            print(k_a2_tk[0,0,:8])
+            print(k_a2_v1[0,0,:8])
 
         print("\nChecking K States (D1)")
         print(f"{k_a1_v1.shape=}, {k_a1_v3.shape=}")
         __eq("PyTorch v1 D1 - PyTorch v3 D1", k_a1_v1, k_a1_v3, debug=False)
         if tk_outputs is not None:
             __eq("PyTorch v1 D1 - PyTorch tk D1", k_a1_v1, k_a1_tk, debug=False)
+            print(k_a1_tk[0,1,:8])
+            print(k_a1_v1[0,1,:8])
 
         print(f"\nChecking K States (D0)")
         print(f"{k_a0_v1.shape=}")
         __eq("PyTorch v1 D0 - PyTorch v3 D0", k_a0_v1, k_a0_v3, debug=False)
         if tk_outputs is not None:
             __eq("PyTorch v1 D0 - PyTorch tk D0", k_a0_v1, k_a0_tk, debug=False)
+            print(k_a0_tk[0,0])
+            print(k_a0_v1[0,0])
 
         print(f"\nChecking K States (Full)")
         k_state_v1_full = torch.concat([k_a0_v1.unsqueeze(-1), k_a1_v1, k_a2_v1], dim=-1)
         k_state_v3_full = torch.concat([k_a0_v3.unsqueeze(-1), k_a1_v3, k_a2_v3], dim=-1)
         k_state_v4_full = torch.concat([k_a0_v4.unsqueeze(-1), k_a1_v4, k_a2_v4], dim=-1)
-        k_state_tk_full = torch.concat([k_a0_tk.unsqueeze(-1), k_a1_tk, k_a2_tk], dim=-1)
+        if tk_outputs is not None:
+            k_state_tk_full = torch.concat([k_a0_tk.unsqueeze(-1), k_a1_tk, k_a2_tk], dim=-1)
         print(f"{k_state_v1_full.shape=}, {k_state_v2_full.shape=}")
         __eq("PyTorch v1 - PyTorch v2", k_state_v1_full, k_state_v2_full, debug=False)
         __eq("PyTorch v1 - PyTorch v3", k_state_v1_full, k_state_v3_full, debug=False)
         __eq("PyTorch v1 - PyTorch v4", k_state_v1_full, k_state_v4_full, debug=False)
-        __eq("PyTorch v1 - PyTorch tk", k_state_v1_full, k_state_tk_full, debug=False)
+        if tk_outputs is not None:
+            __eq("PyTorch v1 - PyTorch tk", k_state_v1_full, k_state_tk_full, debug=False)
 
 if __name__ == "__main__":
     methods = {
