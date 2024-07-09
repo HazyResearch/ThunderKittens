@@ -250,7 +250,7 @@ def linear_attn_correct(dt):
     d = 16
     dv = 64
     add_scale=True     
-    add_norm=False
+    add_norm=True
     output_kv_state=True
     output_k_state=True
     print(f"{b=}, {n=}, {d=}, {h=}")
