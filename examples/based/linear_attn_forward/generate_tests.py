@@ -55,8 +55,8 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     ).to(torch.bfloat16).to(torch.float32)
     T0  = V.cumsum(dim=2).to(torch.bfloat16).to(torch.float32)
 
-    rd  = math.sqrt(D) if add_scale else 1    # 4
-    rrd = math.sqrt(rd) if add_scale else 1   # 2
+    rd  = math.sqrt(D) if add_scale else 1    
+    rrd = math.sqrt(rd) if add_scale else 1   
     r2  = math.sqrt(2) if add_scale else 1
 
     # KV states
@@ -72,27 +72,23 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     K2 = torch.einsum("bhnd,bhne->bhnde", K.to(torch.float32), K.to(torch.float32)) / (rd * r2)
     k_a2_cumsum = K2.to(torch.float32).cumsum(dim=2)
     D2 = torch.einsum("bhnde,bhnde->bhn", Q2.to(torch.float32), k_a2_cumsum) 
-    k_a1_cumsum =  K.to(torch.float32).cumsum(dim=2) / ((rrd))
-    D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32) / ((rrd)), k_a1_cumsum) 
+    k_a1_cumsum =  K.to(torch.float32).cumsum(dim=2) / (rrd)
+    D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32) / (rrd), k_a1_cumsum) 
     k_a0_cumsum =  K0.to(torch.float32).cumsum(dim=2).squeeze(-1)
 
     o = 0
     den = 0
+    norm_a0 = k_a0_cumsum.to(torch.bfloat16).to(torch.float32)
+    norm_a1 = D1.to(torch.bfloat16).to(torch.float32)
+    norm_a2 = D2.to(torch.bfloat16).to(torch.float32)
+
     if add_norm: 
-        norm_a0 = k_a0_cumsum.to(torch.bfloat16).to(torch.float32)
         den += norm_a0
-    o += T0.to(torch.bfloat16).to(torch.float32)
-
-    if add_norm: 
-        norm_a1 = D1.to(torch.bfloat16).to(torch.float32)
         den += norm_a1
-    o += T1.to(torch.bfloat16).to(torch.float32) / (rrd * rrd)
-    
-    if add_norm: 
-        norm_a2 = D2.to(torch.bfloat16).to(torch.float32)
         den += norm_a2
+    o += T0.to(torch.bfloat16).to(torch.float32)
+    o += T1.to(torch.bfloat16).to(torch.float32) / (rrd * rrd)
     o += T2.to(torch.bfloat16).to(torch.float32) / (rd * r2 * rd * r2)
-
     if add_norm and not (type(den) == int and den > 0):
         print("normalizing!")
         eps = 1e-12

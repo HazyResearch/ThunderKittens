@@ -7,21 +7,12 @@
 #define D_QK (16) // hardcoded, don't change
 #define D_VO (64) // hardcoded but can be changed with some effort
 
-#define tile_k_smem st_bf_4x1<wgmma_interleave_l>
-
-#define tile_kv_a2_2_smem st_bf_4x4<wgmma_swizzle_l>            // kvstate
-#define tile_kv_a1_2_smem st_bf_4x1<wgmma_swizzle_l>
-#define tile_kv_a0_2_smem sv_bf<4>
-
-#define tile_k_a2_2_smem sv_bf<16>                              // kstate
-#define tile_k_a1_2_smem sv_bf<1>
-
-#define tile_cumsum_k_a0 row_vec<st<bf16,1,4,wgmma_swizzle_l>>  // cumsum 
-#define tile_cumsum_k_a2 st_bf_4x4<swizzle_l>
-
-#define tile_k_reg rt_bf<4,1>
-#define tile_k_reg_loads rt_bf<1,1>
-#define tile_k_s   st_bf_4x1<wgmma_interleave_l>
+#define tile_smem_bf_4x1 st_bf_4x1<wgmma_interleave_l>
+#define tile_smem_bf_4x4 st_bf_4x4<swizzle_l>           
+#define tile_smem_bf_4x4_wgmma_interleave st_bf_4x4<wgmma_interleave_l>
+#define vec_smem_bf_4 sv_bf<4>
+#define vec_smem_bf_1 sv_bf<1>
+#define row_vec_smem_bf_1x4 row_vec<st_bf_1x4<swizzle_l>> 
 
 using namespace kittens;
 
@@ -50,11 +41,9 @@ __device__ void accumulate_a0(sv_bf<ST::width> &a0_total, const ST &v) {
     }
 }
 
-
 // in pytorch, this computes, for a 16x64 tensor dst and 16x16 tensor src:
 // dst = torch.cat([src * src[:,starting_col+i].unsqueeze(0) for i in range(4)], dim=-1)
 __device__ static void mul_slice_row(rt_bf_1x4<> &dst, const rt_bf_1x1<> &src, const int starting_col) {
-
     const int lane = kittens::laneid(); // 0...31    
     // each thread is responsible for two rows
     #pragma unroll
@@ -134,172 +123,6 @@ __device__ inline void cumulative_add(ST &dst, const ST &inc) {
 }
 
 
-template<ducks::rt::all RT>
-__device__ inline void cumulative_add(RT &dst, const RT &src, const int block_idx) {
-    using dtype = typename RT::dtype;
-    using packed_type = typename base_types::packing<dtype>::unpacked_type;
-    // we know that src and dst will have the same dtype and shape by definition
-    static_assert(dst.width == 1); // hard coded to this case
-
-    // get the leaders for different shuffles.
-    const int row = laneid() / 4;
-    
-    int leader_step_0; 
-    if ( row % 8 < 7 ) { leader_step_0 = laneid() + 4*(7 - row);  }
-    else { leader_step_0 = laneid(); }
-
-    const int leader_step_1 = (row % 2 == 1) ? laneid() - 4: laneid();
-
-    int leader_step_2;
-    if (row % 4 == 2 || row % 4 == 3 ) { leader_step_2 = (row % 2 == 0) ? laneid() - 4 : laneid() - 8; } 
-    else {  leader_step_2 = laneid(); }  
-
-    int leader_step_3; 
-    if ( row % 8 > 3 ) { leader_step_3 = laneid() - 4*((row % 4) + 1); } 
-    else { leader_step_3 = laneid(); }
-
-    int leader_step_4; 
-    if ( row % 8 < 7 ) { leader_step_4 = laneid() + 4*(7 - row);  }
-    else { leader_step_4 = laneid(); }
-
-    // Extract the last row of dst from the prior block.
-    row_vec<tile_k_reg_loads> last_row_1, last_row_3;
-    tile_k_reg_loads broadcast_last_row_1, broadcast_last_row_3;
-    dtype copy_accum_packed_1 = dst.tiles[dst.height-1][0].data[1];
-    dtype copy_accum_packed_3 = dst.tiles[dst.height-1][0].data[3];
-
-    copy_accum_packed_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_1, leader_step_0);
-    last_row_1[0][0] = copy_accum_packed_1;
-    broadcast_col(broadcast_last_row_1, last_row_1);
-    dtype (*broadcast_last_row_1_) = reinterpret_cast<dtype*>(&broadcast_last_row_1);
-
-    copy_accum_packed_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_3, leader_step_0);
-    last_row_3[0][0] = copy_accum_packed_3;
-    broadcast_col(broadcast_last_row_3, last_row_3);
-    dtype (*broadcast_last_row_3_) = reinterpret_cast<dtype*>(&broadcast_last_row_3);
-    __syncthreads();
-
-    // initial values
-    dtype accum_packed_0 = src.tiles[0][0].data[0];
-    dtype accum_packed_1 = src.tiles[0][0].data[1];
-    dtype accum_packed_2 = src.tiles[0][0].data[2];
-    dtype accum_packed_3 = src.tiles[0][0].data[3];
-    dtype final_0, final_1, final_2, final_3;
-
-    // start the cumsum
-    #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
-        
-        dtype (*broadcast_last_row_inner_1_), (*broadcast_last_row_inner_3_);
-        if (i > 0) {
-            // last row of the previous core matrix from src tiles.
-            row_vec<tile_k_reg_loads> last_row_inner_1, last_row_inner_3;
-            tile_k_reg_loads broadcast_last_row_inner_1, broadcast_last_row_inner_3;
-            dtype copy_accum_packed_inner_1 = accum_packed_1;
-            dtype copy_accum_packed_inner_3 = accum_packed_3;
-
-            copy_accum_packed_inner_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_1, leader_step_0);
-            last_row_inner_1[0][0] = copy_accum_packed_inner_1;
-            broadcast_col(broadcast_last_row_inner_1, last_row_inner_1);
-            broadcast_last_row_inner_1_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_1);
-
-            copy_accum_packed_inner_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_3, leader_step_0);
-            last_row_inner_3[0][0] = copy_accum_packed_inner_3;
-            broadcast_col(broadcast_last_row_inner_3, last_row_inner_3);
-            broadcast_last_row_inner_3_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_3);
-            __syncthreads();
-
-            // add it to the starting point.
-            accum_packed_0 = src.tiles[i][0].data[0]; 
-            accum_packed_1 = src.tiles[i][0].data[1]; 
-            accum_packed_2 = src.tiles[i][0].data[2]; 
-            accum_packed_3 = src.tiles[i][0].data[3]; 
-        }
-        __syncthreads();
-
-        // step 1. even row i ships its values to odd row i+1
-        dtype pull_0 = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_1);
-        dtype pull_1 = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_1);
-        dtype pull_2 = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_1);
-        dtype pull_3 = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_1);
-        if ( row % 2 == 1) {  
-            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0); 
-            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2); 
-            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1); 
-            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3); 
-        }
-        __syncthreads();
-
-        // step 2. each row pulls from the last row of the prior two rows cumsum
-        dtype pull_0_ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_2);
-        dtype pull_2_ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_2);
-        dtype pull_1_ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_2);
-        dtype pull_3_ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_2);
-        if ( row % 4 == 2 || row % 4 == 3 ) {  
-            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0_); 
-            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2_); 
-            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1_); 
-            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3_); 
-        }
-        __syncthreads();
-
-        // step 3: each row pulls from the last row of the prior four rows
-        dtype pull_0__ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_3);
-        dtype pull_2__ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_3);
-        dtype pull_1__ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_3);
-        dtype pull_3__ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_3);
-        if ( row % 8 > 3 ) {  
-            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0__); 
-            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2__); 
-            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1__); 
-            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3__); 
-        }
-        __syncthreads();
-
-        // step 4: each core matrix sends its last row to the ``next'' core matrix (0 to 1, 2 to 3)
-        row_vec<tile_k_reg_loads> last_row_0, last_row_2;
-        tile_k_reg_loads broadcast_last_row_0, broadcast_last_row_2;
-        dtype copy_accum_packed_0 = accum_packed_0;
-        dtype copy_accum_packed_2 = accum_packed_2;
-
-        copy_accum_packed_0 = packed_shfl_sync(MASK_ALL, copy_accum_packed_0, leader_step_4);
-        last_row_0[0][0] = copy_accum_packed_0;
-        broadcast_col(broadcast_last_row_0, last_row_0);
-        dtype (*broadcast_last_row_0_) = reinterpret_cast<dtype*>(&broadcast_last_row_0);
-        accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_0_);
-
-        copy_accum_packed_2 = packed_shfl_sync(MASK_ALL, copy_accum_packed_2, leader_step_4);
-        last_row_2[0][0] = copy_accum_packed_2;
-        broadcast_col(broadcast_last_row_2, last_row_2);
-        dtype (*broadcast_last_row_2_) = reinterpret_cast<dtype*>(&broadcast_last_row_2);
-        accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_2_);
-        __syncthreads();
-
-        // Finally, save everything out.
-        final_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_1_);
-        final_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_1_);
-        final_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_3_);
-        final_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_3_);
-        if (i > 0) {
-            final_0 = base_ops::sum::op<dtype>(final_0, *broadcast_last_row_inner_1_);
-            final_1 = base_ops::sum::op<dtype>(final_1, *broadcast_last_row_inner_1_);
-            final_2 = base_ops::sum::op<dtype>(final_2, *broadcast_last_row_inner_3_);
-            final_3 = base_ops::sum::op<dtype>(final_3, *broadcast_last_row_inner_3_);
-            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_inner_1_);
-            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_inner_1_);
-            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_inner_3_);
-            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_inner_3_);
-        }
-        __syncthreads();
-        dst.tiles[i][0].data[0] = final_0;
-        dst.tiles[i][0].data[1] = final_1;
-        dst.tiles[i][0].data[2] = final_2;
-        dst.tiles[i][0].data[3] = final_3;
-        __syncthreads();
-    }
-}
-
-
 template<ducks::sv::all SV, ducks::st::all ST>
 __device__ inline void cumulative_add_a0(SV &dst, const ST &src) {
     // this is called along a warpgroup
@@ -324,48 +147,45 @@ void based_linear_attention(
     CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o, 
     CUtensorMap* tma_kv_a2, CUtensorMap* tma_kv_a1, CUtensorMap* tma_kv_a0, 
     CUtensorMap* tma_k_a2, CUtensorMap* tma_k_a1
+    // ,
+    // CUtensorMap* debug_norm_a1, CUtensorMap* debug_cumsum_k_a1,
+    // CUtensorMap* debug_cumsum_k_a0, CUtensorMap* debug_norm_a2, CUtensorMap* debug_cumsum_k_a2
 ) {
 
     int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
     int tic = 0, toc = 1;
 
-    const int batch_id = blockIdx.y;
-    const int head_id  = blockIdx.x;
-    const int batch_head_id = batch_id*gridDim.x + head_id;
-
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
     st_bf_4x1<wgmma_swizzle_l>    (&q_s)  [2]   = al.allocate<st_bf_4x1<wgmma_swizzle_l>,    2>(); // 4096 bytes
-    tile_k_smem (&k_s)  [2]                     = al.allocate<tile_k_smem, 2>();                   // 4096 bytes
-    st_bf_4x4<wgmma_interleave_l> (&v_s)  [2]   = al.allocate<st_bf_4x4<wgmma_interleave_l>, 2>(); // 16384 bytes
-    st_bf_4x4<wgmma_interleave_l> (&v_s_2)[2]   = al.allocate<st_bf_4x4<wgmma_interleave_l>, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
-    st_bf_4x4<swizzle_l>          (&v_s_3)[2]   = al.allocate<st_bf_4x4<swizzle_l>,          2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
-    st_bf_4x4<swizzle_l>          (&o_s)  [2]   = al.allocate<st_bf_4x4<swizzle_l>,          2>(); // 16384 bytes
+    tile_smem_bf_4x1 (&k_s)  [2]                     = al.allocate<tile_smem_bf_4x1, 2>();                   // 4096 bytes
+    tile_smem_bf_4x4_wgmma_interleave (&v_s)  [2]   = al.allocate<tile_smem_bf_4x4_wgmma_interleave, 2>(); // 16384 bytes
+    tile_smem_bf_4x4_wgmma_interleave (&v_s_2)[2]   = al.allocate<tile_smem_bf_4x4_wgmma_interleave, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
+    tile_smem_bf_4x4       (&v_s_3)[2]   = al.allocate<tile_smem_bf_4x4,          2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
+    tile_smem_bf_4x4       (&o_s)  [2]   = al.allocate<tile_smem_bf_4x4,          2>(); // 16384 bytes
 
     rt_fl_1x1<> a1_trans; // transposed chunk of a1.
     rt_fl_1x4<> a2[4];    // a2 gets propagated through here.
     st_bf_4x1<wgmma_swizzle_l>    (&a1_trans_s) = al.allocate<st_bf_4x1<wgmma_swizzle_l>    >();   // 2048 bytes
-    st_bf_4x4<wgmma_interleave_l> (&a2_s)       = al.allocate<st_bf_4x4<wgmma_interleave_l> >();   // 8192 bytes
+    tile_smem_bf_4x4_wgmma_interleave (&a2_s)       = al.allocate<tile_smem_bf_4x4_wgmma_interleave >();   // 8192 bytes
     sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
     // k_state stuff
-    // k-state a1
     row_vec<st_bf<4,1>> (&ks_smem_a1) = al.allocate<row_vec<st_bf<4,1>>>();  // 1024 bytes
     warpgroup::zero(ks_smem_a1);
-    tile_k_smem (&ks_smem_a1_tile) = al.allocate<tile_k_smem>();             // 1024 bytes
+    tile_smem_bf_4x1 (&ks_smem_a1_tile) = al.allocate<tile_smem_bf_4x1>();             // 1024 bytes
     warpgroup::zero(ks_smem_a1_tile);
-    // k-state a2
     col_vec<rt_bf<1,1>>  ks_a2[4];
     for(int i = 0; i < 4; i++) { zero(ks_a2[i]); } // everyone zeroes ks_a2.
     col_vec<st_bf<4,1>>  (&ks_a2_s) = al.allocate<col_vec<st_bf<4,1>>>();
     warpgroup::zero(ks_a2_s);
 
     // norms testing
-    tile_cumsum_k_a2 (&cumsum_k_a2_s) [4]  = al.allocate<tile_cumsum_k_a2,4>();
-    tile_cumsum_k_a2 (&k_smem_a2)          = al.allocate<tile_cumsum_k_a2>();
-    tile_cumsum_k_a0 &a0_cumsum = al.allocate<tile_cumsum_k_a0>(); 
-    tile_cumsum_k_a0 &a0_fixed_vec = al.allocate<tile_cumsum_k_a0>(); 
+    tile_smem_bf_4x4 (&cumsum_k_a2_s) [4]  = al.allocate<tile_smem_bf_4x4,4>();
+    tile_smem_bf_4x4 (&k_smem_a2)          = al.allocate<tile_smem_bf_4x4>();
+    row_vec_smem_bf_1x4 &a0_cumsum            = al.allocate<row_vec_smem_bf_1x4>(); 
+    row_vec_smem_bf_1x4 &a0_fixed_vec         = al.allocate<row_vec_smem_bf_1x4>(); 
     warpgroup::zero(a0_cumsum);
     for(int i = 0; i < 4; i++) { warpgroup::zero(cumsum_k_a2_s[i]); } // everyone zeroes ks_a2.
     warpgroup::zero(k_smem_a2);
@@ -377,6 +197,13 @@ void based_linear_attention(
         a0_fixed_vec[laneid+32] = __float2bfloat16(64);
     }
     __syncthreads();
+
+    // debugging
+    // tile_k_reg k_cumsum_a2_reg [4];
+    // for (int i = 0; i < 4; i ++ )  { zero(k_cumsum_a2_reg[i]); }
+    // tile_smem_bf_4x1 (&cumsum_k_a1_s) [2]  = al.allocate<tile_smem_bf_4x1,2>(); 
+    // row_vec_smem_bf_1x4  (&norm_a1_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>(); 
+    // row_vec_smem_bf_1x4  (&norm_a2_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>();  
 
     if(warpid == 0) { zero(a0_total); }
     warpgroup::zero(a1_trans_s);
@@ -398,7 +225,7 @@ void based_linear_attention(
         int tile_idx = blockIdx.x * n_blocks;
         tma::load_async(q_s[tic],   tma_q,   bar, tile_idx);
         tma::load_async(k_s[tic],   tma_k,   bar, tile_idx);
-        tma::load_async(v_s[tic],   tma_v,   bar, tile_idx); // it's actually faster to have TMA fill a few copies than for the warps to do it.
+        tma::load_async(v_s[tic],   tma_v,   bar, tile_idx); // faster to have TMA fill a copies than the warps do it.
         tma::load_async(v_s_2[tic], tma_v,   bar, tile_idx);
         tma::load_async(v_s_3[tic], tma_v_3, bar, tile_idx);
     }
@@ -406,7 +233,6 @@ void based_linear_attention(
 
     for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
         // each iteration, we handle 64 tokens x 16 feature dim (k, q).
-
         rt_bf_1x4<> local_attn_bf;               // 4 registers each -- 16
         rt_fl_1x4<> local_attn, temp_attn_accum; // 32 registers each -- 64
         rt_fl_1x4<> o;                           // 32 registers each -- 64
@@ -487,8 +313,8 @@ void based_linear_attention(
         zero(linear_norm_vec); 
         if (output_state > 0) {
             cumulative_add(ks_smem_a1, k_s[tic]); // TODO: remove
-            __syncthreads();
         }
+        __syncthreads();
         if ( add_norm > 0) {   
             cumulative_add(ks_smem_a1_tile, k_s[tic]); 
             __syncthreads();
@@ -539,7 +365,6 @@ void based_linear_attention(
                 rt_bf_4x1<> k_t_den;
                 zero(k_t_den);
                 transpose_sep(k_t_den, k); 
-                zero(k_smem_a2);
                 auto k_smem_a2_subtile = subtile_inplace<4,1>(k_smem_a2, 0, warpid);   
                 store(k_smem_a2_subtile, k_t_den);
                 __syncthreads();
@@ -609,6 +434,23 @@ void based_linear_attention(
             tma::store_async(tma_o, o_s[tic], (blockIdx.x * n_blocks) + block); 
             tma::store_commit_group(); // dew it
         } tma::store_async_wait();
+
+
+        // // save stuff for the normalization terms
+        // warpgroup::store(cumsum_k_a1_s[tic], cumsum_k_a1_reg_tile);
+        // warpgroup::store(norm_a1_s[tic], linear_norm_vec);
+        // warpgroup::store(norm_a2_s[tic], linear_norm_vec_a2);
+        // __syncthreads();
+        // if (warpid == 0) { // go get the next K from HBM
+        //     tma::store_async(debug_norm_a1, norm_a1_s[tic], (blockIdx.x * n_blocks) + block);
+        //     tma::store_async(debug_norm_a2, norm_a2_s[tic], (blockIdx.x * n_blocks) + block);
+        //     tma::store_async(debug_cumsum_k_a1, cumsum_k_a1_s[tic], (blockIdx.x * n_blocks) + block);  
+        //     tma::store_async(debug_cumsum_k_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
+        //     for (int t = 0; t < 4; t++) {
+        //         tma::store_async(debug_cumsum_k_a2, cumsum_k_a2_s[t], 4*(blockIdx.x * n_blocks + block)+t);
+        //     }
+        //     tma::store_commit_group();  
+        // }
     }
 
 
@@ -617,7 +459,7 @@ void based_linear_attention(
         for (int rt = 0; rt < 4; rt++) {
             // reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
             // it tells the compiler to treat a2_s as a reference to the type we've specified.
-            auto &kv_smem_2 = reinterpret_cast<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>&>(a2_s); // this layout is better for global HBM stores so we cast.
+            auto &kv_smem_2 = reinterpret_cast<tile_smem_bf_4x4&>(a2_s); // this layout is better for global HBM stores so we cast.
             if (add_scale > 0) { 
                 mul(a2[rt], a2[rt], 0.70710678118); 
                 mul(a2[rt], a2[rt], 0.25); 
@@ -633,50 +475,49 @@ void based_linear_attention(
         }
 
         // save the KV state A1
-        auto &kv_smem_1 = reinterpret_cast<st_bf<4, 1, kittens::ducks::st_layout::wgmma_swizzle>&>(a1_trans_s);
+        auto &kv_smem_1 = reinterpret_cast<tile_smem_bf_4x1&>(a1_trans_s);
         if (add_scale > 0 ) { mul(a1_trans, a1_trans, 0.5); } // divides by math.sqrt(math.sqrt(D_QK))
         warpgroup::store(kv_smem_1, a1_trans);                // from individual warps to shared address
         __syncthreads();
         if (warpid == 0) {                                    // one warp takes care of the write to HBM
-            int tile_idx = (blockIdx.x); 
-            tma::store_async(tma_kv_a1, kv_smem_1, tile_idx); 
+            tma::store_async(tma_kv_a1, kv_smem_1, blockIdx.x); 
             tma::store_commit_group(); 
         }
         tma::store_async_wait();
 
         // save the KV state A0
-        if (warpid == 0) {      // one warp takes care of the write to HBM
-            int tile_idx = (blockIdx.x); 
-            tma::store_async(tma_kv_a0, a0_total, tile_idx); 
+        if (warpid == 0) {   
+            tma::store_async(tma_kv_a0, a0_total, blockIdx.x); 
             tma::store_commit_group(); 
         }
         tma::store_async_wait();
 
         // save the K state A1
-        tile_k_a1_2_smem (&k_state_smem) = *reinterpret_cast<tile_k_a1_2_smem*>(&ks_smem_a1.data[0]);
         __syncthreads();
-        __syncthreads(); 
-        if (add_scale > 0) { 
+        if ( add_scale > 0 && warpid == 0 ) { 
             mul(ks_smem_a1, ks_smem_a1, __float2bfloat16(0.5f)); 
         }
+        __syncthreads(); 
+        __syncthreads(); 
         if (warpid == 0) { 
-            tma::store_async(tma_k_a1, ks_smem_a1, batch_head_id); 
+            tma::store_async(tma_k_a1, ks_smem_a1, blockIdx.x); 
             tma::store_commit_group(); 
         }
         tma::store_async_wait();
 
         // save the K state A2
         for (int rt = 0; rt < 4; rt++) {
-            auto (&k_smem_2) = reinterpret_cast<col_vec<tile_k_smem>&>(ks_a2_s);
-            warpgroup::zero(k_smem_2);
+            // st_bf_4x1<wgmma_interleave_l>
+            // col_vec<rt_bf<1,1>>
+            auto (&k_smem_2) = reinterpret_cast<col_vec<tile_smem_bf_4x1>&>(ks_a2_s);
+            // warpgroup::zero(k_smem_2);
             if (add_scale > 0) { 
                 mul(ks_a2[rt], ks_a2[rt], __float2bfloat16(0.70710678118)); 
                 mul(ks_a2[rt], ks_a2[rt], __float2bfloat16(0.25)); 
             }
             __syncthreads(); 
-            warpgroup::store(k_smem_2, ks_a2[rt]); 
+            warpgroup::store(k_smem_2, ks_a2[rt]);
             __syncthreads(); 
-            __syncthreads();
             if (warpid == 0) {
                 int tile_idx = (blockIdx.x * 4) + rt; 
                 tma::store_async(tma_k_a2, k_smem_2, tile_idx); 
@@ -749,19 +590,19 @@ void based_fwd_tk(
           bf16* d_k_a1 = reinterpret_cast<bf16*>(k_a1_ptr);
 
     CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>   (d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_k_smem>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (batch*heads*n)/(kittens::st_bf_4x4<wgmma_interleave_l>::rows)); 
-    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x1>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4_wgmma_interleave>(d_v, (batch*heads*n)/(tile_smem_bf_4x4_wgmma_interleave::rows)); 
+    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
 
     // kv state maps
-    CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, batch*heads*(D_QK*D_QK));
-    CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, batch*heads*(D_QK));
-    CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a0, batch*heads);
+    CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4> (d_kv_a2, batch*heads*(D_QK*D_QK));
+    CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x1> (d_kv_a1, batch*heads*(D_QK));
+    CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<vec_smem_bf_4> (d_kv_a0, batch*heads);
 
-    // k state maps 
-    CUtensorMap* tma_k_a2_d   = tma::allocate_and_create_tensor_map<tile_k_a2_2_smem>(d_k_a2, batch*heads); 
-    CUtensorMap* tma_k_a1_d   = tma::allocate_and_create_tensor_map<tile_k_a1_2_smem>(d_k_a1, batch*heads); 
+    // k state maps  
+    CUtensorMap* tma_k_a2_d   = tma::allocate_and_create_tensor_map<col_vec<tile_smem_bf_4x1>>(d_k_a2, 4*batch*heads); 
+    CUtensorMap* tma_k_a1_d   = tma::allocate_and_create_tensor_map<vec_smem_bf_1>(d_k_a1, batch*heads); 
 
     unsigned long mem_size = 145000; 
     
