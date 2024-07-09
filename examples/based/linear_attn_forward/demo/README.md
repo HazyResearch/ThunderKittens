@@ -25,8 +25,14 @@ Setup ThunderKittens kernels:
 ```bash 
 cd ThunderKittens/
 source env.src
-cd examples/based/linear_attn_forward/H100/
+
+# prefill kernel
+cd ThunderKittens/examples/based/linear_attn_forward/H100/
 python lin_attn_setup.py install 
+
+# decode kernel
+cd ThunderKittens//examples/based/based_inference/
+python based_inference_setup.py install
 ```
 
 Run the demo:
