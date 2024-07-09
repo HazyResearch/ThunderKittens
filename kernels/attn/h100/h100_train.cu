@@ -1,10 +1,4 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
-
-#ifdef TORCH_COMPILE
-#include "src/kittens.cuh"
-#else
-#include "../../../src/kittens.cuh"
-#endif
+#include "kittens.cuh"
 #include <cooperative_groups.h>
 
 #define NUM_WORKERS 8
@@ -447,7 +441,7 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
 }
 
 #ifdef TORCH_COMPILE
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
 void attention_train_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {

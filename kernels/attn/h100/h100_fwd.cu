@@ -1,10 +1,4 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
-
-#ifdef TORCH_COMPILE
-#include "src/kittens.cuh"
-#else
-#include "../../../src/kittens.cuh"
-#endif
+#include "kittens.cuh"
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
@@ -148,10 +142,11 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 }
 
 #ifdef TORCH_COMPILE
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
 
-void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+#pragma message("Kernels hould be defined!")
+void attention_inference_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
     CHECK_INPUT(q);
     CHECK_INPUT(k);
