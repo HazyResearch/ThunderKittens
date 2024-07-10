@@ -235,7 +235,7 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
     int threads = workers * kittens::WARP_THREADS;
-    printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
+    // printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
     based_simple_ker<H,T><<<batch,threads,0,stream>>>(
