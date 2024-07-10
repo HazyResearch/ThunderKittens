@@ -1,13 +1,7 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
-
-#ifdef TORCH_COMPILE
-#include "src/kittens.cuh"
-#else
-#include "../../src/kittens.cuh"
-#endif
-
-#include <cuda/pipeline>
+#include "kittens.cuh"
 #include <cooperative_groups.h>
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
 
 #define NUM_WORKERS (8)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
@@ -192,10 +186,6 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     tma::store_async_wait();
 }
 
-#ifdef TORCH_COMPILE
-#include "src/common/pyutils/torch_helpers.cuh"
-#include <iostream>
-
 void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
     CHECK_INPUT(q);
@@ -261,7 +251,4 @@ void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
-#else
-#include "harness_h100_fwd.impl"
-#endif
 

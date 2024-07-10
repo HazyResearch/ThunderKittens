@@ -1,12 +1,7 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
-
-#ifdef TORCH_COMPILE
-#include "src/kittens.cuh"
-#else
-#include "../../src/kittens.cuh"
-#endif
-
+#include "kittens.cuh"
 #include <cooperative_groups.h>
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
 
 #define NUM_WORKERS (8)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
@@ -65,7 +60,7 @@ using layout_v = kittens::ducks::st_layout::wgmma_interleave;
 using layout_o = kittens::ducks::st_layout::swizzle;
 
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
-void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
+void attend_ker_fwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
@@ -203,7 +198,7 @@ void attend_ker_fwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
 using layout_nrow = ducks::st_layout::swizzle;
 
 __global__  __launch_bounds__(WORKERS*kittens::WARP_THREADS, 2)
-void attend_ker_prep_train(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
+void attend_ker_prep_train_causal(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
@@ -284,7 +279,7 @@ using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
 __global__ __launch_bounds__(WORKERS_BWD*kittens::WARP_THREADS, 2)
-void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
+void attend_ker_bwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, 
                             CUtensorMap* tma_l_vec, CUtensorMap* tma_d_vec, 
                             CUtensorMap* tma_og, CUtensorMap* tma_qg, CUtensorMap* tma_kg, CUtensorMap* tma_vg)
 {
@@ -468,10 +463,6 @@ void attend_ker_bwd_train(const int N, CUtensorMap* tma_q, CUtensorMap* tma_k, C
     tma::store_async_wait();
 }
 
-#ifdef TORCH_COMPILE    
-#include "src/common/pyutils/torch_helpers.cuh"
-#include <iostream>
-
 void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -510,10 +501,10 @@ void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, torch::Ten
     CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_o>         >(o_bf, (batch*heads*N)/(4 * 16));
     CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_q>::col_vec>(l_bf, (batch*heads*N)/(4 * 16));
 
-    cudaFuncSetAttribute(attend_ker_fwd_train, cudaFuncAttributeMaxDynamicSharedMemorySize, 112000);
+    cudaFuncSetAttribute(attend_ker_fwd_train_causal, cudaFuncAttributeMaxDynamicSharedMemorySize, 112000);
 
     dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
-    attend_ker_fwd_train<<<grid, threads, 112000>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    attend_ker_fwd_train_causal<<<grid, threads, 112000>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
@@ -569,11 +560,11 @@ void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Te
     CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(og_bf,(batch*heads*N)/(4*16));
 
     unsigned long mem_size = 227000;
-    cudaFuncSetAttribute(attend_ker_prep_train, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(attend_ker_prep_train_causal, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     dim3 grid_1(N/(WORKERS*kittens::TILE_DIM*4), batch*heads, 1);
     auto threads_1 = WORKERS * kittens::WARP_THREADS;
-    attend_ker_prep_train<<<grid_1, threads_1, mem_size>>>(tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
+    attend_ker_prep_train_causal<<<grid_1, threads_1, mem_size>>>(tma_o_d_pre, tma_d_d_pre, tma_og_d_pre);
 
     CUtensorMap* tma_b_q_d  = tma::allocate_and_create_tensor_map<q_smem_tile> (q_bf,  (batch*heads*N)/(tile_h_qo * 16)); 
     CUtensorMap* tma_b_k_d  = tma::allocate_and_create_tensor_map<k_smem_tile> (k_bf,  (batch*heads*N)/(tile_h    * 16));
@@ -586,16 +577,13 @@ void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Te
     CUtensorMap* tma_b_vg_d = tma::allocate_and_create_tensor_map<v_smem_tile> (vg_bf, (batch*heads*N)/(tile_h    * 16));
 
     cudaFuncSetAttribute(
-        attend_ker_bwd_train,
+        attend_ker_bwd_train_causal,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         112000
     );
 
     dim3 grid_2(N/(WORKERS_BWD*kittens::TILE_DIM), batch*heads, 1);
-    attend_ker_bwd_train<<<grid_2, (kittens::WARP_THREADS*WORKERS_BWD), 112000>>>(N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
+    attend_ker_bwd_train_causal<<<grid_2, (kittens::WARP_THREADS*WORKERS_BWD), 112000>>>(N, tma_b_q_d, tma_b_k_d, tma_b_v_d, tma_b_l_d, tma_n_d_d, tma_n_og_d, tma_b_qg_d, tma_b_kg_d, tma_b_vg_d); 
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
-#else 
-#include "harness_h100_train.impl"
-#endif

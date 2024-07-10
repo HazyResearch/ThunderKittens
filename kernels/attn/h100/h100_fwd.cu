@@ -1,6 +1,7 @@
 #include "kittens.cuh"
-#include <cuda/pipeline>
 #include <cooperative_groups.h>
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
 
 #define NUM_WORKERS (8)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
@@ -141,11 +142,6 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     tma::store_async_wait();
 }
 
-#ifdef TORCH_COMPILE
-#include "common/pyutils/torch_helpers.cuh"
-#include <iostream>
-
-#pragma message("Kernels hould be defined!")
 void attention_inference_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
     CHECK_INPUT(q);
@@ -212,6 +208,3 @@ void attention_inference_forward(torch::Tensor q, torch::Tensor k, torch::Tensor
     
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
-#else
-#include "harness_h100_fwd.impl"
-#endif
