@@ -1,0 +1,2543 @@
+
+
+================================================================================
+File: register.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief An aggregate header for warp operations on data stored in registers.
+ */
+
+#pragma once
+
+#include "tile/tile.cuh"
+#include "vec/vec.cuh"
+
+================================================================================
+File: tile/conversions.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Conversions between data layouts and types for register tiles.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/* ----------  LAYOUT SWAPS  ---------- */
+
+/**
+ * @brief Perform a matrix transpose on a block of 8 bf16_2 elements using inline assembly.
+ *
+ * This low-level operation is utilized by higher-level layout swap functions to transpose
+ * the layout of bf16_2 elements within a register tile. The function leverages inline PTX
+ * assembly to efficiently swap the layout of the given block.
+ *
+ * @param[out] dst A reference to the destination bf16_2 element where the transposed result is stored.
+ * @param[in] src A reference to the source bf16_2 element to be transposed.
+ */
+__device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
+    asm volatile (
+        "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
+    :   "+r"(*(uint32_t*)(&dst))
+    :   "r"(*(uint32_t*)(&src))
+    );
+}
+/**
+ * @brief Swaps the layout of a register base tile.
+ *
+ * This function swaps the layout of a register base tile by performing a series of layout swaps
+ * on its constituent bf16_2 elements. It is used to change the data layout within a register tile.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam layout The current layout of the register tile.
+ * @param dst[out] Reference to the destination register base tile where the result will be stored.
+ * @param src[in] Reference to the source register base tile to be swapped.
+ */
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline void swap_layout(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T2, layout> &src) {
+    swap_layout_8(dst.data[0], src.data[0]);
+    // technically this swap can be eliminated if we simply reinterpret the layout of the registers
+    // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
+    T2 data1_cache = src.data[1]; // important for swap!
+    swap_layout_8(dst.data[1], src.data[2]);
+    swap_layout_8(dst.data[2], data1_cache);
+    swap_layout_8(dst.data[3], src.data[3]);
+}
+/**
+ * @brief Swaps the layout of a register tile.
+ *
+ * This function swaps the layout of a register tile by iterating over its height and width
+ * and performing layout swaps on each of its base elements.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height of the register tile.
+ * @tparam _width The width of the register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param dst[out] Reference to the destination register tile where the result will be stored.
+ * @param src[in] Reference to the source register tile to be swapped.
+ */
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline void swap_layout(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt<T2, _height, _width, layout> &src) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            swap_layout(dst.tiles[i][j], src.tiles[i][j]);
+        }
+    }
+}
+
+/**
+ * @brief Swaps the layout of a register base tile in place.
+ *
+ * This function swaps the layout of a register base tile in place by casting it to the
+ * transposed layout type and then performing the layout swap.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam layout The current layout of the register tile.
+ * @param src[in] Reference to the register base tile to be swapped in place.
+ * @return A reference to the swapped register base tile.
+ */
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline rt_base<T2, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(const rt_base<T2, layout> &src) {
+    rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst = *(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type>*)(&src);
+    swap_layout(dst, src);
+    return dst;
+}
+/**
+ * @brief Swaps the layout of a register tile in place.
+ *
+ * This function swaps the layout of a register tile in place by iterating over its height and width
+ * and performing in-place layout swaps on each of its base elements.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height of the register tile.
+ * @tparam _width The width of the register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile[in,out] Reference to the register tile to be swapped in place.
+ * @return A reference to the swapped register tile.
+ */
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt<T2, _height, _width, layout> &tile) {
+    #pragma unroll
+    for(int i = 0; i < tile.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < tile.width; j++) {
+            swap_layout_inplace(tile.tiles[i][j]);
+        }
+    }
+    return *(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>*)(&tile);
+}
+
+/* ----------  TRANSPOSE  ---------- */
+
+/**
+ * @brief Transposes a register base tile.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam layout The current layout of the register tile.
+ * @param dst[out] Reference to the register tile in which to store the transposed src.
+ * @param src[in] Reference to the register base tile to be transposed.
+ */
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, layout> &src) {
+    swap_layout_8(dst.data[0], src.data[0]);
+    // technically this swap can be eliminated if we simply reinterpret the layout of the registers
+    // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
+    T2 data1_cache = src.data[1]; // important for swap!
+    swap_layout_8(dst.data[1], src.data[2]);
+    swap_layout_8(dst.data[2], data1_cache);
+    swap_layout_8(dst.data[3], src.data[3]);
+}
+/**
+ * @brief Transposes a register tile.
+ * 
+ * This function is marked "sep", which means that the registers underlying dst MUST be separate
+ * from the registers underlying src.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height of the src register tile, and the width of the dst tile.
+ * @tparam _width The width of the src register tile, and the height of the dst tile.
+ * @tparam layout The layout of the register tile.
+ * @param dst[out] Reference to the register tile in which to store the transposed src.
+ * @param src[in] Reference to the register tile to be transposed.
+ */
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst, const rt<T2, _height, _width, layout> &src) {
+    #pragma unroll
+    for(int i = 0; i < _height; i++) {
+        #pragma unroll
+        for(int j = 0; j < _width; j++) {
+            transpose(dst.tiles[j][i], src.tiles[i][j]);
+        }
+    }
+}
+
+/**
+ * @brief Transposes a register base tile in-place.
+ *
+ * @tparam T2 The data type of the register base tile elements.
+ * @tparam layout The current layout of the register base tile.
+ * @param src[in] Reference to the register tile to be transposed.
+ * @return A reference to the transposed register base tile.
+ */
+template<typename T2, ducks::rt_layout::all layout>
+__device__ inline rt_base<T2, layout>& transpose_inplace(rt_base<T2, layout> &src) {
+    transpose(src, src);
+    return src;
+}
+/**
+ * @brief Transposes a square register tile in-place.
+ *
+ * @tparam T2 The data type of the register tile elements.
+ * @tparam _height The height (in units of 16) of the src register tile, and the width of the dst tile. (Must be the same as _width.)
+ * @tparam _width The width (in units of 16) of the src register tile, and the height of the dst tile. (Must be the same as _height.)
+ * @tparam layout The current layout of the register tile.
+ * @param src[in] Reference to the register tile to be transposed.
+ * @return A reference to the transposed register tile.
+ */
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T2, _height, _width, layout> &tile) {
+    static_assert(_width == _height, "in-place register tile transpose is only allowed for square tiles.");
+    #pragma unroll
+    for(int i = 0; i < _height; i++) {
+        #pragma unroll
+        for(int j = 0; j < i; j++) {
+            rt_base<T2, layout> tmp;
+            copy(tmp, tile.tiles[i][j]);
+            transpose(tile.tiles[i][j], tile.tiles[j][i]);
+            transpose(tile.tiles[j][i], tmp);
+        }
+        transpose_inplace(tile.tiles[i][i]);
+    }
+    return tile;
+}
+
+/* ----------  TYPE SWAPS  ---------- */
+
+/**
+ * @brief Copies a register base tile, converting the underlying type if necessary.
+ *
+ * @tparam T2 The data type of the destination register elements.
+ * @tparam U2 The data type of the source register elements.
+ * @tparam layout The current layout of the register base tile.
+ * @param[out] dst A reference to the destination register base tile.
+ * @param[in] src A reference to the source register base tile.
+ */
+template<typename T2, typename U2, ducks::rt_layout::all layout>
+__device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, layout> &src) {
+    #pragma unroll
+    for(int k = 0; k < dst.packed_per_thread; k++) {
+        dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
+    }
+}
+/**
+ * @brief Copies a register tile, converting the underlying type if necessary.
+ *
+ * @tparam T2 The data type of the destination register elements.
+ * @tparam U2 The data type of the source register elements.
+ * @tparam _height The height (in units of 16) of the register tiles.
+ * @tparam _width The width (in units of 16) of the register tiles.
+ * @tparam layout The current layout of the register tile.
+ * @param[out] dst A reference to the destination register tile.
+ * @param[in] src A reference to the source register tile.
+ */
+template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            copy(dst.tiles[i][j], src.tiles[i][j]);
+        }
+    }
+}
+
+/* ----------  CAUSAL  ---------- */
+
+/**
+ * @brief Makes a square register tile causal by zeroing elements above the main diagonal.
+ *
+ * This function modifies a square register tile in-place to make it causal. All elements
+ * above the main diagonal are set to zero, while elements on or below the main diagonal
+ * are left unchanged.
+ *
+ * @tparam T The data type of the register tile elements.
+ * @tparam _size The size (height and width) of the square register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile[in,out] Reference to the register tile to be made causal.
+ */
+template<ducks::rt::row_layout RT>
+__device__ static inline void make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            if(j < i) { // below the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j > i) { // above the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = packed_val;
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
+                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                else {
+                    dst.tiles[i][j].data[0].x = val;
+                    dst.tiles[i][j].data[3].x = val;
+                }
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                else {
+                    dst.tiles[i][j].data[0].y = val;
+                    dst.tiles[i][j].data[3].y = val;
+                }
+            }
+        }
+    }
+}
+
+
+/* ----------  SUBTILE  ---------- */
+
+/**
+* @brief Returns a reference to a subtile of the given tile.
+*
+* @tparam subtile_height The height of the subtile.
+* @tparam RT The type of the input tile, which must satisfy the ducks::rt::all concept.
+* @param src The input tile.
+* @param idx The index of the subtile.
+* @return A reference to the subtile.
+*
+* @note The subtile height must evenly divide the tile height.
+*/
+template<int subtile_height, ducks::rt::all RT>
+__device__ inline rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
+    static_assert(RT::height % subtile_height == 0, "subtile height should evenly divide tile height.");
+    return reinterpret_cast<rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout>&>(
+        src.tiles[idx*subtile_height]
+    );
+}
+
+}
+
+================================================================================
+File: tile/reductions.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Reduction operations mapping tiles to vectors.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/**
+ * @brief Perform a row-wise reduction on a matrix in row-major layout.
+ *
+ * This function template performs a parallel reduction across the rows of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type with row layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
+template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
+__device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
+    // I actually like these static asserts because they give more verbose errors when things go wrong.
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = V::dtype;
+
+    const int leader = threadIdx.x & 0x1C; // 11100 in binary
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        dtype accum_top_row    = op::template op<dtype>(src.tiles[i][0].data[0], src.tiles[i][0].data[2]);
+        dtype accum_bottom_row = op::template op<dtype>(src.tiles[i][0].data[1], src.tiles[i][0].data[3]);
+        #pragma unroll
+        for(int j = 1; j < src.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < src.packed_per_tile; k+=2) {
+                accum_top_row    = op::template op<dtype>(accum_top_row,    src.tiles[i][j].data[k+0]);
+                accum_bottom_row = op::template op<dtype>(accum_bottom_row, src.tiles[i][j].data[k+1]);
+            }
+        }
+        dtype accum_packed;
+        accum_packed.x = op::template op<base_types::packing<dtype>::unpacked_type>(accum_top_row.x,    accum_top_row.y);
+        accum_packed.y = op::template op<base_types::packing<dtype>::unpacked_type>(accum_bottom_row.x, accum_bottom_row.y);
+
+        // Now we need to do a lil shuffle to make everyone happy.
+
+        accum_packed = op::template op<dtype>(accum_packed, packed_shfl_down_sync(MASK_ALL, accum_packed, 2));
+        accum_packed = op::template op<dtype>(accum_packed, packed_shfl_down_sync(MASK_ALL, accum_packed, 1));
+
+        accum_packed = packed_shfl_sync(MASK_ALL, accum_packed, leader);
+
+        if(reset) {
+            row_accum[i][0] = accum_packed;
+        }
+        else {
+            row_accum[i][0] = op::template op<dtype>(src_accum[i][0], accum_packed);
+        }
+    }
+}
+/**
+ * @brief Perform a row-wise reduction on a matrix in column-major layout.
+ *
+ * This function template performs a parallel reduction across the rows of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for column-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type with column layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
+template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
+__device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
+    // I actually like these static asserts because they give more verbose errors when things go wrong.
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = V::dtype;
+
+    const int leader = threadIdx.x & 0x3; // 00011 in binary
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        dtype accum_top_rows    = op::template op<dtype>(src.tiles[i][0].data[0], src.tiles[i][0].data[1]);
+        dtype accum_bottom_rows = op::template op<dtype>(src.tiles[i][0].data[2], src.tiles[i][0].data[3]);
+        #pragma unroll
+        for(int j = 1; j < src.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < src.packed_per_tile/2; k++) {
+                accum_top_rows    = op::template op<dtype>(accum_top_rows,    src.tiles[i][j].data[k+0]);
+                accum_bottom_rows = op::template op<dtype>(accum_bottom_rows, src.tiles[i][j].data[k+2]);
+            }
+        }
+
+        // Now we need to do a lil shuffle to make everyone happy.
+
+        accum_top_rows = op::template op<dtype>(accum_top_rows, packed_shfl_down_sync(MASK_ALL, accum_top_rows, 16));
+        accum_top_rows = op::template op<dtype>(accum_top_rows, packed_shfl_down_sync(MASK_ALL, accum_top_rows, 8));
+        accum_top_rows = op::template op<dtype>(accum_top_rows, packed_shfl_down_sync(MASK_ALL, accum_top_rows, 4));
+
+        accum_bottom_rows = op::template op<dtype>(accum_bottom_rows, packed_shfl_down_sync(MASK_ALL, accum_bottom_rows, 16));
+        accum_bottom_rows = op::template op<dtype>(accum_bottom_rows, packed_shfl_down_sync(MASK_ALL, accum_bottom_rows, 8));
+        accum_bottom_rows = op::template op<dtype>(accum_bottom_rows, packed_shfl_down_sync(MASK_ALL, accum_bottom_rows, 4));
+
+        accum_top_rows    = packed_shfl_sync(MASK_ALL, accum_top_rows,    leader);
+        accum_bottom_rows = packed_shfl_sync(MASK_ALL, accum_bottom_rows, leader);
+
+        if(reset) {
+            row_accum[i][0] = accum_top_rows;
+            row_accum[i][1] = accum_bottom_rows;
+        }
+        else {
+            row_accum[i][0] = op::template op<dtype>(src_accum[i][0], accum_top_rows);
+            row_accum[i][1] = op::template op<dtype>(src_accum[i][1], accum_bottom_rows);
+        }
+    }
+}
+
+// Col reduction.
+/**
+ * @brief Perform a column-wise reduction on a matrix in row-major layout.
+ *
+ * This function template performs a parallel reduction across the columns of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for row-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the column accumulator.
+ * @tparam T The matrix type with row layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
+template<typename op, ducks::rv::all V, ducks::rt::row_layout T, bool reset>
+__device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
+    // I actually like these static asserts because they give more verbose errors when things go wrong.
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = V::dtype;
+
+    const int leader = threadIdx.x & 0x3; // 00011 in binary
+    #pragma unroll
+    for(int j = 0; j < src.width; j++) {
+        dtype accum_left_cols  = op::template op<dtype>(src.tiles[0][j].data[0], src.tiles[0][j].data[1]);
+        dtype accum_right_cols = op::template op<dtype>(src.tiles[0][j].data[2], src.tiles[0][j].data[3]);
+        #pragma unroll
+        for(int i = 1; i < src.height; i++) {
+            #pragma unroll
+            for(int k = 0; k < src.packed_per_tile/2; k++) {
+                accum_left_cols  = op::template op<dtype>(accum_left_cols,  src.tiles[i][j].data[k+0]);
+                accum_right_cols = op::template op<dtype>(accum_right_cols, src.tiles[i][j].data[k+2]);
+            }
+        }
+
+        // Now we need to do a lil shuffle to make everyone happy.
+
+        accum_left_cols = op::template op<dtype>(accum_left_cols, packed_shfl_down_sync(MASK_ALL, accum_left_cols, 16));
+        accum_left_cols = op::template op<dtype>(accum_left_cols, packed_shfl_down_sync(MASK_ALL, accum_left_cols, 8));
+        accum_left_cols = op::template op<dtype>(accum_left_cols, packed_shfl_down_sync(MASK_ALL, accum_left_cols, 4));
+
+        accum_right_cols = op::template op<dtype>(accum_right_cols, packed_shfl_down_sync(MASK_ALL, accum_right_cols, 16));
+        accum_right_cols = op::template op<dtype>(accum_right_cols, packed_shfl_down_sync(MASK_ALL, accum_right_cols, 8));
+        accum_right_cols = op::template op<dtype>(accum_right_cols, packed_shfl_down_sync(MASK_ALL, accum_right_cols, 4));
+
+        accum_left_cols  = packed_shfl_sync(MASK_ALL, accum_left_cols,  leader);
+        accum_right_cols = packed_shfl_sync(MASK_ALL, accum_right_cols, leader);
+
+        if(reset) {
+            col_accum[j][0] = accum_left_cols;
+            col_accum[j][1] = accum_right_cols;
+        }
+        else {
+            col_accum[j][0] = op::template op<dtype>(src_accum[j][0], accum_left_cols);
+            col_accum[j][1] = op::template op<dtype>(src_accum[j][1], accum_right_cols);
+        }
+    }
+}
+/**
+ * @brief Perform a column-wise reduction on a matrix in column-major layout.
+ *
+ * This function template performs a parallel reduction across the columns of a matrix using a specified operation.
+ * It leverages warp shuffle functions for efficient intra-warp communication and is optimized for column-major matrices.
+ *
+ * @tparam op The operation to be applied for reduction.
+ * @tparam V The vector type for the column accumulator.
+ * @tparam T The matrix type with column layout.
+ * @tparam reset A boolean flag indicating whether to reset the accumulator (ignore src_accum) or not.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when reset is false.
+ */
+template<typename op, ducks::rv::all V, ducks::rt::col_layout T, bool reset>
+__device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
+    // I actually like these static asserts because they give more verbose errors when things go wrong.
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = V::dtype;
+    const int leader = threadIdx.x & 0x1C; // 11100 in binary
+    #pragma unroll
+    for(int j = 0; j < src.width; j++) { // note now width is the outer loop
+        dtype accum_left_col  = op::template op<dtype>(src.tiles[0][j].data[0], src.tiles[0][j].data[2]);
+        dtype accum_right_col = op::template op<dtype>(src.tiles[0][j].data[1], src.tiles[0][j].data[3]);
+        #pragma unroll
+        for(int i = 1; i < src.height; i++) { // and height is the inner loop
+            #pragma unroll
+            for(int k = 0; k < src.packed_per_tile; k+=2) {
+                accum_left_col  = op::template op<dtype>(accum_left_col,  src.tiles[i][j].data[k+0]);
+                accum_right_col = op::template op<dtype>(accum_right_col, src.tiles[i][j].data[k+1]);
+            }
+        }
+        dtype accum_packed;
+        accum_packed.x = op::template op<base_types::packing<dtype>::unpacked_type>(accum_left_col.x,  accum_left_col.y);
+        accum_packed.y = op::template op<base_types::packing<dtype>::unpacked_type>(accum_right_col.x, accum_right_col.y);
+
+        // Now we need to do a lil shuffle to make everyone happy.
+
+        accum_packed = op::template op<dtype>(accum_packed, packed_shfl_down_sync(MASK_ALL, accum_packed, 2));
+        accum_packed = op::template op<dtype>(accum_packed, packed_shfl_down_sync(MASK_ALL, accum_packed, 1));
+
+        accum_packed = packed_shfl_sync(MASK_ALL, accum_packed, leader);
+
+        if(reset) {
+            col_accum[j][0] = accum_packed;
+        }
+        else {
+            col_accum[j][0] = op::template op<dtype>(src_accum[j][0], accum_packed);
+        }
+    }
+}
+
+
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+
+// two-operand row reductions. (Accumulate and REPLACE.)
+/**
+ * @brief Store the maximum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_max(V &row_accum, const T &src)  {
+    row_reduce<base_ops::max, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the minimum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_min(V &row_accum, const T &src)  {
+    row_reduce<base_ops::min, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the sum of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_sum(V &row_accum, const T &src)  {
+    row_reduce<base_ops::sum, V, T, true>(row_accum, src, row_accum);
+}
+/**
+ * @brief Store the product of each row of the src register tile in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_prod(V &row_accum, const T &src) {
+    row_reduce<base_ops::mul, V, T, true>(row_accum, src, row_accum);
+}
+// three-operand row reductions. (Accumulate ONTO.)
+/**
+ * @brief Store the maximum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_max(V &row_accum, const T &src, const V &src_accum)  {
+    row_reduce<base_ops::max, V, T, false>(row_accum, src, src_accum);
+}
+/**
+ * @brief Store the minimum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_min(V &row_accum, const T &src, const V &src_accum)  {
+    row_reduce<base_ops::min, V, T, false>(row_accum, src, src_accum);
+}
+/**
+ * @brief Store the sum of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_sum(V &row_accum, const T &src, const V &src_accum)  {
+    row_reduce<base_ops::sum, V, T, false>(row_accum, src, src_accum);
+}
+/**
+ * @brief Store the product of each row of the src register tile, as well as the src_accum column vector, in the row_accum column vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] row_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void row_prod(V &row_accum, const T &src, const V &src_accum) {
+    row_reduce<base_ops::mul, V, T, false>(row_accum, src, src_accum);
+}
+
+// two-operand col reductions. (Accumulate and REPLACE.)
+
+/**
+ * @brief Store the maximum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_max(V &col_accum, const T &src)  {
+    col_reduce<base_ops::max, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the minimum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_min(V &col_accum, const T &src)  {
+    col_reduce<base_ops::min, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the sum of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_sum(V &col_accum, const T &src)  {
+    col_reduce<base_ops::sum, V, T, true>(col_accum, src, col_accum);
+}
+/**
+ * @brief Store the product of each column of the src register tile in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_prod(V &col_accum, const T &src) {
+    col_reduce<base_ops::mul, V, T, true>(col_accum, src, col_accum);
+}
+// three-operand col reductions. (Accumulate ONTO.)
+/**
+ * @brief Store the maximum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_max(V &col_accum, const T &src, const V &src_accum)  {
+    col_reduce<base_ops::max, V, T, false>(col_accum, src, src_accum);
+}
+/**
+ * @brief Store the minimum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_min(V &col_accum, const T &src, const V &src_accum)  {
+    col_reduce<base_ops::min, V, T, false>(col_accum, src, src_accum);
+}
+/**
+ * @brief Store the sum of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_sum(V &col_accum, const T &src, const V &src_accum)  {
+    col_reduce<base_ops::sum, V, T, false>(col_accum, src, src_accum);
+}
+/**
+ * @brief Store the product of each column of the src register tile, as well as the src_accum row vector, in the col_accum row vector.
+ *
+ * @tparam V The vector type for the row accumulator.
+ * @tparam T The matrix type.
+ * @param[out] col_accum The accumulator where the result of the reduction is stored.
+ * @param[in] src The source matrix on which to perform the reduction.
+ * @param[in] src_accum The initial value of the accumulator, used when accumulating onto an existing value.
+ */
+template<ducks::rv::all V, ducks::rt::all T>
+__device__ static inline void col_prod(V &col_accum, const T &src, const V &src_accum) {
+    col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
+}
+
+}
+
+================================================================================
+File: tile/tile.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief An aggregate header for warp operations on register tiles.
+ */
+
+#pragma once
+
+#include "conversions.cuh"
+#include "maps.cuh"
+#include "reductions.cuh"
+#include "mma.cuh"
+
+================================================================================
+File: tile/mma.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Matrix multiply-accumulate operations for tiles stored in registers.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/**
+ * @brief Perform the HMMA.16816 operation.
+ *
+ * This function performs the half-precision matrix multiply-accumulate operation
+ * using the `mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32` instruction.
+ *
+ * @param[out] d0 The first half of the output float2 accumulator.
+ * @param[out] d1 The second half of the output float2 accumulator.
+ * @param[in] a0 The first half of the first input bf16_2 matrix.
+ * @param[in] a1 The second half of the first input bf16_2 matrix.
+ * @param[in] a2 The first half of the second input bf16_2 matrix.
+ * @param[in] a3 The second half of the second input bf16_2 matrix.
+ * @param[in] b0 The first half of the bf16_2 matrix B.
+ * @param[in] b1 The second half of the bf16_2 matrix B.
+ * @param[in] c0 The first half of the float2 accumulator matrix C.
+ * @param[in] c1 The second half of the float2 accumulator matrix C.
+ */
+__device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
+                                        const bf16_2 &a0, const bf16_2 &a1, const bf16_2 &a2, const bf16_2 &a3,
+                                        const bf16_2 &b0, const bf16_2 &b1,
+                                        const float2 &c0, const float2 &c1                                    ) {
+    asm volatile(
+        // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#multiply-and-accumulate-instruction-mma
+        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 " \
+        "{%0, %1, %2, %3}, " \
+        "{%4, %5, %6, %7}, " \
+        "{%8, %9}, " \
+        "{%10, %11, %12, %13};"
+
+        // D matrix
+    :   "+f"(d0.x), "+f"(d0.y),
+        "+f"(d1.x), "+f"(d1.y)
+
+        // A matrix
+    :   "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+        "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+
+        // B matrix
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+
+        // C matrix
+        "f"(c0.x), "f"(c0.y),
+        "f"(c1.x), "f"(c1.y)
+    );
+}
+/**
+ * @brief Perform the HMMA.16816 operation.
+ *
+ * This function performs the half-precision matrix multiply-accumulate operation
+ * using the `mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16` instruction.
+ *
+ * @param[out] d0 The first half of the output half_2 accumulator.
+ * @param[out] d1 The second half of the output half_2 accumulator.
+ * @param[in] a0 The first half of the first input half_2 matrix.
+ * @param[in] a1 The second half of the first input half_2 matrix.
+ * @param[in] a2 The first half of the second input half_2 matrix.
+ * @param[in] a3 The second half of the second input half_2 matrix.
+ * @param[in] b0 The first half of the half_2 matrix B.
+ * @param[in] b1 The second half of the half_2 matrix B.
+ * @param[in] c0 The first half of the half_2 accumulator matrix C.
+ * @param[in] c1 The second half of the half_2 accumulator matrix C.
+ */
+__device__ static inline void hmma16816(      half_2 &d0,       half_2 &d1,
+                                        const half_2 &a0, const half_2 &a1, const half_2 &a2, const half_2 &a3,
+                                        const half_2 &b0, const half_2 &b1,
+                                        const half_2 &c0, const half_2 &c1                                    ) {
+    asm volatile(
+        // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#multiply-and-accumulate-instruction-mma
+        "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 " \
+        "{%0, %1}, " \
+        "{%2, %3, %4, %5}, " \
+        "{%6, %7}, " \
+        "{%8, %9};"
+
+        // D matrix
+    :   "=r"(*(uint32_t*)(&d0)), "=r"(*(uint32_t*)(&d1))
+
+        // A matrix
+    :   "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+        "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+
+        // B matrix
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+
+        // C matrix
+        "r"(*(uint32_t*)(&c0)), "r"(*(uint32_t*)(&c1))
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, row_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AB_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                    const rt_base<bf16_2, ducks::rt_layout::row> &a,
+                                    const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<float2, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<half_2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<half_2, row_layout> matrix.
+ * @param[in] b The second input rt_base<half_2, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<half_2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AB_base(rt_base<half_2, ducks::rt_layout::row> &d,
+                                    const rt_base<half_2, ducks::rt_layout::row> &a,
+                                    const rt_base<half_2, ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<half_2, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base dot product operation for row layout.
+ *
+ * This function performs the base dot product operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, row_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, row_layout> matrix in row-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_ABt_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16_2, ducks::rt_layout::row> &a,
+                                     const rt_base<bf16_2, ducks::rt_layout::row> &b, // in row-major mode
+                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2], // for some reason this one seems to need to be backwards
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3], // for some reason this one seems to need to be backwards
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout with transposed A.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, col_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AtB_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16_2, ducks::rt_layout::col> &a,
+                                     const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
+                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout with transposed A and B.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<bf16_2, col_layout> matrix.
+ * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AtBt_base(rt_base<float2, ducks::rt_layout::row> &d,
+                                      const rt_base<bf16_2, ducks::rt_layout::col> &a,
+                                      const rt_base<bf16_2, ducks::rt_layout::row> &b, // in col-major mode
+                                      const rt_base<float2, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+
+/**
+ * @brief Matrix multiply-accumulate operation.
+ *
+ * This function performs the matrix multiply-accumulate operation
+ * using the `hmma16816` function.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_hf<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_hf<N, K, row_layout> matrix.
+ * @param[in] b The second input rt_hf<K, M, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_hf<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_AB(rt_hf<N, M, ducks::rt_layout::row> &d,
+                               const rt_hf<N, K, ducks::rt_layout::row> &a,
+                               const rt_hf<K, M, ducks::rt_layout::col> &b,
+                               const rt_hf<N, M, ducks::rt_layout::row> &c) {
+    #pragma unroll
+    for(int n = 0; n < N; n++) {
+        #pragma unroll
+        for(int m = 0; m < M; m++) {
+            mma_AB_base(
+                d.tiles[n][m],
+                a.tiles[n][0],
+                b.tiles[0][m],
+                c.tiles[n][m]
+            );
+            #pragma unroll
+            for(int k = 1; k < K; k++) {
+                mma_AB_base(
+                    d.tiles[n][m],
+                    a.tiles[n][k],
+                    b.tiles[k][m],
+                    d.tiles[n][m]
+                );
+            }
+        }
+    }
+}
+/**
+ * @brief Matrix multiply-accumulate operation.
+ *
+ * This function performs the matrix multiply-accumulate operation
+ * using the `hmma16816` function.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_bf<N, K, row_layout> matrix.
+ * @param[in] b The second input rt_bf<K, M, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_fl<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_AB(rt_fl<N, M, ducks::rt_layout::row> &d,
+                               const rt_bf<N, K, ducks::rt_layout::row> &a,
+                               const rt_bf<K, M, ducks::rt_layout::col> &b,
+                               const rt_fl<N, M, ducks::rt_layout::row> &c) {
+    #pragma unroll
+    for(int n = 0; n < N; n++) {
+        #pragma unroll
+        for(int m = 0; m < M; m++) {
+            mma_AB_base(
+                d.tiles[n][m],
+                a.tiles[n][0],
+                b.tiles[0][m],
+                c.tiles[n][m]
+            );
+            #pragma unroll
+            for(int k = 1; k < K; k++) {
+                mma_AB_base(
+                    d.tiles[n][m],
+                    a.tiles[n][k],
+                    b.tiles[k][m],
+                    d.tiles[n][m]
+                );
+            }
+        }
+    }
+}
+/**
+ * @brief Dot product operation for row layout.
+ *
+ * This function performs the dot product operation
+ * using the `hmma16816` function.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_bf<N, K, row_layout> matrix.
+ * @param[in] b The second input rt_bf<M, K, row_layout> matrix in row-major mode.
+ * @param[in] c The input rt_fl<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_ABt(rt_fl<N, M, ducks::rt_layout::row> &d,
+                                const rt_bf<N, K, ducks::rt_layout::row> &a,
+                                const rt_bf<M, K, ducks::rt_layout::row> &b, // notice row and (M, K) instead of col and (K, M)
+                                const rt_fl<N, M, ducks::rt_layout::row> &c) {
+    #pragma unroll
+    for(int n = 0; n < N; n++) {
+        #pragma unroll
+        for(int m = 0; m < M; m++) {
+            mma_ABt_base(
+                d.tiles[n][m],
+                a.tiles[n][0],
+                b.tiles[m][0],
+                c.tiles[n][m]
+            );
+            #pragma unroll
+            for(int k = 1; k < K; k++) {
+                mma_ABt_base(
+                    d.tiles[n][m],
+                    a.tiles[n][k],
+                    b.tiles[m][k],
+                    d.tiles[n][m]
+                );
+            }
+        }
+    }
+}
+/**
+ * @brief Matrix multiply-accumulate operation with transposed A.
+ *
+ * This function performs the matrix multiply-accumulate operation
+ * using the `hmma16816` instruction.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_bf<K, N, row_layout> matrix.
+ * @param[in] b The second input rt_bf<K, M, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_fl<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_AtB(rt_fl<N, M, ducks::rt_layout::row> &d,
+                                const rt_bf<K, N, ducks::rt_layout::col> &a,
+                                const rt_bf<K, M, ducks::rt_layout::col> &b,
+                                const rt_fl<N, M, ducks::rt_layout::row> &c) {
+    #pragma unroll
+    for(int n = 0; n < N; n++) {
+        #pragma unroll
+        for(int m = 0; m < M; m++) {
+            mma_AtB_base(
+                d.tiles[n][m],
+                a.tiles[0][n],
+                b.tiles[0][m],
+                c.tiles[n][m]
+            );
+            #pragma unroll
+            for(int k = 1; k < K; k++) {
+                mma_AtB_base(
+                    d.tiles[n][m],
+                    a.tiles[k][n],
+                    b.tiles[k][m],
+                    d.tiles[n][m]
+                );
+            }
+        }
+    }
+}
+/**
+ * @brief Matrix multiply-accumulate operation with transposed A and B.
+ *
+ * This function performs the matrix multiply-accumulate operation
+ * using the `hmma16816` instruction.
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_fl<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_bf<K, N, col_layout> matrix.
+ * @param[in] b The second input rt_bf<M, K, row_layout> matrix in column-major mode.
+ * @param[in] c The input rt_fl<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_AtBt(rt_fl<N, M, ducks::rt_layout::row> &d,
+                                 const rt_bf<K, N, ducks::rt_layout::col> &a,
+                                 const rt_bf<M, K, ducks::rt_layout::row> &b,
+                                 const rt_fl<N, M, ducks::rt_layout::row> &c) {
+    #pragma unroll
+    for(int n = 0; n < N; n++) {
+        #pragma unroll
+        for(int m = 0; m < M; m++) {
+            mma_AtBt_base(
+                d.tiles[n][m],
+                a.tiles[0][n],
+                b.tiles[m][0],
+                c.tiles[n][m]
+            );
+            #pragma unroll
+            for(int k = 1; k < K; k++) {
+                mma_AtBt_base(
+                    d.tiles[n][m],
+                    a.tiles[k][n],
+                    b.tiles[m][k],
+                    d.tiles[n][m]
+                );
+            }
+        }
+    }
+}
+
+}
+
+================================================================================
+File: tile/maps.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Map operations: between tiles, and those which apply vectors to tiles.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/* ----------  Uniform tile maps (independent of layout)  ---------- */
+
+/**
+ * @brief Applies a unary operation to each element of a tile.
+ *
+ * @tparam op Unary operation to apply.
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ */
+template<typename op, ducks::rt::all T>
+__device__ static inline void unary_map(T &dst, const T &src) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k++) {
+                dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(src.tiles[i][j].data[k]);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Applies a binary operation to each element of a tile with a scalar parameter.
+ *
+ * @tparam op Binary operation to apply.
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param param[in] Scalar parameter for the binary operation.
+ */
+template<typename op, ducks::rt::all T>
+__device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k++) {
+                dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(src.tiles[i][j].data[k], param);
+            }
+        }
+    }
+}
+/**
+ * @brief Applies a binary operation to each element of a tile with an unpacked scalar parameter.
+ *
+ * @tparam op Binary operation to apply.
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param param[in] Unpacked scalar parameter for the binary operation.
+ */
+template<typename op, ducks::rt::all T>
+__device__ static inline void bin_map(T &dst, const T &src, const typename base_types::packing<typename T::dtype>::unpacked_type &param) {
+    // The optimizing compiler should eliminate this pack in the 32-bit case but not in the 16-bit case
+    bin_map<op, T>(dst, src, base_types::packing<typename T::dtype>::pack(param));
+}
+/**
+ * @brief Applies a binary operation element-wise between two tiles.
+ *
+ * @tparam op Binary operation to apply.
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile for the operation.
+ */
+template<typename op, ducks::rt::all T>
+__device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k++) {
+                dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(lhs.tiles[i][j].data[k], rhs.tiles[i][j].data[k]);
+            }
+        }
+    }
+}
+
+/* ----------  Row tile maps  ----------*/
+
+/**
+ * @brief Applies an operation across the rows of a tile in a row-major layout.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with row-major layout.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
+ */
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
+__device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        dtype packed_top_row    = base_types::packing<dtype>::pack(row_values[i][0].x); //  first value in eager mode
+        dtype packed_bottom_row = base_types::packing<dtype>::pack(row_values[i][0].y); // second value in eager mode
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], packed_top_row);
+                dst.tiles[i][j].data[k+1] = op::template op<dtype>(src.tiles[i][j].data[k+1], packed_bottom_row);
+            }
+        }
+    }
+}
+/**
+ * @brief Applies an operation across the rows of a tile in a column-major layout.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with column-major layout.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
+ */
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
+__device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], row_values[i][0]);
+                dst.tiles[i][j].data[k+2] = op::template op<dtype>(src.tiles[i][j].data[k+2], row_values[i][1]);
+            }
+        }
+    }
+}
+
+
+// Three-operand row map. Mostly useful for FMA instructions.
+
+/**
+ * @brief Applies an operation across the rows of two tiles in a row-major layout, using a third operand.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with row-major layout.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
+ */
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
+__device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        dtype packed_top_row    = base_types::packing<dtype>::pack(row_values[i][0].x); //  first value in eager mode
+        dtype packed_bottom_row = base_types::packing<dtype>::pack(row_values[i][0].y); // second value in eager mode
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], packed_top_row);
+                dst.tiles[i][j].data[k+1] = op::template op<dtype>(a.tiles[i][j].data[k+1], b.tiles[i][j].data[k+1], packed_bottom_row);
+            }
+        }
+    }
+}
+/**
+ * @brief Applies an operation across the rows of two tiles in a column-major layout, using a third operand.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with column-major layout.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param row_values[in] Column vector containing values to apply across each row.
+ */
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
+__device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::height); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], row_values[i][0]);
+                dst.tiles[i][j].data[k+2] = op::template op<dtype>(a.tiles[i][j].data[k+2], b.tiles[i][j].data[k+2], row_values[i][1]);
+            }
+        }
+    }
+}
+
+/* ----------  Col major tile maps  ----------*/
+
+/**
+ * @brief Applies an operation across the columns of a tile in a row-major layout.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with row-major layout.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
+ */
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
+__device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int j = 0; j < dst.width; j++) {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], col_values[j][0]);
+                dst.tiles[i][j].data[k+2] = op::template op<dtype>(src.tiles[i][j].data[k+2], col_values[j][1]);
+            }
+        }
+    }
+}
+/**
+ * @brief Applies an operation across the columns of a tile in a column-major layout.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with column-major layout.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
+ */
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
+__device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int j = 0; j < dst.width; j++) {
+        dtype packed_left_col  = base_types::packing<dtype>::pack(col_values[j][0].x); //  first value in eager mode
+        dtype packed_right_col = base_types::packing<dtype>::pack(col_values[j][0].y); // second value in eager mode
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], packed_left_col);
+                dst.tiles[i][j].data[k+1] = op::template op<dtype>(src.tiles[i][j].data[k+1], packed_right_col);
+            }
+        }
+    }
+}
+
+// Three-operand col map
+/**
+ * @brief Applies an operation across the columns of two tiles in a row-major layout, using a third operand.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with row-major layout.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
+ */
+template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
+__device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = T::dtype;
+
+    #pragma unroll
+    for(int j = 0; j < dst.width; j++) {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], col_values[j][0]);
+                dst.tiles[i][j].data[k+2] = op::template op<dtype>(a.tiles[i][j].data[k+2], b.tiles[i][j].data[k+2], col_values[j][1]);
+            }
+        }
+    }
+}
+/**
+ * @brief Applies an operation across the columns of two tiles in a column-major layout, using a third operand.
+ *
+ * @tparam op Operation to apply.
+ * @tparam T Tile type with column-major layout.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param a[in] First source tile to apply the operation on.
+ * @param b[in] Second source tile to apply the operation on.
+ * @param col_values[in] Row vector containing values to apply across each column.
+ */
+template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
+__device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
+
+    static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
+    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::outer_dim == T::width); // compatible size
+
+    using dtype = T::dtype;
+    #pragma unroll
+    for(int j = 0; j < dst.width; j++) {
+        dtype packed_left_col  = base_types::packing<dtype>::pack(col_values[j][0].x); //  first value in eager mode
+        dtype packed_right_col = base_types::packing<dtype>::pack(col_values[j][0].y); // second value in eager mode
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+                dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], packed_left_col);
+                dst.tiles[i][j].data[k+1] = op::template op<dtype>(a.tiles[i][j].data[k+1], b.tiles[i][j].data[k+1], packed_right_col);
+            }
+        }
+    }
+}
+
+
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+
+// All of the annoying qualifiers *should* be automatically inferred during compile-time.
+// So, syntax should just be kittens::add_row(tile, colvec);
+
+/**
+ * @brief Sets all elements of a tile to zero.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ */
+template<ducks::rt::all T>
+__device__ static inline void zero(T &dst) {
+    unary_map<base_ops::zero, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a tile to one.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ */
+template<ducks::rt::all T>
+__device__ static inline void one(T &dst) {
+    unary_map<base_ops::one, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a tile to positive infinity.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ */
+template<ducks::rt::all T>
+__device__ static inline void pos_infty(T &dst) {
+    unary_map<base_ops::pos_infty, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a tile to negative infinity.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ */
+template<ducks::rt::all T>
+__device__ static inline void neg_infty(T &dst) {
+    unary_map<base_ops::neg_infty, T>(dst, dst);
+}
+
+/**
+ * @brief Applies the exponential function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the exponential function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void exp(T &dst, const T &src) {
+    unary_map<base_ops::exp, T>(dst, src);
+}
+/**
+ * @brief Applies the natural logarithm function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the natural logarithm function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void log(T &dst, const T &src) {
+    unary_map<base_ops::log, T>(dst, src);
+}
+/**
+ * @brief Applies the absolute value function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the absolute value function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void abs(T &dst, const T &src) {
+    unary_map<base_ops::abs, T>(dst, src);
+}
+/**
+ * @brief Applies the rectified linear unit (ReLU) function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the ReLU function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void relu(T &dst, const T &src) {
+    unary_map<base_ops::relu, T>(dst, src);
+}
+/**
+ * @brief Copies the elements from one tile to another.
+ *
+ * @tparam T Destination tile type.
+ * @tparam U Source tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to copy from.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void copy(T &dst, const U &src) {
+    bin_map<base_ops::copy2, T>(dst, src);
+}
+
+/**
+ * @brief Applies the max operation element-wise between two tiles or a tile and a scalar.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile or scalar for the operation.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::max, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Applies the min operation element-wise between two tiles or a tile and a scalar.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the operation.
+ * @param rhs[in] Right-hand side source tile or scalar for the operation.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::min, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Adds two tiles element-wise or adds a scalar to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the addition.
+ * @param rhs[in] Right-hand side source tile or scalar for the addition.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::sum, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Subtracts two tiles element-wise or subtracts a scalar from each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the subtraction.
+ * @param rhs[in] Right-hand side source tile or scalar for the subtraction.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::sub, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Multiplies two tiles element-wise or multiplies each element of a tile by a scalar.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the multiplication.
+ * @param rhs[in] Right-hand side source tile or scalar for the multiplication.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::mul, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Divides two tiles element-wise or divides each element of a tile by a scalar.
+ *
+ * @tparam T Tile type.
+ * @tparam U Second operand type, which can be a tile or a scalar.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param lhs[in] Left-hand side source tile for the division.
+ * @param rhs[in] Right-hand side source tile or scalar for the division.
+ */
+template<ducks::rt::all T, typename U>
+__device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
+    bin_map<base_ops::div, T>(dst, lhs, rhs);
+}
+
+/**
+ * @brief Adds row values to each row of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the addition on.
+ * @param row_values[in] Column vector containing values to add to each row.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void add_row(T &dst, const T &src, const V &row_values) {
+    row_map<base_ops::sum, T, V>(dst, src, row_values);
+}
+/**
+ * @brief Subtracts row values from each row of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the subtraction on.
+ * @param row_values[in] Column vector containing values to subtract from each row.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void sub_row(T &dst, const T &src, const V &row_values) {
+    row_map<base_ops::sub, T, V>(dst, src, row_values);
+}
+/**
+ * @brief Multiplies each row of a tile by row values.
+ *
+ * @tparam T Tile type.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the multiplication on.
+ * @param row_values[in] Column vector containing values to multiply each row by.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void mul_row(T &dst, const T &src, const V &row_values) {
+    row_map<base_ops::mul, T, V>(dst, src, row_values);
+}
+/**
+ * @brief Divides each row of a tile by row values.
+ *
+ * @tparam T Tile type.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the division on.
+ * @param row_values[in] Column vector containing values to divide each row by.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
+    row_map<base_ops::div, T, V>(dst, src, row_values);
+}
+/**
+ * @brief Broadcast a vector into into a tile's rows.
+ *
+ * @tparam T Tile type.
+ * @tparam V Column vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param row_values[in] Column vector containing values to broadcast into rows.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void broadcast_row(T &dst, const V &row_values) {
+    row_map<base_ops::copy2, T, V>(dst, dst, row_values);
+}
+
+
+// col maps
+/**
+ * @brief Adds column values to each column of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the addition on.
+ * @param col_values[in] Row vector containing values to add to each column.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void add_col(T &dst, const T &src, const V &col_values) {
+    col_map<base_ops::sum, T, V>(dst, src, col_values);
+}
+/**
+ * @brief Subtracts column values from each column of a tile.
+ *
+ * @tparam T Tile type.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the subtraction on.
+ * @param col_values[in] Row vector containing values to subtract from each column.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void sub_col(T &dst, const T &src, const V &col_values) {
+    col_map<base_ops::sub, T, V>(dst, src, col_values);
+}
+/**
+ * @brief Multiplies each column of a tile by column values.
+ *
+ * @tparam T Tile type.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the multiplication on.
+ * @param col_values[in] Row vector containing values to multiply each column by.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void mul_col(T &dst, const T &src, const V &col_values) {
+    col_map<base_ops::mul, T, V>(dst, src, col_values);
+}
+/**
+ * @brief Divides each column of a tile by column values.
+ *
+ * @tparam T Tile type.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the division on.
+ * @param col_values[in] Row vector containing values to divide each column by.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void div_col(T &dst, const T &src, const V &col_values) {
+    col_map<base_ops::div, T, V>(dst, src, col_values);
+}
+/**
+ * @brief Broadcast a vector into into a tile's columns.
+ *
+ * @tparam T Tile type.
+ * @tparam V Row vector type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param row_values[in] Row vector containing values to broadcast into cols.
+ */
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void broadcast_col(T &dst, const V &col_values) {
+    col_map<base_ops::copy2, T, V>(dst, dst, col_values);
+}
+
+}
+
+================================================================================
+File: vec/conversions.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Conversions on vectors stored in registers.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+namespace detail {
+
+// i am not smart enough to figure out these indices without these helpers :/
+// again, blame nvidia for these stupid, stupid layouts
+__device__ static inline int row_from_indices_dim2(int laneid, int inner_dim, int x_or_y) {
+    return 8*inner_dim + (laneid%4)*2 + x_or_y;
+}
+__device__ static inline int row_from_indices_dim1(int laneid, int x_or_y) {
+    return 8*x_or_y + (laneid/4);
+}
+__device__ static inline int canonical_src_lane_dim2(int row) {
+    return (row/2)%4 + 4*(row%2); // draw even rows from 0...3 and odds from 4...7
+}
+__device__ static inline int canonical_src_lane_dim1(int row) {
+    return (row*4)%32;
+}
+
+}
+
+/**
+ * @brief Copies data from one register vector to another.
+ *
+ * @tparam RV1 The type of the destination register vector.
+ * @tparam RV2 The type of the source register vector.
+ * @param dst[out] The destination register vector.
+ * @param src[in] The source register vector to copy from.
+ */
+template<ducks::rv::all RV1, ducks::rv::all RV2>
+__device__ static inline void copy(RV1 &dst, const RV2 &src) {
+    static_assert(RV1::outer_dim == RV2::outer_dim, "Outer dimensions of the register vectors must be the same.");
+    using D1 = RV1::dtype;
+    using D2 = RV2::dtype;
+    if constexpr (RV1::inner_dim == RV2::inner_dim) {
+        #pragma unroll
+        for(int i = 0; i < RV1::outer_dim; i++) {
+            #pragma unroll
+            for(int j = 0; j < RV1::inner_dim; j++) {
+                dst[i][j] = base_types::convertor<D1, D2>::convert(src[i][j]);
+            }
+        }
+    }
+    // Inner dimensions are not the same, this is really a layout conversion.
+    else if constexpr (RV1::inner_dim == 1 && RV2::inner_dim == 2) {
+        // Convert from an unaligned vector layout to an aligned vector layout.
+        int laneid = kittens::laneid();
+        #pragma unroll
+        for(int i = 0; i < RV1::outer_dim; i++) {
+            dst[i][0].x = packed_shfl_sync(
+                kittens::MASK_ALL,
+                laneid < 4 ? src[i][0].x : src[i][0].y, // mirrors canonical_src_lane_dim2
+                detail::canonical_src_lane_dim2(detail::row_from_indices_dim1(laneid, 0))
+            );
+            dst[i][0].y = packed_shfl_sync(
+                kittens::MASK_ALL,
+                laneid < 4 ? src[i][1].x : src[i][1].y, // mirrors canonical_src_lane_dim2
+                detail::canonical_src_lane_dim2(detail::row_from_indices_dim1(laneid, 1))
+            );
+        }
+    }
+    else if constexpr (RV1::inner_dim == 2 && RV2::inner_dim == 1) {
+        // Convert from an aligned vector layout to an unaligned vector layout.
+        int laneid = kittens::laneid();
+        #pragma unroll
+        for(int i = 0; i < RV1::outer_dim; i++) {
+            dst[i][0].x = packed_shfl_sync(
+                kittens::MASK_ALL,
+                src[i][0].x, // first 8 rows
+                detail::canonical_src_lane_dim1(detail::row_from_indices_dim2(laneid, 0, 0))
+            );
+            dst[i][0].y = packed_shfl_sync(
+                kittens::MASK_ALL,
+                src[i][0].x, // first 8 rows
+                detail::canonical_src_lane_dim1(detail::row_from_indices_dim2(laneid, 0, 1))
+            );
+            dst[i][1].x = packed_shfl_sync(
+                kittens::MASK_ALL,
+                src[i][0].y, // last 8 rows
+                detail::canonical_src_lane_dim1(detail::row_from_indices_dim2(laneid, 1, 0))
+            );
+            dst[i][1].y = packed_shfl_sync(
+                kittens::MASK_ALL,
+                src[i][0].y, // last 8 rows
+                detail::canonical_src_lane_dim1(detail::row_from_indices_dim2(laneid, 1, 1))
+            );
+        }
+    }
+    else {
+        static_assert(RV1::inner_dim == RV2::inner_dim, "Something has gone deeply wrong with how register vectors were instantiated.");
+    }
+}
+
+} // namespace kittens
+
+================================================================================
+File: vec/reductions.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Reductions on vectors stored in registers.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/* ----------  Vector Reductions  ---------- */
+
+/**
+ * @brief Performs a reduction operation on elements of a register vector within a warp.
+ *
+ * This function applies a specified operation to reduce the elements of a register vector `src` to a single value.
+ * The result is stored in `accum`. If the `reset` parameter is true, the reduction includes an initial value `src_accum`.
+ * The reduction operation is performed in a warp-wide context, ensuring synchronization between threads in the warp.
+ *
+ * @tparam op The operation to perform on the elements. Must provide a static `op` method.
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @tparam reset A boolean flag indicating whether to include an initial value in the reduction.
+ * @param[out] accum The result of the reduction operation.
+ * @param[in] src The register vector to reduce.
+ * @param[in] src_accum The initial value to include in the reduction if `reset` is false.
+ */
+template<typename op, ducks::rv::all RV, bool reset>
+__device__ static inline void reduce(
+        typename base_types::packing<typename RV::dtype>::unpacked_type &dst_accum,
+        const RV &src,
+        const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    using T = base_types::packing<typename RV::dtype>::unpacked_type;
+    int laneid = kittens::laneid();
+    if constexpr (RV::inner_dim == 1) {
+        T accum = op::template op<T>(src[0][0].x, src[0][0].y);
+        #pragma unroll
+        for(int i = 1; i < src.outer_dim; i++) {
+            accum = op::template op<T>(accum, src[i][0].x);
+            accum = op::template op<T>(accum, src[i][0].y);
+        }
+        // we've now reduced everything into 8 distinct values, replicated across lanes x, x+1, x+2, x+3 for x≡0(mod4)
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 8));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 4));
+        // we've now reduced everything into 1 distinct value, replicated across lanes 0, 1, 2, 3
+        if constexpr (!reset) accum = op::template op<T>(accum, src_accum);
+        // final result has now been achieved (incorporating src_accum if necessary), finally broadcast back to all threads.
+        dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0);
+    }
+    else if constexpr (RV::inner_dim == 2) {
+        T accum = op::template op<T>(src[0][0].x, src[0][0].y);
+        accum = op::template op<T>(accum,       src[0][1].x);
+        accum = op::template op<T>(accum,       src[0][1].y);
+        #pragma unroll
+        for(int i = 1; i < src.outer_dim; i++) {
+            // it is possible that shfl_sync's would be faster but I doubt it, replication is likely better. Certainly simpler.
+            accum = op::template op<T>(accum, src[i][0].x);
+            accum = op::template op<T>(accum, src[i][0].y);
+            accum = op::template op<T>(accum, src[i][1].x);
+            accum = op::template op<T>(accum, src[i][1].y);
+        }
+        // we've now reduced everything into 4 distinct values, replicated across lanes x, x+4, x+8, ..., x+28 for x<4
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 2));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 1));
+        // we've now reduced everything into 1 distinct value, replicated across lanes 0, 4, 8, 12, ..., 28
+        if constexpr (!reset) accum = op::template op<T>(accum, src_accum);
+        // final result has now been achieved (incorporating src_accum if necessary), finally broadcast back to all threads from lane 0
+        dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0);
+    }
+    else {
+        static_assert(RV::inner_dim==1 || RV::inner_dim==2, "RV's can only have an inner dimension of 1 or 2!");
+    }
+}
+
+
+/**
+ * @brief Finds the maximum element in a register vector.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] max_val The maximum value found in the vector.
+ * @param[in] src The register vector to find the maximum in.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void max(typename base_types::packing<typename RV::dtype>::unpacked_type &max_val, const RV &src) {
+    reduce<base_ops::max, RV, true>(max_val, src, max_val);
+}
+
+/**
+ * @brief Finds the minimum element in a register vector.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] min_val The minimum value found in the vector.
+ * @param[in] src The register vector to find the minimum in.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void min(typename base_types::packing<typename RV::dtype>::unpacked_type &min_val, const RV &src) {
+    reduce<base_ops::min, RV, true>(min_val, src, min_val);
+}
+
+/**
+ * @brief Calculates the sum of elements in a register vector.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] sum_val The sum of the values in the vector.
+ * @param[in] src The register vector to sum.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void sum(typename base_types::packing<typename RV::dtype>::unpacked_type &sum_val, const RV &src) {
+    reduce<base_ops::sum, RV, true>(sum_val, src, sum_val);
+}
+
+/**
+ * @brief Calculates the product of elements in a register vector.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] prod_val The product of the values in the vector.
+ * @param[in] src The register vector to multiply.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void prod(typename base_types::packing<typename RV::dtype>::unpacked_type &prod_val, const RV &src) {
+    reduce<base_ops::mul, RV, true>(prod_val, src, prod_val);
+}
+
+// Three operand versions.
+
+/**
+ * @brief Finds the maximum element in a register vector and accumulates it with src_accum.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] max_val The maximum value found in the vector, accumulated with src_accum.
+ * @param[in] src The register vector to find the maximum in.
+ * @param[in] src_accum The initial value to accumulate with the maximum value found.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void max(typename base_types::packing<typename RV::dtype>::unpacked_type &max_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    reduce<base_ops::max, RV, false>(max_val, src, src_accum);
+}
+
+/**
+ * @brief Finds the minimum element in a register vector and accumulates it with src_accum.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] min_val The minimum value found in the vector, accumulated with src_accum.
+ * @param[in] src The register vector to find the minimum in.
+ * @param[in] src_accum The initial value to accumulate with the minimum value found.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void min(typename base_types::packing<typename RV::dtype>::unpacked_type &min_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    reduce<base_ops::min, RV, false>(min_val, src, src_accum);
+}
+
+/**
+ * @brief Calculates the sum of elements in a register vector and accumulates it with src_accum.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] sum_val The sum of the values in the vector, accumulated with src_accum.
+ * @param[in] src The register vector to sum.
+ * @param[in] src_accum The initial value to accumulate with the sum of the vector.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void sum(typename base_types::packing<typename RV::dtype>::unpacked_type &sum_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    reduce<base_ops::sum, RV, false>(sum_val, src, src_accum);
+}
+
+/**
+ * @brief Calculates the product of elements in a register vector and accumulates it with src_accum.
+ *
+ * @tparam RV The type of the register vector. Must satisfy the `ducks::rv::all` concept.
+ * @param[out] prod_val The product of the values in the vector, accumulated with src_accum.
+ * @param[in] src The register vector to multiply.
+ * @param[in] src_accum The initial value to accumulate with the product of the vector.
+ */
+template<ducks::rv::all RV>
+__device__ static inline void prod(typename base_types::packing<typename RV::dtype>::unpacked_type &prod_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    reduce<base_ops::mul, RV, false>(prod_val, src, src_accum);
+}
+
+}
+
+================================================================================
+File: vec/vec.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief An aggregate header for warp operations on register vectors.
+ */
+
+#pragma once
+
+#include "conversions.cuh"
+#include "maps.cuh"
+#include "reductions.cuh"
+
+================================================================================
+File: vec/maps.cuh
+================================================================================
+
+/**
+ * @file
+ * @brief Maps on vectors stored in registers.
+ */
+
+#pragma once
+
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
+
+namespace kittens {
+
+/* ----------  Vector Maps  ---------- */
+
+/**
+ * @brief Perform a unary operation on a vector.
+ *
+ * @tparam op The unary operation to perform.
+ * @tparam T The type of the vector.
+ * @param dst[out] The destination vector where the result is stored.
+ * @param src[in] The source vector to perform the operation on.
+ */
+template<typename op, ducks::rv::all T>
+__device__ static inline void unary_op(T &dst, const T &src) {
+    #pragma unroll
+    for(int i = 0; i < dst.outer_dim; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.inner_dim; j++) {
+            dst[i][j] = op::template op<typename T::dtype>(src[i][j]);
+        }
+    }
+}
+/**
+ * @brief Perform a binary operation on two vectors.
+ *
+ * @tparam op The binary operation to perform.
+ * @tparam T The type of the vectors.
+ * @param dst[out] The destination vector where the result is stored.
+ * @param lhs[in] The left-hand side vector for the operation.
+ * @param rhs[in] The right-hand side vector for the operation.
+ */
+template<typename op, ducks::rv::all T>
+__device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
+    #pragma unroll
+    for(int i = 0; i < dst.outer_dim; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.inner_dim; j++) {
+            dst[i][j] = op::template op<typename T::dtype>(lhs[i][j], rhs[i][j]);
+        }
+    }
+}
+/**
+ * @brief Perform a binary operation on a vector and a scalar.
+ *
+ * @tparam op The binary operation to perform.
+ * @tparam T The type of the vector.
+ * @param dst[out] The destination vector where the result is stored.
+ * @param src[in] The source vector for the operation.
+ * @param param[in] The scalar parameter for the operation.
+ */
+template<typename op, ducks::rv::all T>
+__device__ static inline void bin_op(T &dst, const T &src, const typename T::dtype &param) {
+    #pragma unroll
+    for(int i = 0; i < dst.outer_dim; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.inner_dim; j++) {
+            dst[i][j] = op::template op<typename T::dtype>(src[i][j], param);
+        }
+    }
+}
+/**
+ * @brief Perform a binary operation on a vector and an unpacked scalar.
+ *
+ * @tparam op The binary operation to perform.
+ * @tparam T The type of the vector.
+ * @param dst[out] The destination vector where the result is stored.
+ * @param src[in] The source vector for the operation.
+ * @param param[in] The unpacked scalar parameter for the operation.
+ */
+template<typename op, ducks::rv::all T>
+__device__ static inline void bin_op(T &dst, const T &src, const typename base_types::packing<typename T::dtype>::unpacked_type &param) {
+    bin_op<op, T>(dst, src, base_types::packing<typename T::dtype>::pack(param));
+}
+
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+
+// ---- const ops ----
+
+/**
+ * @brief Sets all elements of a register vector to zero.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector to be set to zero.
+ */
+template<ducks::rv::all T>
+__device__ static inline void zero(T &dst) {
+    unary_op<base_ops::zero, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a register vector to one.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector to be set to one.
+ */
+template<ducks::rv::all T>
+__device__ static inline void one(T &dst) {
+    unary_op<base_ops::one, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a register vector to positive infinity.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector to be set to positive infinity.
+ */
+template<ducks::rv::all T>
+__device__ static inline void pos_infty(T &dst) {
+    unary_op<base_ops::pos_infty, T>(dst, dst);
+}
+/**
+ * @brief Sets all elements of a register vector to negative infinity.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector to be set to negative infinity.
+ */
+template<ducks::rv::all T>
+__device__ static inline void neg_infty(T &dst) {
+    unary_op<base_ops::neg_infty, T>(dst, dst);
+}
+
+// ---- unary ops ----
+
+/**
+ * @brief Copies the elements from one register vector to another.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the source vector.
+ * @param dst[out] Destination vector where the elements will be copied to.
+ * @param src[in] Source vector to copy the elements from.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void copy(T &dst, const U &src) {
+    bin_op<base_ops::copy2, T>(dst, dst, src); // the second arg is ignored here.
+}
+/**
+ * @brief Applies the exponential function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the exponential values will be stored.
+ * @param src[in] Source vector to apply the exponential function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void exp(T &dst, const T &src) {
+    unary_op<base_ops::exp, T>(dst, src);
+}
+/**
+ * @brief Applies the natural logarithm function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the exponential values will be stored.
+ * @param src[in] Source vector to apply the exponential function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void log(T &dst, const T &src) {
+    unary_op<base_ops::log, T>(dst, src);
+}
+/**
+ * @brief Applies the absolute value function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the absolute values will be stored.
+ * @param src[in] Source vector to apply the absolute value function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void abs(T &dst, const T &src) {
+    unary_op<base_ops::abs, T>(dst, src);
+}
+/**
+ * @brief Applies the rectified linear unit (ReLU) function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the ReLU values will be stored.
+ * @param src[in] Source vector to apply the ReLU function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void relu(T &dst, const T &src) {
+    unary_op<base_ops::relu, T>(dst, src);
+}
+
+// ---- binary ops ----
+
+/**
+ * @brief Computes the element-wise maximum of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the maximum values will be stored.
+ * @param lhs[in] First vector for the maximum operation.
+ * @param rhs[in] Second vector for the maximum operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::max, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Computes the element-wise minimum of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the minimum values will be stored.
+ * @param lhs[in] First vector for the minimum operation.
+ * @param rhs[in] Second vector for the minimum operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::min, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Computes the element-wise sum of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the sum values will be stored.
+ * @param lhs[in] First vector for the sum operation.
+ * @param rhs[in] Second vector for the sum operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::sum, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Computes the element-wise difference of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the difference values will be stored.
+ * @param lhs[in] First vector for the difference operation.
+ * @param rhs[in] Second vector for the difference operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::sub, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Computes the element-wise product of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the product values will be stored.
+ * @param lhs[in] First vector for the product operation.
+ * @param rhs[in] Second vector for the product operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::mul, T>(dst, lhs, rhs);
+}
+/**
+ * @brief Computes the element-wise division of two register vectors.
+ *
+ * @tparam T Register vector type.
+ * @tparam U Type of the second vector.
+ * @param dst[out] Destination vector where the division values will be stored.
+ * @param lhs[in] First vector for the division operation.
+ * @param rhs[in] Second vector for the division operation.
+ */
+template<ducks::rv::all T, typename U>
+__device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
+    bin_op<base_ops::div, T>(dst, lhs, rhs);
+}
+
+}

@@ -32,7 +32,7 @@ extern void attention_train_backward(torch::Tensor q, torch::Tensor k, torch::Te
 #endif
 
 #ifdef TK_COMPILE_ATTN_CAUSAL_INFERENCE
-extern void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
+extern void attention_inference_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
 #endif
 
 #ifdef TK_COMPILE_ATTN_CAUSAL_TRAINING
@@ -53,7 +53,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #endif
 
 #ifdef TK_COMPILE_ATTN_CAUSAL_INFERENCE
-    m.def("mha_causal", attention_forward_causal, "Causal forward MHA meant for inference. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64");
+    m.def("mha_causal", attention_inference_forward_causal, "Causal forward MHA meant for inference. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64");
 #endif
 
 #ifdef TK_COMPILE_ATTN_CAUSAL_TRAINING

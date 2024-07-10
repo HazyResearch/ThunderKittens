@@ -8,7 +8,7 @@ COMP_LEVEL=fast
 
 # Compiler
 NVCC=nvcc
-NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../src
+NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
 
 # At what level to run tests?
 # Level 1 takes a 15 seconds to compile 1,000 tests.

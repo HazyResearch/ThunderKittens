@@ -2,22 +2,22 @@
 sources = {
     'attn_inference': {
         'source_files': {
-            'h100': 'attn/h100/h100_fwd.cu' # define these source files for each GPU target desired. (they can be the same.)
+            'h100': 'kernels/attn/h100/h100_fwd.cu' # define these source files for each GPU target desired. (they can be the same.)
         }
     },
     'attn_training': {
         'source_files': {
-            'h100': 'attn/h100/h100_train.cu'
+            'h100': 'kernels/attn/h100/h100_train.cu'
         }
     },
     'attn_causal_inference': {
         'source_files': {
-            'h100': 'attn_causal/h100/h100_fwd.cu'
+            'h100': 'kernels/attn_causal/h100/h100_fwd.cu'
         }
     },
     'attn_causal_training': {
         'source_files': {
-            'h100': 'attn_causal/h100/h100_train.cu'
+            'h100': 'kernels/attn_causal/h100/h100_train.cu'
         }
     }
 }

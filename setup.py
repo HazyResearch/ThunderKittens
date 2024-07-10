@@ -6,7 +6,7 @@ from config import sources, target, kernels
 target = target.lower()
 
 # Set environment variables
-thunderkittens_root = os.getenv('THUNDERKITTENS_ROOT', os.path.abspath(os.path.join(os.getcwd(), '..')))
+thunderkittens_root = os.getenv('THUNDERKITTENS_ROOT', os.path.abspath(os.path.join(os.getcwd(), '.')))
 python_include = subprocess.check_output(['python', '-c', "import sysconfig; print(sysconfig.get_path('include'))"]).decode().strip()
 torch_include = subprocess.check_output(['python', '-c', "import torch; from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))"]).decode().strip()
 print('Thunderkittens root:', thunderkittens_root)
@@ -27,7 +27,7 @@ cuda_flags = [
     '-Xnvlink=--verbose',
     '-Xptxas=--verbose',
     '-Xptxas=--warn-on-spills',
-    f'-I{thunderkittens_root}/src',
+    f'-I{thunderkittens_root}/include',
     f'-I{python_include}',
     '-DTORCH_COMPILE'
 ] + torch_include.split()

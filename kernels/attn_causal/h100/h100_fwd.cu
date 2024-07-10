@@ -64,7 +64,7 @@ constexpr int kv_height = 4;
 
 template<int D>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
-void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
+void fwd_inference_attend_ker_causal(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
@@ -186,7 +186,7 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     tma::store_async_wait();
 }
 
-void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+void attention_inference_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -229,11 +229,11 @@ void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v,
         CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, 4, layout_o>>(o_bf, (batch*heads*N)/(qo_height * 16));
 
         unsigned long mem_size = 112000;
-        cudaFuncSetAttribute(fwd_attend_ker_dim<64>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        cudaFuncSetAttribute(fwd_inference_attend_ker_causal<64>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
         dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
 
-        fwd_attend_ker_dim<64><<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        fwd_inference_attend_ker_causal<64><<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     else {
         CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, 8, layout_q>>(q_bf, (batch*heads*N)/(qo_height * 16));
@@ -242,11 +242,11 @@ void attention_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v,
         CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, 8, layout_o>>(o_bf, (batch*heads*N)/(qo_height * 16));
 
         unsigned long mem_size = 112000;
-        cudaFuncSetAttribute(fwd_attend_ker_dim<128>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+        cudaFuncSetAttribute(fwd_inference_attend_ker_causal<128>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
         dim3 grid(N/(NUM_WORKERS*kittens::TILE_DIM), batch*heads, 1);
 
-        fwd_attend_ker_dim<128><<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        fwd_inference_attend_ker_causal<128><<<grid, threads, mem_size>>>(N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     
     CHECK_CUDA_ERROR(cudaGetLastError());
