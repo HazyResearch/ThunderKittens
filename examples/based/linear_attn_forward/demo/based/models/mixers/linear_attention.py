@@ -128,9 +128,9 @@ class LinearAttention(nn.Module):
             self.decay_proj = nn.Linear(self.d_model, self.num_heads, bias=False)
 
         self.inference_implementation = inference_implementation
+        self.silent=silent
         if self.inference_implementation == "tk":
             self.d_state = 320
-            self.silent=silent
             bs = inference_bs
             assert bs is not None, print(f"for TK, need to pass in the batch size")
             self.y = torch.empty((bs, self.num_heads, self.l_max, self.head_dim), dtype=torch.bfloat16, device='cuda')
@@ -183,18 +183,11 @@ class LinearAttention(nn.Module):
                 y = self.parallel_forward(hidden_states, q, k, v, decay=decay, impl_choice=impl_choice)
                 if impl_choice != "default" and impl_choice == "tk":
                     if self.layer_idx < 2 and not self.silent: print("recurrent state tk")
-                    if decay is not None:
-                        k = self.feature_map(k)
-                        if len(decay.shape) == 3:
-                            decay = decay.unsqueeze(0)
-                        k_decay = decay[:, :, l - 1 , :l, None] * k
-                        kv_state = torch.einsum("bhnd,bhnf->bhfd", k_decay, v)[:, :, None]
-                    else:
-                        kv_state = torch.concat([
-                            self.kv_state_a0.unsqueeze(-1), 
-                            self.kv_state_a1, 
-                            self.kv_state_a2.transpose(2,3)
-                        ], dim=-1)[:, :, None]
+                    kv_state = torch.concat([
+                        self.kv_state_a0.unsqueeze(-1), 
+                        self.kv_state_a1, 
+                        self.kv_state_a2.transpose(2,3)
+                    ], dim=-1)[:, :, None]
                     k_state = torch.concat([
                         self.k_state_a0.unsqueeze(-1),
                         self.k_state_a1, 
