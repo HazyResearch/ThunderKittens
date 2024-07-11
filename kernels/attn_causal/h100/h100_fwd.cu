@@ -188,25 +188,28 @@ void fwd_inference_attend_ker_causal(int N, const CUtensorMap* tma_q, const CUte
 
 void attention_inference_forward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
 
+    // get general parameters to check
+    TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4, "q,k,v must have 4 dimensions (B,H,N,D)");
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N = q.size(2);
+    TORCH_CHECK(N>0 && N%128 == 0, "N must be a multiple of 128");
+    auto D = q.size(3);
+    TORCH_CHECK(D == 128 || D == 64, "Only head dims of 64 or 128 are supported");
+
+    // check K, V, O dimensions, too.
+    TORCH_CHECK(k.size(0) == batch && k.size(1) == heads && v.size(2) == N && k.size(3) == D, "k must be (B,H,N,128)");
+    TORCH_CHECK(v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D, "v must be (B,H,N,128)");
+    TORCH_CHECK(o.size(0) == batch && o.size(1) == heads && o.size(2) == N && o.size(3) == D, "o must be (B,H,N,128)");
+
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
     CHECK_INPUT(o);
-
-    auto batch   = q.size(0);
-    auto heads   = q.size(1);
-    auto N       = q.size(2);
-    auto D       = q.size(3);
-
-    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-
-    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
-    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
-    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
-    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
-
-    // make sure sequence length is multiple of 128 for now
-    TORCH_CHECK(N % (NUM_WORKERS * kittens::TILE_DIM) == 0, "Please pad sequence length to be multiple of 128");
+    TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
+    TORCH_CHECK(o.scalar_type() == torch::kBFloat16, "o must be bf16");
 
     // make sure D = 64 or 128
     TORCH_CHECK(D == 64 | D == 128, "Currently, only D = 64 or 128 is supported");
@@ -222,6 +225,7 @@ void attention_inference_forward_causal(torch::Tensor q, torch::Tensor k, torch:
     const bf16* v_bf = reinterpret_cast<const bf16*>(v_ptr);
     bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
 
+    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
     if (D == 64) {
         CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<qo_height, 4, layout_q>>(q_bf, (batch*heads*N)/(qo_height * 16));
         CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<kv_height, 4, layout_k>>(k_bf, (batch*heads*N)/(kv_height * 16));
