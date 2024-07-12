@@ -25,7 +25,7 @@ else:
     print('Invalid test name')
     sys.exit(0)
 
-def get_output(x, residual, norm, dropout_p=0.01):
+def get_output(x, residual, norm, dropout_p=0.00):
     # 1. dropout on x
     mask = torch.bernoulli(torch.full_like(x, 1 - dropout_p))
     dropped = x * mask / (1 - dropout_p) 
@@ -43,9 +43,9 @@ def get_output(x, residual, norm, dropout_p=0.01):
     # norm_weight = torch.randn_like(norm_weight) # was for testing
     o = norm_weight * residual_norm + norm_bias 
     
-    return o, norm_weight, norm_bias, mean, sqrt_var
+    return o, residual, norm_weight, norm_bias, mean, sqrt_var
 
-o, norm_weight, norm_bias, mean, var = get_output(x, residual, norm)
+o, new_residual, norm_weight, norm_bias, mean, var = get_output(x, residual, norm)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
     xf = x.to(torch.float32).flatten().detach().cpu().numpy()
@@ -55,6 +55,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     meanf = mean.to(torch.float32).flatten().detach().cpu().numpy()
     varf = var.to(torch.float32).flatten().detach().cpu().numpy()
     of = o.to(torch.float32).flatten().detach().cpu().numpy()
+    o_residf = new_residual.to(torch.float32).flatten().detach().cpu().numpy()
 
     for i in trange(B*N*D):
         f.write(repr(xf[i]))
@@ -66,6 +67,10 @@ with open(f'{TESTNAME}.txt', 'w') as f:
 
     for i in trange(B*N*D):
         f.write(repr(of[i]))
+        f.write(' ')
+
+    for i in trange(B*N*D):
+        f.write(repr(o_residf[i]))
         f.write(' ')
 
     for i in trange(D):

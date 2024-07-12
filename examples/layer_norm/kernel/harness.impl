@@ -6,8 +6,9 @@
 #define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 
-#define dropout_p 0.01
+#define dropout_p 0.00
 #define has_residual 1
+#define test_with_intermediates 0
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -47,10 +48,14 @@ int main(int argc, char **argv) {
     float *x            = new float[TOTAL_UNIQUE_ELEMENTS_X];
     float *residual     = new float[TOTAL_UNIQUE_ELEMENTS_X];
     float *o_ref        = new float[TOTAL_UNIQUE_ELEMENTS_O];
+    float *o_resid_ref  = new float[TOTAL_UNIQUE_ELEMENTS_O];
     bf16 *x_bf          = new bf16[TOTAL_ELEMENTS_X];
     bf16 *residual_bf   = new bf16[TOTAL_ELEMENTS_X];
     bf16 *o_bf          = new bf16[TOTAL_ELEMENTS_O];
+    bf16 *o_resid_bf    = new bf16[TOTAL_ELEMENTS_O];
+
     float *o            = new float[TOTAL_ELEMENTS_O];
+    float *o_resid      = new float[TOTAL_ELEMENTS_O];
 
     float *norm_weight   = new float[TOTAL_ELEMENTS_NORM_WEIGHT];
     float *norm_bias     = new float[TOTAL_ELEMENTS_NORM_BIAS];
@@ -77,6 +82,8 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading RESIDUAL" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {  infile >> o_ref[i];  }
         std::cout << "Finished loading O_REF" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> o_resid_ref[i];   }
+        std::cout << "Finished loading OUT_RESIDUAL" << std::endl;
 
         for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  infile >> norm_weight[i];   }
         std::cout << "Finished loading NORM_WEIGHT" << std::endl;
@@ -104,13 +111,15 @@ int main(int argc, char **argv) {
         norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]);
     }
 
-    bf16 *d_x, *d_residual, *d_o;
+    bf16 *d_x, *d_residual, *d_o, *d_o_resid;
     cudaMalloc(&d_x, TOTAL_ELEMENTS_X * sizeof(bf16));
     cudaMalloc(&d_residual, TOTAL_ELEMENTS_X * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_O * sizeof(bf16));
+    cudaMalloc(&d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16));
     cudaMemcpy(d_x, x_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_residual, residual_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_o, o_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o_resid, o_resid_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
 
     bf16 *d_norm_weight, *d_norm_bias;
     cudaMalloc(&d_norm_weight, TOTAL_ELEMENTS_NORM_WEIGHT * sizeof(bf16));
@@ -128,7 +137,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = 98000; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
@@ -150,7 +159,9 @@ int main(int argc, char **argv) {
             d_x, 
             d_residual,
             d_norm_weight, d_norm_bias, 
-            d_mean, d_var, d_o
+            d_o, d_o_resid
+            // ,
+            // d_mean, d_var
         );  
     }
     cudaDeviceSynchronize();
@@ -181,49 +192,73 @@ int main(int argc, char **argv) {
     if(good) std::cout << "Correct out :)\n";
     else std::cout << "Incorrect out :(\n";
 
-
-    // mean
-    cudaMemcpy(mean_bf, d_mean, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { mean[i] = __bfloat162float(mean_bf[i]); }
-    bool good_mean = true;
-    std::ofstream mean_ref_file("printouts/mean_ref.txt");
-    std::ofstream mean_file("printouts/mean.txt");
-    std::ofstream mean_diff_file("printouts/mean_diff.txt");
-    std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
-    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
-        float mean_diff = mean[i] - mean_ref[i % TOTAL_ELEMENTS_MEAN];
-        if(i < TOTAL_ELEMENTS_MEAN) {
-            mean_ref_file << mean_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
-            mean_file << mean[i] << ' ';
-            mean_diff_file << mean_diff << ' ';
+    // o_resid
+    cudaMemcpy(o_resid_bf, d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o_resid[i] = __bfloat162float(o_resid_bf[i]); }
+    bool good_resid = true;
+    std::ofstream o_resid_ref_file("printouts/o_resid_ref.txt");
+    std::ofstream o_resid_file("printouts/o_resid.txt");
+    std::ofstream resid_diff_file("printouts/resid_diff.txt");
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
+        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+            o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_resid_file << o_resid[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            resid_diff_file << resid_diff << ' ';
         }
-        if(abs(mean_diff) > 0.05 || isnan(mean_diff)) { good_mean = false; }
-    }
-    if(good_mean) std::cout << "Correct mean :)\n";
-    else std::cout << "Incorrect mean :(\n";
-
-
-    // var
-    cudaMemcpy(var_bf, d_var, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { var[i] = __bfloat162float(var_bf[i]); }
-    bool good_var = true;
-    std::ofstream var_ref_file("printouts/var_ref.txt");
-    std::ofstream var_file("printouts/var.txt");
-    std::ofstream var_diff_file("printouts/var_diff.txt");
-    std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
-    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
-        float var_diff = var[i] - var_ref[i % TOTAL_ELEMENTS_MEAN];
-        if(i < TOTAL_ELEMENTS_MEAN) {
-            var_ref_file << var_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
-            var_file << var[i] << ' ';
-            var_diff_file << var_diff << ' ';
+        if(abs(resid_diff) > 0.05 || isnan(resid_diff)) {
+            good_resid = false;
         }
-        if(abs(var_diff) > 0.05 || isnan(var_diff)) { good_var = false; }
     }
-    if(good_var) std::cout << "Correct var :)\n";
-    else std::cout << "Incorrect var :(\n";
+    if(good_resid) std::cout << "Correct out resid :)\n";
+    else std::cout << "Incorrect out resid :(\n";
+
+    if (test_with_intermediates > 1) {
+        // mean
+        cudaMemcpy(mean_bf, d_mean, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { mean[i] = __bfloat162float(mean_bf[i]); }
+        bool good_mean = true;
+        std::ofstream mean_ref_file("printouts/mean_ref.txt");
+        std::ofstream mean_file("printouts/mean.txt");
+        std::ofstream mean_diff_file("printouts/mean_diff.txt");
+        std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
+            float mean_diff = mean[i] - mean_ref[i % TOTAL_ELEMENTS_MEAN];
+            if(i < TOTAL_ELEMENTS_MEAN) {
+                mean_ref_file << mean_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
+                mean_file << mean[i] << ' ';
+                mean_diff_file << mean_diff << ' ';
+            }
+            if(abs(mean_diff) > 0.05 || isnan(mean_diff)) { good_mean = false; }
+        }
+        if(good_mean) std::cout << "Correct mean :)\n";
+        else std::cout << "Incorrect mean :(\n";
+
+
+        // var
+        cudaMemcpy(var_bf, d_var, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { var[i] = __bfloat162float(var_bf[i]); }
+        bool good_var = true;
+        std::ofstream var_ref_file("printouts/var_ref.txt");
+        std::ofstream var_file("printouts/var.txt");
+        std::ofstream var_diff_file("printouts/var_diff.txt");
+        std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
+            float var_diff = var[i] - var_ref[i % TOTAL_ELEMENTS_MEAN];
+            if(i < TOTAL_ELEMENTS_MEAN) {
+                var_ref_file << var_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
+                var_file << var[i] << ' ';
+                var_diff_file << var_diff << ' ';
+            }
+            if(abs(var_diff) > 0.05 || isnan(var_diff)) { good_var = false; }
+        }
+        if(good_var) std::cout << "Correct var :)\n";
+        else std::cout << "Incorrect var :(\n";
+    }
 
     std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;

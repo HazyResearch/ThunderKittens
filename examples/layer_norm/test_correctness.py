@@ -3,25 +3,43 @@ import torch
 import torch.nn as nn
 from torchvision.ops import StochasticDepth
 
-def run_torch(x, drop_path, dropout, norm, residual_in_fp32=False):
-    residual = x
+import sys
+sys.path.append("kernel/")
+import layer_norm as mod
 
+
+def run_torch(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
     dropped = drop_path(dropout(x))
     residual = (residual + dropped ) if residual is not None else dropped
-    x = norm(residual.to(dtype=norm.weight.dtype))
+    out = norm(residual.to(dtype=norm.weight.dtype))
     residual = residual.to(torch.float32)
+    return out, residual 
 
 
-    return x, residual 
+def run_tk(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
+    x = x.to(dtype=torch.bfloat16)
+    residual = residual.to(dtype=torch.bfloat16)
+    norm_weight = norm.weight.to(dtype=torch.bfloat16)
+    norm_bias = norm.bias.to(dtype=torch.bfloat16)
+
+    has_residual = int(residual is not None)
+    out = torch.zeros_like(x)
+    out_resid = torch.zeros_like(x)
+    mod.fused_ln_tk(
+        int(has_residual), float(dropout.p),
+        x, residual, 
+        norm_weight, norm_bias, 
+        out, out_resid
+    )
+
+    return out, out_resid 
 
 
-def run_flash(x, drop_path, dropout, norm, residual_in_fp32=True):
+def run_flash(x, residual, drop_path, dropout, norm, residual_in_fp32=True):
     from layer_norm_triton import layer_norm_fn, RMSNorm
 
-    residual = x
-
     rowscale = drop_path(torch.ones(x.shape[:-1], device=x.device, dtype=x.dtype, ))
-    x, residual = layer_norm_fn(
+    out, residual = layer_norm_fn(
         x,
         norm.weight,
         norm.bias,
@@ -33,12 +51,10 @@ def run_flash(x, drop_path, dropout, norm, residual_in_fp32=True):
         residual_in_fp32=residual_in_fp32,
         is_rms_norm=False
     )
+    return out, residual
 
-    return x, residual
 
-
-def run_naive(x, drop_path, dropout, norm, residual_in_fp32=False):
-    residual = x
+def run_naive(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
     use_dropout = False
     
     # 1. dropout on x
@@ -61,8 +77,6 @@ def run_naive(x, drop_path, dropout, norm, residual_in_fp32=False):
     residual_norm = (residual_new - mean) / torch.sqrt(var + norm.eps)
     x_norm = norm.weight * residual_norm + norm.bias 
 
-    breakpoint()
-
     # compare
     if use_dropout:
         dropped_ref = dropout(x)
@@ -82,42 +96,46 @@ def run_naive(x, drop_path, dropout, norm, residual_in_fp32=False):
 
 if __name__ == "__main__":
 
-    b, n, d = 2, 36, 64
-    p = 0.1
+    b, n, d = 1, 32, 64
+    p = 0.0
     p_path = 0.00
 
     torch.manual_seed(0)
     x = torch.randn((b, n, d), device='cuda')
+    residual = torch.randn((b, n, d), device='cuda')
 
     # manual impl.
     norm = nn.LayerNorm(d).cuda()
     dropout = nn.Dropout(p)
     drop_path = StochasticDepth(p_path, mode="row")
-    run_naive(x, drop_path, dropout, norm)
-
-    # baselines
-    torch.manual_seed(0)
-    torch.cuda.manual_seed_all(0)
-    norm = nn.LayerNorm(d).cuda()
-    dropout = nn.Dropout(p)
-    drop_path = StochasticDepth(p_path, mode="row")
-    torch_out, torch_resid = run_torch(x, drop_path, dropout, norm)
+    run_naive(x, residual, drop_path, dropout, norm)
 
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
     norm = nn.LayerNorm(d).cuda()
     dropout = nn.Dropout(p)
     drop_path = StochasticDepth(p_path, mode="row")
-    flash_out, flash_resid = run_flash(x, drop_path, dropout, norm)
+    out, resid = run_torch(x, residual, drop_path, dropout, norm)
 
-    diff = torch.norm(torch_out - flash_out).item()
-    print(torch_out[0,0,:16])
-    print(flash_out[0,0,:16])
-    print(f"Out Diff: {diff}")
+    outs = []
+    resids = []
+    for fn in [run_tk, run_flash]:
+        torch.manual_seed(0)
+        torch.cuda.manual_seed_all(0)
+        norm = nn.LayerNorm(d).cuda()
+        dropout = nn.Dropout(p)
+        drop_path = StochasticDepth(p_path, mode="row")
+        fn_out, fn_resid = fn(x, residual, drop_path, dropout, norm)
 
-    diff = torch.norm(torch_resid - flash_resid).item()
-    print(torch_resid[0,0,:16])
-    print(flash_resid[0,0,:16])
-    print(f"Resid Diff: {diff}")
+        print("----"*10)
+        diff = torch.norm(out - fn_out).item()
+        print(out[0,0,:8])
+        print(fn_out[0,0,:8])
+        print(f"Out Diff: {diff}")
+
+        diff = torch.norm(resid - fn_resid).item()
+        print(resid[0,2,:8])
+        print(fn_resid[0,2,:8])
+        print(f"Resid Diff: {diff}")
 
 
