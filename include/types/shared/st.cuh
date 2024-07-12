@@ -73,9 +73,13 @@ struct KITTENS_DEFAULT_ALIGN st {
 
     static constexpr int swizzle_bytes = (
         std::is_same_v<layout, ducks::st_layout::swizzle> || std::is_same_v<layout, ducks::st_layout::wgmma_swizzle> ? (
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ? 64  :
-            32
+            sizeof(dtype) == 2 ? (
+                underlying_width%4 == 0 ? 128 :
+                underlying_width%2 == 0 ?  64 : 32
+            ) :
+            sizeof(dtype) == 4 ? (
+                underlying_width%2 == 0 ? 128 : 64
+            ) : -1
         ) : 0
     );
 
@@ -89,10 +93,10 @@ struct KITTENS_DEFAULT_ALIGN st {
      * indexing calculations for swizzled or strangely ordered layouts.
      */
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return *detail::shared_indexer<height, width, layout>::idx(data, rowcol.x, rowcol.y);
+        return *detail::shared_indexer<dtype, height, width, layout>::idx(data, rowcol.x, rowcol.y);
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return *(const bf16*)detail::shared_indexer<height, width, layout>::idx((bf16*)data, rowcol.x, rowcol.y);
+        return *(const dtype*)detail::shared_indexer<dtype, height, width, layout>::idx((dtype*)data, rowcol.x, rowcol.y);
     }
     __device__ inline       dtype& operator[](int idx)       {
         return data[idx];
@@ -156,13 +160,13 @@ struct st_subtile {
     }
 
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return *detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
+        return *detail::shared_indexer<dtype, underlying_height, underlying_width, layout>::idx(
+            (dtype*)data, rowcol.x+row_offset, rowcol.y+col_offset
         );
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return *(const bf16*)detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
+        return *(const dtype*)detail::shared_indexer<dtype, underlying_height, underlying_width, layout>::idx(
+            (dtype*)data, rowcol.x+row_offset, rowcol.y+col_offset
         );
     }
 
@@ -196,6 +200,7 @@ template<typename T> concept all = requires {
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl = st<float, _height, _width, layout>; // prelim tests indicate this is fastest default
 
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
@@ -208,5 +213,17 @@ template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x1
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
+
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x1 = st_fl<1, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x2 = st_fl<1, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x4 = st_fl<1, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x8 = st_fl<1, 8, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_2x1 = st_fl<2, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_2x2 = st_fl<2, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_2x4 = st_fl<2, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_4x1 = st_fl<4, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_4x2 = st_fl<4, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_4x4 = st_fl<4, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_8x1 = st_fl<8, 1, layout>;
 
 }

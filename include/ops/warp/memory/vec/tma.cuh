@@ -25,12 +25,17 @@ namespace tma {
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::sv::all SV>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src, int num_vectors) {
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const SV::dtype *src, int num_vectors) {
     
     constexpr uint32_t  tma_dim      = 1; 
     void                *global_addr = (void*)(src);
 
-    constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
+    constexpr CUtensorMapDataType     tma_format      = (
+        std::is_same_v<typename SV::dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
+        std::is_same_v<typename SV::dtype, half>  ? CU_TENSOR_MAP_DATA_TYPE_FLOAT16 :
+        std::is_same_v<typename SV::dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
+        -1
+    );
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
@@ -44,7 +49,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
 
-    assert(smem_shape[0] <= 256); // smem_shape[0] elements must be <= 256
+    assert(smem_shape[0] <= 256); // smem_shape[0] elements must be <= 256. TODO: we could fix this by making it a 2D load. But probably use a naive tile, at that point.
 
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
     const uint64_t *gmem_stride_ptr = &gmem_stride[0]; 
@@ -86,7 +91,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::sv::all SV>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src, int num_vectors) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const SV::dtype *src, int num_vectors) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
