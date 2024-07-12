@@ -61,6 +61,8 @@ def run_naive(x, drop_path, dropout, norm, residual_in_fp32=False):
     residual_norm = (residual_new - mean) / torch.sqrt(var + norm.eps)
     x_norm = norm.weight * residual_norm + norm.bias 
 
+    breakpoint()
+
     # compare
     if use_dropout:
         dropped_ref = dropout(x)
