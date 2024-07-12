@@ -152,6 +152,19 @@ template<ducks::rv::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     unary_op<base_ops::exp, T>(dst, src);
 }
+
+/**
+ * @brief Applies the sqrt function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the sqrt values will be stored.
+ * @param src[in] Source vector to apply the sqrt function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void sqrt(T &dst, const T &src) {
+    unary_op<base_ops::sqrt, T>(dst, src);
+}
+
 /**
  * @brief Applies the natural logarithm function element-wise to a register vector.
  *

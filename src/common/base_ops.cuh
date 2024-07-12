@@ -84,6 +84,26 @@ template<> __device__ inline float  exp::op<float> (const float &x ) { return __
 template<> __device__ inline float2 exp::op<float2>(const float2 &x) { return float2{__expf(x.x), __expf(x.y)}; }
 template<> __device__ inline bf16   exp::op<bf16>  (const bf16 &x  ) { return hexp(x);                          }
 template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2exp(x);                         }
+
+
+/**
+ * @brief Square root function operation.
+ *
+ * This operation calculates the sqrt of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The sqrt of the input value.
+ */
+struct sqrt {
+    template<typename T> static __device__ inline T op(const T &x) { return sqrt(x); }
+};
+template<> __device__ inline float  sqrt::op<float> (const float &x ) { return __sqrtf(x);                        }
+template<> __device__ inline float2 sqrt::op<float2>(const float2 &x) { return float2{__sqrtf(x.x), __sqrtf(x.y)}; }
+template<> __device__ inline bf16   sqrt::op<bf16>  (const bf16 &x  ) { return hsqrt(x);                          }
+template<> __device__ inline bf16_2 sqrt::op<bf16_2>(const bf16_2 &x) { return h2sqrt(x);                         }
+
+
 /**
  * @brief Natural log function operation.
  *

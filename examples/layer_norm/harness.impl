@@ -6,6 +6,9 @@
 #define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 
+#define dropout_p 0.01
+#define has_residual 1
+
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();
@@ -41,11 +44,13 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS_NORM_WEIGHT = ATTN_D;
     constexpr int TOTAL_ELEMENTS_NORM_BIAS   = ATTN_D;
 
-    float *x     = new float[TOTAL_UNIQUE_ELEMENTS_X];
-    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS_O];
-    bf16 *x_bf   = new bf16[TOTAL_ELEMENTS_X];
-    bf16 *o_bf   = new bf16[TOTAL_ELEMENTS_O];
-    float *o     = new float[TOTAL_ELEMENTS_O];
+    float *x            = new float[TOTAL_UNIQUE_ELEMENTS_X];
+    float *residual     = new float[TOTAL_UNIQUE_ELEMENTS_X];
+    float *o_ref        = new float[TOTAL_UNIQUE_ELEMENTS_O];
+    bf16 *x_bf          = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *residual_bf   = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *o_bf          = new bf16[TOTAL_ELEMENTS_O];
+    float *o            = new float[TOTAL_ELEMENTS_O];
 
     float *norm_weight   = new float[TOTAL_ELEMENTS_NORM_WEIGHT];
     float *norm_bias     = new float[TOTAL_ELEMENTS_NORM_BIAS];
@@ -68,18 +73,14 @@ int main(int argc, char **argv) {
         std::cout << "Starting to enter!" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> x[i];   }
         std::cout << "Finished loading X" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> residual[i];   }
+        std::cout << "Finished loading RESIDUAL" << std::endl;
         for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {  infile >> o_ref[i];  }
         std::cout << "Finished loading O_REF" << std::endl;
 
-        for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  
-            infile >> norm_weight[i];   
-            if (i < 10) {std::cout << norm_weight[i] << std::endl;}
-        }
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  infile >> norm_weight[i];   }
         std::cout << "Finished loading NORM_WEIGHT" << std::endl;
-        for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {  
-            infile >> norm_bias[i];  
-            if (i < 10) {std::cout << norm_bias[i] << std::endl;  }
-        }
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {  infile >> norm_bias[i];   }
         std::cout << "Finished loading NORM_BIAS" << std::endl;
 
         // debug
@@ -91,22 +92,24 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
     }
 
-    // replicate into heads
+    // set the inputs
     for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {
         x_bf[i] = __float2bfloat16(x[i % TOTAL_UNIQUE_ELEMENTS_X]);
+        residual_bf[i] = __float2bfloat16(residual[i % TOTAL_UNIQUE_ELEMENTS_X]);
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {
-        if (i < 10) {std::cout << norm_weight[i] << std::endl;}
         norm_weight_bf[i] = __float2bfloat16(norm_weight[i]);
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {
         norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]);
     }
 
-    bf16 *d_x, *d_o;
+    bf16 *d_x, *d_residual, *d_o;
     cudaMalloc(&d_x, TOTAL_ELEMENTS_X * sizeof(bf16));
+    cudaMalloc(&d_residual, TOTAL_ELEMENTS_X * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_O * sizeof(bf16));
     cudaMemcpy(d_x, x_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_residual, residual_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_o, o_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
 
     bf16 *d_norm_weight, *d_norm_bias;
@@ -143,8 +146,9 @@ int main(int argc, char **argv) {
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {  
         fused_layer_norm<<<ATTN_B,NUM_THREADS,mem_size>>>(
-            ATTN_N, 
+            ATTN_N, has_residual, dropout_p, 
             d_x, 
+            d_residual,
             d_norm_weight, d_norm_bias, 
             d_mean, d_var, d_o
         );  
@@ -221,18 +225,19 @@ int main(int argc, char **argv) {
     if(good_var) std::cout << "Correct var :)\n";
     else std::cout << "Incorrect var :(\n";
 
-
+    std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
 
     cudaFree(d_x);
+    cudaFree(d_residual);
     cudaFree(d_o);
     cudaFree(d_norm_weight);
     cudaFree(d_norm_bias);
     cudaFree(d_mean);
     cudaFree(d_var);
 
-    delete[] x, o, o_ref, norm_weight, norm_bias;
-    delete[] x_bf, o_bf, norm_weight_bf, norm_bias_bf;
+    delete[] x, residual, o, o_ref, norm_weight, norm_bias;
+    delete[] x_bf, residual_bf, o_bf, norm_weight_bf, norm_bias_bf;
     delete[] mean, mean_ref, mean_bf, var, var_ref, var_bf;
     return 0;
 }
