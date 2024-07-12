@@ -25,7 +25,7 @@ namespace tma {
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::sv::all SV>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const SV::dtype *src, int num_vectors) {
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int num_vectors) {
     
     constexpr uint32_t  tma_dim      = 1; 
     void                *global_addr = (void*)(src);
@@ -91,7 +91,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const SV::dt
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::sv::all SV>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const SV::dtype *src, int num_vectors) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename SV::dtype *src, int num_vectors) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.

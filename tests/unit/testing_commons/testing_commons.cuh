@@ -122,31 +122,37 @@ template<int H, int W, int NW, kittens::ducks::base_types::T2 T2, kittens::ducks
 // Additionally, the templated wrappers:
 // - Loop through lots of template args in a grid to check validity.
 
+template<typename T> concept has_dtype = requires { typename T::dtype; };
+template<typename T>  struct gmem_wrapper    { using dtype = kittens::bf16; };
+template<has_dtype T> struct gmem_wrapper<T> { using dtype = typename T::dtype; };
+template<typename T> using gmem_dtype = typename gmem_wrapper<T>::dtype;
+
 // ----- 1D Wrappers -----
 
-template<typename Ker, int S, int NW, typename... args>
-static __global__ void global_wrapper_1d(const kittens::bf16 *input, kittens::bf16 *output) {
+template<typename Ker, typename T, int S, int NW, typename... args>
+static __global__ void global_wrapper_1d(const T *input, T *output) {
     Ker::template device_func<S, NW, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
 struct wrapper_1d {
+    using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
     static void run(test_data& results) {
         test_info this_result;
         this_result.label = generate_test_name<S,NUM_WORKERS,args...>(test::test_identifier);
         if constexpr (test::template valid<S, NUM_WORKERS, args...>::value) {
             constexpr int SIZE = S*16;
             // initialize
-            kittens::bf16 *d_i, *d_o;
+            dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_1d<test, S, NUM_WORKERS, args...>,
+                global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_1d<test, S, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
             // fill in correct results on cpu
             test::template host_func<S, NUM_WORKERS, args...>(i_ref, o_ref);
             // check and cleanup
@@ -166,31 +172,42 @@ template<typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args> using 
 template<typename test, int MAX_S=8, typename... args> using sweep_size_1d_warp = sweep_size_1d<test, MAX_S, 1, args...>;
 
 
+template<template<typename> typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args>
+struct sweep_gmem_type_1d {
+    static void run(test_data &results) {
+        sweep_size_1d<test<float>, MAX_S, NUM_WORKERS, args...>::run(results);
+        sweep_size_1d<test<kittens::bf16>, MAX_S, NUM_WORKERS, args...>::run(results);
+        sweep_size_1d<test<kittens::half>, MAX_S, NUM_WORKERS, args...>::run(results);
+    }
+};
+template<template<typename> typename test, int MAX_S=8, typename... args> using sweep_gmem_type_1d_warp = sweep_gmem_type_1d<test, MAX_S, 1, args...>;
+
 // ----- 2D Wrappers -----
 
-template<typename Ker, int H, int W, int NW, typename... args>
-static __global__ void global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output) {
+template<typename Ker, typename T, int H, int W, int NW, typename... args>
+static __global__ void global_wrapper_2d(const T *input, T *output) {
     Ker::template device_func<H, W, NW, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct wrapper_2d {
+    using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
     static void run(test_data& results) {
         test_info this_result;
         this_result.label = generate_test_name<H,W,NUM_WORKERS,args...>(test::test_identifier);
         if constexpr (test::template valid<H, W, NUM_WORKERS, args...>::value) {
             constexpr int SIZE = H*W*256;
             // initialize
-            kittens::bf16 *d_i, *d_o;
+            dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_2d<test, H, W, NUM_WORKERS, args...>,
+                global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_2d<test, H, W, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, args...>(i_ref, o_ref);
             // check and cleanup
@@ -218,3 +235,13 @@ struct sweep_st_layout_size_2d {
     }
 };
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warp = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
+
+template<template<typename> typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
+struct sweep_gmem_type_2d {
+    static void run(test_data &results) {
+        sweep_st_layout_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_st_layout_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_st_layout_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+    }
+};
+template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_gmem_type_2d_warp = sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;

@@ -12,9 +12,9 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = (dst.height * dst.width + (N_WARPS-1)) / N_WARPS; // round up
+    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -34,9 +34,9 @@ __device__ static inline void store(typename ST::dtype *dst, const ST &src, cons
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = (src.height * src.width + (N_WARPS-1)) / N_WARPS; // round up
+    int total_calls = ((src.height * src.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -60,9 +60,9 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = (dst.height * dst.width + (N_WARPS-1)) / N_WARPS; // round up
+    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -90,9 +90,9 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(bf16);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = (src.height * src.width + (N_WARPS-1)) / N_WARPS; // round up
+    int total_calls = ((src.height * src.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {

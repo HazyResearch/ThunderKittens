@@ -26,8 +26,8 @@ namespace tma {
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::st::all ST>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const ST::dtype *src, int blocks_height, int blocks_width=1) {
-    using dtype = ST::dtype;
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int blocks_height, int blocks_width=1) {
+    using dtype = typename ST::dtype;
     
     constexpr uint32_t  tma_dim      = (
         detail::st_type_naive_layout<ST>            ? 2 :
@@ -184,7 +184,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const ST::dt
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::st::all ST>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const ST::dtype *src, int blocks_height, int blocks_width=1) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename ST::dtype *src, int blocks_height, int blocks_width=1) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
@@ -224,7 +224,7 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
         }
         if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (dst.rows);
 
             asm volatile (
@@ -239,7 +239,7 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
         if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (dst.rows);
-            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
@@ -302,7 +302,7 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
         }
         else if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (src.rows);
 
             asm volatile (
@@ -317,7 +317,7 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
         else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
@@ -380,7 +380,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
         }
         else if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (src.rows);
 
             asm volatile (
@@ -395,7 +395,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
         else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
@@ -456,7 +456,7 @@ __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, 
         }
         else if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (src.rows);
 
             asm volatile (
@@ -471,7 +471,7 @@ __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, 
         else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.reduce.async.bulk.tensor.3d.global.shared::cta.min.tile.bulk_group"
@@ -532,7 +532,7 @@ __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, 
         }
         else if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (src.rows);
 
             asm volatile (
@@ -547,7 +547,7 @@ __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, 
         else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.reduce.async.bulk.tensor.3d.global.shared::cta.max.tile.bulk_group"
@@ -610,7 +610,7 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
         }
         else if constexpr (detail::st_type_swizzle_layout<ST>) {
             int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
             int32_t crd2 = tile_row_idx * (dst.rows);
 
             asm volatile (
@@ -625,7 +625,7 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
         else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
             int32_t crd0 = 0;
             int32_t crd1 = tile_row_idx * (dst.rows);
-            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(ST::dtype)));
+            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
             asm volatile (
                 "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"

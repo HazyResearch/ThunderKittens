@@ -211,6 +211,47 @@ template<> struct convertor<bf16_2, float2> {
         return 	__float22bfloat162_rn(u);
     }
 };
+template<> struct convertor<float, half> {
+    static __device__ inline float convert(const half & u) {
+        return __half2float(u);
+    }
+};
+template<> struct convertor<half, float> {
+    static __device__ inline half convert(const float & u) {
+        return __float2half(u);
+    }
+};
+template<> struct convertor<float2, half_2> {
+    static __device__ inline float2 convert(const half_2 & u) {
+        return __half22float2(u);
+    }
+};
+template<> struct convertor<half_2, float2> {
+    static __device__ inline half_2 convert(const float2 & u) {
+        return __float22half2_rn(u);
+    }
+};
+template<> struct convertor<bf16, half> {
+    static __device__ inline bf16 convert(const half & u) {
+        return __float2bfloat16_rn(__half2float(u));
+    }
+};
+template<> struct convertor<half, bf16> {
+    static __device__ inline half convert(const bf16 & u) {
+        return __float2half(__bfloat162float(u));
+    }
+};
+template<> struct convertor<bf16_2, half_2> {
+    static __device__ inline bf16_2 convert(const half_2 & u) {
+        return __float22bfloat162_rn(__half22float2(u));
+    }
+};
+template<> struct convertor<half_2, bf16_2> {
+    static __device__ inline half_2 convert(const bf16_2 & u) {
+        return __float22half2_rn(__bfloat1622float2(u));
+    }
+};
+
 
 }
 }

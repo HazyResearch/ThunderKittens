@@ -50,7 +50,7 @@ struct st_subtile;
  * @tparam _width The width of the tile in units of 16-element subtiles.
  * @tparam _layout The memory layout of the tile.
  */
-template<typename _T, int _height, int _width, ducks::st_layout::all _layout>
+template<typename _T, int _height, int _width, ducks::st_layout::all _layout=ducks::st_layout::swizzle>
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using layout = _layout; ///< Memory layout of the tile.

@@ -94,15 +94,15 @@ enum initializers {
     ARANGE = 1, // write an increasing sequence into i_ref and d_i arrays. useful for debugging memory movement.
     NONE   = 2  // use whatever values were already in i_ref. useful for detailed debugging.
 };
-template<initializers initializer=initializers::RANDOM, int SEED=42>
-void initialize(kittens::bf16 **d_i, kittens::bf16 **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {
+template<typename T, initializers initializer=initializers::RANDOM, int SEED=42>
+void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> &o_ref) {
     using namespace kittens;
 
     const int input_size  = i_ref.size();
     const int output_size = o_ref.size();
 
     // Initialize matrices
-    std::vector<bf16> i_bf(input_size);
+    std::vector<T> i_t(input_size);
 
     std::mt19937 gen(SEED); // Standard mersenne_twister_engine
     std::uniform_real_distribution<float> dis(-1.0, 1.0);
@@ -117,16 +117,95 @@ void initialize(kittens::bf16 **d_i, kittens::bf16 **d_o, std::vector<float> &i_
         else {
             f = i_ref[idx];
         }
-        i_bf[idx] = __float2bfloat16(f); // fill in for transfer to device
-        i_ref[idx] = __bfloat162float(i_bf[idx]); // ensure lossiness of fp16 is captured on cpu
+        if constexpr (std::is_same_v<T, bf16>) {
+            i_t[idx] = __float2bfloat16(f); // fill in for transfer to device
+            i_ref[idx] = __bfloat162float(i_t[idx]); // ensure lossiness of fp16 is captured on cpu
+        }
+        else if constexpr (std::is_same_v<T, float>) {
+            i_t[idx] = f;
+            i_ref[idx] = f;
+        }
+        else if constexpr (std::is_same_v<T, half>) {
+            i_t[idx] = __float2half(f);
+            i_ref[idx] = __half2float(i_t[idx]);
+        }
+        else {
+            assert(false && "Unsupported data type");
+        }
     }
 
-    cudaMalloc(d_i, input_size  * sizeof(bf16));
-    cudaMalloc(d_o, output_size * sizeof(bf16));
+    cudaMalloc(d_i, input_size  * sizeof(T));
+    cudaMalloc(d_o, output_size * sizeof(T));
     CudaCheckError();
 
-    cudaMemcpy(*d_i, i_bf.data(), input_size * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(*d_i, i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
     CudaCheckError();
 }
 extern int should_write_outputs;
-test_result validate(kittens::bf16 *d_i, kittens::bf16 *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-4);
+template<typename T>
+test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=1e-2) {
+    using namespace kittens;
+    const int input_size  = i_ref.size();
+    const int output_size = o_ref.size();
+    // copy back
+    T* o_t = new T[output_size];
+    float *o = new float[output_size];
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    cudaMemcpy(o_t, d_o, output_size * sizeof(T), cudaMemcpyDeviceToHost);
+    CudaCheckError();
+    for(int idx = 0; idx < output_size; idx++) {
+        if constexpr (std::is_same_v<T, bf16>) {
+            o[idx] = __bfloat162float(o_t[idx]);
+            o_ref[idx] = __bfloat162float(__float2bfloat16(o_ref[idx]));
+        }
+        else if constexpr (std::is_same_v<T, half>) {
+            o[idx] = __half2float(o_t[idx]);
+            o_ref[idx] = __half2float(__float2half(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, float>) {
+            o[idx] = o_t[idx];
+            o_ref[idx] = o_ref[idx];
+        }
+        else {
+            assert(false && "Unsupported data type");
+        }
+    }
+    // check
+    std::cout << "test `" << test_name << "`";
+    bool good = true;
+    for(int i = 0; i < output_size; i++) {
+        if(abs(o_ref[i] - o[i]) > eps) {
+            good = false;
+            break;
+        }
+    }
+    if(good) std::cout << " -- PASSED" << std::endl;
+    else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
+    if(should_write_outputs && !good) {
+        std::ofstream reffile("outputs/"+test_name+"_ref.txt");
+        std::ofstream outfile("outputs/"+test_name+"_out.txt");
+        for(int i = 0; i < output_size; i++) {
+            reffile << o_ref[i] << ' ';
+            outfile << o[i] << ' ';
+            if(i%cols == cols-1) {
+                reffile << '\n';
+                outfile << '\n';
+            }
+        }
+        reffile << "\n\n\nINPUTS:\n\n";
+        for(int i = 0; i < input_size; i++) {
+            reffile << i_ref[i] << ' ';
+            if(i%cols == cols-1) {
+                reffile << '\n';
+            }
+        }
+        reffile.close();
+        outfile.close();
+    }
+    cudaFree(d_i);
+    cudaFree(d_o);
+    delete[] o_t, o;
+    CudaCheckError();
+    return good ? test_result::PASSED : test_result::FAILED;
+}

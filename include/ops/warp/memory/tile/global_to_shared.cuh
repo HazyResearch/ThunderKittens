@@ -15,7 +15,7 @@ namespace kittens {
 // ----------- ROW LAYOUTS ----------
 
 /**
- * @brief Loads bf16 data from global memory into a shared memory tile with a row layout.
+ * @brief Loads data from global memory into a shared memory tile with a row layout.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
@@ -23,7 +23,7 @@ namespace kittens {
  * @param row_stride[in] The stride between rows in the source array.
  */
 template<ducks::st::all ST>
-__device__ static inline void load(ST &dst, const ST::dtype *src, const int row_stride) {
+__device__ static inline void load(ST &dst, const typename ST::dtype *src, const int row_stride) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
@@ -31,9 +31,9 @@ __device__ static inline void load(ST &dst, const ST::dtype *src, const int row_
     int laneid = threadIdx.x % 32;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (32 * elem_per_memcpy);
+    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -47,7 +47,7 @@ __device__ static inline void load(ST &dst, const ST::dtype *src, const int row_
     }
 }
 /**
- * @brief Stores bf16 data from a shared memory tile with a row layout into global memory.
+ * @brief Stores data from a shared memory tile with a row layout into global memory.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination global memory array.
@@ -55,14 +55,14 @@ __device__ static inline void load(ST &dst, const ST::dtype *src, const int row_
  * @param row_stride[in] The stride between rows in the destination array.
  */
 template<ducks::st::all ST>
-__device__ static inline void store(ST::dtype *dst, const ST &src, const int row_stride) {
+__device__ static inline void store(typename ST::dtype *dst, const ST &src, const int row_stride) {
 
     int laneid = threadIdx.x % 32;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = src.height*src.width * TILE_DIM*TILE_DIM / (32 * elem_per_memcpy);
+    int total_calls = src.height*src.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -77,7 +77,7 @@ __device__ static inline void store(ST::dtype *dst, const ST &src, const int row
 }
 
 /**
- * @brief Asynchronously loads bf16 data from global memory into a shared memory tile with a row layout using CUDA barriers.
+ * @brief Asynchronously loads data from global memory into a shared memory tile with a row layout using CUDA barriers.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
@@ -88,7 +88,7 @@ __device__ static inline void store(ST::dtype *dst, const ST &src, const int row
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::all ST>
-__device__ static inline void load_async(ST &dst, const ST::dtype *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+__device__ static inline void load_async(ST &dst, const typename ST::dtype *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
@@ -96,9 +96,9 @@ __device__ static inline void load_async(ST &dst, const ST::dtype *src, const in
     int laneid = threadIdx.x % 32;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (32 * elem_per_memcpy);
+    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -117,7 +117,7 @@ __device__ static inline void load_async(ST &dst, const ST::dtype *src, const in
     }
 }
 /**
- * @brief Asynchronously stores bf16 data from a shared memory tile with a row layout into global memory using CUDA barriers.
+ * @brief Asynchronously stores data from a shared memory tile with a row layout into global memory using CUDA barriers.
  *
  * @tparam ST The type of the shared tile
  * @param[out] dst The destination global memory array.
@@ -128,7 +128,7 @@ __device__ static inline void load_async(ST &dst, const ST::dtype *src, const in
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::all ST>
-__device__ static inline void store_async(ST::dtype *dst, const ST &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+__device__ static inline void store_async(typename ST::dtype *dst, const ST &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
@@ -136,9 +136,9 @@ __device__ static inline void store_async(ST::dtype *dst, const ST &src, const i
     int laneid = threadIdx.x % 32;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = src.height*src.width * TILE_DIM*TILE_DIM / (32 * elem_per_memcpy);
+    int total_calls = src.height*src.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
