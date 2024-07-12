@@ -96,7 +96,7 @@ def run_naive(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
 
 if __name__ == "__main__":
 
-    b, n, d = 1, 32, 64
+    b, n, d = 16, 32, 64
     p = 0.0
     p_path = 0.00
 
@@ -129,13 +129,13 @@ if __name__ == "__main__":
 
         print("----"*10)
         diff = torch.norm(out - fn_out).item()
-        print(out[0,0,:8])
-        print(fn_out[0,0,:8])
+        print(out[2,4,:8])
+        print(fn_out[2,4,:8])
         print(f"Out Diff: {diff}")
 
         diff = torch.norm(resid - fn_resid).item()
-        print(resid[0,2,:8])
-        print(fn_resid[0,2,:8])
+        print(resid[4,2,:8])
+        print(fn_resid[4,2,:8])
         print(f"Resid Diff: {diff}")
 
 

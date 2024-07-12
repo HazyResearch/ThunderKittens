@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 1
+#define ATTN_B 2
 #define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 
@@ -180,9 +180,9 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+        if(i < TOTAL_ELEMENTS_O) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
-            o_file << o[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_file << o[i] << ' ';
             diff_file << diff << ' ';
         }
         if(abs(diff) > 0.05 || isnan(diff)) {
@@ -203,9 +203,9 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+        if(i < TOTAL_ELEMENTS_O) {
             o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
-            o_resid_file << o_resid[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_resid_file << o_resid[i] << ' ';
             resid_diff_file << resid_diff << ' ';
         }
         if(abs(resid_diff) > 0.05 || isnan(resid_diff)) {

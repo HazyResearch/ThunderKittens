@@ -6,16 +6,20 @@
 #include <curand_kernel.h>
 #include <cuda/barrier>
 
-#define NUM_WORKERS (1) // hardcoded, don't change
+#define NUM_WORKERS (1) 
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 const int d_model =  64; 
+const int d_model_tile = d_model / kittens::TILE_DIM;
 
 using namespace kittens;
 using layout = kittens::ducks::st_layout::wgmma_swizzle; 
 using layout_o = kittens::ducks::st_layout::swizzle;
+using layout_reg = kittens::ducks::rt_layout::row;
 
-#define tile_smem_1xD st_bf_1x4<layout>
-#define tile_reg_1xD rt_bf_1x4<>
+#define vec_smem_1xD sv<bf16, 1, d_model_tile, layout>
+#define tile_smem_1xD st<bf16, 1, d_model_tile, layout>
+#define vec_reg_1xD  row_vec<rt_bf<1, d_model_tile>>
+#define tile_reg_1xD  rt_bf<1, d_model_tile>
 
 template<kittens::ducks::rt::all T>
 __device__ void dropout_mask(T &dst, float keep_prob) {
@@ -39,32 +43,33 @@ __device__ void dropout_mask(T &dst, float keep_prob) {
     mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
 }
 
-
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void fused_layer_norm(
     int n, int has_residual, 
     float dropout_p, 
     const bf16* __x,
     const bf16* __residual,
-    const bf16* __norm_weight, const bf16* __norm_bias, 
+    const bf16* __norm_weight, 
+    const bf16* __norm_bias, 
     bf16* __o,
     bf16* __o_residual
-    // ,
     // bf16* __mean, bf16* __var
 ) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
+    if ( threadIdx.x == 0  )  { printf("BlockIDx.x: %d\n", blockIdx.x); } 
+
     // shared memory setup to load from hbm
     const bf16 *x_g             = reinterpret_cast<const bf16*>(__x)+blockIdx.x*(n*d_model);
     const bf16 *residual_g      = reinterpret_cast<const bf16*>(__residual)+blockIdx.x*(n*d_model);
-    const bf16 *norm_weight_g   = reinterpret_cast<const bf16*>(__norm_weight)+blockIdx.x*(d_model);
-    const bf16 *norm_bias_g     = reinterpret_cast<const bf16*>(__norm_bias)+blockIdx.x*(d_model);
-        //   bf16 *mean_g          = reinterpret_cast<      bf16*>(__mean)+blockIdx.x*(n);
-        //   bf16 *var_g           = reinterpret_cast<      bf16*>(__var)+blockIdx.x*(n);
+    const bf16 *norm_weight_g   = reinterpret_cast<const bf16*>(__norm_weight);
+    const bf16 *norm_bias_g     = reinterpret_cast<const bf16*>(__norm_bias);
           bf16 *o_g             = reinterpret_cast<bf16*>(__o)+blockIdx.x*(n*d_model);
           bf16 *o_residual_g    = reinterpret_cast<bf16*>(__o_residual)+blockIdx.x*(n*d_model);
+          //   bf16 *mean_g          = reinterpret_cast<      bf16*>(__mean)+blockIdx.x*(n);
+          //   bf16 *var_g           = reinterpret_cast<      bf16*>(__var)+blockIdx.x*(n);
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -84,43 +89,25 @@ void fused_layer_norm(
     row_vec<tile_reg_1xD> norm_bias;  
     load(norm_weight, norm_weight_s);
     load(norm_bias,   norm_bias_s  );
-
-    int tic = 0, toc = 1;
-    // float dropout_p = 0.1;
-
-    // kittens::load_async(q[tic][warpid], _q + warpid*qk_tile_elements, d,  qkv_barrier);
-    // auto block = cooperative_groups::this_thread_block();
-    // __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> x_barrier;
-    // if (threadIdx.x == 0) {init(&x_barrier, block.size());}
-    // __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> store_barrier;
-    // if (threadIdx.x == 0) {init(&store_barrier, block.size());}
-    // block.sync(); // Make sure no gets to the barrier before its initialized.
-    // if (warpid == 1) {
-    //     kittens::load_async(x_s[tic], x_g, D, x_barrier); 
-    //     kittens::load_async(x_s[tic], x_g, D, x_barrier); 
-        
     
     // iterate through the input
     int chunk_size = kittens::TILE_DIM;
     int n_blocks = n / chunk_size;
-    for(int block = 0; block < n_blocks; block++, tic ^= 1, toc ^= 1) { 
-        // x_barrier.arrive_and_wait();
-        
+    for(int block = 0; block < n_blocks; block++) { 
         tile_reg_1xD x;            // 4 registers
         tile_reg_1xD temp;         // 4 registers
         tile_reg_1xD temp_squared; // 4 registers
         col_vec<tile_reg_1xD> mean;
         col_vec<tile_reg_1xD> var; 
-        tile_reg_1xD o; // 4 registers
         
         int cur_idx = block*NUM_WORKERS + warpid;
         load(x_s, x_g + cur_idx * x_s.num_elements, d_model); // hbm to smem
-        load(x, x_s); // smem to reg
+        load(x, x_s);                                         // smem to reg
 
-        if (dropout_p > 0) { dropout_mask(x, dropout_p); } // dropout on x
+        if (dropout_p > 0) { dropout_mask(x, dropout_p); }    // dropout on x
 
         // add residual
-        tile_reg_1xD residual; // 4 registers
+        tile_reg_1xD residual;                                // 4 registers
         if ( has_residual > 0 ) { 
             load(residual_s, residual_g + cur_idx * residual_s.num_elements, d_model);
             load(residual, residual_s);
@@ -136,31 +123,31 @@ void fused_layer_norm(
 
         // compute the variance
         zero(var);
-        sub_row(temp, residual, mean);   // center 
-        mul(temp_squared, temp, temp);   // square
+        sub_row(temp, residual, mean);           // center 
+        mul(temp_squared, temp, temp);           // square
         row_sum(var, temp_squared, var);
         div(var, var, __float2bfloat16(d_model));
         add(var, var, __float2bfloat16(1e-05f)); // add norm.eps
         sqrt(var, var);
 
+        // compute norm
         div_row(temp, temp, var);
         mul_col(temp, temp, norm_weight);
         add_col(temp, temp, norm_bias);
 
         // save output
-        copy(o, temp);
-        store(o_s, temp); // store reg to smem
+        store(o_s, temp);     
         store(o_g + cur_idx * o_s.num_elements, o_s, d_model); // store smem to hbm
 
         // save residual
-        store(residual_s, residual); // store reg to smem
+        store(residual_s, residual);                                                  // store reg to smem
         store(o_residual_g + cur_idx * residual_s.num_elements, residual_s, d_model); // store smem to hbm
         
         // inspect stuff 
         // store(mean_s, mean);
         // store(mean_g + cur_idx * chunk_size, mean_s); // no stride when passing vectors
         // store(var_s, var);
-        // store(var_g + cur_idx * chunk_size, var_s); // no stride when passing vectors
+        // store(var_g + cur_idx * chunk_size, var_s);   // no stride when passing vectors
     }
 }
 
