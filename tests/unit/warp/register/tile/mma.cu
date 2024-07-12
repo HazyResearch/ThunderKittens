@@ -127,11 +127,11 @@ struct mma_wrapper_2d {
             initialize(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_2d<test, H, W, NUM_WORKERS, _K, args...>,
+                global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, _K, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_2d<test, H, W, NUM_WORKERS, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, _K, args...>(i_ref, o_ref);
             // check and cleanup

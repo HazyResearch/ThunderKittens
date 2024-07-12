@@ -13,14 +13,14 @@ void warp::shared::tile::conversions::detail::internal_tests_2(test_data &result
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 1>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 2>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 3>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 4>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 1>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 2>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 3>>::run(results);
-    sweep_st_layout_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 4>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 1>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 2>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 3>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>, std::integral_constant<int, 4>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 1>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 2>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 3>>::run(results);
+    sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>, std::integral_constant<int, 4>>::run(results);
 }
 
 #endif
