@@ -100,7 +100,7 @@ struct test_store_add_reduce {
 template<typename T>
 struct test_store_min_reduce {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_vec_gmem=half" :
                                                                                          "tma_store_min_reduce_vec_gmem=float";
@@ -132,7 +132,7 @@ struct test_store_min_reduce {
 template<typename T>
 struct test_store_max_reduce {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_vec_gmem=half" :
                                                                                          "tma_store_max_reduce_vec_gmem=float";
@@ -201,8 +201,8 @@ struct tma_wrapper_1d {
         results.push_back(this_result);
     }
 };
-template<typename test, int MAX_S=8, typename... args>
-using tma_sweep_size_1d_warp = loop_s<tma_wrapper_1d, test, MAX_S, 1, MAX_S, args...>;
+template<typename test, int MAX_S, int NW, typename... args>
+using tma_sweep_size_1d = loop_s<tma_wrapper_1d, test, MAX_S, NW, MAX_S, args...>;
 
 template<template<typename> typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args>
 struct tma_sweep_gmem_type_1d {

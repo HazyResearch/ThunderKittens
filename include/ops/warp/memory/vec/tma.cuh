@@ -34,14 +34,14 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<typename SV::dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
         std::is_same_v<typename SV::dtype, half>  ? CU_TENSOR_MAP_DATA_TYPE_FLOAT16 :
         std::is_same_v<typename SV::dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
-        -1
+        CUtensorMapDataType(-1)
     );
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
-    uint64_t gmem_shape [1] = {SV::length * num_vectors};
+    uint64_t gmem_shape [1] = {(uint64_t)(SV::length * num_vectors)};
     uint64_t gmem_stride[1] = {1};
     uint32_t smem_shape [1] = {SV::length};
     uint32_t smem_stride[1] = {1};
@@ -197,6 +197,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const SV &src, 
 */
 template<ducks::sv::all SV>
 __device__ static inline void store_min_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -225,6 +226,7 @@ __device__ static inline void store_min_async(void *dst_tma_map, const SV &src, 
 */
 template<ducks::sv::all SV>
 __device__ static inline void store_max_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));

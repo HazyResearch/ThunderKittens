@@ -28,6 +28,7 @@ namespace tma {
 template<ducks::st::all ST>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int blocks_height, int blocks_width=1) {
     using dtype = typename ST::dtype;
+    constexpr int cols_per_core_matrix = (16 / sizeof(dtype));
     
     constexpr uint32_t  tma_dim      = (
         detail::st_type_naive_layout<ST>            ? 2 :
@@ -42,7 +43,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
         std::is_same_v<dtype, half>  ? CU_TENSOR_MAP_DATA_TYPE_FLOAT16 :
         std::is_same_v<dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
-        -1
+        CUtensorMapDataType(-1)
     );
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
@@ -102,18 +103,18 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         smem_shape[2] = shared_tile_width / swizzle_elements;
     }
     else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-        gmem_shape[0] = 8;
+        gmem_shape[0] = cols_per_core_matrix;
         gmem_shape[1] = 8;
-        gmem_shape[2] = global_tile_width/8;
+        gmem_shape[2] = global_tile_width/cols_per_core_matrix;
         gmem_shape[3] = global_tile_height/8;
 
         gmem_stride[0] = global_tile_width * sizeof(dtype);
-        gmem_stride[1] = 8 * sizeof(dtype);
+        gmem_stride[1] = cols_per_core_matrix * sizeof(dtype);
         gmem_stride[2] = 8 * global_tile_width * sizeof(dtype);
 
-        smem_shape[0] = 8;
+        smem_shape[0] = cols_per_core_matrix;
         smem_shape[1] = 8;
-        smem_shape[2] = shared_tile_width/8;
+        smem_shape[2] = shared_tile_width/cols_per_core_matrix;
         smem_shape[3] = shared_tile_height/8;
     }
 
@@ -139,8 +140,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     assert(smem_stride[0] == 1); // smem_stride[0] is ignored when wgmma_interleave is none
 
     if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
-        constexpr int swizzle_size = (ST::width) * 32;
-        assert(smem_shape[0] * sizeof(dtype) <= swizzle_size);
+        assert(smem_shape[0] * sizeof(dtype) <= ST::swizzle_bytes);
     }
 
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
@@ -253,7 +253,7 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
         else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0;  
             int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (dst.cols/8);
+            int32_t crd2 = tile_col_idx * (dst.cols/(16/sizeof(typename ST::dtype)));
             int32_t crd3 = tile_row_idx * (dst.rows/8);
 
             asm volatile (
@@ -331,7 +331,7 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
         else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0; 
             int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/8);
+            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
             int32_t crd3 = tile_row_idx * (src.rows/8);
 
             asm volatile (
@@ -409,7 +409,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
         else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0; 
             int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/8);
+            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
             int32_t crd3 = tile_row_idx * (src.rows/8);
 
             asm volatile (
@@ -437,6 +437,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
  */
 template<ducks::st::all ST>
 __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+    static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -513,6 +514,7 @@ __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, 
  */
 template<ducks::st::all ST>
 __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+    static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -561,7 +563,7 @@ __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, 
         else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0; 
             int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/8);
+            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
             int32_t crd3 = tile_row_idx * (src.rows/8);
 
             asm volatile (
@@ -639,7 +641,7 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
         else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
             int32_t crd0 = 0;  
             int32_t crd1 = 0; 
-            int32_t crd2 = tile_col_idx * (dst.cols/8);
+            int32_t crd2 = tile_col_idx * (dst.cols/(16/sizeof(typename ST::dtype)));
             int32_t crd3 = tile_row_idx * (dst.rows/8);
 
             asm volatile (

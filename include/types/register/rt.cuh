@@ -51,11 +51,11 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename T2, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
+template<typename T, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt {
     using identifier = ducks::rt::identifier; ///< Type identifier for the rt structure.
     using layout = _layout; ///< Layout of the matrix tile.
-    using dtype = T2; ///< Data type of the matrix elements.
+    using dtype = kittens::base_types::packing<T>::packed_type; ///< Data type of the matrix elements.
 
     static constexpr int height              = _height; ///< Height in subtiles.
     static constexpr int width               = _width; ///< Width in subtiles.
@@ -69,8 +69,8 @@ struct rt {
 
     rt_base<dtype, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
 
-    using col_vec = rv<dtype, height, rt_base<dtype, layout>::col_vec_pack>; ///< A type representing a column vector for this tile.
-    using row_vec = rv<dtype, width , rt_base<dtype, layout>::row_vec_pack>; ///< A type representing a column vector for this tile.
+    using col_vec = rv<T, height, rt_base<dtype, layout>::col_vec_pack>; ///< A type representing a column vector for this tile.
+    using row_vec = rv<T, width , rt_base<dtype, layout>::row_vec_pack>; ///< A type representing a column vector for this tile.
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -116,9 +116,9 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 
 // layout and type wrappers
 
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float2, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16_2, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half_2, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half, _height, _width, layout>;
 
 // layout, type, and size wrappers
 // sizes are chosen with the assumption that you aren't going to want to fit more than

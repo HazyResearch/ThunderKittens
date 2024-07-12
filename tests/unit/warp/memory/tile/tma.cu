@@ -5,7 +5,7 @@
 template<typename T>
 struct test_load { // load with TMA, write out normally
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_load_gmem=half" :
                                                                                          "tma_load_gmem=float";
@@ -35,7 +35,7 @@ struct test_load { // load with TMA, write out normally
 template<typename T>
 struct test_store { // load normally, store with TMA
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_gmem=half" :
                                                                                          "tma_store_gmem=float";
@@ -63,7 +63,7 @@ struct test_store { // load normally, store with TMA
 template<typename T>
 struct test_store_add_reduce {
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_add_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_add_reduce_gmem=half" :
                                                                                          "tma_store_add_reduce_gmem=float";
@@ -99,7 +99,7 @@ struct test_store_add_reduce {
 template<typename T>
 struct test_store_min_reduce {
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_gmem=half" :
                                                                                          "tma_store_min_reduce_gmem=float";
@@ -130,7 +130,7 @@ struct test_store_min_reduce {
 template<typename T>
 struct test_store_max_reduce {
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_gmem=half" :
                                                                                          "tma_store_max_reduce_gmem=float";
@@ -164,11 +164,7 @@ static __global__ void tma_global_wrapper_2d(const T *input, T *output, CUtensor
 }
 template<typename test, int H, int W, int NUM_WORKERS, kittens::ducks::st_layout::all L, typename... args>
 struct tma_wrapper_2d {
-    using dtype = std::conditional_t<
-        requires { typename test::dtype; },
-        typename test::dtype,
-        kittens::bf16
-    >; // defaults to bf16 in global memory if the test doesn't specify.
+    using dtype = gmem_dtype<test>;
     static void run(test_data& results) {
         test_info this_result;
         this_result.label = generate_test_name<H,W,NUM_WORKERS, L, args...>(test::test_identifier);
@@ -179,7 +175,7 @@ struct tma_wrapper_2d {
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
 
-            initialize<initializers::RANDOM>(&d_i, &d_o, i_ref, o_ref); 
+            initialize<dtype, initializers::RANDOM>(&d_i, &d_o, i_ref, o_ref); 
             
             // initialize TMA descriptors
             CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::st<dtype, H, W, L>>(d_i, 2, 2);

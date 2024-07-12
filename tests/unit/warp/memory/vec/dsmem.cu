@@ -3,9 +3,13 @@
 
 #ifdef TEST_WARP_MEMORY_VEC_DSMEM
 
+template<typename T>
 struct test_dsmem_vec { // load with dsmem, write out normally
+    using dtype = T;
     template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>;
-    static inline const std::string test_identifier = "dsmem_vec_transfer";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "dsmem_vec_transfer_gmem=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "dsmem_vec_transfer_gmem=half" :
+                                                                                         "dsmem_vec_transfer_gmem=float";
     template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < 4; i++) {
             for(int j = 0; j < S*16; j++) {
@@ -14,11 +18,11 @@ struct test_dsmem_vec { // load with dsmem, write out normally
         }
     }
     template<int S, int NW>
-    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    __device__ static void device_func(const dtype *input, dtype *output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st_bf<S, S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st_bf<S, S>>>();
-        kittens::row_vec<kittens::st_bf<S, S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st_bf<S, S>>>();
+        kittens::row_vec<kittens::st<dtype, S, S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, S, S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
         
         __shared__ kittens::dsmem::barrier dsmem_barrier;
         kittens::load(src_vec, input + blockIdx.x*src_vec.length);
@@ -36,29 +40,30 @@ struct test_dsmem_vec { // load with dsmem, write out normally
     }
 };
 
-template<typename Ker, int S, int NW, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_1d(const kittens::bf16 *input, kittens::bf16 *output) {
+template<typename Ker, typename T, int S, int NW, typename... args>
+static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_1d(const T *input, T *output) {
     Ker::template device_func<S, NW, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
 struct dsmem_wrapper_1d {
+    using dtype = gmem_dtype<test>;
     static void run(test_data& results) {
         test_info this_result;
         this_result.label = generate_test_name<S, NUM_WORKERS, args...>(test::test_identifier);
         if constexpr (test::template valid<S, NUM_WORKERS, args...>::value) {
             constexpr int SIZE = S*16 * 4; // 4 for additional dsmem cluster dimension
             // initialize
-            kittens::bf16 *d_i, *d_o;
+            dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
-            initialize<initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
+            initialize<dtype, initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
-                dsmem_global_wrapper_1d<test, S, NUM_WORKERS, args...>,
+                dsmem_global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            dsmem_global_wrapper_1d<test, S, NUM_WORKERS, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            dsmem_global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
             // fill in correct results on cpu
             test::template host_func<S, NUM_WORKERS, args...>(i_ref, o_ref);
             // check and cleanup
@@ -70,8 +75,17 @@ struct dsmem_wrapper_1d {
         results.push_back(this_result);
     }
 };
-template<typename test, int MAX_S=8, typename... args>
-using dsmem_sweep_size_1d_warp = loop_s<dsmem_wrapper_1d, test, MAX_S, 1, MAX_S, args...>;
+template<typename test, int MAX_S, int NW, typename... args>
+using dsmem_sweep_size_1d = loop_s<dsmem_wrapper_1d, test, MAX_S, NW, MAX_S, args...>;
+template<template<typename> typename test, int MAX_S=8, int NUM_WORKERS=1, typename... args>
+struct dsmem_sweep_gmem_type_1d {
+    static void run(test_data &results) {
+        dsmem_sweep_size_1d<test<float>, MAX_S, NUM_WORKERS, args...>::run(results);
+        dsmem_sweep_size_1d<test<kittens::bf16>, MAX_S, NUM_WORKERS, args...>::run(results);
+        dsmem_sweep_size_1d<test<kittens::half>, MAX_S, NUM_WORKERS, args...>::run(results);
+    }
+};
+template<template<typename> typename test, int MAX_S=8, typename... args> using dsmem_sweep_gmem_type_1d_warp = dsmem_sweep_gmem_type_1d<test, MAX_S, 1, args...>;
 
 void warp::memory::vec::dsmem::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/vec/dsmem tests! -----\n" << std::endl;
@@ -80,7 +94,7 @@ void warp::memory::vec::dsmem::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    dsmem_sweep_size_1d_warp<test_dsmem_vec, SIZE>::run(results);
+    dsmem_sweep_gmem_type_1d_warp<test_dsmem_vec, SIZE>::run(results);
 }
 
 #endif

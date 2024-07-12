@@ -3,10 +3,14 @@
 
 #ifdef TEST_WARP_MEMORY_TILE_DSMEM
 
+template<typename T>
 struct test_dsmem { // load with dsmem, write out normally
+    using dtype = T;
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16) && W*H<=64>;
-    static inline const std::string test_identifier = "dsmem_transfer";
+        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16) && W*H*sizeof(dtype)*256*2<=kittens::MAX_SHARED_MEMORY-1024>;
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "dsmem_transfer_gmem=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "dsmem_transfer_gmem=half" :
+                                                                                         "dsmem_transfer_gmem=float";
     template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < 4; i++) {
             for(int j = 0; j < H*W*256; j++) {
@@ -15,11 +19,11 @@ struct test_dsmem { // load with dsmem, write out normally
         }
     }
     template<int H, int W, int NW, kittens::ducks::st_layout::all L>
-    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    __device__ static void device_func(const dtype *input, dtype *output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W, L> (&src_tile) = al.allocate<kittens::st_bf<H, W, L>>();
-        kittens::st_bf<H, W, L> (&dst_tile) = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::st<dtype, H, W, L> (&src_tile) = al.allocate<kittens::st<dtype, H, W, L>>();
+        kittens::st<dtype, H, W, L> (&dst_tile) = al.allocate<kittens::st<dtype, H, W, L>>();
         
         __shared__ kittens::dsmem::barrier dsmem_barrier;
         kittens::load(src_tile, input + blockIdx.x*src_tile.num_elements, W*16);
@@ -37,29 +41,30 @@ struct test_dsmem { // load with dsmem, write out normally
     }
 };
 
-template<typename Ker, int H, int W, int NW, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const kittens::bf16 *input, kittens::bf16 *output) {
+template<typename Ker, typename T, int H, int W, int NW, typename... args>
+static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const T *input, T *output) {
     Ker::template device_func<H, W, NW, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, kittens::ducks::st_layout::all L, typename... args>
 struct dsmem_wrapper_2d {
+    using dtype = gmem_dtype<test>;
     static void run(test_data& results) {
         test_info this_result;
         this_result.label = generate_test_name<H,W,NUM_WORKERS, L, args...>(test::test_identifier);
         if constexpr (test::template valid<H, W, NUM_WORKERS, L, args...>::value) {
             constexpr int SIZE = H*W*256 * 4; // 4 for additional dsmem cluster dimension
             // initialize
-            kittens::bf16 *d_i, *d_o;
+            dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
-            initialize<initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
+            initialize<dtype, initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             cudaFuncSetAttribute(
-                dsmem_global_wrapper_2d<test, H, W, NUM_WORKERS, L, args...>,
+                dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, L, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            dsmem_global_wrapper_2d<test, H, W, NUM_WORKERS, L, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, L, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, L, args...>(i_ref, o_ref);
             // check and cleanup
@@ -73,16 +78,16 @@ struct dsmem_wrapper_2d {
 };
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
 using dsmem_sweep_size_2d = loop_h<dsmem_wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
-struct dsmem_sweep_st_layout_size_2d {
+template<template<typename> typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
+struct dsmem_sweep_gmem_type_2d {
     static void run(test_data &results) {
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::swizzle, args...>::run(results);
-        dsmem_sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_interleave, args...>::run(results);
+        dsmem_sweep_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        dsmem_sweep_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        dsmem_sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
     }
 };
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args>
-using dsmem_sweep_st_layout_size_2d_warp = dsmem_sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
+template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using dsmem_sweep_gmem_type_2d_warp = dsmem_sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;
+
 
 void warp::memory::tile::dsmem::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/tile/dsmem tests! -----\n" << std::endl;
@@ -91,8 +96,7 @@ void warp::memory::tile::dsmem::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    dsmem_sweep_size_2d<test_dsmem, SIZE, SIZE, 1, kittens::ducks::st_layout::naive>::run(results);
-    // dsmem_sweep_st_layout_size_2d_warp<test_dsmem, SIZE, SIZE>::run(results);
+    dsmem_sweep_gmem_type_2d_warp<test_dsmem, SIZE, SIZE, kittens::ducks::st_layout::naive>::run(results);
 }
 
 #endif

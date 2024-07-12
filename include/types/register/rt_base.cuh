@@ -58,13 +58,13 @@ template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
     static constexpr int num_elements         = rows*cols; // 256
     static constexpr int elements_per_thread  = num_elements / 32; // 8
 
-    static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<T2>::num(); // 4
-    static constexpr int registers_per_thread = packed_per_thread * sizeof(T2) / 4; // 4 or 8, registers are 32-bit words
+    static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<dtype>::num(); // 4
+    static constexpr int registers_per_thread = packed_per_thread * sizeof(dtype) / 4; // 4 or 8, registers are 32-bit words
 
     static constexpr int col_vec_pack = layout::is_row ? 1 : 2; // for holding row reductions
     static constexpr int row_vec_pack = layout::is_row ? 2 : 1; // for holding column reductions
 
-    T2 data[packed_per_thread]; ///< The actual storage for the base tile
+    dtype data[packed_per_thread]; ///< The actual storage for the base tile
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -88,5 +88,6 @@ template<typename T> concept all = requires {
 
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16_2, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half_2, L>;
 
 }
