@@ -13,9 +13,8 @@ struct group_load_store {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const dtype *input, dtype *output) {
-        using D2 = kittens::base_types::packing<dtype>::packed_type;
         using G = kittens::group<NW>;
-        kittens::rt<D2, H/NW, W, L> reg_tile;
+        kittens::rt<dtype, H/NW, W, L> reg_tile;
         G::load(reg_tile, input, W*16);
         G::store(output, reg_tile, W*16);
     }

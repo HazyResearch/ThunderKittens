@@ -93,8 +93,12 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float2, kittens::bf16_2>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16_2, float2>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::bf16>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, float>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::half>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, float>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
+    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
 
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);

@@ -203,8 +203,10 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl = st<float, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf = st<bf16, _height, _width, layout>;
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf = st<half, _height, _width, layout>;
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl = st<float, _height, _width, layout>;
+
 
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
@@ -217,6 +219,18 @@ template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x1
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
+
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_1x1 = st_hf<1, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_1x2 = st_hf<1, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_1x4 = st_hf<1, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_1x8 = st_hf<1, 8, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_2x1 = st_hf<2, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_2x2 = st_hf<2, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_2x4 = st_hf<2, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_4x1 = st_hf<4, 1, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_4x2 = st_hf<4, 2, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_4x4 = st_hf<4, 4, layout>;
+template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_hf_8x1 = st_hf<8, 1, layout>;
 
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x1 = st_fl<1, 1, layout>;
 template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_fl_1x2 = st_fl<1, 2, layout>;

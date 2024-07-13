@@ -4,7 +4,10 @@
 
 #include "testing_commons.cuh"
 
-#include "mma.cuh"
+#include "mma_fp32_bf16.cuh"
+#include "mma_fp32_fp16.cuh"
+#include "mma_fp16_fp16.cuh"
+// #include "mma_fp32_fp32.cuh" TODO
 
 namespace group {
 namespace wgmma {

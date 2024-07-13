@@ -121,7 +121,7 @@ struct mma_wrapper_2d {
         this_result.label = generate_test_name<H,W,NUM_WORKERS,_K,args...>(test::test_identifier);
         if constexpr (test::template valid<H, W, NUM_WORKERS, _K, args...>::value) {
             // initialize
-            bf16 *d_i, *d_o;
+            kittens::bf16 *d_i, *d_o;
             std::vector<float> i_ref((H+W)*K*256);
             std::vector<float> o_ref(H*W*256);
             initialize(&d_i, &d_o, i_ref, o_ref);

@@ -100,12 +100,14 @@ template<int H, int W, int NW, kittens::ducks::st_layout::all L, kittens::ducks:
     else label += "_[rt_col_layout]";
     return label;
 }
-template<int H, int W, int NW, kittens::ducks::base_types::T2 T2, kittens::ducks::base_types::T2 U2> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, kittens::ducks::base_types::T1 T2, kittens::ducks::base_types::T1 U2> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id);
-    if constexpr (std::is_same_v<U2, float2>) label += "_[float2->";
-    else label += "_[bf16_2->";
-    if constexpr (std::is_same_v<T2, float2>) label += "float2]";
-    else label += "bf16_2]";
+    if constexpr (std::is_same_v<U2, float>) label += "_[float->";
+    else if constexpr (std::is_same_v<U2, kittens::bf16>) label += "_[bf16->";
+    else label += "_[half->";
+    if constexpr (std::is_same_v<T2, float>) label += "float]";
+    else if constexpr (std::is_same_v<T2, kittens::bf16>) label += "bf16]";
+    else label += "half]";
     return label;
 }
 
