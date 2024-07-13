@@ -45,10 +45,12 @@ struct identifier {};
  * the register layouts used by the tensor cores. ThunderKittens wants you working with tiles
  * where possible!
  */
-template<typename T, size_t _outer_dim, size_t _inner_dim=1>
+template<typename _T, size_t _outer_dim, size_t _inner_dim=1>
 struct rv {
     using identifier = ducks::rv::identifier; ///< Type identifier for the rv structure.
-    using dtype = kittens::base_types::packing<T>::packed_type; ///< Data type of the vector elements.
+    using T = kittens::base_types::packing<_T>::unpacked_type;
+    using T2 = kittens::base_types::packing<_T>::packed_type;
+    using dtype = T2; ///< Data type of the matrix elements
 
     static constexpr int outer_dim = _outer_dim; ///< Length in subtiles.
     static constexpr int inner_dim = _inner_dim; ///< Internal layout within a subtile. Either 1 or 2.

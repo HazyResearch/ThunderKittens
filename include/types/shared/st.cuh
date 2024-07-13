@@ -54,7 +54,9 @@ template<typename _T, int _height, int _width, ducks::st_layout::all _layout=duc
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using layout = _layout; ///< Memory layout of the tile.
-    using dtype = _T; ///< Data type of the elements in the tile.
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_height        = _height;
@@ -136,7 +138,9 @@ template<
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
     using layout = _layout;
-    using dtype = _T;
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
 
     static constexpr int underlying_height        = _underlying_height;
     static constexpr int underlying_width         = _underlying_width;

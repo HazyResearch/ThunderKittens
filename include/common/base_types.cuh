@@ -44,7 +44,9 @@ namespace ducks {
 namespace base_types {
 
 template<typename T>
-concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>; // could add half_2 later if implemented.
+template<typename T>
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half>; // could add half_2 later if implemented.
 
 } // namespace base_types
 } // namespace ducks
@@ -136,32 +138,38 @@ template<typename T> struct packing {
 };
 template<> struct packing<bf16> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = bf16;
     using packed_type = bf16_2;
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; }
 };
 template<> struct packing<half> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = half;
     using packed_type = half_2;
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; }
 };
 template<> struct packing<float> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = float;
     using packed_type = float2;
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; }
 };
 template<> struct packing<bf16_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = bf16;
+    using packed_type = bf16_2;
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<half_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = half;
+    using packed_type = half_2;
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<float2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = float;
+    using packed_type = float2;
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<int2> {

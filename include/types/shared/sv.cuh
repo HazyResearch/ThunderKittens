@@ -44,7 +44,9 @@ struct identifier {};
 template<typename _T, size_t _tiles>
 struct KITTENS_DEFAULT_ALIGN sv {
     using identifier = ducks::sv::identifier;
-    using dtype = _T;
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
 
     static constexpr int tiles  = _tiles; ///< Length in subtiles.
     static constexpr int length = tiles * kittens::TILE_DIM; ///< Length in elements.

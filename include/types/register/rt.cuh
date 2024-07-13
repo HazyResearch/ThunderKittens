@@ -51,11 +51,13 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename T, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
+template<typename _T, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt {
     using identifier = ducks::rt::identifier; ///< Type identifier for the rt structure.
     using layout = _layout; ///< Layout of the matrix tile.
-    using dtype = kittens::base_types::packing<T>::packed_type; ///< Data type of the matrix elements.
+    using T = kittens::base_types::packing<_T>::unpacked_type;
+    using T2 = kittens::base_types::packing<_T>::packed_type;
+    using dtype = T2; ///< Data type of the matrix elements
 
     static constexpr int height              = _height; ///< Height in subtiles.
     static constexpr int width               = _width; ///< Width in subtiles.

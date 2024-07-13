@@ -15,6 +15,8 @@ template<typename T>
 concept transposed = (
     std::is_same_v<T, st_layout::wgmma_interleave>   // ||
 );
+template<typename T> concept st_normal     = ducks::st::all<T> && normal<typename T::layout>;
+template<typename T> concept st_transposed = ducks::st::all<T> && transposed<typename T::layout>;
 }
 }
 namespace wgmma {
@@ -83,18 +85,19 @@ __device__ static inline uint64_t make_descriptor(const ST &tile, int chunk_idx)
 // templated wrapper for PTX
 template<int width, int trans_a, int trans_b>
 struct base {
-    __device__ static inline void rt_st(
+    template<typename T_D, typename T_AB> __device__ static inline void rt_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const rt_bf<1, 1, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
         int scale_d = 1
     );
-    __device__ static inline void st_st(
+    template<typename T_D, typename T_AB> __device__ static inline void st_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
         int scale_d = 1
     );
+    // ----- DESCRIPTORS ----- //
     template<ducks::st::all ST> __device__ static inline uint64_t a_desc(const ST &tile, int chunk_idx) {
         return make_descriptor<trans_a>(tile, chunk_idx);
     }

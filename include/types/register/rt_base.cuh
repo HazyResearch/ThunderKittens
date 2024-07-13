@@ -42,9 +42,11 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
+template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using identifier = ducks::rt_base::identifier; ///< Type identifier for the rt_base structure.
     using layout = _layout; ///< Layout of the matrix tile.
+    using T = kittens::base_types::packing<_T>::unpacked_type;
+    using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
 
     static_assert(
@@ -88,6 +90,5 @@ template<typename T> concept all = requires {
 
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16_2, L>;
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half_2, L>;
 
 }
