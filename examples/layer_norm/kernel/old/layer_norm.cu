@@ -16,76 +16,31 @@ using layout = kittens::ducks::st_layout::wgmma_swizzle;
 using layout_o = kittens::ducks::st_layout::swizzle;
 using layout_reg = kittens::ducks::rt_layout::row;
 
-#define vec_smem_1xD sv_bf<d_model_tile>
+#define vec_smem_1xD sv<bf16, 1, d_model_tile, layout>
 #define tile_smem_1xD st<bf16, 1, d_model_tile, layout>
 #define vec_reg_1xD  row_vec<rt_bf<1, d_model_tile>>
-#define col_vec_smem_1xD col_vec<rt_bf<1, d_model_tile>>
 #define tile_reg_1xD  rt_bf<1, d_model_tile>
 
-
-template<kittens::ducks::rv::all T>
+template<kittens::ducks::rt::all T>
 __device__ void dropout_mask(T &dst, float keep_prob) {
     unsigned long long seed = 0;
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     curandStatePhilox4_32_10_t state;
     curand_init(seed, idx, 0, &state);
-
     #pragma unroll
-    for ( int i = 0 ; i < dst.outer_dim ; i ++ ) { 
+    for(int i = 0; i < dst.height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.inner_dim; j++) {
-            float rand_1 = curand_uniform(&state);
-            float rand_2 = curand_uniform(&state);
-            if (rand_1 < keep_prob) {
-                dst[i][j].x = base_types::constants<bf16>::zero();
-            } 
-            if (rand_2 < keep_prob) { 
-                dst[i][j].y = base_types::constants<bf16>::zero();
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k++) {
+                float rand = curand_uniform(&state);
+                if (rand < keep_prob) {
+                    dst.tiles[i][j].data[k] = base_types::constants<bf16_2>::zero();
+                }
             }
         }
     }
-
-
     mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
-}
-
-template<ducks::rv::all RV>
-__device__ inline void compute_mean(float* mean, const RV residual) {
-    using dtype = typename RV::dtype;
-    using packed_type = typename base_types::packing<dtype>::unpacked_type;
-
-    float sum = 0.0f;
-    #pragma unroll
-    for ( int i = 0 ; i < residual.outer_dim ; i ++ ) { 
-        #pragma unroll
-        for(int j = 0; j < residual.inner_dim; j++) {
-            sum += __bfloat162float(residual[i][j].x);
-            sum += __bfloat162float(residual[i][j].y);
-        }
-    }
-
-    int leader_1; 
-    if ( laneid() == 0 ) { leader_1 = 1; }     // put 1 --> 0
-    else if ( laneid() == 2 ) { leader_1 = 3; }   // put 3 --> 2
-    else { leader_1 = laneid(); } 
-    float sum_neighbor = packed_shfl_sync(MASK_ALL, sum, leader_1);
-    if ( laneid() == 0 ) { sum += sum_neighbor; }
-    if ( laneid() == 2 ) { sum += sum_neighbor; }
-    __syncthreads();
-
-    int leader_2; 
-    if ( laneid() == 0 ) { leader_2 = 2; }    // put 2 --> 0 (0 should have full sum)
-    else { leader_2 = laneid(); }
-    float sum_neighbor_2 = packed_shfl_sync(MASK_ALL, sum, leader_2);
-    if ( laneid() == 0 ) { sum += sum_neighbor_2; } 
-    __syncthreads();
-
-    int leader_3 = 0;                         // everyone pull the value of thread 0
-    float sum_neighbor_3 = packed_shfl_sync(MASK_ALL, sum, leader_3);
-    sum = sum_neighbor_3; 
-    __syncthreads();
-
-    *mean = sum / d_model;
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
@@ -98,77 +53,103 @@ void fused_layer_norm(
     const bf16* __norm_bias, 
     bf16* __o,
     bf16* __o_residual
+    // bf16* __mean, bf16* __var
 ) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
+    if ( threadIdx.x == 0  )  { printf("BlockIDx.x: %d\n", blockIdx.x); } 
+
     // shared memory setup to load from hbm
-    const bf16 *x_g             = reinterpret_cast<const bf16*>(__x)       +blockIdx.x*(d_model);
-    const bf16 *residual_g      = reinterpret_cast<const bf16*>(__residual)+blockIdx.x*(d_model);
+    const bf16 *x_g             = reinterpret_cast<const bf16*>(__x)+blockIdx.x*(n*d_model);
+    const bf16 *residual_g      = reinterpret_cast<const bf16*>(__residual)+blockIdx.x*(n*d_model);
     const bf16 *norm_weight_g   = reinterpret_cast<const bf16*>(__norm_weight);
     const bf16 *norm_bias_g     = reinterpret_cast<const bf16*>(__norm_bias);
-          bf16 *o_g             = reinterpret_cast<bf16*>(__o)             +blockIdx.x*(d_model);
-          bf16 *o_residual_g    = reinterpret_cast<bf16*>(__o_residual)    +blockIdx.x*(d_model);
+          bf16 *o_g             = reinterpret_cast<bf16*>(__o)+blockIdx.x*(n*d_model);
+          bf16 *o_residual_g    = reinterpret_cast<bf16*>(__o_residual)+blockIdx.x*(n*d_model);
+          //   bf16 *mean_g          = reinterpret_cast<      bf16*>(__mean)+blockIdx.x*(n);
+          //   bf16 *var_g           = reinterpret_cast<      bf16*>(__var)+blockIdx.x*(n);
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    vec_smem_1xD (&x_s)         = al.allocate<vec_smem_1xD>();
-    vec_smem_1xD (&residual_s)  = al.allocate<vec_smem_1xD>();  
-    vec_smem_1xD (&o_s)         = al.allocate<vec_smem_1xD>();
+    tile_smem_1xD (&x_s)  = al.allocate<tile_smem_1xD>();
+    tile_smem_1xD (&residual_s)  = al.allocate<tile_smem_1xD>();  
+    tile_smem_1xD (&o_s)  = al.allocate<tile_smem_1xD>();
+    col_vec<tile_smem_1xD> (&mean_s)  = al.allocate<col_vec<tile_smem_1xD>>();
+    col_vec<tile_smem_1xD> (&var_s)  = al.allocate<col_vec<tile_smem_1xD>>();
 
-    // load in the norm parameters
-    vec_smem_1xD (&norm_weight_s)  = al.allocate<vec_smem_1xD>(); 
-    vec_smem_1xD (&norm_bias_s  )  = al.allocate<vec_smem_1xD>(); 
+    // norms: load in the full thing.
+    row_vec<tile_smem_1xD> (&norm_weight_s)  = al.allocate<row_vec<tile_smem_1xD>>(); 
+    row_vec<tile_smem_1xD> (&norm_bias_s  )  = al.allocate<row_vec<tile_smem_1xD>>(); 
     load(norm_weight_s, norm_weight_g);
-    load(norm_bias_s, norm_bias_g);
-    vec_reg_1xD norm_weight, norm_bias;  
+    load(norm_bias_s  , norm_bias_g);
+
+    row_vec<tile_reg_1xD> norm_weight; 
+    row_vec<tile_reg_1xD> norm_bias;  
     load(norm_weight, norm_weight_s);
-    load(norm_bias,   norm_bias_s);
+    load(norm_bias,   norm_bias_s  );
     
     // iterate through the input
-    vec_reg_1xD x, temp, temp_squared, residual;          // 4 registers each
-
-    load(x_s, x_g);                                       // hbm to smem
-    load(x, x_s);                                         // smem to reg
-
-    if (dropout_p > 0) { dropout_mask(x, dropout_p); } // dropout on x
-    if ( has_residual > 0 ) {                             // add residual
-        load(residual_s, residual_g);
-        load(residual, residual_s);
-        add(residual, residual, x); 
-    } else {
-        copy(residual, x);
-    }
-
-    float mean = 0.0f;                  // compute the mean
-    compute_mean(&mean, residual);
-
-    float var = 0.0f;                    
-    sub(temp, residual, __float2bfloat16(mean));   // center 
-    mul(temp_squared, temp, temp);                 // square
-    compute_mean(&var, temp_squared);              // compute the variance
-    var = sqrt(var + 1e-05f);                      // add norm.eps
-
-    // compute norm
-    div(temp, temp, __float2bfloat16(var));
-    mul(temp, temp, norm_weight); 
-    add(temp, temp, norm_bias);
-
-    // save output
-    store(o_s, temp);     
-    store(o_g, o_s); 
-    store(residual_s, residual);     // store reg to smem
-    store(o_residual_g, residual_s); // store smem to hbm
+    int chunk_size = kittens::TILE_DIM;
+    int n_blocks = n / chunk_size;
+    for(int block = 0; block < n_blocks; block++) { 
+        tile_reg_1xD x;            // 4 registers
+        tile_reg_1xD temp;         // 4 registers
+        tile_reg_1xD temp_squared; // 4 registers
+        col_vec<tile_reg_1xD> mean;
+        col_vec<tile_reg_1xD> var; 
         
-    // inspect stuff 
-    // if ( blockIdx.x == 0 && threadIdx.x == 0 ) { 
-    //     printf("mean: %f\n", mean); 
-    //     printf("var: %f\n", var); 
-    //     printf("");
-    // }
-}
+        int cur_idx = block*NUM_WORKERS + warpid;
+        load(x_s, x_g + cur_idx * x_s.num_elements, d_model); // hbm to smem
+        load(x, x_s);                                         // smem to reg
 
+        if (dropout_p > 0) { dropout_mask(x, dropout_p); }    // dropout on x
+
+        // add residual
+        tile_reg_1xD residual;                                // 4 registers
+        if ( has_residual > 0 ) { 
+            load(residual_s, residual_g + cur_idx * residual_s.num_elements, d_model);
+            load(residual, residual_s);
+            add(residual, residual, x); 
+        } else {
+            copy(residual, x);
+        }
+
+        // compute the mean
+        zero(mean);
+        row_sum(mean, residual, mean);
+        div(mean, mean, __float2bfloat16(d_model));
+
+        // compute the variance
+        zero(var);
+        sub_row(temp, residual, mean);           // center 
+        mul(temp_squared, temp, temp);           // square
+        row_sum(var, temp_squared, var);
+        div(var, var, __float2bfloat16(d_model));
+        add(var, var, __float2bfloat16(1e-05f)); // add norm.eps
+        sqrt(var, var);
+
+        // compute norm
+        div_row(temp, temp, var);
+        mul_col(temp, temp, norm_weight);
+        add_col(temp, temp, norm_bias);
+
+        // save output
+        store(o_s, temp);     
+        store(o_g + cur_idx * o_s.num_elements, o_s, d_model); // store smem to hbm
+
+        // save residual
+        store(residual_s, residual);                                                  // store reg to smem
+        store(o_residual_g + cur_idx * residual_s.num_elements, residual_s, d_model); // store smem to hbm
+        
+        // inspect stuff 
+        // store(mean_s, mean);
+        // store(mean_g + cur_idx * chunk_size, mean_s); // no stride when passing vectors
+        // store(var_s, var);
+        // store(var_g + cur_idx * chunk_size, var_s);   // no stride when passing vectors
+    }
+}
 
 #ifdef TORCH_COMPILE
 #include "src/common/pyutils/torch_helpers.cuh"
@@ -191,8 +172,6 @@ fused_ln_tk(
     CHECK_INPUT(norm_bias);
 
     int batch = x.size(0);
-    auto n    = x.size(1);
-
     TORCH_CHECK(batch == out.size(0) && batch == residual.size(0), "Differing batch sizes?");
     TORCH_CHECK(x.size(2) == d_model,           "x is d_model?");
     TORCH_CHECK(residual.size(2) == d_model,    "residual is d_model?");
@@ -223,6 +202,8 @@ fused_ln_tk(
 
     // launch variables
     auto threads = NUM_WORKERS * kittens::WARP_THREADS;
+    auto n       = x.size(1);
+
     unsigned long mem_size = 100000;
     cudaFuncSetAttribute(
         fused_layer_norm,
@@ -230,7 +211,7 @@ fused_ln_tk(
         mem_size
     );
 
-    fused_layer_norm<<<batch*n,threads,mem_size>>>(
+    fused_layer_norm<<<batch,threads,mem_size>>>(
         n, has_residual, 
         dropout_p, 
         x_bf,

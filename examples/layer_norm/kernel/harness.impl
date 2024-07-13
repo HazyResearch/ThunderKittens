@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 2
+#define ATTN_B 3
 #define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 
@@ -91,9 +91,15 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading NORM_BIAS" << std::endl;
 
         // debug
-        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  infile >> mean_ref[i];   }
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> mean_ref[i];   
+            if (i < 5) { std::cout << mean_ref[i] << std::endl; }
+        }
         std::cout << "Finished loading MEAN_REF" << std::endl;
-        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  infile >> var_ref[i];    }
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> var_ref[i];    
+            if (i < 5) { std::cout << var_ref[i] << std::endl; }
+        }
         std::cout << "Finished loading VAR_REF" << std::endl;
 
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
@@ -106,6 +112,7 @@ int main(int argc, char **argv) {
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {
         norm_weight_bf[i] = __float2bfloat16(norm_weight[i]);
+        if (i < 10 ) { std::cout << norm_weight[i] << std::endl; }
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {
         norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]);
@@ -154,14 +161,12 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {  
-        fused_layer_norm<<<ATTN_B,NUM_THREADS,mem_size>>>(
+        fused_layer_norm<<<ATTN_B*ATTN_N,NUM_THREADS,mem_size>>>(
             ATTN_N, has_residual, dropout_p, 
             d_x, 
             d_residual,
             d_norm_weight, d_norm_bias, 
             d_o, d_o_resid
-            // ,
-            // d_mean, d_var
         );  
     }
     cudaDeviceSynchronize();
@@ -196,8 +201,8 @@ int main(int argc, char **argv) {
     cudaMemcpy(o_resid_bf, d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o_resid[i] = __bfloat162float(o_resid_bf[i]); }
     bool good_resid = true;
-    std::ofstream o_resid_ref_file("printouts/o_resid_ref.txt");
-    std::ofstream o_resid_file("printouts/o_resid.txt");
+    std::ofstream o_resid_ref_file("printouts/resid_ref.txt");
+    std::ofstream o_resid_file("printouts/resid.txt");
     std::ofstream resid_diff_file("printouts/resid_diff.txt");
     std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
@@ -215,7 +220,8 @@ int main(int argc, char **argv) {
     if(good_resid) std::cout << "Correct out resid :)\n";
     else std::cout << "Incorrect out resid :(\n";
 
-    if (test_with_intermediates > 1) {
+    if (test_with_intermediates > 0) {
+        printf("Checking intermediates!\n");
         // mean
         cudaMemcpy(mean_bf, d_mean, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
         for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { mean[i] = __bfloat162float(mean_bf[i]); }

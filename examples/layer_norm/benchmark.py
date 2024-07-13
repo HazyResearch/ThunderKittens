@@ -68,6 +68,10 @@ def run_flash(x, drop_path, dropout, norm, residual_in_fp32=True):
     return tot
 
 
+def run_tk(x, drop_path, dropout, norm, residual_in_fp32=True):
+    pass
+
+
 def plot_timings(x_values, y_torch, y_flash, x_label, y_label, title, filename):
     plt.figure(figsize=(10, 6))
     plt.plot(x_values, y_torch, marker='o', label='Torch')
