@@ -83,15 +83,15 @@ __device__ static inline uint64_t make_descriptor(const ST &tile, int chunk_idx)
     }
 }
 // templated wrapper for PTX
-template<int width, int trans_a, int trans_b>
+template<typename T_D, typename T_AB, int width, int trans_a, int trans_b>
 struct base {
-    template<typename T_D, typename T_AB> __device__ static inline void rt_st(
+    __device__ static inline void rt_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const rt_bf<1, 1, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
         int scale_d = 1
     );
-    template<typename T_D, typename T_AB> __device__ static inline void st_st(
+    __device__ static inline void st_st(
         rt_fl<1, width, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,

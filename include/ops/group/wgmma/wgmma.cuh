@@ -41,18 +41,31 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int N_DIV_4, int K, int M, ducks::wgmma::transposed L_B, int accumulate=1>
-__device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                               const st_bf<K, M, L_B>                         &b) {
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::st_transposed B, int accumulate=1>
+__device__ static inline void mma_AB(D &d,
+                               const A &a,
+                               const B &b) {
+    // Checks
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::wgmma::base<M, 0, 1>;
+    constexpr int M_DIV_4 = A::height;
+    static_assert(D::height == M_DIV_4); // output register is correctly sized
+    constexpr int N = B::width;
+    constexpr int K = A::width;
+    static_assert(B::height == K); // K dimension must match
+    static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
+
+    // Usings
+    using T_AB = A::T;
+    using T_D  = D::T;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 0, 1>;
+
+    // Do it
     #pragma unroll
-    for(int n = 0; n < N_DIV_4; n++) {
-        rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
+    for(int m = 0; m < M_DIV_4; m++) {
+        rt<T_D, 1, N, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, m);
         base::rt_st(
             d_ref,
-            a.tiles[n][0],
+            a.tiles[m][0],
             base::b_desc(b, 0),
             accumulate
         );
@@ -60,26 +73,40 @@ __device__ static inline void mma_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d
         for(int k = 1; k < K; k++) {
             base::rt_st(
                 d_ref,
-                a.tiles[n][k],
+                a.tiles[m][k],
                 base::b_desc(b, k),
                 1
             );
         }
     }
 }
-template<int N_DIV_4, int K, int M, ducks::wgmma::transposed L_B>
-__device__ static inline void mm_AB(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                              const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                              const st_bf<K, M, L_B>                         &b) {
-    mma_AB<N_DIV_4, K, M, L_B, 0>(d, a, b);
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::st_transposed B>
+__device__ static inline void mm_AB(D &d,
+                              const A &a,
+                              const B &b) {
+    mma_AB<D, A, B, 0>(d, a, b);
 }
 
-template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B, int accumulate=1>
-__device__ static inline void mma_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
-                               const st_bf<4, K, L_A>                   &a,
-                               const st_bf<K, M, L_B>                   &b) {
+template<ducks::rt::row_layout D, ducks::wgmma::st_normal A, ducks::wgmma::st_transposed B, int accumulate=1>
+__device__ static inline void mma_AB(D &d,
+                               const A &a,
+                               const B &b) {
+    // Checks
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::wgmma::base<M, 0, 1>;
+    constexpr int M = A::height;
+    static_assert(M == 4);
+    static_assert(D::height == 1); // output register is correctly sized
+    constexpr int N = B::width;
+    constexpr int K = A::width;
+    static_assert(B::height == K); // K dimension must match
+    static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
+
+    // Usings
+    using T_AB = A::T;
+    using T_D  = D::T;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 0, 1>;
+
+    // Do it
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -96,11 +123,11 @@ __device__ static inline void mma_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::transposed L_B>
-__device__ static inline void mm_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
-                              const st_bf<4, K, L_A>                   &a,
-                              const st_bf<K, M, L_B>                   &b) {
-    mma_AB<K, M, L_A, L_B, 0>(d, a, b);
+template<ducks::rt::row_layout D, ducks::wgmma::st_normal A, ducks::wgmma::st_transposed B>
+__device__ static inline void mm_AB(D &d,
+                              const A &a,
+                              const B &b) {
+    mma_AB<D, A, B, 0>(d, a, b);
 }
 
 // [(register, shared) -> register] edition
@@ -118,18 +145,31 @@ __device__ static inline void mm_AB(rt_fl<1, M, ducks::rt_layout::row> &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B, int accumulate=1>
-__device__ static inline void mma_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                                const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                                const st_bf<M, K, L_B>                         &b) {
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::st_normal B, int accumulate=1>
+__device__ static inline void mma_ABt(D &d,
+                                const A &a,
+                                const B &b) {
+    // Checks
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::wgmma::base<M, 0, 0>;
+    constexpr int M_DIV_4 = A::height;
+    static_assert(D::height == M_DIV_4); // output register is correctly sized
+    constexpr int N = B::height;
+    constexpr int K = A::width;
+    static_assert(B::width == K); // K dimension must match
+    static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
+
+    // Usings
+    using T_AB = A::T;
+    using T_D  = D::T;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 0, 0>;
+
+    // Do it
     #pragma unroll
-    for(int n = 0; n < N_DIV_4; n++) {
-        rt_fl<1, M, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, n);
+    for(int m = 0; m < M_DIV_4; m++) {
+        rt<T_D, 1, N, ducks::rt_layout::row> &d_ref = subtile_inplace<1>(d, m);
         base::rt_st(
             d_ref,
-            a.tiles[n][0],
+            a.tiles[m][0],
             base::b_desc(b, 0),
             accumulate
         );
@@ -137,18 +177,18 @@ __device__ static inline void mma_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &
         for(int k = 1; k < K; k++) {
             base::rt_st(
                 d_ref,
-                a.tiles[n][k],
+                a.tiles[m][k],
                 base::b_desc(b, k),
                 1
             );
         }
     }
 }
-template<int N_DIV_4, int K, int M, ducks::wgmma::normal L_B>
-__device__ static inline void mm_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d,
-                               const rt_bf<N_DIV_4, K, ducks::rt_layout::row> &a,
-                               const st_bf<M, K, L_B>                         &b) {
-    mma_ABt<N_DIV_4, K, M, L_B, 0>(d, a, b);
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::st_normal B>
+__device__ static inline void mm_ABt(D &d,
+                               const A &a,
+                               const B &b) {
+    mma_ABt<D, A, B, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -166,12 +206,26 @@ __device__ static inline void mm_ABt(rt_fl<N_DIV_4, M, ducks::rt_layout::row> &d
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B, int accumulate=1>
-__device__ static inline void mma_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
-                                const st_bf<4, K, L_A>                   &a,
-                                const st_bf<M, K, L_B>                   &b) {
+template<ducks::rt::row_layout D, ducks::wgmma::st_normal A, ducks::wgmma::st_normal B, int accumulate=1>
+__device__ static inline void mma_ABt(D &d,
+                                const A &a,
+                                const B &b) {
+    // Checks
     KITTENS_CHECK_WARPGROUP
-    using base = kittens::wgmma::base<M, 0, 0>;
+    constexpr int M = A::height;
+    static_assert(M == 4);
+    static_assert(D::height == 1); // output register is correctly sized
+    constexpr int N = B::height;
+    constexpr int K = A::width;
+    static_assert(B::width == K); // K dimension must match
+    static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
+
+    // Usings
+    using T_AB = A::T;
+    using T_D  = D::T;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 0, 0>;
+
+    // Do it
     base::st_st(
         d,
         base::a_desc(a, 0),
@@ -188,11 +242,11 @@ __device__ static inline void mma_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
         );
     }
 }
-template<int K, int M, ducks::wgmma::normal L_A, ducks::wgmma::normal L_B>
-__device__ static inline void mm_ABt(rt_fl<1, M, ducks::rt_layout::row> &d,
-                               const st_bf<4, K, L_A>                   &a,
-                               const st_bf<M, K, L_B>                   &b) {
-    mma_ABt<K, M, L_A, L_B, 0>(d, a, b);
+template<ducks::rt::row_layout D, ducks::wgmma::st_normal A, ducks::wgmma::st_normal B>
+__device__ static inline void mm_ABt(D &d,
+                               const A &a,
+                               const B &b) {
+    mma_ABt<D, A, B, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -227,10 +281,10 @@ __device__ static inline void mma_AtB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<N, 1, 1>;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 1, 1>;
 
     // Do it
-    base::st_st<T_D, T_AB>(
+    base::st_st(
         d,
         base::a_desc(a, 0),
         base::b_desc(b, 0),
@@ -238,7 +292,7 @@ __device__ static inline void mma_AtB(D &d,
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        base::st_st<T_D, T_AB>(
+        base::st_st(
             d,
             base::a_desc(a, k),
             base::b_desc(b, k),
@@ -251,9 +305,6 @@ __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
     mma_AtB<D, A, B, 0>(d, a, b);
-}
-                               const st_bf<K, M, L_B>                   &b) {
-    mma_AtB<K, M, L_A, L_B, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -284,10 +335,10 @@ __device__ static inline void mma_AtBt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<N, 1, 0>;
+    using base = kittens::wgmma::base<T_D, T_AB, N, 1, 0>;
 
     // Do it
-    base::st_st<T_D, T_AB>(
+    base::st_st(
         d,
         base::a_desc(a, 0),
         base::b_desc(b, 0),
@@ -295,7 +346,7 @@ __device__ static inline void mma_AtBt(D &d,
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
-        base::st_st<T_D, T_AB>(
+        base::st_st(
             d,
             base::a_desc(a, k),
             base::b_desc(b, k),
