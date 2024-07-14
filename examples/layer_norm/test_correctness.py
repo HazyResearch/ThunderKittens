@@ -1,7 +1,7 @@
 
 import torch 
 import torch.nn as nn
-from torchvision.ops import StochasticDepth
+# from torchvision.ops import StochasticDepth
 
 import sys
 sys.path.append("kernel/")
@@ -9,7 +9,7 @@ import layer_norm as mod
 
 
 def run_torch(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
-    dropped = drop_path(dropout(x))
+    dropped = dropout(x) #drop_path(dropout(x))
     residual = (residual + dropped ) if residual is not None else dropped
     out = norm(residual.to(dtype=norm.weight.dtype))
     residual = residual.to(torch.float32)
@@ -38,7 +38,8 @@ def run_tk(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
 def run_flash(x, residual, drop_path, dropout, norm, residual_in_fp32=True):
     from layer_norm_triton import layer_norm_fn, RMSNorm
 
-    rowscale = drop_path(torch.ones(x.shape[:-1], device=x.device, dtype=x.dtype, ))
+    rowscale = torch.ones(x.shape[:-1], device=x.device, dtype=x.dtype, )
+    # drop_path()
     out, residual = layer_norm_fn(
         x,
         norm.weight,
@@ -107,14 +108,14 @@ if __name__ == "__main__":
     # manual impl.
     norm = nn.LayerNorm(d).cuda()
     dropout = nn.Dropout(p)
-    drop_path = StochasticDepth(p_path, mode="row")
+    drop_path = None #StochasticDepth(p_path, mode="row")
     run_naive(x, residual, drop_path, dropout, norm)
 
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
     norm = nn.LayerNorm(d).cuda()
     dropout = nn.Dropout(p)
-    drop_path = StochasticDepth(p_path, mode="row")
+    drop_path = None #StochasticDepth(p_path, mode="row")
     out, resid = run_torch(x, residual, drop_path, dropout, norm)
 
     outs = []
@@ -124,7 +125,7 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(0)
         norm = nn.LayerNorm(d).cuda()
         dropout = nn.Dropout(p)
-        drop_path = StochasticDepth(p_path, mode="row")
+        drop_path = None #StochasticDepth(p_path, mode="row")
         fn_out, fn_resid = fn(x, residual, drop_path, dropout, norm)
 
         print("----"*10)

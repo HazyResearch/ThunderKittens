@@ -44,40 +44,21 @@ __device__ void dropout_mask(T &dst, float keep_prob) {
     mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
 }
 
-template<ducks::rv::all RV>
-__device__ inline void compute_mean(float* mean, const RV residual) {
-    using dtype = typename RV::dtype;
-    using packed_type = typename base_types::packing<dtype>::unpacked_type;
+template<kittens::ducks::sv::all T>
+__device__ void dropout_mask(T &dst, float keep_prob) {
+    unsigned long long seed = 0;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    curandStatePhilox4_32_10_t state;
+    curand_init(seed, idx, 0, &state);
 
-    float sum = 0.0f;
     #pragma unroll
-    for ( int i = 0 ; i < residual.outer_dim ; i ++ ) { 
-        #pragma unroll
-        for(int j = 0; j < residual.inner_dim; j++) {
-            sum += __bfloat162float(residual[i][j].x);
-            sum += __bfloat162float(residual[i][j].y);
+    for(int cur = laneid(); cur < T::length; cur+=WARP_THREADS) {
+        float rand = curand_uniform(&state);
+        if (rand < keep_prob) {
+            dst[cur] = base_types::constants<bf16>::zero();
         }
     }
-
-    int leader_1; 
-    if ( laneid() == 0 ) { leader_1 = 1; }     // put 1 --> 0
-    else if ( laneid() == 2 ) { leader_1 = 3; }   // put 3 --> 2
-    else { leader_1 = laneid(); } 
-    float sum_neighbor = packed_shfl_sync(MASK_ALL, sum, leader_1);
-    if ( laneid() == 0 ) { sum += sum_neighbor; }
-    if ( laneid() == 2 ) { sum += sum_neighbor; }
-
-    int leader_2; 
-    if ( laneid() == 0 ) { leader_2 = 2; }    // put 2 --> 0 (0 should have full sum)
-    else { leader_2 = laneid(); }
-    float sum_neighbor_2 = packed_shfl_sync(MASK_ALL, sum, leader_2);
-    if ( laneid() == 0 ) { sum += sum_neighbor_2; } 
-
-    int leader_3 = 0;                         // everyone pull the value of thread 0
-    float sum_neighbor_3 = packed_shfl_sync(MASK_ALL, sum, leader_3);
-    sum = sum_neighbor_3; 
-
-    *mean = sum / d_model;
+    mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
 }
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
@@ -105,7 +86,7 @@ void fused_layer_norm(
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    vec_smem_1xD (&x_s)           [2][NUM_WORKERS] = al.allocate<vec_smem_1xD,2,NUM_WORKERS>();  // 128 bytes * 3
+    vec_smem_1xD (&x_s)           [2][NUM_WORKERS] = al.allocate<vec_smem_1xD,2,NUM_WORKERS>();
     vec_smem_1xD (&residual_s)    [2][NUM_WORKERS] = al.allocate<vec_smem_1xD,2,NUM_WORKERS>();  
     vec_smem_1xD (&norm_weight_s) = al.allocate<vec_smem_1xD>(); 
     vec_smem_1xD (&norm_bias_s  ) = al.allocate<vec_smem_1xD>();                  
@@ -122,21 +103,13 @@ void fused_layer_norm(
         load(norm_bias_s, norm_bias_g);
         load(norm_weight_s, norm_weight_g);
     }
-
-    // bf16 mean = 0.0f;
-    float mean = 0.0f;
-    float var = 0.0f;     
-    vec_reg_1xD x, temp, temp_squared, residual;          // 4 registers each
-    vec_reg_1xD norm_weight, norm_bias;  
-
-    // load(norm_weight, norm_weight_g);
-    // load(norm_bias, norm_bias_g);
-    load(norm_weight, norm_weight_s);
-    load(norm_bias,   norm_bias_s);
+ 
+    bf16 mean = __float2bfloat16(0.0f);
+    bf16 var  = __float2bfloat16(0.0f);      
 
     load_async(x_s[warpid][tic], x_g + warpid*d_model, d_model, barrier_cheat);
     load_async(residual_s[warpid][tic], residual_g + warpid*d_model, d_model, barrier_cheat);
-    
+    __syncthreads();
     
     int n_blocks = n / NUM_WORKERS;
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
@@ -149,29 +122,30 @@ void fused_layer_norm(
             load_async(residual_s[warpid][toc], residual_g + next_idx*d_model, d_model, barrier_cheat);
         }
         
-        load(x, x_s[warpid][tic]);                            
-        if (dropout_p > 0) { dropout_mask(x, dropout_p); }    // dropout on x
-        if ( has_residual > 0 ) {                             // add residual
-            load(residual, residual_s[warpid][tic]);
-            add(residual, residual, x); 
+        if (dropout_p > 0) { dropout_mask(x_s[warpid][tic], dropout_p); }    // dropout on x
+        if ( has_residual > 0 ) {  
+            add(residual_s[warpid][tic], residual_s[warpid][tic], x_s[warpid][tic]);         
         } else {
-            copy(residual, x);
+            copy(residual_s[warpid][tic], x_s[warpid][tic]);
         }
+        store(o_residual_g + (block*NUM_WORKERS +warpid)*d_model, residual_s[warpid][tic]);
+        __syncthreads();
 
-        compute_mean(&mean, residual);                  
-        mul(temp_squared, residual, residual);         // square
-        compute_mean(&var, temp_squared);              // compute the variance
-        var = sqrt(var + 1e-05f);                      // add norm.eps
+        sum(mean, residual_s[warpid][tic]);
+        mean = mean / __float2bfloat16(d_model);
+        sub(residual_s[warpid][tic], residual_s[warpid][tic], mean);  
+        mul(x_s[warpid][tic], residual_s[warpid][tic], residual_s[warpid][tic]);
+        sum(var, x_s[warpid][tic]);
+        var = var / __float2bfloat16(d_model);
+        var = __float2bfloat16(sqrt(__bfloat162float(var + __float2bfloat16(1e-05f))));
 
         // compute norm
-        sub(temp, residual, __float2bfloat16(mean));   // center 
-        div(temp, temp,     __float2bfloat16(var));
-        mul(temp, temp, norm_weight); 
-        add(temp, temp, norm_bias);
+        div(residual_s[warpid][tic], residual_s[warpid][tic], var);
+        mul(residual_s[warpid][tic], residual_s[warpid][tic], norm_weight_s); 
+        add(residual_s[warpid][tic], residual_s[warpid][tic], norm_bias_s);
 
         // save output
-        store(o_residual_g + (block*NUM_WORKERS +warpid)*d_model, residual);
-        store(o_g+ (block*NUM_WORKERS +warpid)*d_model, temp); 
+        store(o_g + (block*NUM_WORKERS +warpid)*d_model, residual_s[warpid][tic]); 
     }
 }
 
@@ -236,7 +210,7 @@ fused_ln_tk(
         mem_size
     );
 
-    int n_c = 16;
+    int n_c = 2;
     int n_h = n/n_c;
     
 
@@ -253,3 +227,4 @@ fused_ln_tk(
 #else
 #include "harness.impl"
 #endif
+

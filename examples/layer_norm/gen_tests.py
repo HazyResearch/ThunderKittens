@@ -7,7 +7,7 @@ import math
 
 B = 1
 H = 16
-N = 1024
+N = 2048
 D = 64*H
 
 TESTNAME = sys.argv[1]

@@ -1,7 +1,7 @@
 import torch 
 import time 
 import torch.nn as nn
-from torchvision.ops import StochasticDepth
+# from torchvision.ops import StochasticDepth
 import matplotlib.pyplot as plt
 import os
 
@@ -20,7 +20,8 @@ def run_torch(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
         torch.cuda.synchronize()
         st = time.time()
 
-        dropped = drop_path(dropout(x))
+        # dropped = drop_path(dropout(x))
+        dropped = dropout(x)
         residual = (residual + dropped) if residual is not None else dropped
         x = norm(residual.to(dtype=norm.weight.dtype))
         residual = residual.to(torch.float32)
@@ -44,13 +45,14 @@ def run_flash(x, residual, drop_path, dropout, norm, residual_in_fp32=True):
 
         torch.cuda.synchronize()
         st = time.time()
-        rowscale = drop_path(
-            torch.ones(
+        rowscale = torch.ones(
                 x.shape[:-1],
                 device=x.device,
                 dtype=x.dtype,
             )
-        )
+        # drop_path(
+            
+        # )
         x, residual = layer_norm_fn(
             x,
             norm.weight,
@@ -142,7 +144,7 @@ if __name__ == "__main__":
         residual = torch.randn((b, n, d), device='cuda')
         norm = nn.LayerNorm(d).cuda()
         dropout = nn.Dropout(p)
-        drop_path = StochasticDepth(p, mode="row")
+        drop_path = None #StochasticDepth(p, mode="row")
         torch_timings_batch.append(run_torch(x, residual, drop_path, dropout, norm))
         flash_timings_batch.append(run_flash(x, residual, drop_path, dropout, norm))
         tk_timings_batch.append(run_tk(x, residual, drop_path, dropout, norm))
@@ -163,7 +165,7 @@ if __name__ == "__main__":
         residual = torch.randn((b, n, d), device='cuda')
         norm = nn.LayerNorm(d).cuda()
         dropout = nn.Dropout(p)
-        drop_path = StochasticDepth(p, mode="row")
+        drop_path = None #StochasticDepth(p, mode="row")
         torch_timings_seq.append(run_torch(x, residual, drop_path, dropout, norm))
         flash_timings_seq.append(run_flash(x, residual, drop_path, dropout, norm))
         tk_timings_seq.append(run_tk(x, residual, drop_path, dropout, norm))

@@ -5,8 +5,8 @@
 #define ATTN_B 1
 
 #define ATTN_N  2048
-#define ATTN_NS 16  // passed in kernel
-#define ATTN_H  128  // launches
+#define ATTN_NS 2  // passed in kernel
+#define ATTN_H  1024  // launches
 
 #define ATTN_D 1024 // hardcoded into this kernel
 
@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 16384; // have the flag tell us
+    unsigned long mem_size = 20480; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     using T = kittens::bf16;
     using H = kittens::bf16;

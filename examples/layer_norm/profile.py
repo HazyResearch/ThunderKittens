@@ -32,7 +32,9 @@ x = torch.randn((b, n, d), device='cuda')
 residual = torch.randn((b, n, d), device='cuda')
 
 norm = nn.LayerNorm(d).cuda()
-fn_out, fn_resid = run_tk(x, residual, p, norm)
+
+for i in range(4):
+    fn_out, fn_resid = run_tk(x, residual, p, norm)
 
 
 
