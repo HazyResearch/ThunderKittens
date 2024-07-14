@@ -48,6 +48,7 @@ struct identifier {};
 template<typename _T, size_t _outer_dim, size_t _inner_dim=1>
 struct rv {
     using identifier = ducks::rv::identifier; ///< Type identifier for the rv structure.
+    static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements

@@ -55,24 +55,25 @@ template<typename _T, int _height, int _width, ducks::rt_layout::all _layout=duc
 struct rt {
     using identifier = ducks::rt::identifier; ///< Type identifier for the rt structure.
     using layout = _layout; ///< Layout of the matrix tile.
+    static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
 
     static constexpr int height              = _height; ///< Height in subtiles.
     static constexpr int width               = _width; ///< Width in subtiles.
-    static constexpr int rows                = height  * rt_base<dtype, layout>::tile_size; ///< Total number of rows.
-    static constexpr int cols                = width * rt_base<dtype, layout>::tile_size; ///< Total number of columns.
-    static constexpr int tile_size           = rt_base<dtype, layout>::tile_size; ///< Size of the base tile.
-    static constexpr int num_elements        = rt_base<dtype, layout>::num_elements        * width * height; ///< Total number of elements.
-    static constexpr int elements_per_thread = rt_base<dtype, layout>::elements_per_thread * width * height; ///< Elements handled per thread.
-    static constexpr int packed_per_thread   = rt_base<dtype, layout>::packed_per_thread   * width * height; ///< Packed elements per thread.
-    static constexpr int packed_per_tile     = rt_base<dtype, layout>::packed_per_thread; ///< Packed elements per tile.
+    static constexpr int rows                = height  * rt_base<T, layout>::tile_size; ///< Total number of rows.
+    static constexpr int cols                = width   * rt_base<T, layout>::tile_size; ///< Total number of columns.
+    static constexpr int tile_size           = rt_base<T, layout>::tile_size; ///< Size of the base tile.
+    static constexpr int num_elements        = rt_base<T, layout>::num_elements        * width * height; ///< Total number of elements.
+    static constexpr int elements_per_thread = rt_base<T, layout>::elements_per_thread * width * height; ///< Elements handled per thread.
+    static constexpr int packed_per_thread   = rt_base<T, layout>::packed_per_thread   * width * height; ///< Packed elements per thread.
+    static constexpr int packed_per_tile     = rt_base<T, layout>::packed_per_thread; ///< Packed elements per tile.
 
-    rt_base<dtype, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
+    rt_base<T, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
 
-    using col_vec = rv<T, height, rt_base<dtype, layout>::col_vec_pack>; ///< A type representing a column vector for this tile.
-    using row_vec = rv<T, width , rt_base<dtype, layout>::row_vec_pack>; ///< A type representing a column vector for this tile.
+    using col_vec = rv<T, height, rt_base<T, layout>::col_vec_pack>; ///< A type representing a column vector for this tile.
+    using row_vec = rv<T, width , rt_base<T, layout>::row_vec_pack>; ///< A type representing a column vector for this tile.
 };
 
 /* ----------  CONCEPTS  ---------- */

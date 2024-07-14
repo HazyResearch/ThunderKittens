@@ -45,6 +45,7 @@ struct identifier {};
 template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using identifier = ducks::rt_base::identifier; ///< Type identifier for the rt_base structure.
     using layout = _layout; ///< Layout of the matrix tile.
+    static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
@@ -88,7 +89,8 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16_2, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half, L>;
 
 }

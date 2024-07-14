@@ -109,7 +109,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -142,7 +142,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -178,7 +178,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -212,7 +212,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -246,7 +246,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -277,7 +277,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -313,7 +313,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -345,7 +345,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;

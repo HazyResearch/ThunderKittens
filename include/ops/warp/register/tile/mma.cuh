@@ -109,10 +109,10 @@ __device__ static inline void hmma16816(      half_2 &d0,       half_2 &d1,
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AB_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                    const rt_base<bf16_2, ducks::rt_layout::row> &a,
-                                    const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
-                                    const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                    const rt_base<bf16,  ducks::rt_layout::row> &a,
+                                    const rt_base<bf16,  ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -137,10 +137,10 @@ __device__ static inline void mma_AB_base(rt_base<float2, ducks::rt_layout::row>
  * @param[in] b The second input rt_base<half_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<half_2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AB_base(rt_base<half_2, ducks::rt_layout::row> &d,
-                                    const rt_base<half_2, ducks::rt_layout::row> &a,
-                                    const rt_base<half_2, ducks::rt_layout::col> &b, // in col-major mode
-                                    const rt_base<half_2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB_base(rt_base<half, ducks::rt_layout::row> &d,
+                                    const rt_base<half, ducks::rt_layout::row> &a,
+                                    const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<half, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -165,10 +165,10 @@ __device__ static inline void mma_AB_base(rt_base<half_2, ducks::rt_layout::row>
  * @param[in] b The second input rt_base<bf16_2, row_layout> matrix in row-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_ABt_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                     const rt_base<bf16_2, ducks::rt_layout::row> &a,
-                                     const rt_base<bf16_2, ducks::rt_layout::row> &b, // in row-major mode
-                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16,  ducks::rt_layout::row> &a,
+                                     const rt_base<bf16,  ducks::rt_layout::row> &b, // in row-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -193,10 +193,10 @@ __device__ static inline void mma_ABt_base(rt_base<float2, ducks::rt_layout::row
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AtB_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                     const rt_base<bf16_2, ducks::rt_layout::col> &a,
-                                     const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
-                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16,  ducks::rt_layout::col> &a,
+                                     const rt_base<bf16,  ducks::rt_layout::col> &b, // in col-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -221,10 +221,10 @@ __device__ static inline void mma_AtB_base(rt_base<float2, ducks::rt_layout::row
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AtBt_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                      const rt_base<bf16_2, ducks::rt_layout::col> &a,
-                                      const rt_base<bf16_2, ducks::rt_layout::row> &b, // in col-major mode
-                                      const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                      const rt_base<bf16,  ducks::rt_layout::col> &a,
+                                      const rt_base<bf16,  ducks::rt_layout::row> &b, // in col-major mode
+                                      const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],

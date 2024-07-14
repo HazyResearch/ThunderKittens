@@ -211,8 +211,10 @@ __device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T
  * @param[out] dst A reference to the destination register base tile.
  * @param[in] src A reference to the source register base tile.
  */
-template<typename T2, typename U2, ducks::rt_layout::all layout>
-__device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, layout> &src) {
+template<typename T, typename U, ducks::rt_layout::all layout>
+__device__ static inline void copy(rt_base<T, layout> &dst, const rt_base<U, layout> &src) {
+    using T2 = typename base_types::packing<T>::packed_type;
+    using U2 = typename base_types::packing<U>::packed_type;
     #pragma unroll
     for(int k = 0; k < dst.packed_per_thread; k++) {
         dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
@@ -313,9 +315,9 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
 * @note The subtile height must evenly divide the tile height.
 */
 template<int subtile_height, ducks::rt::all RT>
-__device__ inline rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
+__device__ inline rt<typename RT::T, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
     static_assert(RT::height % subtile_height == 0, "subtile height should evenly divide tile height.");
-    return reinterpret_cast<rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout>&>(
+    return reinterpret_cast<rt<typename RT::T, subtile_height, RT::width, typename RT::layout>&>(
         src.tiles[idx*subtile_height]
     );
 }
