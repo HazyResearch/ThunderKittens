@@ -1,4 +1,4 @@
-#define TORCH_COMPILE 
+// #define TORCH_COMPILE 
 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
@@ -122,57 +122,62 @@ void fused_layer_norm(
         load(norm_bias_s, norm_bias_g);
         load(norm_weight_s, norm_weight_g);
     }
+    kittens::load_async(x_s[warpid][tic], x_g + warpid*d_model, d_model, barrier_cheat);
+    if ( has_residual > 0 ) { 
+        kittens::load_async(residual_s[warpid][tic], residual_g + warpid*d_model, d_model, barrier_cheat); 
+    }
 
     // bf16 mean = 0.0f;
     float mean = 0.0f;
     float var = 0.0f;     
     vec_reg_1xD x, temp, temp_squared, residual;          // 4 registers each
     vec_reg_1xD norm_weight, norm_bias;  
-
-    // load(norm_weight, norm_weight_g);
-    // load(norm_bias, norm_bias_g);
-    load(norm_weight, norm_weight_s);
-    load(norm_bias,   norm_bias_s);
-
-    load_async(x_s[warpid][tic], x_g + warpid*d_model, d_model, barrier_cheat);
-    load_async(residual_s[warpid][tic], residual_g + warpid*d_model, d_model, barrier_cheat);
-    
     
     int n_blocks = n / NUM_WORKERS;
-    for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
+    for (int block = 0; block < n; block ++, tic ^=1, toc ^=1) {
         barrier_cheat.arrive_and_wait();  
 
         // kick off load for the next block
-        if( block < n_blocks - 1 ) {
+        if(block < n_blocks - 1) {
             auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
-            load_async(x_s[warpid][toc], x_g + next_idx*d_model, d_model, barrier_cheat);
-            load_async(residual_s[warpid][toc], residual_g + next_idx*d_model, d_model, barrier_cheat);
+            kittens::load_async(x_s[warpid][toc], x_g + next_idx*d_model, d_model, barrier_cheat);
+            kittens::load_async(residual_s[warpid][toc], residual_g + next_idx*d_model, d_model, barrier_cheat);
         }
         
-        load(x, x_s[warpid][tic]);                            
+        load(x, x_s[tic][warpid]);                            
         if (dropout_p > 0) { dropout_mask(x, dropout_p); }    // dropout on x
         if ( has_residual > 0 ) {                             // add residual
-            load(residual, residual_s[warpid][tic]);
+            load(residual, residual_s[tic][warpid]);
             add(residual, residual, x); 
         } else {
             copy(residual, x);
         }
 
+        // sum(mean, residual_s[tic][warpid]);
         compute_mean(&mean, residual);                  
         mul(temp_squared, residual, residual);         // square
         compute_mean(&var, temp_squared);              // compute the variance
         var = sqrt(var + 1e-05f);                      // add norm.eps
 
         // compute norm
+        load(norm_weight, norm_weight_s);
+        load(norm_bias,   norm_bias_s);
         sub(temp, residual, __float2bfloat16(mean));   // center 
         div(temp, temp,     __float2bfloat16(var));
         mul(temp, temp, norm_weight); 
         add(temp, temp, norm_bias);
 
         // save output
-        store(o_residual_g + (block*NUM_WORKERS +warpid)*d_model, residual);
+        // store(o_residual_g + (block*NUM_WORKERS +warpid)*d_model, residual);
         store(o_g+ (block*NUM_WORKERS +warpid)*d_model, temp); 
     }
+        
+    // inspect stuff 
+    // if ( blockIdx.x == 0 && threadIdx.x == 0 ) { 
+    //     printf("mean: %f\n", mean); 
+    //     printf("var: %f\n", var); 
+    //     printf("");
+    // }
 }
 
 
@@ -229,19 +234,15 @@ fused_ln_tk(
 
     // launch variables
     auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-    unsigned long mem_size = d_model*NUM_WORKERS*2*2*2 + d_model*2*2;
+    unsigned long mem_size = 10260;
     cudaFuncSetAttribute(
         fused_layer_norm,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
-    int n_c = 16;
-    int n_h = n/n_c;
-    
-
-    fused_layer_norm<<<batch*n_h,threads,mem_size>>>(
-        n_c, has_residual, 
+    fused_layer_norm<<<batch*n,threads,mem_size>>>(
+        n, has_residual, 
         dropout_p, 
         x_bf,
         residual_bf, 

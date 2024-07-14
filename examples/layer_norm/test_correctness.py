@@ -96,7 +96,7 @@ def run_naive(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
 
 if __name__ == "__main__":
 
-    b, n, d = 16, 32, 64
+    b, n, d = 16, 32, 1024
     p = 0.0
     p_path = 0.00
 

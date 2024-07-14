@@ -6,7 +6,7 @@ import sys
 import math
 
 B = 1
-H = 1
+H = 16
 N = 1024
 D = 64*H
 
@@ -85,7 +85,6 @@ with open(f'{TESTNAME}.txt', 'w') as f:
         f.write(repr(meanf[i]))
         f.write(' ')
 
-    breakpoint()
     for i in trange(B*N*1):
         f.write(repr(varf[i]))
         f.write(' ')

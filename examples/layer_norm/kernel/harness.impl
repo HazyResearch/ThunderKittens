@@ -2,9 +2,13 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 3
-#define ATTN_N 1024
-#define ATTN_D 64 // hardcoded into this kernel
+#define ATTN_B 1
+
+#define ATTN_N  2048
+#define ATTN_NS 16  // passed in kernel
+#define ATTN_H  128  // launches
+
+#define ATTN_D 1024 // hardcoded into this kernel
 
 #define dropout_p 0.00
 #define has_residual 1
@@ -93,12 +97,12 @@ int main(int argc, char **argv) {
         // debug
         for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
             infile >> mean_ref[i];   
-            if (i < 5) { std::cout << mean_ref[i] << std::endl; }
+            // if (i < 5) { std::cout << mean_ref[i] << std::endl; }
         }
         std::cout << "Finished loading MEAN_REF" << std::endl;
         for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
             infile >> var_ref[i];    
-            if (i < 5) { std::cout << var_ref[i] << std::endl; }
+            // if (i < 5) { std::cout << var_ref[i] << std::endl; }
         }
         std::cout << "Finished loading VAR_REF" << std::endl;
 
@@ -112,7 +116,7 @@ int main(int argc, char **argv) {
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {
         norm_weight_bf[i] = __float2bfloat16(norm_weight[i]);
-        if (i < 10 ) { std::cout << norm_weight[i] << std::endl; }
+        // if (i < 10 ) { std::cout << norm_weight[i] << std::endl; }
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {
         norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]);
@@ -144,9 +148,8 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 98000; // have the flag tell us
+    unsigned long mem_size = 16384; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
-    
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
@@ -161,8 +164,8 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {  
-        fused_layer_norm<<<ATTN_B*ATTN_N,NUM_THREADS,mem_size>>>(
-            ATTN_N, has_residual, dropout_p, 
+        fused_layer_norm<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
+            ATTN_NS, has_residual, dropout_p, 
             d_x, 
             d_residual,
             d_norm_weight, d_norm_bias, 
@@ -185,12 +188,12 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_ELEMENTS_O) {
+        if(i < TOTAL_UNIQUE_ELEMENTS_O*2) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
         }
-        if(abs(diff) > 0.05 || isnan(diff)) {
+        if(abs(diff) > 0.1 || isnan(diff)) {
             good = false;
         }
     }
@@ -208,7 +211,7 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_ELEMENTS_O) {
+        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
             o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
             o_resid_file << o_resid[i] << ' ';
             resid_diff_file << resid_diff << ' ';

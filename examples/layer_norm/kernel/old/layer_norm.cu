@@ -123,14 +123,14 @@ void fused_layer_norm(
 
         // compute the variance
         zero(var);
-        sub_row(temp, residual, mean);           // center 
-        mul(temp_squared, temp, temp);           // square
+        mul(temp_squared, residual, residual);   s// square
         row_sum(var, temp_squared, var);
         div(var, var, __float2bfloat16(d_model));
         add(var, var, __float2bfloat16(1e-05f)); // add norm.eps
         sqrt(var, var);
 
         // compute norm
+        sub_row(temp, residual, mean);           // center 
         div_row(temp, temp, var);
         mul_col(temp, temp, norm_weight);
         add_col(temp, temp, norm_bias);
