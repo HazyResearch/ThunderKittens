@@ -33,7 +33,8 @@ class CausalTKTrainWrapper(torch.autograd.Function):
     def backward(ctx, grad_output):
         q, k, v, o, l_vec = ctx.saved_tensors
         q, k, v, o, l_vec = q.contiguous(), k.contiguous(), v.contiguous(), o.contiguous(), l_vec.contiguous()
-        grad_q, grad_k, grad_v = torch.zeros_like(q), torch.zeros_like(k), torch.zeros_like(v)
+        grad_q = torch.zeros(q.shape, device=q.device, dtype=torch.float32)
+        grad_k, grad_v = torch.zeros_like(k), torch.zeros_like(v)
         d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
         tk.mha_causal_train_backward(q, k, v, o, l_vec, d_vec, grad_output.contiguous(), grad_q, grad_k, grad_v)
         return grad_q, grad_k, grad_v
@@ -41,17 +42,24 @@ class NonCausalTKTrainWrapper(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v):
         outputs = torch.zeros_like(v)
-        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=torch.float32).contiguous()
+        print('Starting mha_train fwd')
         tk.mha_train(q, k, v, outputs, l_vec)
+        torch.cuda.synchronize()
+        print('Finished mha_train fwd')
         ctx.save_for_backward(q, k, v, outputs, l_vec)
         return outputs
     @staticmethod
     def backward(ctx, grad_output):
         q, k, v, o, l_vec = ctx.saved_tensors
         q, k, v, o, l_vec = q.contiguous(), k.contiguous(), v.contiguous(), o.contiguous(), l_vec.contiguous()
-        grad_q, grad_k, grad_v = torch.zeros_like(q), torch.zeros_like(k), torch.zeros_like(v)
-        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        grad_q = torch.zeros(q.shape, device=q.device, dtype=torch.float32)
+        grad_k, grad_v = torch.zeros_like(k), torch.zeros_like(v)
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32).contiguous()
+        print('Starting mha_train bwd')
         tk.mha_train_backward(q, k, v, o, l_vec, d_vec, grad_output.contiguous(), grad_q, grad_k, grad_v)
+        torch.cuda.synchronize()
+        print('Finished mha_train bwd')
         return grad_q, grad_k, grad_v
 
 class AttentionTrain(torch.nn.Module):
@@ -184,6 +192,7 @@ configs = [('fwd', False, 32, 16, 4096, 128), ('fwd', True, 32, 16, 4096, 128),
         #    ('fwd', True, 32, 16, 4096, 128),
         #    ('fwd', True, 32, 16, 8192, 128),
         #    ('fwd', True, 32, 16, 16384, 128)]
+configs = [('bwd', False, 32, 16, 4096, 64)]
 for config in configs:
     measure_performance(*config)
 
