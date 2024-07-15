@@ -25,7 +25,7 @@ class CausalTKTrainWrapper(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v):
         outputs = torch.zeros_like(v)
-        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=torch.float32).contiguous()
         tk.mha_causal_train(q, k, v, outputs, l_vec)
         ctx.save_for_backward(q, k, v, outputs, l_vec)
         return outputs
@@ -35,7 +35,7 @@ class CausalTKTrainWrapper(torch.autograd.Function):
         q, k, v, o, l_vec = q.contiguous(), k.contiguous(), v.contiguous(), o.contiguous(), l_vec.contiguous()
         grad_q = torch.zeros(q.shape, device=q.device, dtype=torch.float32)
         grad_k, grad_v = torch.zeros_like(k), torch.zeros_like(v)
-        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=q.dtype).contiguous()
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32).contiguous()
         tk.mha_causal_train_backward(q, k, v, o, l_vec, d_vec, grad_output.contiguous(), grad_q, grad_k, grad_v)
         return grad_q, grad_k, grad_v
 class NonCausalTKTrainWrapper(torch.autograd.Function):
@@ -138,47 +138,47 @@ def measure_performance(mode, causal, b, h, n, d):
         print(f"Max Bwd Magnitude  (V): {torch.max(torch.abs(grad_v_ref.to(torch.float32)))}")
 
 
-    # Warm up
-    for _ in range(10):
-        fn_class(q, k, v)        
+    # # Warm up
+    # for _ in range(10):
+    #     fn_class(q, k, v)        
     
-    torch.cuda.synchronize()
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    # torch.cuda.synchronize()
+    # start_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+    # end_events = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
 
-    if mode == "bwd":
-        grad_q = torch.zeros_like(q)
-        grad_k = torch.zeros_like(k)
-        grad_v = torch.zeros_like(v)
-        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
-        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
-        grad_o = torch.ones_like(o)
+    # if mode == "bwd":
+    #     grad_q = torch.zeros_like(q)
+    #     grad_k = torch.zeros_like(k)
+    #     grad_v = torch.zeros_like(v)
+    #     l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
+    #     d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], device=q.device, dtype=q.dtype).contiguous()
+    #     grad_o = torch.ones_like(o)
     
-    for i in range(100):
-        # Timing the forward pass
-        torch.cuda.synchronize()  # Wait for the events to be recorded!
-        start_events[i].record()
+    # for i in range(100):
+    #     # Timing the forward pass
+    #     torch.cuda.synchronize()  # Wait for the events to be recorded!
+    #     start_events[i].record()
 
-        if mode == "fwd":
-            o = fn_class(q, k, v)
-        if mode == "bwd": # actually need to do this one custom for timing since pytorch likes to control backwards.
-            if causal: tk.mha_causal_train_backward(q, k, v, o, l_vec, d_vec, grad_o, grad_q, grad_k, grad_v)
-            else: tk.mha_train_backward(q, k, v, o, l_vec, d_vec, grad_o, grad_q, grad_k, grad_v)
+    #     if mode == "fwd":
+    #         o = fn_class(q, k, v)
+    #     if mode == "bwd": # actually need to do this one custom for timing since pytorch likes to control backwards.
+    #         if causal: tk.mha_causal_train_backward(q, k, v, o, l_vec, d_vec, grad_o, grad_q, grad_k, grad_v)
+    #         else: tk.mha_train_backward(q, k, v, o, l_vec, d_vec, grad_o, grad_q, grad_k, grad_v)
             
-        torch.cuda.synchronize()  # Wait for the events to be recorded!
+    #     torch.cuda.synchronize()  # Wait for the events to be recorded!
         
-        end_events[i].record()
+    #     end_events[i].record()
     
-    torch.cuda.synchronize()  # Wait for the events to be recorded!
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+    # torch.cuda.synchronize()  # Wait for the events to be recorded!
+    # times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
     
-    time_us = np.mean(times) * 1000
-    tflops = efficiency(flops(b, n, d, h, causal, mode), time_us)
+    # time_us = np.mean(times) * 1000
+    # tflops = efficiency(flops(b, n, d, h, causal, mode), time_us)
     
-    print(f"Head Dim = {d}, Seq Len = {n}, Heads = {h}, Batch = {b}")
-    print(f"Average time taken for {mode} {'causal' if causal else 'non-causal'}: {time_us:.2f} us")
-    print(f"Utilization: {tflops:.2f} TFLOPS")
-    print(f"______________________________________________________")
+    # print(f"Head Dim = {d}, Seq Len = {n}, Heads = {h}, Batch = {b}")
+    # print(f"Average time taken for {mode} {'causal' if causal else 'non-causal'}: {time_us:.2f} us")
+    # print(f"Utilization: {tflops:.2f} TFLOPS")
+    # print(f"______________________________________________________")
 
 # Test configurations
 configs = [('fwd', False, 32, 16, 4096, 128), ('fwd', True, 32, 16, 4096, 128),
@@ -192,8 +192,9 @@ configs = [('fwd', False, 32, 16, 4096, 128), ('fwd', True, 32, 16, 4096, 128),
         #    ('fwd', True, 32, 16, 4096, 128),
         #    ('fwd', True, 32, 16, 8192, 128),
         #    ('fwd', True, 32, 16, 16384, 128)]
-configs = [('bwd', False, 32, 16, 4096, 64)]
+# configs = [('fwd', False, 4, 16, 4096, 128)]
 for config in configs:
+    print('Running config:', config)
     measure_performance(*config)
 
 # Example usage:

@@ -67,7 +67,7 @@ void attend_ker_fwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* t
     st_bf<4, 4, layout_q>          (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 4, layout_q>,          NUM_WARPGROUPS>();
     st_bf<4, 4, layout_k>          (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 4, layout_k>, 2,       NUM_WORKERS_KV>();
     st_bf<4, 4, layout_v>          (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<4, 4, layout_v>, 2,       NUM_WORKERS_KV>();
-    st_bf<4, 4, layout_o>::col_vec (&l_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<4, 4, layout_o>::col_vec, NUM_WARPGROUPS>();
+    st_fl<4, 4, layout_o>::col_vec (&l_smem)   [NUM_WARPGROUPS] = al.allocate<st_fl<4, 4, layout_o>::col_vec, NUM_WARPGROUPS>();
 
     int tic = 0, toc = 1;
  
@@ -206,7 +206,7 @@ void attend_ker_prep_train_causal(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtens
 
     st_bf<4, 4, layout_nrow>          (&og_smem)[WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
     st_bf<4, 4, layout_nrow>          (&o_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>, WORKERS>();
-    st_bf<4, 4, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_bf<4, 4, layout_nrow>::col_vec, WORKERS>();
+    st_fl<4, 4, layout_nrow>::col_vec (&d_smem) [WORKERS] = al.allocate<st_fl<4, 4, layout_nrow>::col_vec, WORKERS>();
 
     rt_fl<4, 4> og_reg;
     rt_fl<4, 4> o_reg; 
@@ -271,9 +271,9 @@ using layout_tma_swi   = ducks::st_layout::swizzle;
 
 #define q_smem_tile  st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
 #define og_smem_tile st_bf<tile_h_qo, tile_w, layout_wgmma_itl>
-#define qg_smem_tile st_bf<tile_h_qo, tile_w, layout_tma_swi>
-#define l_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
-#define d_smem_tile  st_bf<tile_h_qo, tile_w, layout_tma_swi>::col_vec
+#define qg_smem_tile st_fl<tile_h_qo, tile_w, layout_tma_swi>
+#define l_smem_tile  st_fl<tile_h_qo, tile_w, layout_tma_swi>::col_vec
+#define d_smem_tile  st_fl<tile_h_qo, tile_w, layout_tma_swi>::col_vec
 
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
@@ -301,8 +301,6 @@ void attend_ker_bwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* t
 
     rt_fl<tile_h_qo/kittens::WARPGROUP_WARPS, tile_w> qg_reg;
 
-    rt_bf<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h>::col_vec l_reg_bf; 
-    rt_bf<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h>::col_vec d_reg_bf;
     rt_fl<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h>::col_vec l_reg_fl; 
     rt_fl<tile_h_qo/kittens::WARPGROUP_WARPS, tile_h>::col_vec d_reg_fl;
 
@@ -368,7 +366,7 @@ void attend_ker_bwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* t
         if (qo_idx + 1 < qo_blocks) {
             if (warpid == 0) {
                 tma::set_bytes(qo_b,  NUM_WARPGROUPS_BWD_QO * sizeof(bf16) * q_smem[0][0].num_elements * 2); 
-                tma::set_bytes(vec_b, NUM_WARPGROUPS_BWD_QO * sizeof(bf16) * l_smem[0][0].length       * 2);
+                tma::set_bytes(vec_b, NUM_WARPGROUPS_BWD_QO * sizeof(float) * l_smem[0][0].length       * 2);
 
                 for (int w = 0; w < NUM_WARPGROUPS_BWD_QO; w++) {
                     int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + ((qo_idx + 1) * NUM_WARPGROUPS_BWD_QO) + w;
@@ -389,8 +387,7 @@ void attend_ker_bwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* t
         warpgroup::mm_ABt(att_block, q_smem[tic][0], k_smem[warpgroupid]);
         warpgroup::mma_commit_group();
 
-        warpgroup::load(l_reg_bf, l_smem[tic][0]);
-        copy(l_reg_fl, l_reg_bf);
+        warpgroup::load(l_reg_fl, l_smem[tic][0]);
         
         warpgroup::mma_async_wait();
         mul(att_block, att_block, 0.125f);
@@ -412,8 +409,7 @@ void attend_ker_bwd_train_causal(const int N, CUtensorMap* tma_q, CUtensorMap* t
         warpgroup::mm_ABt(att_block, og_smem[tic][0], v_smem[warpgroupid]);
         warpgroup::mma_commit_group();
 
-        warpgroup::load(d_reg_bf, d_smem[tic][0]);
-        copy(d_reg_fl, d_reg_bf);
+        warpgroup::load(d_reg_fl, d_smem[tic][0]);
 
         warpgroup::mma_fence(vg_reg);
         warpgroup::mma_AtB(vg_reg, att_smem[tic][0][warpgroupid], og_smem[tic][0]);
@@ -487,19 +483,19 @@ void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, torch::Ten
     c10::BFloat16 *k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16 *v_ptr = v.data_ptr<c10::BFloat16>();
     c10::BFloat16 *o_ptr = o.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *l_ptr = l.data_ptr<c10::BFloat16>();
+    float *l_ptr = l.data_ptr<float>();
 
     bf16* q_bf = reinterpret_cast<bf16*>(q_ptr);
     bf16* k_bf = reinterpret_cast<bf16*>(k_ptr);
     bf16* v_bf = reinterpret_cast<bf16*>(v_ptr);
     bf16* o_bf = reinterpret_cast<bf16*>(o_ptr);
-    bf16* l_bf = reinterpret_cast<bf16*>(l_ptr);
+    float* l_bf = reinterpret_cast<float*>(l_ptr);
 
     CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_q>         >(q_bf, (batch*heads*N)/(4 * 16));
     CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_k>         >(k_bf, (batch*heads*N)/(4 * 16));
     CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_v>         >(v_bf, (batch*heads*N)/(4 * 16));
     CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_o>         >(o_bf, (batch*heads*N)/(4 * 16));
-    CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_q>::col_vec>(l_bf, (batch*heads*N)/(4 * 16));
+    CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<kittens::st_fl<4, 4, layout_q>::col_vec>(l_bf, (batch*heads*N)/(4 * 16));
 
     cudaFuncSetAttribute(attend_ker_fwd_train_causal, cudaFuncAttributeMaxDynamicSharedMemorySize, 112000);
 
@@ -510,6 +506,8 @@ void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, torch::Ten
 }
 
 void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg) {
+    using namespace kittens;
+
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -537,26 +535,26 @@ void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Te
     c10::BFloat16 *k_ptr  = k.data_ptr<c10::BFloat16>();
     c10::BFloat16 *v_ptr  = v.data_ptr<c10::BFloat16>();
     c10::BFloat16 *o_ptr  = o.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *l_ptr  = l_vec.data_ptr<c10::BFloat16>();
+    float *l_ptr  = l_vec.data_ptr<float>();
     c10::BFloat16 *og_ptr = og.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *d_ptr  = d_vec.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *qg_ptr = qg.data_ptr<c10::BFloat16>();
+    float *d_ptr  = d_vec.data_ptr<float>();
+    float *qg_ptr = qg.data_ptr<float>();
     c10::BFloat16 *kg_ptr = kg.data_ptr<c10::BFloat16>();
     c10::BFloat16 *vg_ptr = vg.data_ptr<c10::BFloat16>();
 
-    const bf16* q_bf  = reinterpret_cast<const bf16*>(q_ptr);
-    const bf16* k_bf  = reinterpret_cast<const bf16*>(k_ptr);
-    const bf16* v_bf  = reinterpret_cast<const bf16*>(v_ptr);
-    const bf16* o_bf  = reinterpret_cast<const bf16*>(o_ptr);
-    const bf16* l_bf  = reinterpret_cast<const bf16*>(l_ptr);
-    const bf16* og_bf = reinterpret_cast<const bf16*>(og_ptr);
-    bf16* d_bf        = reinterpret_cast<bf16*>(d_ptr);
-    bf16* qg_bf       = reinterpret_cast<bf16*>(qg_ptr);
-    bf16* kg_bf       = reinterpret_cast<bf16*>(kg_ptr);
-    bf16* vg_bf       = reinterpret_cast<bf16*>(vg_ptr);
+    const bf16*  q_bf  = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16*  k_bf  = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16*  v_bf  = reinterpret_cast<const bf16*>(v_ptr);
+    const bf16*  o_bf  = reinterpret_cast<const bf16*>(o_ptr);
+    const float* l_fl  = reinterpret_cast<const float*>(l_ptr);
+    const bf16*  og_bf = reinterpret_cast<const bf16*>(og_ptr);
+    float* d_fl        = reinterpret_cast<float*>(d_ptr);
+    float* qg_fl       = reinterpret_cast<float*>(qg_ptr);
+    bf16*  kg_bf       = reinterpret_cast<bf16*>(kg_ptr);
+    bf16*  vg_bf       = reinterpret_cast<bf16*>(vg_ptr);
 
     CUtensorMap* tma_o_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(o_bf, (batch*heads*N)/(4*16)); 
-    CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>::col_vec  >(d_bf, (batch*heads*N)/(4*16));
+    CUtensorMap* tma_d_d_pre  = tma::allocate_and_create_tensor_map<kittens::st_fl<4, 4, layout_nrow>::col_vec  >(d_fl, (batch*heads*N)/(4*16));
     CUtensorMap* tma_og_d_pre = tma::allocate_and_create_tensor_map<kittens::st_bf<4, 4, layout_nrow>           >(og_bf,(batch*heads*N)/(4*16));
 
     unsigned long mem_size = 227000;
@@ -569,10 +567,10 @@ void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Te
     CUtensorMap* tma_b_q_d  = tma::allocate_and_create_tensor_map<q_smem_tile> (q_bf,  (batch*heads*N)/(tile_h_qo * 16)); 
     CUtensorMap* tma_b_k_d  = tma::allocate_and_create_tensor_map<k_smem_tile> (k_bf,  (batch*heads*N)/(tile_h    * 16));
     CUtensorMap* tma_b_v_d  = tma::allocate_and_create_tensor_map<v_smem_tile> (v_bf,  (batch*heads*N)/(tile_h    * 16));
-    CUtensorMap* tma_b_l_d  = tma::allocate_and_create_tensor_map<l_smem_tile> (l_bf,  (batch*heads*N)/(tile_h_qo * 16));
-    CUtensorMap* tma_n_d_d  = tma::allocate_and_create_tensor_map<d_smem_tile> (d_bf,  (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_b_l_d  = tma::allocate_and_create_tensor_map<l_smem_tile> (l_fl,  (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_n_d_d  = tma::allocate_and_create_tensor_map<d_smem_tile> (d_fl,  (batch*heads*N)/(tile_h_qo * 16));
     CUtensorMap* tma_n_og_d = tma::allocate_and_create_tensor_map<og_smem_tile>(og_bf, (batch*heads*N)/(tile_h_qo * 16));
-    CUtensorMap* tma_b_qg_d = tma::allocate_and_create_tensor_map<qg_smem_tile>(qg_bf, (batch*heads*N)/(tile_h_qo * 16));
+    CUtensorMap* tma_b_qg_d = tma::allocate_and_create_tensor_map<qg_smem_tile>(qg_fl, (batch*heads*N)/(tile_h_qo * 16));
     CUtensorMap* tma_b_kg_d = tma::allocate_and_create_tensor_map<k_smem_tile> (kg_bf, (batch*heads*N)/(tile_h    * 16));
     CUtensorMap* tma_b_vg_d = tma::allocate_and_create_tensor_map<v_smem_tile> (vg_bf, (batch*heads*N)/(tile_h    * 16));
 

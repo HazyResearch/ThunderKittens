@@ -212,3 +212,5 @@ void attention_inference_forward(torch::Tensor q, torch::Tensor k, torch::Tensor
     
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
+
+// #include "fwd_harness.impl"
