@@ -206,13 +206,4 @@ struct base<T_D, T_AB, 2, trans_a, trans_b> {
             );
         }
     }
-
-
-    // ----- DESCRIPTORS ----- //
-    template<ducks::st::all ST> __device__ static inline uint64_t a_desc(const ST &tile, int chunk_idx) {
-        return make_descriptor<trans_a>(tile, chunk_idx);
-    }
-    template<ducks::st::all ST> __device__ static inline uint64_t b_desc(const ST &tile, int chunk_idx) {
-        return make_descriptor<trans_b>(tile, chunk_idx);
-    }
 };

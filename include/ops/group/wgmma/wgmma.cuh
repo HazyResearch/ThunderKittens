@@ -58,6 +58,7 @@ __device__ static inline void mma_AB(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 1>;
+    kittens::wgmma::descriptor<B, 1> b_desc(b);
 
     // Do it
     #pragma unroll
@@ -66,7 +67,7 @@ __device__ static inline void mma_AB(D &d,
         base::rt_st(
             d_ref,
             a.tiles[m][0],
-            base::b_desc(b, 0),
+            b_desc.chunk_descriptor(0),
             accumulate
         );
         #pragma unroll
@@ -74,7 +75,7 @@ __device__ static inline void mma_AB(D &d,
             base::rt_st(
                 d_ref,
                 a.tiles[m][k],
-                base::b_desc(b, k),
+                b_desc.chunk_descriptor(k),
                 1
             );
         }
@@ -105,20 +106,22 @@ __device__ static inline void mma_AB(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 1>;
+    kittens::wgmma::descriptor<A, 0> a_desc(a);
+    kittens::wgmma::descriptor<B, 1> b_desc(b);
 
     // Do it
     base::st_st(
         d,
-        base::a_desc(a, 0),
-        base::b_desc(b, 0),
+        a_desc.chunk_descriptor(0),
+        b_desc.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
             d,
-            base::a_desc(a, k),
-            base::b_desc(b, k),
+            a_desc.chunk_descriptor(k),
+            b_desc.chunk_descriptor(k),
             1
         );
     }
@@ -162,6 +165,7 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 0>;
+    kittens::wgmma::descriptor<B, 0> b_desc(b);
 
     // Do it
     #pragma unroll
@@ -170,7 +174,7 @@ __device__ static inline void mma_ABt(D &d,
         base::rt_st(
             d_ref,
             a.tiles[m][0],
-            base::b_desc(b, 0),
+            b_desc.chunk_descriptor(0),
             accumulate
         );
         #pragma unroll
@@ -178,7 +182,7 @@ __device__ static inline void mma_ABt(D &d,
             base::rt_st(
                 d_ref,
                 a.tiles[m][k],
-                base::b_desc(b, k),
+                b_desc.chunk_descriptor(k),
                 1
             );
         }
@@ -224,20 +228,22 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 0>;
+    kittens::wgmma::descriptor<A, 0> a_desc(a);
+    kittens::wgmma::descriptor<B, 0> b_desc(b);
 
     // Do it
     base::st_st(
         d,
-        base::a_desc(a, 0),
-        base::b_desc(b, 0),
+        a_desc.chunk_descriptor(0),
+        b_desc.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
             d,
-            base::a_desc(a, k),
-            base::b_desc(b, k),
+            a_desc.chunk_descriptor(k),
+            b_desc.chunk_descriptor(k),
             1
         );
     }
@@ -282,20 +288,22 @@ __device__ static inline void mma_AtB(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 1, 1>;
+    kittens::wgmma::descriptor<A, 1> a_desc(a);
+    kittens::wgmma::descriptor<B, 1> b_desc(b);
 
     // Do it
     base::st_st(
         d,
-        base::a_desc(a, 0),
-        base::b_desc(b, 0),
+        a_desc.chunk_descriptor(0),
+        b_desc.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
             d,
-            base::a_desc(a, k),
-            base::b_desc(b, k),
+            a_desc.chunk_descriptor(k),
+            b_desc.chunk_descriptor(k),
             1
         );
     }
@@ -336,20 +344,22 @@ __device__ static inline void mma_AtBt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 1, 0>;
+    kittens::wgmma::descriptor<A, 1> a_desc(a);
+    kittens::wgmma::descriptor<B, 0> b_desc(b);
 
     // Do it
     base::st_st(
         d,
-        base::a_desc(a, 0),
-        base::b_desc(b, 0),
+        a_desc.chunk_descriptor(0),
+        b_desc.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
             d,
-            base::a_desc(a, k),
-            base::b_desc(b, k),
+            a_desc.chunk_descriptor(k),
+            b_desc.chunk_descriptor(k),
             1
         );
     }
