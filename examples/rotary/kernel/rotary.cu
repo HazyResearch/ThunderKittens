@@ -1,4 +1,4 @@
-#define TORCH_COMPILE 
+// #define TORCH_COMPILE 
 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
@@ -17,6 +17,7 @@ const int rope_dim = rope_embd_fraction * head_dim;
 const int half_rope_dim = ( rope_dim / 2 );
 const int excess_dim = head_dim - rope_dim; 
 
+const int seq_tiles = N_CHUNK / kittens::TILE_DIM;
 const int rope_tiles = rope_dim / kittens::TILE_DIM;
 const int half_rope_tiles = half_rope_dim / kittens::TILE_DIM;
 const int excess_rope_tiles = excess_dim / kittens::TILE_DIM;
@@ -26,13 +27,13 @@ using layout = kittens::ducks::st_layout::wgmma_swizzle;
 using layout_o = kittens::ducks::st_layout::swizzle;
 using layout_reg = kittens::ducks::rt_layout::row;
 
-#define tile_1xFULL_ROPE_D st<bf16, 1, rope_tiles, layout>
-#define tile_1xHALF_ROPE_D st<bf16, 1, half_rope_tiles, layout>
-#define tile_1xEXCESS_ROPE_D st<bf16, 1, excess_rope_tiles, layout>
+#define tile_1xFULL_ROPE_D st<bf16, seq_tiles, rope_tiles, layout>
+#define tile_1xHALF_ROPE_D st<bf16, seq_tiles, half_rope_tiles, layout>
+#define tile_1xEXCESS_ROPE_D st<bf16, seq_tiles, excess_rope_tiles, layout>
 
-#define reg_tile_1xFULL_ROPE_D rt_bf<1, rope_tiles>
-#define reg_tile_1xHALF_ROPE_D rt_bf<1, half_rope_tiles>
-#define reg_tile_1xEXCESS_ROPE_D rt_bf<1, excess_rope_tiles>
+#define reg_tile_1xFULL_ROPE_D rt_bf<seq_tiles, rope_tiles>
+#define reg_tile_1xHALF_ROPE_D rt_bf<seq_tiles, half_rope_tiles>
+#define reg_tile_1xEXCESS_ROPE_D rt_bf<seq_tiles, excess_rope_tiles>
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void fused_rotary( 
@@ -40,6 +41,8 @@ void fused_rotary(
 ) {
     auto warpid = kittens::warpid();
     auto lane = kittens::laneid();
+
+    static_assert(rope_embd_fraction == 1.0f); // smaller rope_embd_fraction currently unsupported
 
     // shared memory setup to load from hbm
     const bf16 *x_g   = reinterpret_cast<const bf16*>(__x) + blockIdx.x*(n*head_dim);
@@ -49,14 +52,11 @@ void fused_rotary(
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    tile_1xFULL_ROPE_D (&x_s) = al.allocate<tile_1xFULL_ROPE_D>();  
-    tile_1xHALF_ROPE_D (&cos_s) = al.allocate<tile_1xHALF_ROPE_D>(); 
-    tile_1xHALF_ROPE_D (&sin_s) = al.allocate<tile_1xHALF_ROPE_D>(); 
+    tile_1xFULL_ROPE_D (&x_s)       = al.allocate<tile_1xFULL_ROPE_D>();    
+    tile_1xHALF_ROPE_D (&cos_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
+    tile_1xHALF_ROPE_D (&sin_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
 
-    // pipelining
-    int tic = 0, toc = 1;
-    __syncthreads();
-    
+    int tic = 0, toc = 1;    
     const int total_elements = N_CHUNK * head_dim;
     int n_blocks = n / (NUM_WORKERS*kittens::TILE_DIM);
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
@@ -89,7 +89,6 @@ void fused_rotary(
         // sum ( a + b )
         add(temp1, temp1, x2);
         add(temp2, temp2, x1);
-        __syncthreads();
 
         // assemble the result
         zero(x);
@@ -99,8 +98,7 @@ void fused_rotary(
         x.tiles[0][3] = temp2.tiles[0][1];
         
         // store out
-        store(o_g + ( block*x.num_elements ), x, rope_dim);
-        __syncthreads();
+        store(o_g + ( (block*NUM_WORKERS +warpid)*x.num_elements ), x, rope_dim);
     }
 }
 

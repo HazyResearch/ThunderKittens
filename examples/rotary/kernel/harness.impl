@@ -156,8 +156,6 @@ int main(int argc, char **argv) {
     }
     if(good) std::cout << "Correct out :)\n";
     else std::cout << "Incorrect out :(\n";
-
-    std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
 
     cudaFree(d_x);
