@@ -2,9 +2,10 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-#define NUM_WORKERS (8)
+#define NUM_WORKERS (16)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
 #define NUM_WORKERS_KV (1)
+#define NUM_BLOCKS (1)
 
 using namespace kittens;
 
@@ -36,7 +37,7 @@ template<typename... Args> __device__ void gprintf(Args... args) {
 
 
 template<int D>
-__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 2)
+__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, NUM_BLOCKS)
 void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -92,24 +93,19 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 
     tma::arrive_and_wait(qsmem_barrier, 0);
 
-    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); } 
-    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
+    // premultiply by lg(e) and tempreature
+    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.4426950216293334961f)); } 
+    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.4426950216293334961f)); }
 
     for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
 
-        // // gprintf("pre bar" THREADID);
-        // need a barrier that confirms that the TMA barrier has been reinitialized by this point.
-
-        // gprintf(YELLOW "(thread %3d, iter %3d) pre consumer bar %d\n" RESET, threadIdx.x, kv_idx, tic);
         while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
-        // gprintf(BLUE "(thread %3d, iter %3d) post consumer bar %d\n" RESET, threadIdx.x, kv_idx, tic);
-
-        tma::arrive_and_wait(kvsmem_barrier, tic);
-        // gprintf(GREEN "(thread %3d, iter %3d) post kvsmem bar phase %d\n" RESET, threadIdx.x, kv_idx, tic);
         
-        if(threadIdx.x%32 == 0) {
+        tma::arrive_and_wait(kvsmem_barrier, tic);
+        // __syncthreads();
+        
+        if(threadIdx.x%32 == 0) { // 
             int producer_barrier_old = atomicAdd(&producer_barrier, 1);
-            // gprintf(MAGENTA "(thread %3d, iter %3d) just passed atomicAdd\n" RESET, threadIdx.x, kv_idx);
             if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
                 tma::set_bytes(kvsmem_barrier, 2 * NUM_WORKERS_KV * k_smem[0][0].num_elements * sizeof(bf16));
                 producer_barrier = 0; // reset this barrier
@@ -122,29 +118,24 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
                         tma::load_async((v_smem[toc][w]), tma_v, kvsmem_barrier, tile_idx);
                     }
                 }
-                // gprintf(CYAN "(thread %3d, iter %3d) just set consumer barrier %d to %d\n" RESET, threadIdx.x, kv_idx, toc, kv_idx+1);
             }
         }
-        // gprintf(RED "(thread %3d, iter %3d) STARTING compute\n" RESET, threadIdx.x, kv_idx);
-
-        // gprintf(WHITE "(thread %3d, iter %3d) STARTING QK MATMUL\n" RESET, threadIdx.x, kv_idx);
+        
         warpgroup::mma_fence(att_block);
         warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic][0]);
         warpgroup::mma_commit_group();
-        // gprintf(WHITE "(thread %3d, iter %3d) QK MATMUL COMMITTED\n" RESET, threadIdx.x, kv_idx);
 
         copy(norm_vec_last, norm_vec);
         copy(max_vec_last,  max_vec);
 
         warpgroup::mma_async_wait();
-        // gprintf(WHITE "(thread %3d, iter %3d) QK MATMUL DONE\n" RESET, threadIdx.x, kv_idx);
 
         row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
         sub_row(att_block, att_block, max_vec);
-        exp(att_block, att_block);
+        exp2(att_block, att_block);
 
         sub(max_vec_last, max_vec_last, max_vec);
-        exp(max_vec_last, max_vec_last);
+        exp2(max_vec_last, max_vec_last);
         mul(norm_vec, norm_vec, max_vec_last);
 
         row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
@@ -156,14 +147,10 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
         copy(att_block_mma, att_block); // convert to bf16 for mma
         mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
-        // gprintf(WHITE "(thread %3d, iter %3d) SOFTMAX DONE\n" RESET, threadIdx.x, kv_idx);
         warpgroup::mma_fence(o_prev);
         warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic][0]);
         warpgroup::mma_commit_group();
-        // gprintf(WHITE "(thread %3d, iter %3d) O MATMUL COMMITTED\n" RESET, threadIdx.x, kv_idx);
         warpgroup::mma_async_wait();
-        // gprintf(WHITE "(thread %3d, iter %3d) O MATMUL DONE\n" RESET, threadIdx.x, kv_idx);
-        // gprintf(RED "(thread %3d, iter %3d) FINISHED compute\n" RESET, threadIdx.x, kv_idx);
 
         // __syncthreads();
     }
