@@ -9,10 +9,10 @@
 
 using namespace kittens;
 
-using layout_q = kittens::ducks::st_layout::wgmma_swizzle; 
-using layout_k = kittens::ducks::st_layout::wgmma_swizzle;
-using layout_v = kittens::ducks::st_layout::wgmma_interleave;
-using layout_o = kittens::ducks::st_layout::swizzle;
+using layout_q = wgmma_swizzle_l; 
+using layout_k = wgmma_swizzle_l;
+using layout_v = wgmma_interleave_l;
+using layout_o = swizzle_l;
 
 template<int D> struct fwd_attend_ker_tile_dims {
     constexpr static int tile_width = D/kittens::TILE_DIM;
@@ -42,13 +42,24 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
+    int warpid      = kittens::warpid();
+    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
+
     constexpr int tile_width = fwd_attend_ker_tile_dims<D>::tile_width; // constants
     constexpr int qo_height  = fwd_attend_ker_tile_dims<D>::qo_height;
     constexpr int kv_height  = fwd_attend_ker_tile_dims<D>::kv_height;
 
-    st_bf<qo_height, tile_width, layout_q>          (&q_smem)   [NUM_WARPGROUPS] = al.allocate<st_bf<qo_height, tile_width, layout_q>,          NUM_WARPGROUPS>();
-    st_bf<kv_height, tile_width, layout_k>          (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_k>, 2,       NUM_WORKERS_KV>();
-    st_bf<kv_height, tile_width, layout_v>          (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<st_bf<kv_height, tile_width, layout_v>, 2,       NUM_WORKERS_KV>();
+    using q_tile = st_bf<qo_height, tile_width, layout_q>;
+    using k_tile = st_bf<kv_height, tile_width, layout_k>;
+    using v_tile = st_bf<kv_height, tile_width, layout_v>;
+
+    q_tile (&q_smem)   [NUM_WARPGROUPS] = al.allocate<q_tile,    NUM_WARPGROUPS>();
+    k_tile (&k_smem)[2][NUM_WORKERS_KV] = al.allocate<k_tile, 2, NUM_WORKERS_KV>();
+    v_tile (&v_smem)[2][NUM_WORKERS_KV] = al.allocate<v_tile, 2, NUM_WORKERS_KV>();
+
+    wgmma::normal_descriptor<q_tile> q_desc(q_smem[warpgroupid]);
+    wgmma::normal_descriptor<k_tile> k_desc(k_smem[1][0]);
+    wgmma::transposed_descriptor<v_tile> v_desc(v_smem[1][0]);
 
     int tic = 0, toc = 1;
  
@@ -57,9 +68,6 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     rt_fl<1, tile_width> o_prev;
     col_vec<rt_fl<1, kv_height>> max_vec_last, max_vec;
     col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
-
-    int warpid      = kittens::warpid();
-    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     int kv_blocks = N / (NUM_WORKERS_KV*k_smem[0][0].rows);
 
@@ -98,6 +106,14 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.4426950216293334961f)); }
 
     for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
+        if(tic) {
+            k_desc.base_desc += kittens::wgmma::matrix_descriptor_encode(sizeof(k_tile));
+            v_desc.base_desc += kittens::wgmma::matrix_descriptor_encode(sizeof(v_tile));
+        }
+        else {
+            k_desc.base_desc -= kittens::wgmma::matrix_descriptor_encode(sizeof(k_tile));
+            v_desc.base_desc -= kittens::wgmma::matrix_descriptor_encode(sizeof(v_tile));
+        }
 
         while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
         
@@ -122,7 +138,7 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
         }
         
         warpgroup::mma_fence(att_block);
-        warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic][0]);
+        warpgroup::mm_ABt(att_block, q_desc, k_desc);
         warpgroup::mma_commit_group();
 
         copy(norm_vec_last, norm_vec);
@@ -148,11 +164,9 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
         mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
 
         warpgroup::mma_fence(o_prev);
-        warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic][0]);
+        warpgroup::mma_AB(o_prev, att_block_mma, v_desc);
         warpgroup::mma_commit_group();
         warpgroup::mma_async_wait();
-
-        // __syncthreads();
     }
 
     auto (*o_smem) = reinterpret_cast<st_bf<qo_height, tile_width, layout_o>(*)>(q_smem); // reuse q memory

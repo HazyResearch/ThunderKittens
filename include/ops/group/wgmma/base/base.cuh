@@ -6,8 +6,8 @@
 namespace kittens {
 namespace ducks {
 namespace wgmma {
-struct normal {}; // abstract base type
-struct transposed {}; // abstract base type
+struct normal_descriptor_identifier {}; // abstract base type
+struct transposed_descriptor_identifier {}; // abstract base type
 
 template<typename T>
 concept normal_layout = (
@@ -27,8 +27,13 @@ namespace wgmma {
 // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
 __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
 
-template<kittens::ducks::st::all ST>
+template<kittens::ducks::st::all _ST>
 struct normal_descriptor {
+    using identifier = ducks::wgmma::normal_descriptor_identifier;
+    using ST = _ST;
+    static constexpr int height = ST::height;
+    static constexpr int width  = ST::width;
+    using T = ST::T;
     static_assert(kittens::ducks::wgmma::st_normal<ST>, "Layout must be a normal wgmma layout.");
     uint64_t base_desc;
     __device__ inline normal_descriptor(const ST &tile) {
@@ -56,6 +61,7 @@ struct normal_descriptor {
             // no swizzle mode
         }
     }
+    __device__ inline normal_descriptor(const normal_descriptor<ST> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         if constexpr (std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_swizzle>) {
             if constexpr (ST::width%4 == 0) {
@@ -73,8 +79,13 @@ struct normal_descriptor {
         }
     }
 };
-template<kittens::ducks::st::all ST>
+template<kittens::ducks::st::all _ST>
 struct transposed_descriptor {
+    using identifier = ducks::wgmma::transposed_descriptor_identifier;
+    using ST = _ST;
+    static constexpr int height = ST::height;
+    static constexpr int width  = ST::width;
+    using T = ST::T;
     static_assert(kittens::ducks::wgmma::st_transposed<ST>, "Layout must be a transposed wgmma layout.");
     uint64_t base_desc;
     __device__ inline transposed_descriptor(const ST &tile) {
@@ -82,6 +93,7 @@ struct transposed_descriptor {
         base_desc |= matrix_descriptor_encode((uint64_t)256*ST::width) << 16;
         base_desc |= matrix_descriptor_encode((uint64_t)128) << 32;
     }
+    __device__ inline transposed_descriptor(const transposed_descriptor<ST> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         return base_desc + matrix_descriptor_encode(chunk_idx*(256*ST::width * 2));
     }
@@ -117,5 +129,18 @@ struct base {
 #include "4x8.impl"
 #include "4x16.impl"
 
+}
+namespace ducks {
+namespace wgmma {
+template<typename T> concept input_normal     = st_normal<T> ||
+    (requires {typename T::identifier;} && std::is_same_v<typename T::identifier, normal_descriptor_identifier>);
+template<typename T> concept input_transposed = st_transposed<T> ||
+    (requires {typename T::identifier;} && std::is_same_v<typename T::identifier, transposed_descriptor_identifier>);
+namespace detail {
+template<typename T> struct st_getter { using type = typename T::ST; };
+template<ducks::st::all T> struct st_getter<T> { using type = T; };
+template<typename T> using get_st = typename st_getter<T>::type;
+}
+}
 }
 }
