@@ -9,7 +9,7 @@ import sys
 sys.path.append("kernel/")
 import rotary as mod
 
-head_dim = 64
+head_dim = 128
 rotary_emb_fraction = 1
 rotary_emb_dim = head_dim * rotary_emb_fraction
 rotary_emb_base = 10000

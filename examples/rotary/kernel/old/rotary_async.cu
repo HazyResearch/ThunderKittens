@@ -1,4 +1,4 @@
-#define TORCH_COMPILE 
+// #define TORCH_COMPILE 
 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
@@ -6,7 +6,7 @@
 #include <curand_kernel.h>
 #include <cuda/barrier>
 
-#define NUM_WORKERS (1) 
+#define NUM_WORKERS (2) 
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 
 const int N_CHUNK  = 16;
@@ -52,26 +52,41 @@ void fused_rotary(
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    tile_1xFULL_ROPE_D (&x_s)       = al.allocate<tile_1xFULL_ROPE_D>();    
-    tile_1xHALF_ROPE_D (&cos_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
-    tile_1xHALF_ROPE_D (&sin_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
+    tile_1xFULL_ROPE_D (&x_s)   [2][NUM_WORKERS] = al.allocate<tile_1xFULL_ROPE_D,2,NUM_WORKERS>();    
+    tile_1xHALF_ROPE_D (&cos_s) [2][NUM_WORKERS] = al.allocate<tile_1xHALF_ROPE_D,2,NUM_WORKERS>(); 
+    tile_1xHALF_ROPE_D (&sin_s) [2][NUM_WORKERS] = al.allocate<tile_1xHALF_ROPE_D,2,NUM_WORKERS>(); 
 
-    int tic = 0, toc = 1;    
+    // pipelining
+    int tic = 0, toc = 1;
+    auto block = cooperative_groups::this_thread_block();
+     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_cheat;
+    if (threadIdx.x == 0) {init(&barrier_cheat, block.size());}
+    block.sync(); // Need to make sure none calls before setup.
+
+    load_async(x_s[tic][warpid],  x_g    ,      head_dim, barrier_cheat);
+    load_async(cos_s[tic][warpid], cos_g ,  half_rope_dim, barrier_cheat);
+    load_async(sin_s[tic][warpid], sin_g ,  half_rope_dim, barrier_cheat);
+    __syncthreads();
+
     const int total_elements = N_CHUNK * head_dim;
     int n_blocks = n / (NUM_WORKERS*kittens::TILE_DIM);
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
+        barrier_cheat.arrive_and_wait(); 
 
         // smem loads
-        load(x_s,  x_g    + (block * total_elements),      head_dim);
-        load(cos_s, cos_g + (block * cos_s.num_elements),  half_rope_dim);
-        load(sin_s, sin_g + (block * sin_s.num_elements),  half_rope_dim);
+        if( block < n_blocks - 1 ) {
+            auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
+            load_async(x_s[toc][warpid],  x_g    + (next_idx * total_elements),      head_dim, barrier_cheat);
+            load_async(cos_s[toc][warpid], cos_g + (next_idx * cos_s[toc][warpid].num_elements),  half_rope_dim, barrier_cheat);
+            load_async(sin_s[toc][warpid], sin_g + (next_idx * sin_s[toc][warpid].num_elements),  half_rope_dim, barrier_cheat);
+        }
 
         // register loads
         reg_tile_1xHALF_ROPE_D cos, sin, x1, x2, temp1, temp2;
         reg_tile_1xFULL_ROPE_D x;
-        load(x, x_s);
-        load(cos, cos_s);
-        load(sin, sin_s);
+        load(x, x_s[tic][warpid]);
+        load(cos, cos_s[tic][warpid]);
+        load(sin, sin_s[tic][warpid]);
 
         const int x_width = x.width;
         const int x1_width = x1.width;
@@ -101,7 +116,7 @@ void fused_rotary(
         }
         
         // store out
-        store(o_g + ( block*x.num_elements ), x, rope_dim);
+        store(o_g + ( (block*NUM_WORKERS +warpid)*x.num_elements ), x, rope_dim);
     }
 }
 

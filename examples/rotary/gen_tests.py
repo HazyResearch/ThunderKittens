@@ -9,7 +9,7 @@ from einops import rearrange, repeat
 B = 1
 H = 1
 N = 2048
-D = 64
+D = 128
 
 D_2 = D // 2
 
