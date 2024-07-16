@@ -468,7 +468,9 @@ class GPTPreTrainedModel(nn.Module):
         return model
         
     @classmethod
-    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', inference_bs=1, silent=True, **kwargs):
+    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', inference_bs=1, override_seqlen=None, silent=True, **kwargs):
+
+        # breakpoint()
         config_data = load_config_hf(pretrained_model_name)
         config = GPT2Config(**config_data)
         try:
@@ -477,6 +479,12 @@ class GPTPreTrainedModel(nn.Module):
             config.alt_mixer['silent'] = silent
         except:
             pass
+
+        if override_seqlen is not None:
+            # for benchmarking
+            config.alt_mixer['l_max'] = override_seqlen  
+            config.mixer['l_max'] = override_seqlen  
+
         model = cls(config, device=device, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device)
 
@@ -485,7 +493,7 @@ class GPTPreTrainedModel(nn.Module):
         # remove Unexpected key(s) in state_dict: "train_metrics.num-tokens.count", "val_metrics.num-tokens.count", "test_metrics.num-tokens.count". from the state_dict
         state_dict = {k: v for k, v in state_dict.items() if "metrics" not in k}
 
-        model.load_state_dict(state_dict)
+        if override_seqlen is None: model.load_state_dict(state_dict)
         return model.to(device=device)
 
 
