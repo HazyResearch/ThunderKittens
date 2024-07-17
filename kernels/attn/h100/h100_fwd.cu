@@ -101,9 +101,9 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 
     tma::arrive_and_wait(qsmem_barrier, 0);
 
-    // premultiply by lg(e) and tempreature
-    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.4426950216293334961f)); } 
-    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.4426950216293334961f)); }
+    // premultiply by tempreature
+    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); }
+    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
 
     for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic ^= 1, toc ^= 1) {
         if(tic) {
@@ -148,10 +148,10 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 
         row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
         sub_row(att_block, att_block, max_vec);
-        exp2(att_block, att_block);
+        exp(att_block, att_block);
 
         sub(max_vec_last, max_vec_last, max_vec);
-        exp2(max_vec_last, max_vec_last);
+        exp(max_vec_last, max_vec_last);
         mul(norm_vec, norm_vec, max_vec_last);
 
         row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
