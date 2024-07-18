@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = 224000 / NUM_BLOCKS; // need to launch two blocks if possible.
+    unsigned long mem_size = 224000; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(
         fwd_attend_ker_dim<ATTN_D>,
@@ -121,18 +121,18 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
+    dim3 grid(132, 1, 1);
     static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {    
-        fwd_attend_ker_dim<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        fwd_attend_ker_dim<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_B*ATTN_H, ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        fwd_attend_ker_dim<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
+        fwd_attend_ker_dim<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(ATTN_B*ATTN_H, ATTN_N, tma_q_d, tma_k_d, tma_v_d, tma_o_d);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

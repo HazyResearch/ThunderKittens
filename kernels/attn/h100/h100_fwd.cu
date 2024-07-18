@@ -1,9 +1,9 @@
 #include "kittens.cuh"
-#include <cooperative_groups.h>
 #include <iostream>
 
 #define NUM_WORKERS (12)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
+constexpr static int NUM_SMS = 132;
 
 using namespace kittens;
 
@@ -24,9 +24,24 @@ template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int kv_height  = 8;
 };
 
+#define RED  "\033[91m" 
+#define GREEN  "\033[92m" 
+#define YELLOW  "\033[93m" 
+#define BLUE  "\033[94m" 
+#define MAGENTA  "\033[95m" 
+#define CYAN  "\033[96m" 
+#define WHITE  "\033[97m" 
+#define RESET  "\033[0m" 
+
+template<typename... Args> __device__ void gprintf(Args... args) {
+    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x % 32 == 0) {
+        printf(args...);
+    }
+}
+
 template<int D>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
-void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
+void fwd_attend_ker_dim(int BH, int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
@@ -55,102 +70,121 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
 
     int kv_blocks = N / (k_tile::rows);
+    int qo_blocks = N / (q_tile::rows);
+    int qo_iters = N / (q_tile::rows * NUM_WARPGROUPS);
+    int work_iters = BH * qo_iters;
 
-    __shared__ uint64_t qsmem_barrier, kvsmem_barrier;
-    __shared__ uint32_t producer_barrier, consumer_barriers[2];
-
-    if (threadIdx.x == 0) {
-        tma::init_barrier<q_tile, NUM_WARPGROUPS>(qsmem_barrier, 1);
-        tma::init_barrier<k_tile, 2>(kvsmem_barrier, 1);
+    __shared__ uint64_t qsmem_barrier[3], kvsmem_barrier;
+    __shared__ uint32_t producer_barrier, consumer_barriers[2], store_barriers[NUM_WARPGROUPS];
+    if(threadIdx.x % WARPGROUP_THREADS == 0) {
+        tma::init_barrier(qsmem_barrier[warpgroupid], 1);
     }
-
-    if (threadIdx.x == 0) {
-        for (int wg = 0; wg < NUM_WARPGROUPS; wg++) { // load q
-            int q_tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS) + wg;
-            tma::load_async((q_smem[wg]), tma_q, qsmem_barrier, q_tile_idx); 
-        }
-        int kv_tile_idx = (blockIdx.y * kv_blocks) + 0; 
-        tma::load_async((k_smem[0]), tma_k, kvsmem_barrier, kv_tile_idx); 
-        tma::load_async((v_smem[0]), tma_v, kvsmem_barrier, kv_tile_idx);
-        producer_barrier = 0; // nobody is done with them yet
-        consumer_barriers[0] = 0; // read to use on kv iter 0 (launch has been issued)
-        consumer_barriers[1] = 0; // not ready to use -- launch has not been issued.
+    if(threadIdx.x == 0) {
+        tma::init_barrier(kvsmem_barrier, 1);
+        producer_barrier = 99999; // special value that we can safely start the next iter for k, v load
+        consumer_barriers[tic] = 99999; // special value that we have not actually set_bytes on kv yet
     }
-
-    neg_infty(max_vec); // zero registers for the Q chunk
-    zero(norm_vec);
-    zero(o_prev);
     __syncthreads();
 
-    tma::arrive_and_wait(qsmem_barrier, 0);
+    for(int work_idx = blockIdx.x; work_idx < work_iters; work_idx+=NUM_SMS) {
 
-    // premultiply by tempreature
-    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); }
-    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
+        int batchhead_idx = work_idx / qo_iters;
+        int seq_idx       = work_idx % qo_iters;
 
-    for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
+        if(threadIdx.x % WARPGROUP_THREADS == 0) { // load q
+            tma::set_bytes(qsmem_barrier[warpgroupid], size_bytes<q_tile>);
+            int q_tile_idx = (batchhead_idx * qo_blocks) + (seq_idx * NUM_WARPGROUPS) + warpgroupid;
+            tma::load_async(q_smem[warpgroupid], tma_q, qsmem_barrier[warpgroupid], q_tile_idx);
+            store_barriers[warpgroupid] = 0;
+        }
 
-        while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
-        
-        tma::arrive_and_wait(kvsmem_barrier, tic);
-        
-        if(threadIdx.x%32 == 0) {
-            int producer_barrier_old = atomicInc(&producer_barrier, NUM_WORKERS-1);
-            if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
-                tma::set_bytes(kvsmem_barrier, 2  * size_bytes<k_tile>);
-                consumer_barriers[toc] = kv_idx+1; // also reset the tma barrier, we are now allowed to hit the next one
-                
-                if (kv_idx + 1 < kv_blocks) {    
-                    int tile_idx = (blockIdx.y * kv_blocks) + (kv_idx + 1);
-                    tma::load_async(k_smem[toc], tma_k, kvsmem_barrier, tile_idx); 
-                    tma::load_async(v_smem[toc], tma_v, kvsmem_barrier, tile_idx);
+        if(threadIdx.x == 0) {
+            while(producer_barrier != 99999) __nanosleep(10); // wait until we're allowed to issue this load
+            tma::set_bytes(kvsmem_barrier, 2 * size_bytes<k_tile>);
+            int kv_tile_idx = (batchhead_idx * kv_blocks) + 0; 
+            tma::load_async(k_smem[tic], tma_k, kvsmem_barrier, kv_tile_idx); 
+            tma::load_async(v_smem[tic], tma_v, kvsmem_barrier, kv_tile_idx);
+            producer_barrier = 0; // nobody is done with them yet
+            consumer_barriers[tic] = 0; // read to use on kv iter 0 (launch has been issued)
+            consumer_barriers[toc] = 0; // not ready to use -- launch has not been issued.
+        }
+
+        neg_infty(max_vec); // zero registers for the Q chunk
+        zero(norm_vec);
+        zero(o_prev);
+
+        tma::arrive_and_wait(qsmem_barrier[warpgroupid], (work_idx/NUM_SMS)%2);
+
+        // premultiply by tempreature
+        if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.442695040888963407359f)); }
+        else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.442695040888963407359f)); }
+
+        for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
+
+            while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
+            
+            tma::arrive_and_wait(kvsmem_barrier, tic);
+            
+            if(threadIdx.x%32 == 0) {
+                int producer_barrier_old = atomicInc(&producer_barrier, NUM_WORKERS-1);
+                if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
+                    if (kv_idx + 1 < kv_blocks) {    
+                        tma::set_bytes(kvsmem_barrier, 2  * size_bytes<k_tile>);
+                        consumer_barriers[toc] = kv_idx+1; // also reset the tma barrier, we are now allowed to hit the next one
+                        int tile_idx = (batchhead_idx * kv_blocks) + (kv_idx + 1);
+                        tma::load_async(k_smem[toc], tma_k, kvsmem_barrier, tile_idx); 
+                        tma::load_async(v_smem[toc], tma_v, kvsmem_barrier, tile_idx);
+                    }
+                    else {
+                        producer_barrier = 99999; // special value to indicate we are done
+                        consumer_barriers[toc] = 99999; // barrier is invalid until it gets set by thread 0 on the next run
+                    }
                 }
             }
+            
+            warpgroup::mma_fence(att_block);
+            warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic]);
+            warpgroup::mma_commit_group();
+
+            copy(norm_vec_last, norm_vec);
+            copy(max_vec_last,  max_vec);
+
+            warpgroup::mma_async_wait();
+
+            row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
+            sub_row(att_block, att_block, max_vec);
+            exp2(att_block, att_block);
+
+            sub(max_vec_last, max_vec_last, max_vec);
+            exp2(max_vec_last, max_vec_last);
+            mul(norm_vec, norm_vec, max_vec_last);
+
+            row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
+            div_row(att_block, att_block, norm_vec);
+
+            mul(norm_vec_last, norm_vec_last, max_vec_last);
+            div(norm_vec_last, norm_vec_last, norm_vec);
+
+            copy(att_block_mma, att_block); // convert to bf16 for mma
+            mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
+
+            warpgroup::mma_fence(o_prev);
+            warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic]);
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait();
         }
-        
-        warpgroup::mma_fence(att_block);
-        warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic]);
-        warpgroup::mma_commit_group();
 
-        copy(norm_vec_last, norm_vec);
-        copy(max_vec_last,  max_vec);
-
-        warpgroup::mma_async_wait();
-
-        row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
-        sub_row(att_block, att_block, max_vec);
-        exp(att_block, att_block);
-
-        sub(max_vec_last, max_vec_last, max_vec);
-        exp(max_vec_last, max_vec_last);
-        mul(norm_vec, norm_vec, max_vec_last);
-
-        row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
-        div_row(att_block, att_block, norm_vec);
-
-        mul(norm_vec_last, norm_vec_last, max_vec_last);
-        div(norm_vec_last, norm_vec_last, norm_vec);
-
-        copy(att_block_mma, att_block); // convert to bf16 for mma
-        mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-
-        warpgroup::mma_fence(o_prev);
-        warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic]);
-        warpgroup::mma_commit_group();
-        warpgroup::mma_async_wait();
+        auto (*o_smem) = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
+        warpgroup::store(o_smem[warpgroupid], o_prev);
+        if(threadIdx.x%32 == 0) atomicInc(&store_barriers[warpgroupid], WARPGROUP_WARPS);
+        while(store_barriers[warpgroupid] != WARPGROUP_WARPS) __nanosleep(10);
+        if (warpid % 4 == 0) { // store o
+            int tile_idx = (batchhead_idx * qo_blocks) + (seq_idx * NUM_WARPGROUPS) + warpgroupid;
+            tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
+            tma::store_commit_group(); 
+        }
+        tma::store_async_read_wait();
     }
-
-    auto (*o_smem) = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
-    warpgroup::store(o_smem[warpgroupid], o_prev); 
-    __syncthreads();
-    
-    if (warpid % 4 == 0) { // store o
-        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
-        tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
-        tma::store_commit_group(); 
-    }
-
-    tma::store_async_wait();
 }
 
 // #include "common/pyutils/torch_helpers.cuh"
