@@ -4,7 +4,6 @@
 
 #define NUM_WORKERS (12)
 #define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
-#define NUM_BLOCKS (1)
 
 using namespace kittens;
 
@@ -13,29 +12,20 @@ using layout_k = wgmma_swizzle_l;
 using layout_v = wgmma_interleave_l;
 using layout_o = swizzle_l;
 
-template<int D> struct fwd_attend_ker_tile_dims {
-    constexpr static int tile_width = D/kittens::TILE_DIM;
+template<int D> struct fwd_attend_ker_tile_dims {};
+template<> struct fwd_attend_ker_tile_dims<64> {
+    constexpr static int tile_width = 64/kittens::TILE_DIM;
     constexpr static int qo_height  = 4;
-    constexpr static int kv_height  = 1024/D;
+    constexpr static int kv_height  = 12;
+};
+template<> struct fwd_attend_ker_tile_dims<128> {
+    constexpr static int tile_width = 128/kittens::TILE_DIM;
+    constexpr static int qo_height  = 4;
+    constexpr static int kv_height  = 8;
 };
 
-#define RED  "\033[91m" 
-#define GREEN  "\033[92m" 
-#define YELLOW  "\033[93m" 
-#define BLUE  "\033[94m" 
-#define MAGENTA  "\033[95m" 
-#define CYAN  "\033[96m" 
-#define WHITE  "\033[97m" 
-#define RESET  "\033[0m" 
-
-template<typename... Args> __device__ void gprintf(Args... args) {
-    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x % 32 == 0) {
-        printf(args...);
-    }
-}
-
 template<int D>
-__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, NUM_BLOCKS)
+__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);

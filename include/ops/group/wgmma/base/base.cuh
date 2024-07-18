@@ -121,13 +121,12 @@ struct base {
 #include "4x2.impl"
 #include "4x3.impl"
 #include "4x4.impl"
-
-// can add bigger ones later, just annoying
-// #include "4x5.impl"
 #include "4x6.impl"
-// #include "4x7.impl"
 #include "4x8.impl"
+#include "4x12.impl"
 #include "4x16.impl"
+
+// can add more later, just annoying
 
 }
 namespace ducks {
