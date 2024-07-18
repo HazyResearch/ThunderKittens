@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <random>
 #include <type_traits>
@@ -182,12 +183,12 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
     }
     if(good) std::cout << " -- PASSED" << std::endl;
     else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
-    if(should_write_outputs && !good) {
+    if(should_write_outputs){//} && !good) {
         std::ofstream reffile("outputs/"+test_name+"_ref.txt");
         std::ofstream outfile("outputs/"+test_name+"_out.txt");
         for(int i = 0; i < output_size; i++) {
-            reffile << o_ref[i] << ' ';
-            outfile << o[i] << ' ';
+            reffile << std::setw(4) << o_ref[i] << ' ';
+            outfile << std::setw(4) << o[i] << ' ';
             if(i%cols == cols-1) {
                 reffile << '\n';
                 outfile << '\n';

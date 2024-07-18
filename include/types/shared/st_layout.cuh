@@ -19,7 +19,7 @@ namespace st_layout {
 /**
  * @brief A naive row-major layout with no swizzling. row*(#cols)+c
  */
-struct naive {}; // swizzling_mode left undefined to cause errors if matrix_descriptor is called.
+struct naive {};
 /**
  * @brief A layout for minimal bank conflicts and maximal coalescing.
  *
@@ -39,7 +39,13 @@ struct wgmma_swizzle {}; // only defined for x1, x2, x4 tiles.
  * 
  * Note, it has worse coalescing and bank conflicts than any other mode.
  */
-struct wgmma_interleave { static constexpr int swizzling_mode=0; };
+struct wgmma_interleave {};
+/**
+ * @brief A layout for wgmma with no swizzling. This mode is necessary for the wgmma transpose.
+ * 
+ * Note, it has worse coalescing and bank conflicts than any other mode.
+ */
+struct wgmma_experimental {};
 
 /**
  * @brief Concept to check if a type is a row-contiguous layout.
@@ -49,7 +55,8 @@ concept all = (
     std::is_same_v<T, naive>            ||
     std::is_same_v<T, swizzle>          ||
     std::is_same_v<T, wgmma_swizzle>    ||
-    std::is_same_v<T, wgmma_interleave>
+    std::is_same_v<T, wgmma_interleave> ||
+    std::is_same_v<T, wgmma_experimental>
 );
 
 }

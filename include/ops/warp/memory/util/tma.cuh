@@ -27,6 +27,9 @@ template<typename T> concept st_type_wgmma_swizzle_layout = (
 template<typename T> concept st_type_wgmma_interleave_layout = (
     std::is_same_v<typename T::layout, ducks::st_layout::wgmma_interleave>
 );
+template<typename T> concept st_type_wgmma_experimental_layout = (
+    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_experimental>
+);
 
 }
 

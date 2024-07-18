@@ -35,6 +35,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         detail::st_type_swizzle_layout<ST>          ? 3 :
         detail::st_type_wgmma_swizzle_layout<ST>    ? 3 :
         detail::st_type_wgmma_interleave_layout<ST> ? 4 :
+        detail::st_type_wgmma_experimental_layout<ST> ? 4 :
         -1
     );
     void *global_addr = (void*)(src);
@@ -45,7 +46,10 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
         CUtensorMapDataType(-1)
     );
-    constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    constexpr CUtensorMapInterleave   tma_interleave  = (
+        detail::st_type_wgmma_experimental_layout<ST> ? CU_TENSOR_MAP_INTERLEAVE_16B :
+        CU_TENSOR_MAP_INTERLEAVE_NONE
+    );
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      tma_swizzle     = (
