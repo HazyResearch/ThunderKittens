@@ -156,6 +156,7 @@ struct base {
 #include "4x4.impl"
 #include "4x6.impl"
 #include "4x8.impl"
+#include "4x11.impl"
 #include "4x12.impl"
 #include "4x16.impl"
 
