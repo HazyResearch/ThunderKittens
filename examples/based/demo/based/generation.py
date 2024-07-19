@@ -707,7 +707,7 @@ def capture_graph(
                 position_ids=position_ids,
                 inference_params=inference_params,
                 num_last_tokens=decoding_seqlen,
-                stream=s,
+                # stream=s,
             ).logits
         s.synchronize()
         # This might be needed for correctness if we run with NCCL_GRAPH_MIXING_SUPPORT=0,
@@ -725,7 +725,7 @@ def capture_graph(
             position_ids=position_ids,
             inference_params=inference_params,
             num_last_tokens=decoding_seqlen,
-            stream=s,
+            # stream=s,
         ).logits
 
     def run(new_input_ids, new_position_ids, seqlen):

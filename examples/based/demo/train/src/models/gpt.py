@@ -15,19 +15,23 @@ from transformers import GPT2Config
 import hydra
 
 from .block import Block, ParallelBlock
-from flash_attn.modules.embedding import GPT2Embeddings, ParallelGPT2Embeddings
-from flash_attn.modules.mha import MHA, ParallelMHA
-from flash_attn.modules.mlp import (
+from .embeddings import GPT2Embeddings
+from .mha import MHA
+from .mlp import (
     FusedMLP,
     Mlp,
-    ParallelFusedMLP,
-    ParallelMLP,
 )
 from .mlp import GatedMlp, ParallelGatedMlp
-from flash_attn.ops.activations import sqrelu_fwd
-from flash_attn.utils.distributed import all_gather_raw, sync_shared_params
+try:
+    from flash_attn.ops.activations import sqrelu_fwd
+except:
+    sqrelu_fwd = None
+try:
+    from flash_attn.utils.distributed import all_gather_raw, sync_shared_params
+except:
+    all_gather_raw, sync_shared_params = None, None
 from train.src.generation import GenerationMixin, NaiveGenerationMixin
-from flash_attn.utils.pretrained import state_dict_from_pretrained
+# from flash_attn.utils.pretrained import state_dict_from_pretrained
 
 try:
     from flash_attn.ops.fused_dense import ColumnParallelLinear
@@ -48,6 +52,8 @@ try:
     from flash_attn.ops.rms_norm import RMSNorm, dropout_add_rms_norm
 except ImportError:
     RMSNorm, dropout_add_rms_norm = None, None
+    from based.ops.triton.layer_norm import RMSNorm
+
 
 try:
     from flash_attn.ops.rms_norm import dropout_add_rms_norm_parallel_residual
@@ -286,7 +292,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
         else:
             if config.activation_function == "relu":
                 activation = partial(F.relu, inplace=True)
-            elif config.activation_function == "sqrelu":
+            elif config.activation_function == "sqrelu" and sqrelu_fwd is not None:
                 activation = sqrelu_fwd
             else:
                 approximate = (
@@ -374,11 +380,14 @@ def create_block(config, layer_idx=None, process_group=None, device=None, dtype=
     mlp_cls = create_mlp_cls(config, layer_idx, process_group=process_group, **factory_kwargs)
     use_rms_norm = getattr(config, "rms_norm", False)
     
-    norm_cls = partial(
-        nn.LayerNorm if not use_rms_norm else RMSNorm,
-        eps=config.layer_norm_epsilon,
-        **factory_kwargs,
-    )
+    try:
+        norm_cls = partial(
+            nn.LayerNorm if not use_rms_norm else RMSNorm,
+            eps=config.layer_norm_epsilon,
+            **factory_kwargs,
+        )
+    except:
+        print("please install the fused layernorm kernel as specified in the README")
     # TD [2022-07-30]: Force residual in fp32, seems to make fp16 training more stable
     residual_in_fp32 = getattr(config, "residual_in_fp32", False)
     resid_dropout1 = config.resid_pdrop if layer_idx is None or layer_idx > 0 else config.embd_pdrop
@@ -468,13 +477,13 @@ class GPTPreTrainedModel(nn.Module):
         return model
         
     @classmethod
-    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', inference_bs=1, override_seqlen=None, silent=True, **kwargs):
+    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', recurrent_impl="default", inference_bs=1, override_seqlen=None, override_model_dims=None, silent=True, **kwargs):
 
-        # breakpoint()
         config_data = load_config_hf(pretrained_model_name)
         config = GPT2Config(**config_data)
         try:
             config.alt_mixer['inference_implementation'] = implementation
+            config.alt_mixer['recurrent_impl'] = recurrent_impl
             config.alt_mixer['inference_bs'] = inference_bs
             config.alt_mixer['silent'] = silent
         except:
@@ -483,17 +492,38 @@ class GPTPreTrainedModel(nn.Module):
         if override_seqlen is not None:
             # for benchmarking
             config.alt_mixer['l_max'] = override_seqlen  
-            config.mixer['l_max'] = override_seqlen  
+            config.mixer['l_max'] = override_seqlen 
+
+        # if override_model_dims is not None:
+        #     if override_model_dims == "7B":
+        #         config.n_embd = 4096
+        #         config.n_inner = 3 * config.n_embd 
+        #         config.n_head = config.n_embd // 64 
+        #         config.alt_mixer_2['num_heads'] = config.n_head
+        #         config.alt_mixer['num_heads'] = config.n_head
+        #         config.n_layer = 34
+        #         config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
+        #         config.alt_mixer_2_layers = [2, 7, 12, 17, 22, 27, 32]
+        #     elif override_model_dims == "Pure":
+        #         # breakpoint()
+        #         config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
+        #         config.alt_mixer_2_layers = []
+        #     else:
+        #         assert 0, print("Unknown setting.")
 
         model = cls(config, device=device, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device)
+        
+        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"{num_params=:.2e}")
 
         # remove the 'model.' prefix from the keys
         state_dict = {re.sub("^model\.", "", k): v for k, v in state_dict.items()}
         # remove Unexpected key(s) in state_dict: "train_metrics.num-tokens.count", "val_metrics.num-tokens.count", "test_metrics.num-tokens.count". from the state_dict
         state_dict = {k: v for k, v in state_dict.items() if "metrics" not in k}
 
-        if override_seqlen is None: model.load_state_dict(state_dict)
+        if override_seqlen is None and override_model_dims is None: 
+            model.load_state_dict(state_dict)
         return model.to(device=device)
 
 
@@ -577,23 +607,13 @@ class GPTModel(GPTPreTrainedModel):
 
         self.enc_length = getattr(config, "enc_length", None)
 
-        if process_group is None:
-            self.embeddings = GPT2Embeddings(
-                config.hidden_size,
-                vocab_size,
-                config.max_position_embeddings,
-                word_embed_proj_dim=word_embed_proj_dim,
-                **factory_kwargs,
-            )
-        else:
-            self.embeddings = ParallelGPT2Embeddings(
-                config.hidden_size,
-                vocab_size,
-                config.max_position_embeddings,
-                process_group=process_group,
-                sequence_parallel=self.sequence_parallel,
-                **factory_kwargs,
-            )
+        self.embeddings = GPT2Embeddings(
+            config.hidden_size,
+            vocab_size,
+            config.max_position_embeddings,
+            word_embed_proj_dim=word_embed_proj_dim,
+            **factory_kwargs,
+        )
 
         # We change the order of dropout, residual and layer norm:
         # Instead of LN -> Attn / MLP -> Dropout -> Add, we do:
@@ -607,7 +627,11 @@ class GPTModel(GPTPreTrainedModel):
                 for i in range(config.num_hidden_layers)
             ]
         )
-        self.fused_dropout_add_ln = getattr(config, "fused_dropout_add_ln", False)
+        if dropout_add_layer_norm is None:
+            self.fused_dropout_add_ln = False 
+            print("Please install fused_dense following the README for additional speedup.")
+        else:
+            self.fused_dropout_add_ln = getattr(config, "fused_dropout_add_ln", False)
         if self.fused_dropout_add_ln:
             if (not self.parallel_block and dropout_add_layer_norm is None) or (
                 self.parallel_block and dropout_add_layer_norm_parallel_residual is None
@@ -661,104 +685,106 @@ class GPTModel(GPTPreTrainedModel):
         # If using Tensor Parallel with sequence parallel, we combine the batch and the seqlen
         # dimensions so that we can split on it easily, in case of small batch size.
         # Only the attention layers need to know the seqlen.
-        embedding_kwargs = (
-            {"combine_batch_seqlen_dim": True}
-            if self.process_group is not None and self.sequence_parallel
-            else {}
-        )
-        hidden_states = self.embeddings(
-            input_ids, 
-            position_ids=position_ids, 
-            **embedding_kwargs
-        )
-        if self.parallel_block:
-            hidden_states2 = None
-        residual = None
-        mixer_kwargs = (
-            {"seqlen": input_ids.shape[1]}
-            if self.process_group is not None and self.sequence_parallel
-            else {}
-        )
-        if 'mask' in kwargs['kwargs']:
-            mixer_kwargs['mask'] = kwargs['kwargs']['mask']
-        if 'attn_mask' in kwargs['kwargs']:
-            mixer_kwargs['attn_mask'] = kwargs['kwargs']['attn_mask']
-        if inference_params is not None:
-            mixer_kwargs["inference_params"] = inference_params
-            mixer_kwargs['stream'] = stream
+        if 1:
+            embedding_kwargs = (
+                {"combine_batch_seqlen_dim": True}
+                if self.process_group is not None and self.sequence_parallel
+                else {}
+            )
+            hidden_states = self.embeddings(
+                input_ids, 
+                position_ids=position_ids, 
+                **embedding_kwargs
+            )
+            if self.parallel_block:
+                hidden_states2 = None
+            residual = None
+            mixer_kwargs = (
+                {"seqlen": input_ids.shape[1]}
+                if self.process_group is not None and self.sequence_parallel
+                else {}
+            )
+            if 'mask' in kwargs['kwargs']:
+                mixer_kwargs['mask'] = kwargs['kwargs']['mask']
+            if 'attn_mask' in kwargs['kwargs']:
+                mixer_kwargs['attn_mask'] = kwargs['kwargs']['attn_mask']
+            if inference_params is not None:
+                mixer_kwargs["inference_params"] = inference_params
+                mixer_kwargs['stream'] = stream
 
-        # decay
-        if self.decay is not None:
-            decay = self.decay()
-        else:
-            decay = None
+            # decay
+            if self.decay is not None:
+                decay = self.decay()
+            else:
+                decay = None
 
-        for layer in self.layers:
+            for layer in self.layers:
+                if self.prenorm:
+                    layer_name = layer.mixer.__class__.__name__
+                    if not self.parallel_block and layer_name not in ['MHA']:
+                        hidden_states, residual = layer(
+                            hidden_states, residual=residual, position_ids=position_ids, decay=decay, mixer_kwargs=mixer_kwargs
+                        )
+                    elif not self.parallel_block and layer_name in ['MHA']:
+                        hidden_states, residual = layer(hidden_states, residual=residual, mixer_kwargs=mixer_kwargs)
+                    else:
+                        hidden_states, hidden_states2, residual = layer(
+                            hidden_states, hidden_states2, residual=residual, position_ids=position_ids, decay=decay, mixer_kwargs=mixer_kwargs
+                        )
+                else:
+                    hidden_states = layer(hidden_states, position_ids=position_ids, mixer_kwargs=mixer_kwargs)
+
             if self.prenorm:
-                layer_name = layer.mixer.__class__.__name__
-                if not self.parallel_block and layer_name not in ['MHA']:
-                    hidden_states, residual = layer(
-                        hidden_states, residual=residual, position_ids=position_ids, decay=decay, mixer_kwargs=mixer_kwargs
-                    )
-                elif not self.parallel_block and layer_name in ['MHA']:
-                    hidden_states, residual = layer(hidden_states, residual=residual, mixer_kwargs=mixer_kwargs)
+                if not self.fused_dropout_add_ln:
+                    dropped = self.drop_f(hidden_states)
+                    if not self.parallel_block:
+                        residual = (dropped + residual) if residual is not None else dropped
+                    else:
+                        dropped2 = self.drop_f(hidden_states2)
+                        residual = (
+                            (residual + dropped + dropped2)
+                            if residual is not None
+                            else dropped + dropped2
+                        )
+                    hidden_states = self.ln_f(residual.to(dtype=self.ln_f.weight.dtype))
                 else:
-                    hidden_states, hidden_states2, residual = layer(
-                        hidden_states, hidden_states2, residual=residual, position_ids=position_ids, decay=decay, mixer_kwargs=mixer_kwargs
-                    )
-            else:
-                hidden_states = layer(hidden_states, position_ids=position_ids, mixer_kwargs=mixer_kwargs)
-        if self.prenorm:
-            if not self.fused_dropout_add_ln:
-                dropped = self.drop_f(hidden_states)
-                if not self.parallel_block:
-                    residual = (dropped + residual) if residual is not None else dropped
-                else:
-                    dropped2 = self.drop_f(hidden_states2)
-                    residual = (
-                        (residual + dropped + dropped2)
-                        if residual is not None
-                        else dropped + dropped2
-                    )
-                hidden_states = self.ln_f(residual.to(dtype=self.ln_f.weight.dtype))
-            else:
-                # Set prenorm=False here since we don't need the residual
-                if not self.parallel_block:
-                    fused_add_norm_fn = (
-                        dropout_add_rms_norm
-                        if isinstance(self.ln_f, RMSNorm)
-                        else dropout_add_layer_norm
-                    )
-                    hidden_states = fused_add_norm_fn(
-                        hidden_states,
-                        residual,
-                        self.ln_f.weight,
-                        self.ln_f.bias,
-                        self.drop_f.p if self.training else 0.0,
-                        self.ln_f.eps,
-                        prenorm=False,
-                        residual_in_fp32=self.residual_in_fp32,
-                    )
-                else:
-                    fused_add_norm_fn = (
-                        dropout_add_rms_norm_parallel_residual
-                        if isinstance(self.ln_f, RMSNorm)
-                        else dropout_add_layer_norm_parallel_residual
-                    )
-                    hidden_states, _ = fused_add_norm_fn(
-                        hidden_states,
-                        hidden_states2,
-                        residual,
-                        self.ln_f.weight,
-                        self.ln_f.bias,
-                        None,
-                        None,
-                        self.drop_f.p if self.training else 0.0,
-                        self.ln_f.eps,
-                        prenorm=False,
-                        residual_in_fp32=self.residual_in_fp32,
-                    )
-        return hidden_states
+                    # Set prenorm=False here since we don't need the residual
+                    if not self.parallel_block:
+                        fused_add_norm_fn = (
+                            dropout_add_rms_norm
+                            if isinstance(self.ln_f, RMSNorm)
+                            else dropout_add_layer_norm
+                        )
+                        hidden_states = fused_add_norm_fn(
+                            hidden_states,
+                            residual,
+                            self.ln_f.weight,
+                            self.ln_f.bias,
+                            self.drop_f.p if self.training else 0.0,
+                            self.ln_f.eps,
+                            prenorm=False,
+                            residual_in_fp32=self.residual_in_fp32,
+                        )
+                    else:
+                        fused_add_norm_fn = (
+                            dropout_add_rms_norm_parallel_residual
+                            if isinstance(self.ln_f, RMSNorm)
+                            else dropout_add_layer_norm_parallel_residual
+                        )
+                        hidden_states, _ = fused_add_norm_fn(
+                            hidden_states,
+                            hidden_states2,
+                            residual,
+                            self.ln_f.weight,
+                            self.ln_f.bias,
+                            None,
+                            None,
+                            self.drop_f.p if self.training else 0.0,
+                            self.ln_f.eps,
+                            prenorm=False,
+                            residual_in_fp32=self.residual_in_fp32,
+                        )
+            return hidden_states
 
 
 class GPTLMHeadModel(GPTPreTrainedModel, GenerationMixin, NaiveGenerationMixin):

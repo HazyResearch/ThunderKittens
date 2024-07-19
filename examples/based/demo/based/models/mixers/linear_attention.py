@@ -30,7 +30,6 @@ except:
 
 try:
     import lin_attn as mod
-    # import lin_attn_4090 as mod_4090
     print(f"Successfully imported TK based_H100 kernel")
 except:
     mod = None
@@ -96,6 +95,7 @@ class LinearAttention(nn.Module):
         layer_idx: int = None,
         parallel_implementation: str="quadratic",
         inference_implementation: str="default",
+        recurrent_impl: str="default",
         silent=True,
         inference_bs: int=1,
         use_decay_proj: bool = False,
@@ -128,6 +128,7 @@ class LinearAttention(nn.Module):
             self.decay_proj = nn.Linear(self.d_model, self.num_heads, bias=False)
 
         self.inference_implementation = inference_implementation
+        self.recurrent_impl = recurrent_impl
         self.silent=silent
         if self.inference_implementation == "tk":
             self.d_state = 320
@@ -144,7 +145,10 @@ class LinearAttention(nn.Module):
             self.k_state_a1 = torch.empty((bs, self.num_heads, self.feature_dim), dtype=torch.bfloat16, device='cuda')
             self.k_state_a0 = torch.ones((bs, self.num_heads), dtype=torch.bfloat16, device='cuda') * self.l_max
 
-            self.padding = torch.zeros(bs*self.num_heads, self.d_state-self.expanded_size(), dtype=torch.bfloat16, device='cuda')
+            if self.recurrent_impl == "default": 
+                self.padding = torch.zeros(bs, self.num_heads, self.d_state-self.expanded_size(), dtype=torch.bfloat16, device='cuda')
+                self.qk_padding = torch.zeros(bs*self.num_heads, self.d_state-self.expanded_size(), dtype=torch.bfloat16, device='cuda')
+                self.kv_padding = torch.zeros(bs, self.num_heads, self.d_state-self.expanded_size(), self.head_dim, dtype=torch.bfloat16, device='cuda')
 
         
     def forward(self, 
@@ -177,12 +181,18 @@ class LinearAttention(nn.Module):
                 # recurrent
                 kv_state, k_state = self._get_inference_cache(inference_params)
                 q, k = self.feature_map(q), self.feature_map(k)
-                return self.recurrent_forward(hidden_states, kv_state, k_state, q, k, v, decay=decay_recurrent, impl_choice=impl_choice)
+                return self.recurrent_forward(hidden_states, kv_state, k_state, q, k, v, decay=decay_recurrent, impl_choice=impl_choice).to(hidden_states.dtype)
             else:  
                 # prefill
                 y = self.parallel_forward(hidden_states, q, k, v, decay=decay, impl_choice=impl_choice)
-                if impl_choice != "default" and impl_choice == "tk":
+                if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "default":
                     if self.layer_idx < 2 and not self.silent: print("recurrent state tk")
+                    
+                    kv_state = torch.concat([self.kv_state_a0.unsqueeze(-2), self.kv_state_a1.transpose(2,3), self.kv_state_a2, self.kv_padding], dim=-2)
+                    k_state = torch.concat([self.k_state_a0.unsqueeze(-1), self.k_state_a1,  self.k_state_a2, self.padding], dim=-1)
+
+                elif impl_choice != "default" and impl_choice == "tk":
+                    
                     kv_state = torch.concat([
                         self.kv_state_a0.unsqueeze(-1), 
                         self.kv_state_a1, 
@@ -304,22 +314,21 @@ class LinearAttention(nn.Module):
         b, h, l, dv = v.shape
         assert l == 1, f'q.shape is {q.shape} but should be ({b}, {h}, 1, {d})'
 
-        if impl_choice != "default" and impl_choice == "tk":
+        if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "default":
             if self.layer_idx <= 2 and not self.silent: print(f"recurrent tk")
 
-            q = rearrange(q, 'b h 1 d -> (b h) d').to(torch.bfloat16)
-            k = rearrange(k, 'b h 1 d -> (b h) d').to(torch.bfloat16)
-            v = rearrange(v, 'b h 1 d -> (b h) d').to(torch.bfloat16)
+            q = rearrange(q, 'b h 1 d -> (b h) d')
+            k = rearrange(k, 'b h 1 d -> (b h) d')
+            v = rearrange(v, 'b h 1 d -> (b h) d')
 
-            q, k = torch.cat([q, self.padding], dim=-1), torch.cat([k, self.padding], dim=-1)
-            kv_state_t = torch.cat(
-                [rearrange(kv_state, 'b h 1 d f -> (b h) f d').to(torch.bfloat16).contiguous(), 
-                torch.zeros(b*h, self.d_state - d, dv, dtype=torch.bfloat16, device=q.device)], dim=1)
-            k_state = torch.cat([rearrange(k_state, 'b h 1 1 d -> (b h) d').to(torch.bfloat16), self.padding], dim=-1)
-            
-            mod_inf.based_step(q, k, v, kv_state_t, k_state, self.y_rec)
-            y = self.y_rec.to(torch.bfloat16).view(b, h, v.shape[-1]).unsqueeze(2)
-            kv_state = kv_state_t.transpose(1,2).contiguous()
+            q, k = torch.cat([q, self.qk_padding], dim=-1), torch.cat([k, self.qk_padding], dim=-1)
+            mod_inf.based_step(
+                q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16), 
+                rearrange(kv_state, 'b h f d -> (b h) f d').to(torch.bfloat16), 
+                rearrange(k_state, 'b h d -> (b h) d').to(torch.bfloat16), 
+                self.y_rec
+            )
+            y = self.y_rec.view(b, h, v.shape[-1]).unsqueeze(2).to(q.dtype)
 
         else:
             # Expand dims for broadcasting to compute linear attention
@@ -351,14 +360,20 @@ class LinearAttention(nn.Module):
     def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype=None, **kwargs):
         """Creates a state tensor of shape ..."""
 
-        kv_shape = (
-            batch_size, self.num_heads, 1, self.head_dim, self.expanded_size()
-        )
-        k_shape = (
-            batch_size, self.num_heads, 1, 1, self.expanded_size()
-        )
-        kv_state = torch.zeros(*kv_shape, dtype=dtype, device=self.out_proj.weight.device)
-        k_state = torch.zeros(*k_shape, dtype=dtype, device=self.out_proj.weight.device)
+        if self.inference_implementation == 'tk' and self.recurrent_impl == "default":
+            kv_shape = (batch_size, self.num_heads, self.d_state, self.head_dim, )
+            k_shape = (batch_size, self.num_heads, self.d_state)
+            kv_state = torch.zeros(*kv_shape, dtype=dtype, device=self.out_proj.weight.device)
+            k_state = torch.zeros(*k_shape, dtype=dtype, device=self.out_proj.weight.device)
+        else:
+            kv_shape = (
+                batch_size, self.num_heads, 1, self.head_dim, self.expanded_size()
+            )
+            k_shape = (
+                batch_size, self.num_heads, 1, 1, self.expanded_size()
+            )
+            kv_state = torch.zeros(*kv_shape, dtype=dtype, device=self.out_proj.weight.device)
+            k_state = torch.zeros(*k_shape, dtype=dtype, device=self.out_proj.weight.device)
         return (kv_state, k_state)
      
     def _get_inference_cache(self, inference_params: InferenceParams):

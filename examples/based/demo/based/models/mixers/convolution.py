@@ -6,7 +6,9 @@ from einops import rearrange
 from train.src.generation import InferenceParams
 try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
+    print("Successfully imported causal_conv1d")
 except:
+    print("Could not import causal_conv1d")
     causal_conv1d_fn = None
     causal_conv1d_update = None
 

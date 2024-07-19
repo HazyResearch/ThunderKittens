@@ -573,7 +573,7 @@ class GenerationMixin:
         self,
         encodings,
         max_length,
-        pad_token_id: int = 220, # Space " " Token ID in GPT2 Tokenizer
+        pad_token_id: int=220, # Space " " Token ID in GPT2 Tokenizer
         enc_length: int=1024,
         is_prefill: bool=False,
     ): 
@@ -625,7 +625,7 @@ class GenerationMixin:
         ], print("Unrecognized decode mode")
 
         attn_mask = None
-        print(f"Decode mode: {decode_mode}")
+        # print(f"Decode mode: {decode_mode}")
         if decode_mode == "naive": 
             decode_fn = decode_naive
         elif decode_mode == "default":
@@ -910,7 +910,7 @@ class NaiveGenerationMixin:
         output_scores=False,
         **kwargs,
     ):
-        print("Using naive generation")
+        # print("Using naive generation")
         output = decode_naive(
             input_ids, self, max_length, top_k=top_k, top_p=top_p, temperature=temperature, **kwargs
         )

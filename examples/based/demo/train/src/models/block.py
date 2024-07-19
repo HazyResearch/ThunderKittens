@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from torchvision.ops import StochasticDepth
 
-from flash_attn.modules.mha import MHA
-from flash_attn.modules.mlp import Mlp
+from train.src.models.mha import MHA
+from train.src.models.mlp import Mlp
 
 try:
     from flash_attn.ops.layer_norm import dropout_add_layer_norm
@@ -26,6 +26,8 @@ try:
     from flash_attn.ops.rms_norm import RMSNorm, dropout_add_rms_norm
 except ImportError:
     RMSNorm, dropout_add_rms_norm = None, None
+    from based.ops.triton.layer_norm import RMSNorm
+    print("Using triton RMSNorm; may see slight output differences.")
 
 try:
     from flash_attn.ops.rms_norm import dropout_add_rms_norm_parallel_residual
@@ -94,12 +96,15 @@ class Block(nn.Module):
             self.drop_path2 = StochasticDepth(drop_path2, mode="row")
             self.norm2 = norm_cls(dim)
 
-        if self.fused_dropout_add_ln:
-            assert dropout_add_layer_norm is not None, "dropout_layer_norm is not installed"
-            assert dropout_add_rms_norm is not None, "dropout_layer_norm is not installed"
-            assert isinstance(self.norm1, (nn.LayerNorm, RMSNorm)) and isinstance(
-                self.dropout1, nn.Dropout
-            )
+        if isinstance(self.norm1, (nn.LayerNorm, RMSNorm)) and dropout_add_rms_norm is None:
+            self.fused_dropout_add_ln = False 
+        else:
+            if self.fused_dropout_add_ln:
+                assert dropout_add_layer_norm is not None, "dropout_layer_norm is not installed"
+                assert dropout_add_rms_norm is not None, "dropout_layer_norm is not installed"
+                assert isinstance(self.norm1, (nn.LayerNorm, RMSNorm)) and isinstance(
+                    self.dropout1, nn.Dropout
+                )
 
         self.layer_idx = layer_idx
 

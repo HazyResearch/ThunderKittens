@@ -25,17 +25,22 @@ def get_model(model_name, impl, batch_size, seqlen):
             silent=True,          # prints info during inference if False
             inference_bs=batch_size,
             override_seqlen=seqlen,
-        )
+            recurrent_impl="default",
+            # override_model_dims='Pure',
+            override_model_dims='7B',
+        ).to(dtype=torch.bfloat16)
     elif model_name == 'mamba':
         return MambaLMHeadModel.from_pretrained_hf(
             "hazyresearch/mamba-360m",
-            override_seqlen=seqlen
-        ).to("cuda")
+            override_seqlen=seqlen,
+            override_model_dims='7B',
+        ).to("cuda").to(dtype=torch.bfloat16)
     elif model_name == "attn": 
         return GPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/attn-360m",
-            override_seqlen=seqlen
-        ).to("cuda")
+            override_seqlen=seqlen,
+            override_model_dims='7B',
+        ).to("cuda").to(dtype=torch.bfloat16)
     else:
         assert 0, print("Unknown model.")
 
@@ -45,48 +50,48 @@ WARMUP_ITERS = 1
 assert NUM_ITERS > WARMUP_ITERS, print("Not enough iters.")
 toks_per_sec = []
 
-context_len, input_len, output_len = 8192, 8128, 64
+context_len, input_len, output_len, cg = 8192, 8128, 64, True
 assert context_len % 64 == 0, print("Context length must be divisible by 64.")
 benchmark_dims = [ 
     ('based', 'tk', 1, input_len, output_len), 
     ('based', 'tk', 4, input_len, output_len), 
     ('based', 'tk', 16, input_len, output_len), 
-    ('based', 'tk', 32, input_len, output_len),
     ('based', 'tk', 64, input_len, output_len), 
 
     ('based', 'default', 1, input_len, output_len), 
     ('based', 'default', 4, input_len, output_len), 
     ('based', 'default', 16, input_len, output_len), 
-    ('based', 'default', 32, input_len, output_len),
     ('based', 'default', 64, input_len, output_len), 
 
     ('mamba', 'default', 1, input_len, output_len), 
     ('mamba', 'default', 4, input_len, output_len), 
     ('mamba', 'default', 16, input_len, output_len), 
-    ('mamba', 'default', 32, input_len, output_len),
     ('mamba', 'default', 64, input_len, output_len), 
 
     ('attn', 'default', 1, input_len, output_len), 
     ('attn', 'default', 4, input_len, output_len), 
     ('attn', 'default', 16, input_len, output_len), 
-    ('attn', 'default', 32, input_len, output_len),
     ('attn', 'default', 64, input_len, output_len), 
 ]
 for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
 
-    model = get_model(model_name, impl, batch_size, context_len)
+    try:
+        model = get_model(model_name, impl, batch_size, context_len)
+    except:
+        continue
     inputs = torch.randint(low=0, high=len(tokenizer), size=(batch_size, input_len), device="cuda")
     limit = inputs.shape[-1] + output_len
     start = inputs.shape[-1]
     print(f"{start=}, {limit=}")
 
-    tps_iters = []
 
+    ttps_iters = []
+    otps_iters = []
+    times_iters = []
     # Generate
     model.eval()
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    if 1:
         with torch.no_grad():
-            
             try:
                 for i in range(NUM_ITERS): 
                     fn = model.generate
@@ -99,13 +104,18 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
                         temperature=0.1,
                         top_k=1,
                         top_p=1.0,
-                        implementation=impl
+                        implementation=impl,
+                        cg=cg,
                     )
 
                     torch.cuda.synchronize()
                     end_t = time.time()
-                    tps = ((input_len + output_len) / (end_t-start_t))
-                    if i >= WARMUP_ITERS: tps_iters.append(tps)
+                    tps = (input_len + output_len) / (end_t-start_t)
+                    otps = ( output_len ) / (end_t-start_t)
+                    if i >= WARMUP_ITERS: 
+                        ttps_iters.append(tps)
+                        otps_iters.append(otps)
+                        times_iters.append((end_t-start_t)*1000)
 
                 toks_per_sec.append({
                     'model': model_name,
@@ -113,17 +123,23 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
                     'bs': batch_size, 
                     'input_len': input_len, 
                     'output_len': output_len, 
-                    'time': sum(tps_iters)/len(tps_iters)
+                    'total_tps': sum(ttps_iters)/len(ttps_iters),
+                    'out_tps': sum(otps_iters)/len(otps_iters),
+                    'time': sum(times_iters)/len(times_iters),
+                    'cg': cg
                 })
             except Exception as e:
                 print(e)
                 pass
+    import gc
+    try:
+        del model;gc.collect();torch.cuda.empty_cache()
+    except:
+        pass
 
 # plot
 def plot_results(toks_per_sec):
-    # Prepare data for plotting
     batch_size_2_data = {}
-    
     for value in toks_per_sec:
         model = value['model']
         impl = value['impl'] 
@@ -136,16 +152,11 @@ def plot_results(toks_per_sec):
         input_len = value['input_len']
         output_len = value['output_len']
     
-    # Extract unique batch sizes and sort them
-    batch_sizes = sorted(batch_size_2_data.keys())
-    
-    # Get unique implementation-model combinations
+    batch_sizes = sorted(batch_size_2_data.keys())    
     impl_models = sorted(set(key for bs_data in batch_size_2_data.values() for key in bs_data.keys()))
     
     # Set up the plot
     fig, ax = plt.subplots(figsize=(15, 8))
-    
-    # Set the width of each bar and positions of the bars
     num_impl_models = len(impl_models)
     width = 0.8 / num_impl_models
     x = np.arange(len(batch_sizes))
@@ -177,7 +188,6 @@ def plot_results(toks_per_sec):
     plt.tight_layout()
     plt.savefig(f'benchmarking/plots/performance_comparison_input{input_len}_output{output_len}.png', dpi=300, bbox_inches='tight')
     plt.close()
-
 
 plot_results(toks_per_sec)
 print(toks_per_sec)
