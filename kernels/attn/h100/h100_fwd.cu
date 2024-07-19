@@ -9,7 +9,7 @@ using namespace kittens;
 
 using layout_q = wgmma_swizzle_l; 
 using layout_k = wgmma_swizzle_l;
-using layout_v = wgmma_interleave_l;
+using layout_v = wgmma_swizzle_l;
 using layout_o = swizzle_l;
 
 template<int D> struct fwd_attend_ker_tile_dims {};
@@ -85,8 +85,8 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     tma::arrive_and_wait(qsmem_barrier, 0);
 
     // premultiply by tempreature
-    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); }
-    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
+    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.44269504089f)); }
+    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.44269504089f)); }
 
     for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
 
@@ -119,10 +119,10 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 
         row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
         sub_row(att_block, att_block, max_vec);
-        exp(att_block, att_block);
+        exp2(att_block, att_block);
 
         sub(max_vec_last, max_vec_last, max_vec);
-        exp(max_vec_last, max_vec_last);
+        exp2(max_vec_last, max_vec_last);
         mul(norm_vec, norm_vec, max_vec_last);
 
         row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec

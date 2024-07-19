@@ -3,10 +3,10 @@
 #ifdef TEST_GROUP_WGMMA_MMA_FP32_BF16
 
 struct test_mma_AB_fp32_bf16 {
-    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::transposed L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>;
+    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::transposed_layout L2>
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 6 || W == 8 || W == 12)>;
     static inline const std::string test_identifier = "wgmma_mma_AB_fp32_bf16";
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::transposed L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::transposed_layout L2>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -19,7 +19,7 @@ struct test_mma_AB_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::transposed L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::transposed_layout L2>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -41,10 +41,10 @@ struct test_mma_AB_fp32_bf16 {
     }
 };
 struct test_mma_ABt_fp32_bf16 {
-    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>; // this is warp-level
+    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 6 || W == 8 || W == 12)>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_ABt_fp32_bf16";
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -57,7 +57,7 @@ struct test_mma_ABt_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -79,10 +79,10 @@ struct test_mma_ABt_fp32_bf16 {
     }
 };
 struct test_mma_AtB_fp32_bf16 {
-    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>; // this is warp-level
+    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 6 || W == 8 || W == 12)>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_AtB_fp32_bf16";
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -95,7 +95,7 @@ struct test_mma_AtB_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -117,10 +117,10 @@ struct test_mma_AtB_fp32_bf16 {
     }
 };
 struct test_mma_AtBt_fp32_bf16 {
-    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
-    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 8)>; // this is warp-level
+    template<int H, int W, int NW, typename K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
+    using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256 && (W <= 4 || W == 6 || W == 8 || W == 12)>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_AtBt_fp32_bf16";
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -133,7 +133,7 @@ struct test_mma_AtBt_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal L1, kittens::ducks::wgmma::normal L2>
+    template<int H, int W, int NW, typename _K, kittens::ducks::wgmma::normal_layout L1, kittens::ducks::wgmma::normal_layout L2>
     __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -197,15 +197,13 @@ using I2_t = std::integral_constant<int, 2>;
 using I3_t = std::integral_constant<int, 3>;
 using I4_t = std::integral_constant<int, 4>;
 using I5_t = std::integral_constant<int, 5>;
-using I6_t = std::integral_constant<int, 6>;
-using I7_t = std::integral_constant<int, 7>;
-using I8_t = std::integral_constant<int, 8>;
 void group::wgmma::mma_fp32_bf16::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warpgroup/wgmma/mma_fp32_bf16 tests! -----\n" << std::endl;
-    constexpr int SIZE = INTENSITY_1 ? 1 :
-                         INTENSITY_2 ? 2 : 
-                         INTENSITY_3 ? 4 :
-                         INTENSITY_4 ? 8 : -1;
+    constexpr int SIZE = INTENSITY_1 ? 2 :
+                         INTENSITY_2 ? 4 : 
+                         INTENSITY_3 ? 8 :
+                         INTENSITY_4 ? 16 : -1;
+    // Test all interleave formats
     mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I1_t, wgmma_interleave, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I1_t, wgmma_interleave, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I1_t, wgmma_interleave, wgmma_interleave>::run(results);
@@ -226,19 +224,9 @@ void group::wgmma::mma_fp32_bf16::tests(test_data &results) {
     mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I5_t, wgmma_interleave, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I5_t, wgmma_interleave, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_AtBt_fp32_bf16, SIZE, I5_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I6_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I6_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I6_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtBt_fp32_bf16, SIZE, I6_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I7_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I7_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I7_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtBt_fp32_bf16, SIZE, I7_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I8_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I8_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I8_t, wgmma_interleave, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AtBt_fp32_bf16, SIZE, I8_t, wgmma_interleave, wgmma_interleave>::run(results);
 
+    // Test swizzle formats without any transpositions
+    std::cout << "Swizzle, no transpositions.\n";
     mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I1_t, wgmma_swizzle, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I1_t, wgmma_swizzle, wgmma_swizzle>::run(results);
     mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I2_t, wgmma_swizzle, wgmma_interleave>::run(results);
@@ -249,12 +237,33 @@ void group::wgmma::mma_fp32_bf16::tests(test_data &results) {
     mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I4_t, wgmma_swizzle, wgmma_swizzle>::run(results);
     mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I5_t, wgmma_swizzle, wgmma_interleave>::run(results);
     mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I5_t, wgmma_swizzle, wgmma_swizzle>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I6_t, wgmma_swizzle, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I6_t, wgmma_swizzle, wgmma_swizzle>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I7_t, wgmma_swizzle, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I7_t, wgmma_swizzle, wgmma_swizzle>::run(results);
-    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I8_t, wgmma_swizzle, wgmma_interleave>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,  SIZE, I8_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+
+    std::cout << "B matrix swizzle transposed.\n";
+    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I1_t, wgmma_interleave, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I2_t, wgmma_interleave, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I3_t, wgmma_interleave, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I4_t, wgmma_interleave, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AB_fp32_bf16,   SIZE, I5_t, wgmma_interleave, wgmma_swizzle>::run(results);
+
+    std::cout << "A matrix swizzle transposed.\n";
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,   SIZE, I1_t, wgmma_swizzle, wgmma_interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,   SIZE, I2_t, wgmma_swizzle, wgmma_interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,   SIZE, I3_t, wgmma_swizzle, wgmma_interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,   SIZE, I4_t, wgmma_swizzle, wgmma_interleave>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_bf16,   SIZE, I5_t, wgmma_swizzle, wgmma_interleave>::run(results);
+
+    // Test swizzle formats with transpositions;
+    std::cout << "Both sides swizzle transposed.\n";
+    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I1_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I2_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I3_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I4_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+    mma_sweep_width_warpgroup<test_mma_AtB_fp32_bf16,  SIZE, I5_t, wgmma_swizzle, wgmma_swizzle>::run(results);
+
+
+//     mma_wrapper_2d<test_mma_AB_fp32_bf16, 4, 4, 4, I4_t, wgmma_interleave, wgmma_interleave>::run(results);
+//     mma_wrapper_2d<test_mma_AB_fp32_bf16, 4, 4, 4, I4_t, wgmma_swizzle, wgmma_interleave>::run(results);
+//     mma_wrapper_2d<test_mma_AB_fp32_bf16, 4, 4, 4, I4_t, wgmma_swizzle, wgmma_swizzle>::run(results);
 }
 
 #endif

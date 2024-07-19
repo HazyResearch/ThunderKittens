@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = 224000 / NUM_BLOCKS; // need to launch two blocks if possible.
+    unsigned long mem_size = 224000; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(
         fwd_attend_ker_dim<ATTN_D>,

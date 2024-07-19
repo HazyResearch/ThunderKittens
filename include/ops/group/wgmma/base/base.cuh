@@ -16,7 +16,8 @@ concept normal_layout = (
 );
 template<typename T>
 concept transposed_layout = (
-    std::is_same_v<T, st_layout::wgmma_interleave>
+    std::is_same_v<T, st_layout::wgmma_interleave>   ||
+    std::is_same_v<T, st_layout::wgmma_swizzle> 
 );
 template<typename T> concept st_normal     = ducks::st::all<T> && normal_layout<typename T::layout>;
 template<typename T> concept st_transposed = ducks::st::all<T> && transposed_layout<typename T::layout>;
@@ -90,12 +91,44 @@ struct transposed_descriptor {
     uint64_t base_desc;
     __device__ inline transposed_descriptor(const ST &tile) {
         base_desc  = matrix_descriptor_encode((uint64_t)(&tile.data[0]));
-        base_desc |= matrix_descriptor_encode((uint64_t)256*ST::width) << 16;
-        base_desc |= matrix_descriptor_encode((uint64_t)128) << 32;
+        if constexpr (std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_swizzle>) {
+            if constexpr (ST::width%4 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)1024*ST::height*2) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
+                base_desc |= 1llu << 62; // set wgmma_swizzle mode
+            }
+            else if constexpr (ST::width%2 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)512*ST::height*2) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)512) << 32;
+                base_desc |= 2llu << 62; // set wgmma_swizzle mode
+            }
+            else {
+                base_desc |= matrix_descriptor_encode((uint64_t)256*ST::height*2) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)256) << 32;
+                base_desc |= 3llu << 62; // set wgmma_swizzle mode
+            }
+        }
+        else {
+            base_desc |= matrix_descriptor_encode((uint64_t)256*ST::width) << 16;
+            base_desc |= matrix_descriptor_encode((uint64_t)128) << 32;
+        }
     }
     __device__ inline transposed_descriptor(const transposed_descriptor<ST> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
-        return base_desc + matrix_descriptor_encode(chunk_idx*(256*ST::width * 2));
+        if constexpr (std::is_same_v<typename ST::layout, ducks::st_layout::wgmma_swizzle>) {
+            if constexpr (ST::width%4 == 0) {
+                return base_desc + matrix_descriptor_encode(chunk_idx*2048);
+            }
+            else if constexpr (ST::width%2 == 0) {
+                return base_desc + matrix_descriptor_encode(chunk_idx*1024);
+            }
+            else {
+                return base_desc + matrix_descriptor_encode(chunk_idx*512);
+            }
+        }
+        else {
+            return base_desc + matrix_descriptor_encode(chunk_idx*(256*ST::width * 2));
+        }
     }
 };
 template<kittens::ducks::st::all ST, int transpose> using descriptor = std::conditional_t<transpose, transposed_descriptor<ST>, normal_descriptor<ST>>;
