@@ -150,14 +150,22 @@ struct base {
     );
 };
 
+// all the ptx's
 #include "4x1.impl"
 #include "4x2.impl"
 #include "4x3.impl"
 #include "4x4.impl"
+#include "4x5.impl"
 #include "4x6.impl"
+#include "4x7.impl"
 #include "4x8.impl"
+#include "4x9.impl"
+#include "4x10.impl"
 #include "4x11.impl"
 #include "4x12.impl"
+#include "4x13.impl"
+#include "4x14.impl"
+#include "4x15.impl"
 #include "4x16.impl"
 
 // can add more later, just annoying
