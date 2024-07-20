@@ -6,17 +6,9 @@
 namespace kittens {
 namespace ducks {
 namespace wgmma {
-template<typename T>
-concept normal = (
-    std::is_same_v<T, st_layout::wgmma_interleave>   ||
-    std::is_same_v<T, st_layout::wgmma_swizzle> 
-);
-template<typename T>
-concept transposed = (
-    std::is_same_v<T, st_layout::wgmma_interleave>   // ||
-);
-template<typename T> concept st_normal     = ducks::st::all<T> && normal<typename T::layout>;
-template<typename T> concept st_transposed = ducks::st::all<T> && transposed<typename T::layout>;
+namespace descriptor {
+struct identifier {};
+}
 }
 }
 namespace wgmma {
@@ -24,64 +16,78 @@ namespace wgmma {
 // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
 __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
 
-// wgmma helpers
-template<int height, int width, ducks::st_layout::all L>
-struct descriptor { static_assert("Asbtract wgmma descriptor struct should never be instantiated."); };
-
-template<int height, int width>
-struct descriptor<height, width, ducks::st_layout::wgmma_interleave> {
-    __device__ static inline uint64_t normal(uint64_t start_addr, int chunk_idx) {
-        uint64_t desc = 0x0000000000000000;
-        desc |= matrix_descriptor_encode(start_addr + chunk_idx*(128 * 2));
-        desc |= matrix_descriptor_encode((uint64_t)128) << 16;
-        desc |= matrix_descriptor_encode((uint64_t)256*width) << 32;
-        return desc;
+template<kittens::ducks::st::all _ST, int transpose>
+struct descriptor {
+    using identifier = ducks::wgmma::descriptor::identifier;
+    using ST = _ST;
+    static constexpr int height = ST::height;
+    static constexpr int width  = ST::width;
+    using T = ST::T;
+    uint64_t base_desc;
+    __device__ inline descriptor(const ST &tile) {
+        base_desc = matrix_descriptor_encode((uint64_t)(&tile.data[0]));
+        if constexpr (transpose) { // transpose mode
+            if constexpr (ST::width%4 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)2048*ST::height) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
+                base_desc |= 1llu << 62; // set wgmma_swizzle mode
+            }
+            else if constexpr (ST::width%2 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)1024*ST::height) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)512) << 32;
+                base_desc |= 2llu << 62; // set wgmma_swizzle mode
+            }
+            else {
+                base_desc |= matrix_descriptor_encode((uint64_t)512*ST::height) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)256) << 32;
+                base_desc |= 3llu << 62; // set wgmma_swizzle mode
+            }
+        }
+        else { // normal mode
+            if constexpr (ST::width%4 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
+                base_desc |= 1llu << 62; // set wgmma_swizzle mode
+            }
+            else if constexpr (ST::width%2 == 0) {
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)512) << 32;
+                base_desc |= 2llu << 62; // set wgmma_swizzle mode
+            }
+            else {
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
+                base_desc |= matrix_descriptor_encode((uint64_t)256) << 32;
+                base_desc |= 3llu << 62; // set wgmma_swizzle mode
+            }
+        }
     }
-    __device__ static inline uint64_t transposed(uint64_t start_addr, int chunk_idx) {
-        uint64_t desc = 0x0000000000000000;
-        desc |= matrix_descriptor_encode(start_addr + chunk_idx*(256*width * 2));
-        desc |= matrix_descriptor_encode((uint64_t)256*width) << 16;
-        desc |= matrix_descriptor_encode((uint64_t)128) << 32;
-        return desc;
+    __device__ inline descriptor(const descriptor<ST, transpose> &other) : base_desc(other.base_desc) {} // copy constructor
+    __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
+        if constexpr (transpose) { // transpose mode
+            if constexpr (ST::width%4 == 0) {
+                return base_desc + matrix_descriptor_encode(chunk_idx*2048);
+            }
+            else if constexpr (ST::width%2 == 0) {
+                return base_desc + matrix_descriptor_encode(chunk_idx*1024);
+            }
+            else {
+                return base_desc + matrix_descriptor_encode(chunk_idx*512);
+            }
+        }
+        else { // normal mode
+            if constexpr (ST::width%4 == 0) {
+                return base_desc + matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*ST::height*2048);
+            }
+            else if constexpr (ST::width%2 == 0) {
+                return base_desc + matrix_descriptor_encode((chunk_idx%2)*32 + (chunk_idx/2)*ST::height*1024);
+            }
+            else {
+                return base_desc + matrix_descriptor_encode(chunk_idx*ST::height*512);
+            }
+        }
     }
 };
-template<int height, int width>
-struct descriptor<height, width, ducks::st_layout::wgmma_swizzle> {
-    __device__ static inline uint64_t normal(uint64_t start_addr, int chunk_idx) {
-        uint64_t desc = 0x0000000000000000;
-        if constexpr (width%4 == 0) {
-            desc |= matrix_descriptor_encode(start_addr + (chunk_idx%4)*32 + (chunk_idx/4)*height*2048);
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
-            desc |= 1llu << 62; // set wgmma_swizzle mode
-        }
-        else if constexpr (width%2 == 0) {
-            desc |= matrix_descriptor_encode(start_addr + (chunk_idx%2)*32 + (chunk_idx/2)*height*1024);
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)512) << 32;
-            desc |= 2llu << 62; // set wgmma_swizzle mode
-        }
-        else {
-            desc |= matrix_descriptor_encode(start_addr + chunk_idx*height*512);
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)256) << 32;
-            desc |= 3llu << 62; // set wgmma_swizzle mode
-        }
-        return desc;
-    }
-};
 
-template<int transpose, ducks::st::all ST>
-__device__ static inline uint64_t make_descriptor(const ST &tile, int chunk_idx) {
-    if constexpr (transpose) {
-        static_assert(ducks::wgmma::transposed<typename ST::layout>, "Tile must have a transposable wgmma layout to be used here.");
-        return descriptor<ST::underlying_height, ST::underlying_width, typename ST::layout>::transposed((uint64_t)(tile.data), chunk_idx);
-    }
-    else {
-        static_assert(ducks::wgmma::normal<typename ST::layout>, "Tile must have a normal wgmma layout to be used here.");
-        return descriptor<ST::underlying_height, ST::underlying_width, typename ST::layout>::normal((uint64_t)(tile.data), chunk_idx);
-    }
-}
 // templated wrapper for PTX
 template<typename T_D, typename T_AB, int width, int trans_a, int trans_b>
 struct base {
@@ -97,26 +103,36 @@ struct base {
         const uint64_t b_st_desc,
         int scale_d = 1
     );
-    // ----- DESCRIPTORS ----- //
-    template<ducks::st::all ST> __device__ static inline uint64_t a_desc(const ST &tile, int chunk_idx) {
-        return make_descriptor<trans_a>(tile, chunk_idx);
-    }
-    template<ducks::st::all ST> __device__ static inline uint64_t b_desc(const ST &tile, int chunk_idx) {
-        return make_descriptor<trans_b>(tile, chunk_idx);
-    }
 };
 
+// all the ptx's
 #include "4x1.impl"
 #include "4x2.impl"
 #include "4x3.impl"
 #include "4x4.impl"
-
-// can add bigger ones later, just annoying
-// #include "4x5.impl"
+#include "4x5.impl"
 #include "4x6.impl"
-// #include "4x7.impl"
+#include "4x7.impl"
 #include "4x8.impl"
+#include "4x9.impl"
+#include "4x10.impl"
+#include "4x11.impl"
+#include "4x12.impl"
+#include "4x13.impl"
+#include "4x14.impl"
+#include "4x15.impl"
 #include "4x16.impl"
 
+}
+namespace ducks {
+namespace wgmma {
+// input refers to either an ST directly or to a pre-generated descriptor, which can save cycles in certain situations.
+template<typename T> concept input = ducks::st::all<T> || (requires {typename T::identifier;} && std::is_same_v<typename T::identifier, descriptor::identifier>);
+namespace detail {
+template<typename T> struct st_getter { using type = typename T::ST; };
+template<ducks::st::all T> struct st_getter<T> { using type = T; };
+template<typename T> using get_st = typename st_getter<T>::type;
+}
+}
 }
 }

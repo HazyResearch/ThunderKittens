@@ -86,6 +86,25 @@ template<> __device__ inline bf16   exp::op<bf16>  (const bf16 &x  ) { return he
 template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2exp(x);                         }
 template<> __device__ inline half   exp::op<half>  (const half &x  ) { return hexp(x);                          }
 template<> __device__ inline half_2 exp::op<half_2>(const half_2 &x) { return h2exp(x);                         }
+
+/**
+ * @brief Exponential function operation, in base 2
+ *
+ * This operation calculates the exponential of the input value, in base 2.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The exponential of the input value.
+ */
+struct exp2 {
+    template<typename T> static __device__ inline T op(const T &x) { return exp2f(x); }
+};
+template<> __device__ inline float  exp2::op<float> (const float &x ) { return exp2f(x);                        }
+template<> __device__ inline float2 exp2::op<float2>(const float2 &x) { return float2{exp2f(x.x), exp2f(x.y)}; }
+template<> __device__ inline bf16   exp2::op<bf16>  (const bf16 &x  ) { return hexp2(x);                          }
+template<> __device__ inline bf16_2 exp2::op<bf16_2>(const bf16_2 &x) { return h2exp2(x);                         }
+template<> __device__ inline half   exp2::op<half>  (const half &x  ) { return hexp2(x);                          }
+template<> __device__ inline half_2 exp2::op<half_2>(const half_2 &x) { return h2exp2(x);                         }
 /**
  * @brief Natural log function operation.
  *

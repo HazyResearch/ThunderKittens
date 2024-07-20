@@ -17,8 +17,8 @@
  * @param[out] dst The destination tile.
  * @param[in] src The source tile.
  */
-template<typename T, typename U, int _height, int _width, ducks::st_layout::all L1, ducks::st_layout::all L2>
-__device__ static inline void copy(st<T, _height, _width, L1> &dst, const st<U, _height, _width, L2> &src) {
+template<typename T, typename U, int _height, int _width>
+__device__ static inline void copy(st<T, _height, _width> &dst, const st<U, _height, _width> &src) {
     #pragma unroll
     for(int i = laneid(); i < dst.num_elements; i+=GROUP_THREADS) {
         int row = i/dst.cols, col = i%dst.cols;

@@ -1,7 +1,7 @@
 template<typename T_D, typename T_AB, int trans_a, int trans_b>
-struct base<T_D, T_AB, 16, trans_a, trans_b> {
+struct base<T_D, T_AB, 10, trans_a, trans_b> {
     __device__ static inline void rt_st(
-        rt<T_D, 1, 16, ducks::rt_layout::row> &dst,
+        rt<T_D, 1, 10, ducks::rt_layout::row> &dst,
         const rt_base<T_AB, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
         int scale_d = 1
@@ -17,12 +17,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %133, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111, %112, %113, %114, %115, %116, %117, %118, %119, %120, %121, %122, %123, %124, %125, %126, %127}, " \
-                "{%128, %129, %130, %131}, " \
-                "%132, " \
-                "p, 1, 1, %134;\n" \
+                "setp.ne.b32 p, %85, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f32.bf16.bf16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79}, " \
+                "{%80, %81, %82, %83}, " \
+                "%84, " \
+                "p, 1, 1, %86;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -65,31 +65,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+f"(dst.tiles[0][ 9].data[0].x), "+f"(dst.tiles[0][ 9].data[0].y),
                 "+f"(dst.tiles[0][ 9].data[1].x), "+f"(dst.tiles[0][ 9].data[1].y),
                 "+f"(dst.tiles[0][ 9].data[2].x), "+f"(dst.tiles[0][ 9].data[2].y),
-                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y),
-                "+f"(dst.tiles[0][10].data[0].x), "+f"(dst.tiles[0][10].data[0].y),
-                "+f"(dst.tiles[0][10].data[1].x), "+f"(dst.tiles[0][10].data[1].y),
-                "+f"(dst.tiles[0][10].data[2].x), "+f"(dst.tiles[0][10].data[2].y),
-                "+f"(dst.tiles[0][10].data[3].x), "+f"(dst.tiles[0][10].data[3].y),
-                "+f"(dst.tiles[0][11].data[0].x), "+f"(dst.tiles[0][11].data[0].y),
-                "+f"(dst.tiles[0][11].data[1].x), "+f"(dst.tiles[0][11].data[1].y),
-                "+f"(dst.tiles[0][11].data[2].x), "+f"(dst.tiles[0][11].data[2].y),
-                "+f"(dst.tiles[0][11].data[3].x), "+f"(dst.tiles[0][11].data[3].y),
-                "+f"(dst.tiles[0][12].data[0].x), "+f"(dst.tiles[0][12].data[0].y),
-                "+f"(dst.tiles[0][12].data[1].x), "+f"(dst.tiles[0][12].data[1].y),
-                "+f"(dst.tiles[0][12].data[2].x), "+f"(dst.tiles[0][12].data[2].y),
-                "+f"(dst.tiles[0][12].data[3].x), "+f"(dst.tiles[0][12].data[3].y),
-                "+f"(dst.tiles[0][13].data[0].x), "+f"(dst.tiles[0][13].data[0].y),
-                "+f"(dst.tiles[0][13].data[1].x), "+f"(dst.tiles[0][13].data[1].y),
-                "+f"(dst.tiles[0][13].data[2].x), "+f"(dst.tiles[0][13].data[2].y),
-                "+f"(dst.tiles[0][13].data[3].x), "+f"(dst.tiles[0][13].data[3].y),
-                "+f"(dst.tiles[0][14].data[0].x), "+f"(dst.tiles[0][14].data[0].y),
-                "+f"(dst.tiles[0][14].data[1].x), "+f"(dst.tiles[0][14].data[1].y),
-                "+f"(dst.tiles[0][14].data[2].x), "+f"(dst.tiles[0][14].data[2].y),
-                "+f"(dst.tiles[0][14].data[3].x), "+f"(dst.tiles[0][14].data[3].y),
-                "+f"(dst.tiles[0][15].data[0].x), "+f"(dst.tiles[0][15].data[0].y),
-                "+f"(dst.tiles[0][15].data[1].x), "+f"(dst.tiles[0][15].data[1].y),
-                "+f"(dst.tiles[0][15].data[2].x), "+f"(dst.tiles[0][15].data[2].y),
-                "+f"(dst.tiles[0][15].data[3].x), "+f"(dst.tiles[0][15].data[3].y)
+                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y)
 
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
@@ -102,12 +78,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %133, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f32.f16.f16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111, %112, %113, %114, %115, %116, %117, %118, %119, %120, %121, %122, %123, %124, %125, %126, %127}, " \
-                "{%128, %129, %130, %131}, " \
-                "%132, " \
-                "p, 1, 1, %134;\n" \
+                "setp.ne.b32 p, %85, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f32.f16.f16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79}, " \
+                "{%80, %81, %82, %83}, " \
+                "%84, " \
+                "p, 1, 1, %86;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -150,31 +126,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+f"(dst.tiles[0][ 9].data[0].x), "+f"(dst.tiles[0][ 9].data[0].y),
                 "+f"(dst.tiles[0][ 9].data[1].x), "+f"(dst.tiles[0][ 9].data[1].y),
                 "+f"(dst.tiles[0][ 9].data[2].x), "+f"(dst.tiles[0][ 9].data[2].y),
-                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y),
-                "+f"(dst.tiles[0][10].data[0].x), "+f"(dst.tiles[0][10].data[0].y),
-                "+f"(dst.tiles[0][10].data[1].x), "+f"(dst.tiles[0][10].data[1].y),
-                "+f"(dst.tiles[0][10].data[2].x), "+f"(dst.tiles[0][10].data[2].y),
-                "+f"(dst.tiles[0][10].data[3].x), "+f"(dst.tiles[0][10].data[3].y),
-                "+f"(dst.tiles[0][11].data[0].x), "+f"(dst.tiles[0][11].data[0].y),
-                "+f"(dst.tiles[0][11].data[1].x), "+f"(dst.tiles[0][11].data[1].y),
-                "+f"(dst.tiles[0][11].data[2].x), "+f"(dst.tiles[0][11].data[2].y),
-                "+f"(dst.tiles[0][11].data[3].x), "+f"(dst.tiles[0][11].data[3].y),
-                "+f"(dst.tiles[0][12].data[0].x), "+f"(dst.tiles[0][12].data[0].y),
-                "+f"(dst.tiles[0][12].data[1].x), "+f"(dst.tiles[0][12].data[1].y),
-                "+f"(dst.tiles[0][12].data[2].x), "+f"(dst.tiles[0][12].data[2].y),
-                "+f"(dst.tiles[0][12].data[3].x), "+f"(dst.tiles[0][12].data[3].y),
-                "+f"(dst.tiles[0][13].data[0].x), "+f"(dst.tiles[0][13].data[0].y),
-                "+f"(dst.tiles[0][13].data[1].x), "+f"(dst.tiles[0][13].data[1].y),
-                "+f"(dst.tiles[0][13].data[2].x), "+f"(dst.tiles[0][13].data[2].y),
-                "+f"(dst.tiles[0][13].data[3].x), "+f"(dst.tiles[0][13].data[3].y),
-                "+f"(dst.tiles[0][14].data[0].x), "+f"(dst.tiles[0][14].data[0].y),
-                "+f"(dst.tiles[0][14].data[1].x), "+f"(dst.tiles[0][14].data[1].y),
-                "+f"(dst.tiles[0][14].data[2].x), "+f"(dst.tiles[0][14].data[2].y),
-                "+f"(dst.tiles[0][14].data[3].x), "+f"(dst.tiles[0][14].data[3].y),
-                "+f"(dst.tiles[0][15].data[0].x), "+f"(dst.tiles[0][15].data[0].y),
-                "+f"(dst.tiles[0][15].data[1].x), "+f"(dst.tiles[0][15].data[1].y),
-                "+f"(dst.tiles[0][15].data[2].x), "+f"(dst.tiles[0][15].data[2].y),
-                "+f"(dst.tiles[0][15].data[3].x), "+f"(dst.tiles[0][15].data[3].y)
+                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y)
 
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
@@ -187,12 +139,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %69, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f16.f16.f16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63}, " \
-                "{%64, %65, %66, %67}, " \
-                "%68, " \
-                "p, 1, 1, %70;\n" \
+                "setp.ne.b32 p, %45, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f16.f16.f16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39}, " \
+                "{%40, %41, %42, %43}, " \
+                "%44, " \
+                "p, 1, 1, %46;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -235,31 +187,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[0]),
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[1]),
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[3])
+                "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[3])
 
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
@@ -269,7 +197,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
         }
     }
     __device__ static inline void st_st(
-        rt<T_D, 1, 16, ducks::rt_layout::row> &dst,
+        rt<T_D, 1, 10, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
         int scale_d = 1
@@ -285,12 +213,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %130, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111, %112, %113, %114, %115, %116, %117, %118, %119, %120, %121, %122, %123, %124, %125, %126, %127}, " \
-                "%128, " \
-                "%129, " \
-                "p, 1, 1, %131, %132;\n" \
+                "setp.ne.b32 p, %82, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f32.bf16.bf16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79}, " \
+                "%80, " \
+                "%81, " \
+                "p, 1, 1, %83, %84;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a im-trans-b
 
@@ -333,31 +261,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+f"(dst.tiles[0][ 9].data[0].x), "+f"(dst.tiles[0][ 9].data[0].y),
                 "+f"(dst.tiles[0][ 9].data[1].x), "+f"(dst.tiles[0][ 9].data[1].y),
                 "+f"(dst.tiles[0][ 9].data[2].x), "+f"(dst.tiles[0][ 9].data[2].y),
-                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y),
-                "+f"(dst.tiles[0][10].data[0].x), "+f"(dst.tiles[0][10].data[0].y),
-                "+f"(dst.tiles[0][10].data[1].x), "+f"(dst.tiles[0][10].data[1].y),
-                "+f"(dst.tiles[0][10].data[2].x), "+f"(dst.tiles[0][10].data[2].y),
-                "+f"(dst.tiles[0][10].data[3].x), "+f"(dst.tiles[0][10].data[3].y),
-                "+f"(dst.tiles[0][11].data[0].x), "+f"(dst.tiles[0][11].data[0].y),
-                "+f"(dst.tiles[0][11].data[1].x), "+f"(dst.tiles[0][11].data[1].y),
-                "+f"(dst.tiles[0][11].data[2].x), "+f"(dst.tiles[0][11].data[2].y),
-                "+f"(dst.tiles[0][11].data[3].x), "+f"(dst.tiles[0][11].data[3].y),
-                "+f"(dst.tiles[0][12].data[0].x), "+f"(dst.tiles[0][12].data[0].y),
-                "+f"(dst.tiles[0][12].data[1].x), "+f"(dst.tiles[0][12].data[1].y),
-                "+f"(dst.tiles[0][12].data[2].x), "+f"(dst.tiles[0][12].data[2].y),
-                "+f"(dst.tiles[0][12].data[3].x), "+f"(dst.tiles[0][12].data[3].y),
-                "+f"(dst.tiles[0][13].data[0].x), "+f"(dst.tiles[0][13].data[0].y),
-                "+f"(dst.tiles[0][13].data[1].x), "+f"(dst.tiles[0][13].data[1].y),
-                "+f"(dst.tiles[0][13].data[2].x), "+f"(dst.tiles[0][13].data[2].y),
-                "+f"(dst.tiles[0][13].data[3].x), "+f"(dst.tiles[0][13].data[3].y),
-                "+f"(dst.tiles[0][14].data[0].x), "+f"(dst.tiles[0][14].data[0].y),
-                "+f"(dst.tiles[0][14].data[1].x), "+f"(dst.tiles[0][14].data[1].y),
-                "+f"(dst.tiles[0][14].data[2].x), "+f"(dst.tiles[0][14].data[2].y),
-                "+f"(dst.tiles[0][14].data[3].x), "+f"(dst.tiles[0][14].data[3].y),
-                "+f"(dst.tiles[0][15].data[0].x), "+f"(dst.tiles[0][15].data[0].y),
-                "+f"(dst.tiles[0][15].data[1].x), "+f"(dst.tiles[0][15].data[1].y),
-                "+f"(dst.tiles[0][15].data[2].x), "+f"(dst.tiles[0][15].data[2].y),
-                "+f"(dst.tiles[0][15].data[3].x), "+f"(dst.tiles[0][15].data[3].y)
+                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y)
 
             :   "l"(a_st_desc),
                 "l"(b_st_desc),
@@ -372,12 +276,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %130, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f32.f16.f16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111, %112, %113, %114, %115, %116, %117, %118, %119, %120, %121, %122, %123, %124, %125, %126, %127}, " \
-                "%128, " \
-                "%129, " \
-                "p, 1, 1, %131, %132;\n" \
+                "setp.ne.b32 p, %82, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f32.f16.f16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79}, " \
+                "%80, " \
+                "%81, " \
+                "p, 1, 1, %83, %84;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a im-trans-b
 
@@ -420,31 +324,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+f"(dst.tiles[0][ 9].data[0].x), "+f"(dst.tiles[0][ 9].data[0].y),
                 "+f"(dst.tiles[0][ 9].data[1].x), "+f"(dst.tiles[0][ 9].data[1].y),
                 "+f"(dst.tiles[0][ 9].data[2].x), "+f"(dst.tiles[0][ 9].data[2].y),
-                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y),
-                "+f"(dst.tiles[0][10].data[0].x), "+f"(dst.tiles[0][10].data[0].y),
-                "+f"(dst.tiles[0][10].data[1].x), "+f"(dst.tiles[0][10].data[1].y),
-                "+f"(dst.tiles[0][10].data[2].x), "+f"(dst.tiles[0][10].data[2].y),
-                "+f"(dst.tiles[0][10].data[3].x), "+f"(dst.tiles[0][10].data[3].y),
-                "+f"(dst.tiles[0][11].data[0].x), "+f"(dst.tiles[0][11].data[0].y),
-                "+f"(dst.tiles[0][11].data[1].x), "+f"(dst.tiles[0][11].data[1].y),
-                "+f"(dst.tiles[0][11].data[2].x), "+f"(dst.tiles[0][11].data[2].y),
-                "+f"(dst.tiles[0][11].data[3].x), "+f"(dst.tiles[0][11].data[3].y),
-                "+f"(dst.tiles[0][12].data[0].x), "+f"(dst.tiles[0][12].data[0].y),
-                "+f"(dst.tiles[0][12].data[1].x), "+f"(dst.tiles[0][12].data[1].y),
-                "+f"(dst.tiles[0][12].data[2].x), "+f"(dst.tiles[0][12].data[2].y),
-                "+f"(dst.tiles[0][12].data[3].x), "+f"(dst.tiles[0][12].data[3].y),
-                "+f"(dst.tiles[0][13].data[0].x), "+f"(dst.tiles[0][13].data[0].y),
-                "+f"(dst.tiles[0][13].data[1].x), "+f"(dst.tiles[0][13].data[1].y),
-                "+f"(dst.tiles[0][13].data[2].x), "+f"(dst.tiles[0][13].data[2].y),
-                "+f"(dst.tiles[0][13].data[3].x), "+f"(dst.tiles[0][13].data[3].y),
-                "+f"(dst.tiles[0][14].data[0].x), "+f"(dst.tiles[0][14].data[0].y),
-                "+f"(dst.tiles[0][14].data[1].x), "+f"(dst.tiles[0][14].data[1].y),
-                "+f"(dst.tiles[0][14].data[2].x), "+f"(dst.tiles[0][14].data[2].y),
-                "+f"(dst.tiles[0][14].data[3].x), "+f"(dst.tiles[0][14].data[3].y),
-                "+f"(dst.tiles[0][15].data[0].x), "+f"(dst.tiles[0][15].data[0].y),
-                "+f"(dst.tiles[0][15].data[1].x), "+f"(dst.tiles[0][15].data[1].y),
-                "+f"(dst.tiles[0][15].data[2].x), "+f"(dst.tiles[0][15].data[2].y),
-                "+f"(dst.tiles[0][15].data[3].x), "+f"(dst.tiles[0][15].data[3].y)
+                "+f"(dst.tiles[0][ 9].data[3].x), "+f"(dst.tiles[0][ 9].data[3].y)
 
             :   "l"(a_st_desc),
                 "l"(b_st_desc),
@@ -459,12 +339,12 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
             asm volatile (
                 "{\n"
                 ".reg .pred p;\n" \
-                "setp.ne.b32 p, %66, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n256k16.f16.f16.f16 " \
-                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63}, " \
-                "%64, " \
-                "%65, " \
-                "p, 1, 1, %67, %68;\n" \
+                "setp.ne.b32 p, %42, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n160k16.f16.f16.f16 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39}, " \
+                "%40, " \
+                "%41, " \
+                "p, 1, 1, %43, %44;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a im-trans-b
 
@@ -507,31 +387,7 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[0]),
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[1]),
                 "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][10].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][11].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][12].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][13].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][14].data[3]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[0]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[1]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[2]),
-                "+r"(*(uint32_t*)&dst.tiles[0][15].data[3])
+                "+r"(*(uint32_t*)&dst.tiles[0][ 9].data[3])
 
             :   "l"(a_st_desc),
                 "l"(b_st_desc),

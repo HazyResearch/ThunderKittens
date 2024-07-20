@@ -423,6 +423,17 @@ __device__ static inline void exp(T &dst, const T &src) {
     unary_map<base_ops::exp, T>(dst, src);
 }
 /**
+ * @brief Applies the exponential function to each element of a tile, in base 2.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the exponential function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void exp2(T &dst, const T &src) {
+    unary_map<base_ops::exp2, T>(dst, src);
+}
+/**
  * @brief Applies the natural logarithm function to each element of a tile.
  *
  * @tparam T Tile type.

@@ -12,24 +12,6 @@ namespace kittens {
 */
 namespace tma {
 
-namespace detail {
-
-// Concepts for tiles
-template<typename T> concept st_type_naive_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::naive>
-);
-template<typename T> concept st_type_swizzle_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::swizzle>
-);
-template<typename T> concept st_type_wgmma_swizzle_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_swizzle>
-);
-template<typename T> concept st_type_wgmma_interleave_layout = (
-    std::is_same_v<typename T::layout, ducks::st_layout::wgmma_interleave>
-);
-
-}
-
 using barrier = uint64_t;
 
 /* ----------   Barrier functions for async load  ---------- */
