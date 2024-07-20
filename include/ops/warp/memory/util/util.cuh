@@ -23,7 +23,6 @@ using barrier = uint64_t;
  * @param[in] tc The thread counter for the barrier.
  */
 __device__ static inline void init_barrier(barrier& bar, int thread_count, int transaction_count) {
-    static_assert(ducks::st::all<T> || ducks::sv::all<T> || std::is_same_v<T, ducks::default_type>);
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 

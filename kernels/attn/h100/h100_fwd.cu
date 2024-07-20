@@ -7,11 +7,6 @@
 
 using namespace kittens;
 
-using layout_q = wgmma_swizzle_l; 
-using layout_k = wgmma_swizzle_l;
-using layout_v = wgmma_swizzle_l;
-using layout_o = swizzle_l;
-
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = 64/kittens::TILE_DIM;
@@ -37,10 +32,10 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     constexpr int qo_height  = fwd_attend_ker_tile_dims<D>::qo_height;
     constexpr int kv_height  = fwd_attend_ker_tile_dims<D>::kv_height;
 
-    using q_tile = st_bf<qo_height, tile_width, layout_q>; // 64 * (64 | 128) * 2 = (8192 | 16384) per warpgroup
-    using k_tile = st_bf<kv_height, tile_width, layout_k>; // (256 | 128) * (64 | 128) * 2 = 32768 per pipeline stage
-    using v_tile = st_bf<kv_height, tile_width, layout_v>; // (256 | 128) * (64 | 128) * 2 = 32768 per pipeline stage
-    using o_tile = st_bf<qo_height, tile_width, layout_o>; // overwrites existing memory so irrelevant
+    using q_tile = st_bf<qo_height, tile_width>; // 64 * (64 | 128) * 2 = (8192 | 16384) per warpgroup
+    using k_tile = st_bf<kv_height, tile_width>; // (256 | 128) * (64 | 128) * 2 = 32768 per pipeline stage
+    using v_tile = st_bf<kv_height, tile_width>; // (256 | 128) * (64 | 128) * 2 = 32768 per pipeline stage
+    using o_tile = st_bf<qo_height, tile_width>; // overwrites existing memory so irrelevant
 
     q_tile (&q_smem)[NUM_WARPGROUPS] = al.allocate<q_tile, NUM_WARPGROUPS>();
     k_tile (&k_smem)[2]              = al.allocate<k_tile, 2             >();
@@ -60,8 +55,10 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     __shared__ uint32_t producer_barrier, consumer_barriers[2];
 
     if (threadIdx.x == 0) {
-        tma::init_barrier<q_tile, NUM_WARPGROUPS>(qsmem_barrier, 1);
-        tma::init_barrier<k_tile, 2>(kvsmem_barrier, 1);
+        init_barrier(qsmem_barrier, 0, 1);
+        tma::expect_bytes(qsmem_barrier, sizeof(q_tile)*NUM_WARPGROUPS);
+        init_barrier(kvsmem_barrier, 0, 1);
+        tma::expect_bytes(kvsmem_barrier, sizeof(k_tile)*2);
     }
 
     if (threadIdx.x == 0) {
@@ -82,7 +79,7 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     zero(o_prev);
     __syncthreads();
 
-    tma::arrive_and_wait(qsmem_barrier, 0);
+    wait(qsmem_barrier, 0);
 
     // premultiply by tempreature
     if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.44269504089f)); }
@@ -92,12 +89,12 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
 
         while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
         
-        tma::arrive_and_wait(kvsmem_barrier, tic);
+        wait(kvsmem_barrier, tic);
         
         if(threadIdx.x%32 == 0) {
             int producer_barrier_old = atomicInc(&producer_barrier, NUM_WORKERS-1);
             if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
-                tma::set_bytes(kvsmem_barrier, 2  * size_bytes<k_tile>);
+                tma::expect_bytes(kvsmem_barrier, 2*sizeof(k_tile));
                 consumer_barriers[toc] = kv_idx+1; // also reset the tma barrier, we are now allowed to hit the next one
                 
                 if (kv_idx + 1 < kv_blocks) {    

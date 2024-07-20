@@ -131,7 +131,7 @@ __device__ static inline void arrive(barrier& bar, int dst_cta) {
     asm volatile (
         "mbarrier.arrive.release.cluster.b64 _, [%0], %1;\n"
         :
-        : "r"(mbar_ptr), "r"(1)
+        : "r"(neighbor_mbar_addr), "r"(1)
         : "memory"
     );
 }
