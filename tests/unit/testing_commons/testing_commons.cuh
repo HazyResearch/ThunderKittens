@@ -16,11 +16,6 @@
 
 #include "testing_utils.cuh"
 
-/* ---------- LABELS ---------- */
-
-// map an st_layout to a string representing it.
-template<kittens::ducks::st_layout::all layout> std::string layout_name();
-
 /* ---------- TEST NAMES ---------- */
 
 // This how we generate parameterized names for tests.
@@ -67,37 +62,18 @@ template<int H, int W, int NW, integral_wrapper _K> std::string generate_test_na
     }
     return label;
 }
-template<int H, int W, int NW, integral_wrapper _K, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2>
-std::string generate_test_name(std::string test_id) {
-    std::string label = generate_test_name<H, W, NW, _K>(test_id)+"_["+layout_name<L1>()+"]_["+layout_name<L2>()+"]";
-    return label;
-}
 template<int H, int W, int NW, kittens::ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<H,W,NW>(test_id);
     if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
     else label += "_[rt_col_layout]";
     return label;
 }
-template<int H, int W, int NW, kittens::ducks::st_layout::all L> std::string generate_test_name(std::string test_id) {
-    std::string label = generate_test_name<H,W,NW>(test_id)+"_["+layout_name<L>()+"]";
-    return label;
-}
-template<int H, int W, int NW, kittens::ducks::st_layout::all L1, kittens::ducks::st_layout::all L2> std::string generate_test_name(std::string test_id) {
-    std::string label = generate_test_name<H,W,NW>(test_id) + "_["+layout_name<L2>()+"->"+layout_name<L1>()+"]";
-    return label;
-}
-template<int H, int W, int NW, kittens::ducks::st_layout::all L, integral_wrapper _J, integral_wrapper _K> std::string generate_test_name(std::string test_id) {
+template<int H, int W, int NW, integral_wrapper _J, integral_wrapper _K> std::string generate_test_name(std::string test_id) {
     constexpr int J = _J::value, K = _K::value;
-    std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"_"+std::to_string(J)+"x"+std::to_string(K)+"]_["+layout_name<L>()+"]";
+    std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"_"+std::to_string(J)+"x"+std::to_string(K)+"]";
     if constexpr (NW > 1) {
         label += "_["+std::to_string(NW)+"warps]";
     }
-    return label;
-}
-template<int H, int W, int NW, kittens::ducks::st_layout::all L, kittens::ducks::rt_layout::all RL> std::string generate_test_name(std::string test_id) {
-    std::string label = generate_test_name<H,W,NW,L>(test_id);
-    if constexpr (std::is_same_v<L, kittens::ducks::rt_layout::row>) label += "_[rt_row_layout]";
-    else label += "_[rt_col_layout]";
     return label;
 }
 template<int H, int W, int NW, kittens::ducks::base_types::T1 T2, kittens::ducks::base_types::T1 U2> std::string generate_test_name(std::string test_id) {
@@ -226,24 +202,12 @@ template<typename test, int H, int W, typename... args> using wrapper_2d_warp   
 template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using sweep_size_2d = loop_h<wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_size_2d_warp = sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
 
-// Loop over st_layouts too, since this is needed by a bunch of tests.
-template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
-struct sweep_st_layout_size_2d {
-    static void run(test_data &results) {
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::naive, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::swizzle, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_swizzle, args...>::run(results);
-        sweep_size_2d<test, MAX_H, MAX_W, NUM_WORKERS, kittens::ducks::st_layout::wgmma_interleave, args...>::run(results);
-    }
-};
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_st_layout_size_2d_warp = sweep_st_layout_size_2d<test, MAX_H, MAX_W, 1, args...>;
-
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args>
 struct sweep_gmem_type_2d {
     static void run(test_data &results) {
-        sweep_st_layout_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
-        sweep_st_layout_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
-        sweep_st_layout_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
     }
 };
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_gmem_type_2d_warp = sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;

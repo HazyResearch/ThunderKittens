@@ -3,10 +3,9 @@
 #ifdef TEST_GROUP_SHARED_TILE_REDUCTIONS
 
 struct normalize_row {
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_norm_row";
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -20,11 +19,11 @@ struct normalize_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W, L> &shared_tile = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, W*16);
         __syncthreads();
@@ -36,10 +35,9 @@ struct normalize_row {
     }
 };
 struct normalize_col {
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_norm_col";
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -53,11 +51,11 @@ struct normalize_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W, L> &shared_tile = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, W*16);
         __syncthreads();
@@ -69,10 +67,9 @@ struct normalize_col {
     }
 };
 struct broadcast_row {
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_broadcast_row";
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -86,11 +83,11 @@ struct broadcast_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W, L> &shared_tile = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, W*16);
         __syncthreads();
@@ -102,10 +99,9 @@ struct broadcast_row {
     }
 };
 struct broadcast_col {
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> using valid = std::bool_constant<H%NW==0 && W*H<=64 &&
-        (!std::is_same_v<L, kittens::ducks::st_layout::swizzle> || W == 1 || W == 2 || W == 4 || W == 8 || W == 16)>; // this is group-level
+    template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_broadcast_col";
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -119,11 +115,11 @@ struct broadcast_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, kittens::ducks::st_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W, L> &shared_tile = al.allocate<kittens::st_bf<H, W, L>>();
+        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, W*16);
         __syncthreads();
@@ -142,25 +138,25 @@ void group::shared::tile::reductions::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    sweep_st_layout_size_2d<normalize_row, SIZE, SIZE, 2>::run(results);
-    sweep_st_layout_size_2d<normalize_col, SIZE, SIZE, 2>::run(results);
-    sweep_st_layout_size_2d<broadcast_row, SIZE, SIZE, 2>::run(results);
-    sweep_st_layout_size_2d<broadcast_col, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<normalize_row, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<normalize_col, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<broadcast_row, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<broadcast_col, SIZE, SIZE, 2>::run(results);
 
 
     if constexpr (TEST_INTENSITY > 1) {
 
-        sweep_st_layout_size_2d<normalize_row, SIZE, SIZE, 4>::run(results);
-        sweep_st_layout_size_2d<normalize_col, SIZE, SIZE, 4>::run(results);
-        sweep_st_layout_size_2d<broadcast_row, SIZE, SIZE, 4>::run(results);
-        sweep_st_layout_size_2d<broadcast_col, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<normalize_row, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<normalize_col, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<broadcast_row, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<broadcast_col, SIZE, SIZE, 4>::run(results);
 
         if constexpr (TEST_INTENSITY > 3) {
 
-            sweep_st_layout_size_2d<normalize_row, 12, 5, 12>::run(results);
-            sweep_st_layout_size_2d<normalize_col, 12, 5, 12>::run(results);
-            sweep_st_layout_size_2d<broadcast_row, 12, 5, 12>::run(results);
-            sweep_st_layout_size_2d<broadcast_col, 12, 5, 12>::run(results);
+            sweep_size_2d<normalize_row, 12, 5, 12>::run(results);
+            sweep_size_2d<normalize_col, 12, 5, 12>::run(results);
+            sweep_size_2d<broadcast_row, 12, 5, 12>::run(results);
+            sweep_size_2d<broadcast_col, 12, 5, 12>::run(results);
 
         }
     }

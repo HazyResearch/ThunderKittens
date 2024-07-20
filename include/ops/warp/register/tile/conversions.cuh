@@ -40,12 +40,12 @@ __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
  * @param dst[out] Reference to the destination register base tile where the result will be stored.
  * @param src[in] Reference to the source register base tile to be swapped.
  */
-template<typename T2, ducks::rt_layout::all layout>
-__device__ inline void swap_layout(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T2, layout> &src) {
+template<typename T, ducks::rt_layout::all layout>
+__device__ inline void swap_layout(rt_base<T, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
     // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
-    T2 data1_cache = src.data[1]; // important for swap!
+    typename rt_base<T, layout>::T2 data1_cache = src.data[1]; // important for swap!
     swap_layout_8(dst.data[1], src.data[2]);
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
@@ -126,12 +126,12 @@ __device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::tran
  * @param dst[out] Reference to the register tile in which to store the transposed src.
  * @param src[in] Reference to the register base tile to be transposed.
  */
-template<typename T2, ducks::rt_layout::all layout>
-__device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, layout> &src) {
+template<typename T, ducks::rt_layout::all layout>
+__device__ inline void transpose(rt_base<T, layout> &dst, const rt_base<T, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
     // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
-    T2 data1_cache = src.data[1]; // important for swap!
+    typename rt_base<T, layout>::T2 data1_cache = src.data[1]; // important for swap!
     swap_layout_8(dst.data[1], src.data[2]);
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);

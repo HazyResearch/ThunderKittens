@@ -28,7 +28,6 @@ namespace tma {
 template<ducks::st::all ST>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int blocks_height, int blocks_width=1) {
     using dtype = typename ST::dtype;
-    constexpr int cols_per_core_matrix = (16 / sizeof(dtype));
     
     constexpr uint32_t  tma_dim = 3;
     void *global_addr = (void*)(src);

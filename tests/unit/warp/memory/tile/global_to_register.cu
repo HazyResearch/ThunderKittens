@@ -13,7 +13,7 @@ struct load_store {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const T *input, T *output) {
-        kittens::rt_bf<H, W, L> reg_tile;
+        kittens::rt_bf<H, W> reg_tile;
         kittens::load(reg_tile, input, W*16);
         kittens::store(output, reg_tile, W*16);
     }
