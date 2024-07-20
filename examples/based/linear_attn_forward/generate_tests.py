@@ -29,6 +29,7 @@ else:
     sys.exit(0)
 
 def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
+    print("Adding scale:", add_scale)
 
     B, H, L, D = Q.shape
 

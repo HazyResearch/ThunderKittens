@@ -238,7 +238,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 145000;  // have the flag tell us
+    unsigned long mem_size = 108000;  //106368// have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;

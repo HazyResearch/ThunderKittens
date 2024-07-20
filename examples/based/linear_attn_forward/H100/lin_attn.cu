@@ -325,8 +325,8 @@ void based_linear_attention(
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
-    st_bf_4x1<wgmma_swizzle_l>    (&q_s)  [2]   = al.allocate<st_bf_4x1<wgmma_swizzle_l>,    2>(); // 4096 bytes
-    tile_smem_bf_4x1 (&k_s)  [2]                     = al.allocate<tile_smem_bf_4x1, 2>();                   // 4096 bytes
+    st_bf_4x1<wgmma_swizzle_l> (&q_s)  [2]   = al.allocate<st_bf_4x1<wgmma_swizzle_l>,    2>(); // 4096 bytes
+    tile_smem_bf_4x1 (&k_s)  [2]             = al.allocate<tile_smem_bf_4x1, 2>();              // 4096 bytes
     tile_smem_bf_4x4_wgmma_interleave (&v_s)  [2]   = al.allocate<tile_smem_bf_4x4_wgmma_interleave, 2>(); // 16384 bytes
     tile_smem_bf_4x4_wgmma_interleave (&v_s_2)[2]   = al.allocate<tile_smem_bf_4x4_wgmma_interleave, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
     tile_smem_bf_4x4       (&v_s_3)[2]   = al.allocate<tile_smem_bf_4x4,          2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
@@ -335,26 +335,25 @@ void based_linear_attention(
     rt_fl_1x1<> a1_trans; // transposed chunk of a1.
     rt_fl_1x4<> a2[4];    // a2 gets propagated through here.
     st_bf_4x1<wgmma_swizzle_l>    (&a1_trans_s) = al.allocate<st_bf_4x1<wgmma_swizzle_l>    >();   // 2048 bytes
-    tile_smem_bf_4x4_wgmma_interleave (&a2_s)       = al.allocate<tile_smem_bf_4x4_wgmma_interleave >();   // 8192 bytes
+    tile_smem_bf_4x4_wgmma_interleave (&a2_s)   = al.allocate<tile_smem_bf_4x4_wgmma_interleave >();   // 8192 bytes
     sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
     // k_state stuff
     row_vec<st_bf<4,1>> (&ks_smem_a1) = al.allocate<row_vec<st_bf<4,1>>>();  // 1024 bytes
     warpgroup::zero(ks_smem_a1);
-    tile_smem_bf_4x1 (&ks_smem_a1_tile) = al.allocate<tile_smem_bf_4x1>();             // 1024 bytes
-    warpgroup::zero(ks_smem_a1_tile);
+    tile_k_reg k_cumsum_a2_reg [4];
+    tile_k_reg k_cumsum_a1_reg;
+
     col_vec<rt_bf<1,1>>  ks_a2[4];
     for(int i = 0; i < 4; i++) { zero(ks_a2[i]); } // everyone zeroes ks_a2.
     col_vec<st_bf<4,1>>  (&ks_a2_s) = al.allocate<col_vec<st_bf<4,1>>>();
     warpgroup::zero(ks_a2_s);
 
     // norms testing
-    // tile_smem_bf_4x4 (&cumsum_k_a2_s)    [4]  = al.allocate<tile_smem_bf_4x4,4>();
     tile_smem_bf_4x4 (&k_smem_a2)          = al.allocate<tile_smem_bf_4x4>();
-    row_vec_smem_bf_1x4 &a0_cumsum            = al.allocate<row_vec_smem_bf_1x4>(); 
-    row_vec_smem_bf_1x4 &a0_fixed_vec         = al.allocate<row_vec_smem_bf_1x4>(); 
+    row_vec_smem_bf_1x4 &a0_cumsum         = al.allocate<row_vec_smem_bf_1x4>(); 
+    row_vec_smem_bf_1x4 &a0_fixed_vec      = al.allocate<row_vec_smem_bf_1x4>(); 
     warpgroup::zero(a0_cumsum);
-    // for(int i = 0; i < 4; i++) { warpgroup::zero(cumsum_k_a2_s[i]); } // everyone zeroes ks_a2.
     warpgroup::zero(k_smem_a2);
     warpgroup::zero(a0_fixed_vec);
     if ( warpid == 0 && laneid < 32) { 
@@ -366,7 +365,6 @@ void based_linear_attention(
     __syncthreads();
 
     // debugging
-    tile_k_reg k_cumsum_a2_reg [4];
     // for (int i = 0; i < 4; i ++ )  { zero(k_cumsum_a2_reg[i]); }
     // tile_smem_bf_4x1 (&cumsum_k_a1_s) [2]  = al.allocate<tile_smem_bf_4x1,2>(); 
     // row_vec_smem_bf_1x4  (&norm_a1_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>(); 
@@ -464,42 +462,42 @@ void based_linear_attention(
         // a2 loads
         rt_bf_1x1<> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
         warpgroup::load(q_src, q_s[tic]);
-        if (add_scale > 0) { 
-            mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices square it.
-            mul(q_src, q_src, __float2bfloat16(0.25));          // divide by sqrt(d=16) for A2 here.
-        } 
         rt_bf_4x1<> k_src_tmp;
         rt_bf_1x4<> k_src;
         load(k_src_tmp, k_s[tic]);
         transpose_sep(k_src, k_src_tmp); // transpose K into Kt
 
         // denominator for a1
-        rt_bf_1x1<> q_a1_reg_tile;
         rt_bf_1x1<> cumsum_k_a1_reg_tile;
         rt_bf_1x1<>::col_vec linear_norm_vec; 
         zero(linear_norm_vec); 
         if (output_state > 0) {
             cumulative_add(ks_smem_a1, k_s[tic]); // TODO: remove
         }
-        __syncthreads();
-        if ( add_norm > 0) {   
-            cumulative_add(ks_smem_a1_tile, k_s[tic]); 
+        if ( add_norm > 0) { 
+            cumulative_add(k_cumsum_a1_reg, k_src_tmp, block);
             __syncthreads();
-            warpgroup::load(cumsum_k_a1_reg_tile, ks_smem_a1_tile);
-            warpgroup::load(q_a1_reg_tile, q_s[tic]);  
+            cumsum_k_a1_reg_tile.tiles[0][0] = k_cumsum_a1_reg.tiles[warpid][0];
             if (add_scale > 0) { 
-                mul(q_a1_reg_tile, q_a1_reg_tile,__float2bfloat16(0.25f)); 
-            } // for q and k scale sqrt(sqrt(D))**2
-            mul(q_a1_reg_tile, q_a1_reg_tile, cumsum_k_a1_reg_tile);
-            if (add_scale > 0) { 
-                mul(cumsum_k_a1_reg_tile, cumsum_k_a1_reg_tile,__float2bfloat16(0.5f)); 
+                mul(q_src, q_src, __float2bfloat16(0.25f)); // for q and k scale sqrt(sqrt(D))**2
             } 
+            mul(cumsum_k_a1_reg_tile, q_src, cumsum_k_a1_reg_tile);
+            // if (add_scale > 0) { 
+                   // if saving this out
+            //     mul(cumsum_k_a1_reg_tile, cumsum_k_a1_reg_tile,__float2bfloat16(0.5f)); 
+            // } 
             __syncthreads();
-            row_sum(linear_norm_vec, q_a1_reg_tile, linear_norm_vec);
-            __syncthreads();
+            row_sum(linear_norm_vec, cumsum_k_a1_reg_tile, linear_norm_vec);
         }
         
         // about 75% of execution time is in this loop
+        if (add_scale > 0) { 
+            mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices square it.
+            if (add_norm == 0) {
+                // in add_norm > 0, this is taken care of above.
+                mul(q_src, q_src, __float2bfloat16(0.25));          // divide by sqrt(d=16) for A2 here.
+            }
+        } 
         rt_bf_1x1<>::col_vec linear_norm_vec_a2; // N/4 elements over 4 warps
         zero(linear_norm_vec_a2);
         #pragma unroll
