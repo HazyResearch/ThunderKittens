@@ -30,13 +30,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     using dtype = typename ST::dtype;
     constexpr int cols_per_core_matrix = (16 / sizeof(dtype));
     
-    constexpr uint32_t  tma_dim      = (
-        detail::st_type_naive_layout<ST>            ? 2 :
-        detail::st_type_swizzle_layout<ST>          ? 3 :
-        detail::st_type_wgmma_swizzle_layout<ST>    ? 3 :
-        detail::st_type_wgmma_interleave_layout<ST> ? 4 :
-        -1
-    );
+    constexpr uint32_t  tma_dim = 3;
     void *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = (
@@ -65,58 +59,18 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
-    if constexpr (detail::st_type_naive_layout<ST>) {
-        gmem_shape[0] = global_tile_width;
-        gmem_shape[1] = global_tile_height;
+    constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
 
-        gmem_stride[0] = global_tile_width * sizeof(dtype);
+    gmem_shape[0] = swizzle_elements;
+    gmem_shape[1] = global_tile_height;
+    gmem_shape[2] = global_tile_width / swizzle_elements;
 
-        smem_shape[0] = shared_tile_width;
-        smem_shape[1] = shared_tile_height;
-    }
-    else if constexpr (detail::st_type_swizzle_layout<ST>) {
-        constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
+    gmem_stride[0] = global_tile_width * sizeof(dtype);
+    gmem_stride[1] = ST::swizzle_bytes;
 
-        gmem_shape[0] = swizzle_elements;
-        gmem_shape[1] = global_tile_width / swizzle_elements;
-        gmem_shape[2] = global_tile_height;
-
-        gmem_stride[0] = ST::swizzle_bytes;
-        gmem_stride[1] = global_tile_width * sizeof(dtype);
-
-        smem_shape[0] = swizzle_elements;
-        smem_shape[1] = shared_tile_width / swizzle_elements;
-        smem_shape[2] = shared_tile_height;
-    }
-    else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-        constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
-
-        gmem_shape[0] = swizzle_elements;
-        gmem_shape[1] = global_tile_height;
-        gmem_shape[2] = global_tile_width / swizzle_elements;
-
-        gmem_stride[0] = global_tile_width * sizeof(dtype);
-        gmem_stride[1] = ST::swizzle_bytes;
-
-        smem_shape[0] = swizzle_elements;
-        smem_shape[1] = shared_tile_height;
-        smem_shape[2] = shared_tile_width / swizzle_elements;
-    }
-    else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-        gmem_shape[0] = cols_per_core_matrix;
-        gmem_shape[1] = 8;
-        gmem_shape[2] = global_tile_width/cols_per_core_matrix;
-        gmem_shape[3] = global_tile_height/8;
-
-        gmem_stride[0] = global_tile_width * sizeof(dtype);
-        gmem_stride[1] = cols_per_core_matrix * sizeof(dtype);
-        gmem_stride[2] = 8 * global_tile_width * sizeof(dtype);
-
-        smem_shape[0] = cols_per_core_matrix;
-        smem_shape[1] = 8;
-        smem_shape[2] = shared_tile_width/cols_per_core_matrix;
-        smem_shape[3] = shared_tile_height/8;
-    }
+    smem_shape[0] = swizzle_elements;
+    smem_shape[1] = shared_tile_height;
+    smem_shape[2] = shared_tile_width / swizzle_elements;
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
@@ -208,63 +162,18 @@ template<ducks::st::all ST>
 __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (dst.rows);
+        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (dst.cols);
-            int32_t crd1 = tile_row_idx * (dst.rows);
-
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.2d.L2.global.tile"
-                " [%0, {%1, %2}];"
-                :
-                : "l"(tma_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (dst.rows);
-
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
-                " [%0, {%1, %2, %3}];"
-                :
-                : "l"(tma_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (dst.rows);
-            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
-                " [%0, {%1, %2, %3}];"
-                :
-                : "l"(tma_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0;  
-            int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (dst.cols/(16/sizeof(typename ST::dtype)));
-            int32_t crd3 = tile_row_idx * (dst.rows/8);
-
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.4d.L2.global.tile"
-                " [%0, {%1, %2, %3, %4}];"
-                :
-                : "l"(tma_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
+            " [%0, {%1, %2, %3}];"
+            :
+            : "l"(tma_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 
@@ -285,64 +194,18 @@ template<ducks::st::all ST>
 __device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
-        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (src.rows);
+        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (src.cols);
-            int32_t crd1 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"
-                " [%0, {%2, %3}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0; 
-            int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
-            int32_t crd3 = tile_row_idx * (src.rows/8);
-
-            asm volatile (
-                "cp.async.bulk.tensor.4d.global.shared::cta.tile.bulk_group"
-                " [%0, {%2, %3, %4, %5}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
+            " [%0, {%2, %3, %4}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 
@@ -364,63 +227,18 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (src.rows);
+        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (src.cols);
-            int32_t crd1 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group"
-                " [%0, {%2, %3}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0; 
-            int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
-            int32_t crd3 = tile_row_idx * (src.rows/8);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.4d.global.shared::cta.add.tile.bulk_group"
-                " [%0, {%2, %3, %4, %5}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
+            " [%0, {%2, %3, %4}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 
@@ -441,63 +259,18 @@ __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, 
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (src.rows);
+        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (src.cols);
-            int32_t crd1 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.2d.global.shared::cta.min.tile.bulk_group"
-                " [%0, {%2, %3}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.min.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.min.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0; 
-            int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/8);
-            int32_t crd3 = tile_row_idx * (src.rows/8);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.4d.global.shared::cta.min.tile.bulk_group"
-                " [%0, {%2, %3, %4, %5}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.min.tile.bulk_group"
+            " [%0, {%2, %3, %4}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 
@@ -518,63 +291,18 @@ __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, 
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (src.rows);
+        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (src.cols);
-            int32_t crd1 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.2d.global.shared::cta.max.tile.bulk_group"
-                " [%0, {%2, %3}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (src.rows);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.max.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (src.rows);
-            int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.3d.global.shared::cta.max.tile.bulk_group"
-                " [%0, {%2, %3, %4}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0; 
-            int32_t crd1 = 0;
-            int32_t crd2 = tile_col_idx * (src.cols/(16/sizeof(typename ST::dtype)));
-            int32_t crd3 = tile_row_idx * (src.rows/8);
-
-            asm volatile (
-                "cp.reduce.async.bulk.tensor.4d.global.shared::cta.max.tile.bulk_group"
-                " [%0, {%2, %3, %4, %5}], [%1];"
-                :
-                : "l"(tma_ptr), "r"(src_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.max.tile.bulk_group"
+            " [%0, {%2, %3, %4}], [%1];"
+            :
+            : "l"(tma_ptr), "r"(src_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 
@@ -597,62 +325,18 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
-        if constexpr (detail::st_type_naive_layout<ST>) {
-            int32_t crd0 = tile_col_idx * (dst.cols);
-            int32_t crd1 = tile_row_idx * (dst.rows);
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (dst.rows);
+        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
 
-            asm volatile (
-                "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-                " [%0], [%1, {%3, %4}], [%2];"
-                :
-                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-                "r"(crd0), "r"(crd1)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-            int32_t crd2 = tile_row_idx * (dst.rows);
-
-            asm volatile (
-                "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-                " [%0], [%1, {%3, %4, %5}], [%2];"
-                :
-                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_swizzle_layout<ST>) {
-            int32_t crd0 = 0;
-            int32_t crd1 = tile_row_idx * (dst.rows);
-            int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-
-            asm volatile (
-                "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-                " [%0], [%1, {%3, %4, %5}], [%2];"
-                :
-                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2)
-                : "memory"
-            );
-        }
-        else if constexpr (detail::st_type_wgmma_interleave_layout<ST>) {
-            int32_t crd0 = 0;  
-            int32_t crd1 = 0; 
-            int32_t crd2 = tile_col_idx * (dst.cols/(16/sizeof(typename ST::dtype)));
-            int32_t crd3 = tile_row_idx * (dst.rows/8);
-
-            asm volatile (
-                "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-                " [%0], [%1, {%3, %4, %5, %6}], [%2];"
-                :
-                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-                "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3)
-                : "memory"
-            );
-        }
+        asm volatile (
+            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+            " [%0], [%1, {%3, %4, %5}], [%2];"
+            :
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2)
+            : "memory"
+        );
     }
 }
 

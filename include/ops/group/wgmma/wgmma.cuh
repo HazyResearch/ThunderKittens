@@ -41,7 +41,7 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input_transposed B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -81,14 +81,14 @@ __device__ static inline void mma_AB(D &d,
         }
     }
 }
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input_transposed B>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
     mma_AB<D, A, B, 0>(d, a, b);
 }
 
-template<ducks::rt::row_layout D, ducks::wgmma::input_normal A, ducks::wgmma::input_transposed B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -126,7 +126,7 @@ __device__ static inline void mma_AB(D &d,
         );
     }
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input_normal A, ducks::wgmma::input_transposed B>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
@@ -148,7 +148,7 @@ __device__ static inline void mm_AB(D &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input_normal B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -188,7 +188,7 @@ __device__ static inline void mma_ABt(D &d,
         }
     }
 }
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input_normal B>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -210,7 +210,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input_normal A, ducks::wgmma::input_normal B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -248,7 +248,7 @@ __device__ static inline void mma_ABt(D &d,
         );
     }
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input_normal A, ducks::wgmma::input_normal B>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -270,7 +270,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input_transposed A, ducks::wgmma::input_transposed B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b) {
@@ -308,7 +308,7 @@ __device__ static inline void mma_AtB(D &d,
         );
     }
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input_transposed A, ducks::wgmma::input_transposed B>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
@@ -326,7 +326,7 @@ __device__ static inline void mm_AtB(D &d,
  * @tparam B The source shared tile type.
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input_transposed A, ducks::wgmma::input_normal B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
 __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b) {
@@ -364,7 +364,7 @@ __device__ static inline void mma_AtBt(D &d,
         );
     }
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input_transposed A, ducks::wgmma::input_normal B>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AtBt(D &d,
                                 const A &a,
                                 const B &b) {
