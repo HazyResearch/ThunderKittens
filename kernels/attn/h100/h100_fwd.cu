@@ -2,8 +2,10 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-#define NUM_WORKERS (12)
-#define NUM_WARPGROUPS (NUM_WORKERS/(kittens::WARPGROUP_WARPS))
+#define NUM_CONSUMER_WARPGROUPS (3)
+#define NUM_PRODUCER_WARPGROUPS (0)
+#define NUM_WARPGROUPS (NUM_CONSUMER_WARPGROUPS+NUM_PRODUCER_WARPGROUPS)
+#define NUM_WORKERS (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS)
 
 using namespace kittens;
 
@@ -37,9 +39,9 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     using v_tile = st_bf<kv_height, tile_width>; // (256 | 128) * (64 | 128) * 2 = 32768 per pipeline stage
     using o_tile = st_bf<qo_height, tile_width>; // overwrites existing memory so irrelevant
 
-    q_tile (&q_smem)[NUM_WARPGROUPS] = al.allocate<q_tile, NUM_WARPGROUPS>();
-    k_tile (&k_smem)[2]              = al.allocate<k_tile, 2             >();
-    v_tile (&v_smem)[2]              = al.allocate<v_tile, 2             >();
+    q_tile (&q_smem)[NUM_CONSUMER_WARPGROUPS] = al.allocate<q_tile, NUM_CONSUMER_WARPGROUPS>();
+    k_tile (&k_smem)[2]                       = al.allocate<k_tile, 2                      >();
+    v_tile (&v_smem)[2]                       = al.allocate<v_tile, 2                      >();
 
     int tic = 0, toc = 1;
  
@@ -52,26 +54,24 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     int kv_blocks = N / (k_tile::rows);
 
     __shared__ uint64_t qsmem_barrier, kvsmem_barrier;
-    __shared__ uint32_t producer_barrier, consumer_barriers[2];
+    __shared__ uint32_t producer_barrier;
 
     if (threadIdx.x == 0) {
         init_barrier(qsmem_barrier, 0, 1);
-        tma::expect_bytes(qsmem_barrier, sizeof(q_tile)*NUM_WARPGROUPS);
+        tma::expect_bytes(qsmem_barrier, sizeof(q_tile)*NUM_CONSUMER_WARPGROUPS);
         init_barrier(kvsmem_barrier, 0, 1);
         tma::expect_bytes(kvsmem_barrier, sizeof(k_tile)*2);
     }
 
     if (threadIdx.x == 0) {
-        for (int wg = 0; wg < NUM_WARPGROUPS; wg++) { // load q
-            int q_tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS) + wg;
+        for (int wg = 0; wg < NUM_CONSUMER_WARPGROUPS; wg++) { // load q
+            int q_tile_idx = (blockIdx.y * NUM_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_CONSUMER_WARPGROUPS) + wg;
             tma::load_async((q_smem[wg]), tma_q, qsmem_barrier, q_tile_idx); 
         }
         int kv_tile_idx = (blockIdx.y * kv_blocks) + 0; 
         tma::load_async((k_smem[0]), tma_k, kvsmem_barrier, kv_tile_idx); 
         tma::load_async((v_smem[0]), tma_v, kvsmem_barrier, kv_tile_idx);
         producer_barrier = 0; // nobody is done with them yet
-        consumer_barriers[0] = 0; // read to use on kv iter 0 (launch has been issued)
-        consumer_barriers[1] = 0; // not ready to use -- launch has not been issued.
     }
 
     neg_infty(max_vec); // zero registers for the Q chunk
@@ -86,8 +86,6 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.44269504089f)); }
 
     for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
-
-        while(consumer_barriers[tic] != kv_idx) __nanosleep(10); // has not been reset
         
         wait(kvsmem_barrier, tic);
         
@@ -95,7 +93,6 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
             int producer_barrier_old = atomicInc(&producer_barrier, NUM_WORKERS-1);
             if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
                 tma::expect_bytes(kvsmem_barrier, 2*sizeof(k_tile));
-                consumer_barriers[toc] = kv_idx+1; // also reset the tma barrier, we are now allowed to hit the next one
                 
                 if (kv_idx + 1 < kv_blocks) {    
                     int tile_idx = (blockIdx.y * kv_blocks) + (kv_idx + 1);
@@ -142,7 +139,7 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     __syncthreads();
     
     if (warpid % 4 == 0) { // store o
-        int tile_idx = (blockIdx.y * NUM_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_WARPGROUPS) + warpgroupid;
+        int tile_idx = (blockIdx.y * NUM_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_CONSUMER_WARPGROUPS) + warpgroupid;
         tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
         tma::store_commit_group(); 
     }
