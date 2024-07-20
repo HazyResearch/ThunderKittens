@@ -1,3 +1,5 @@
+// #define TORCH_COMPILE 
+
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
@@ -13,6 +15,9 @@
 #define vec_smem_bf_4 sv_bf<4>
 #define vec_smem_bf_1 sv_bf<1>
 #define row_vec_smem_bf_1x4 row_vec<st_bf_1x4<swizzle_l>> 
+
+#define tile_k_reg rt_bf<4,1>
+#define tile_k_reg_loads rt_bf<1,1>
 
 using namespace kittens;
 
@@ -86,7 +91,6 @@ __device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, c
     }
 }
 
-
 template<ducks::sv::all SV, ducks::st::all ST>
 __device__ inline void cumulative_add(SV &dst, const ST &src) {
     // this is called along a warpgroup
@@ -102,7 +106,6 @@ __device__ inline void cumulative_add(SV &dst, const ST &src) {
         dst[lane] = __float2bfloat16(f);
     }
 }
-
 
 template<ducks::st::all ST>
 __device__ inline void cumulative_add(ST &dst, const ST &inc) {
@@ -122,7 +125,6 @@ __device__ inline void cumulative_add(ST &dst, const ST &inc) {
     }
 }
 
-
 template<ducks::sv::all SV, ducks::st::all ST>
 __device__ inline void cumulative_add_a0(SV &dst, const ST &src) {
     // this is called along a warpgroup
@@ -136,6 +138,171 @@ __device__ inline void cumulative_add_a0(SV &dst, const ST &src) {
             f += i;
         }
         dst[lane] = __float2bfloat16(f);
+    }
+}
+
+template<ducks::rt::all RT>
+__device__ inline void cumulative_add(RT &dst, const RT &src, const int block_idx) {
+    using dtype = typename RT::dtype;
+    using packed_type = typename base_types::packing<dtype>::unpacked_type;
+    // we know that src and dst will have the same dtype and shape by definition
+    static_assert(dst.width == 1); // hard coded to this case
+
+    // get the leaders for different shuffles.
+    const int row = laneid() / 4;
+    
+    int leader_step_0; 
+    if ( row % 8 < 7 ) { leader_step_0 = laneid() + 4*(7 - row);  }
+    else { leader_step_0 = laneid(); }
+
+    const int leader_step_1 = (row % 2 == 1) ? laneid() - 4: laneid();
+
+    int leader_step_2;
+    if (row % 4 == 2 || row % 4 == 3 ) { leader_step_2 = (row % 2 == 0) ? laneid() - 4 : laneid() - 8; } 
+    else {  leader_step_2 = laneid(); }  
+
+    int leader_step_3; 
+    if ( row % 8 > 3 ) { leader_step_3 = laneid() - 4*((row % 4) + 1); } 
+    else { leader_step_3 = laneid(); }
+
+    int leader_step_4; 
+    if ( row % 8 < 7 ) { leader_step_4 = laneid() + 4*(7 - row);  }
+    else { leader_step_4 = laneid(); }
+
+    // Extract the last row of dst from the prior block.
+    row_vec<tile_k_reg_loads> last_row_1, last_row_3;
+    tile_k_reg_loads broadcast_last_row_1, broadcast_last_row_3;
+    dtype copy_accum_packed_1 = dst.tiles[dst.height-1][0].data[1];
+    dtype copy_accum_packed_3 = dst.tiles[dst.height-1][0].data[3];
+
+    copy_accum_packed_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_1, leader_step_0);
+    last_row_1[0][0] = copy_accum_packed_1;
+    broadcast_col(broadcast_last_row_1, last_row_1);
+    dtype (*broadcast_last_row_1_) = reinterpret_cast<dtype*>(&broadcast_last_row_1);
+
+    copy_accum_packed_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_3, leader_step_0);
+    last_row_3[0][0] = copy_accum_packed_3;
+    broadcast_col(broadcast_last_row_3, last_row_3);
+    dtype (*broadcast_last_row_3_) = reinterpret_cast<dtype*>(&broadcast_last_row_3);
+    __syncthreads();
+
+    // initial values
+    dtype accum_packed_0 = src.tiles[0][0].data[0];
+    dtype accum_packed_1 = src.tiles[0][0].data[1];
+    dtype accum_packed_2 = src.tiles[0][0].data[2];
+    dtype accum_packed_3 = src.tiles[0][0].data[3];
+    dtype final_0, final_1, final_2, final_3;
+
+    // start the cumsum
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        
+        dtype (*broadcast_last_row_inner_1_), (*broadcast_last_row_inner_3_);
+        if (i > 0) {
+            // last row of the previous core matrix from src tiles.
+            row_vec<tile_k_reg_loads> last_row_inner_1, last_row_inner_3;
+            tile_k_reg_loads broadcast_last_row_inner_1, broadcast_last_row_inner_3;
+            dtype copy_accum_packed_inner_1 = accum_packed_1;
+            dtype copy_accum_packed_inner_3 = accum_packed_3;
+
+            copy_accum_packed_inner_1 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_1, leader_step_0);
+            last_row_inner_1[0][0] = copy_accum_packed_inner_1;
+            broadcast_col(broadcast_last_row_inner_1, last_row_inner_1);
+            broadcast_last_row_inner_1_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_1);
+
+            copy_accum_packed_inner_3 = packed_shfl_sync(MASK_ALL, copy_accum_packed_inner_3, leader_step_0);
+            last_row_inner_3[0][0] = copy_accum_packed_inner_3;
+            broadcast_col(broadcast_last_row_inner_3, last_row_inner_3);
+            broadcast_last_row_inner_3_ = reinterpret_cast<dtype*>(&broadcast_last_row_inner_3);
+            __syncthreads();
+
+            // add it to the starting point.
+            accum_packed_0 = src.tiles[i][0].data[0]; 
+            accum_packed_1 = src.tiles[i][0].data[1]; 
+            accum_packed_2 = src.tiles[i][0].data[2]; 
+            accum_packed_3 = src.tiles[i][0].data[3]; 
+        }
+        __syncthreads();
+
+        // step 1. even row i ships its values to odd row i+1
+        dtype pull_0 = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_1);
+        dtype pull_1 = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_1);
+        dtype pull_2 = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_1);
+        dtype pull_3 = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_1);
+        if ( row % 2 == 1) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3); 
+        }
+        __syncthreads();
+
+        // step 2. each row pulls from the last row of the prior two rows cumsum
+        dtype pull_0_ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_2);
+        dtype pull_2_ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_2);
+        dtype pull_1_ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_2);
+        dtype pull_3_ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_2);
+        if ( row % 4 == 2 || row % 4 == 3 ) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0_); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2_); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1_); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3_); 
+        }
+        __syncthreads();
+
+        // step 3: each row pulls from the last row of the prior four rows
+        dtype pull_0__ = packed_shfl_sync(MASK_ALL, accum_packed_0, leader_step_3);
+        dtype pull_2__ = packed_shfl_sync(MASK_ALL, accum_packed_2, leader_step_3);
+        dtype pull_1__ = packed_shfl_sync(MASK_ALL, accum_packed_1, leader_step_3);
+        dtype pull_3__ = packed_shfl_sync(MASK_ALL, accum_packed_3, leader_step_3);
+        if ( row % 8 > 3 ) {  
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, pull_0__); 
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, pull_2__); 
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, pull_1__); 
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, pull_3__); 
+        }
+        __syncthreads();
+
+        // step 4: each core matrix sends its last row to the ``next'' core matrix (0 to 1, 2 to 3)
+        row_vec<tile_k_reg_loads> last_row_0, last_row_2;
+        tile_k_reg_loads broadcast_last_row_0, broadcast_last_row_2;
+        dtype copy_accum_packed_0 = accum_packed_0;
+        dtype copy_accum_packed_2 = accum_packed_2;
+
+        copy_accum_packed_0 = packed_shfl_sync(MASK_ALL, copy_accum_packed_0, leader_step_4);
+        last_row_0[0][0] = copy_accum_packed_0;
+        broadcast_col(broadcast_last_row_0, last_row_0);
+        dtype (*broadcast_last_row_0_) = reinterpret_cast<dtype*>(&broadcast_last_row_0);
+        accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_0_);
+
+        copy_accum_packed_2 = packed_shfl_sync(MASK_ALL, copy_accum_packed_2, leader_step_4);
+        last_row_2[0][0] = copy_accum_packed_2;
+        broadcast_col(broadcast_last_row_2, last_row_2);
+        dtype (*broadcast_last_row_2_) = reinterpret_cast<dtype*>(&broadcast_last_row_2);
+        accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_2_);
+        __syncthreads();
+
+        // Finally, save everything out.
+        final_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_1_);
+        final_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_1_);
+        final_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_3_);
+        final_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_3_);
+        if (i > 0) {
+            final_0 = base_ops::sum::op<dtype>(final_0, *broadcast_last_row_inner_1_);
+            final_1 = base_ops::sum::op<dtype>(final_1, *broadcast_last_row_inner_1_);
+            final_2 = base_ops::sum::op<dtype>(final_2, *broadcast_last_row_inner_3_);
+            final_3 = base_ops::sum::op<dtype>(final_3, *broadcast_last_row_inner_3_);
+            accum_packed_0 = base_ops::sum::op<dtype>(accum_packed_0, *broadcast_last_row_inner_1_);
+            accum_packed_1 = base_ops::sum::op<dtype>(accum_packed_1, *broadcast_last_row_inner_1_);
+            accum_packed_2 = base_ops::sum::op<dtype>(accum_packed_2, *broadcast_last_row_inner_3_);
+            accum_packed_3 = base_ops::sum::op<dtype>(accum_packed_3, *broadcast_last_row_inner_3_);
+        }
+        __syncthreads();
+        dst.tiles[i][0].data[0] = final_0;
+        dst.tiles[i][0].data[1] = final_1;
+        dst.tiles[i][0].data[2] = final_2;
+        dst.tiles[i][0].data[3] = final_3;
+        __syncthreads();
     }
 }
 
@@ -182,12 +349,12 @@ void based_linear_attention(
     warpgroup::zero(ks_a2_s);
 
     // norms testing
-    tile_smem_bf_4x4 (&cumsum_k_a2_s) [4]  = al.allocate<tile_smem_bf_4x4,4>();
+    // tile_smem_bf_4x4 (&cumsum_k_a2_s)    [4]  = al.allocate<tile_smem_bf_4x4,4>();
     tile_smem_bf_4x4 (&k_smem_a2)          = al.allocate<tile_smem_bf_4x4>();
     row_vec_smem_bf_1x4 &a0_cumsum            = al.allocate<row_vec_smem_bf_1x4>(); 
     row_vec_smem_bf_1x4 &a0_fixed_vec         = al.allocate<row_vec_smem_bf_1x4>(); 
     warpgroup::zero(a0_cumsum);
-    for(int i = 0; i < 4; i++) { warpgroup::zero(cumsum_k_a2_s[i]); } // everyone zeroes ks_a2.
+    // for(int i = 0; i < 4; i++) { warpgroup::zero(cumsum_k_a2_s[i]); } // everyone zeroes ks_a2.
     warpgroup::zero(k_smem_a2);
     warpgroup::zero(a0_fixed_vec);
     if ( warpid == 0 && laneid < 32) { 
@@ -199,7 +366,7 @@ void based_linear_attention(
     __syncthreads();
 
     // debugging
-    // tile_k_reg k_cumsum_a2_reg [4];
+    tile_k_reg k_cumsum_a2_reg [4];
     // for (int i = 0; i < 4; i ++ )  { zero(k_cumsum_a2_reg[i]); }
     // tile_smem_bf_4x1 (&cumsum_k_a1_s) [2]  = al.allocate<tile_smem_bf_4x1,2>(); 
     // row_vec_smem_bf_1x4  (&norm_a1_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>(); 
@@ -323,7 +490,10 @@ void based_linear_attention(
             if (add_scale > 0) { 
                 mul(q_a1_reg_tile, q_a1_reg_tile,__float2bfloat16(0.25f)); 
             } // for q and k scale sqrt(sqrt(D))**2
-            mul(q_a1_reg_tile, q_a1_reg_tile, cumsum_k_a1_reg_tile); 
+            mul(q_a1_reg_tile, q_a1_reg_tile, cumsum_k_a1_reg_tile);
+            if (add_scale > 0) { 
+                mul(cumsum_k_a1_reg_tile, cumsum_k_a1_reg_tile,__float2bfloat16(0.5f)); 
+            } 
             __syncthreads();
             row_sum(linear_norm_vec, q_a1_reg_tile, linear_norm_vec);
             __syncthreads();
@@ -361,23 +531,21 @@ void based_linear_attention(
             rt_bf_1x4<> cumsum_k_a2_reg_tile;
             zero(cumsum_k_a2_reg_tile);
             if ( add_norm > 0 ) {
-                // 4x4 smem
+                // along the local 64 tokens
                 rt_bf_4x1<> k_t_den;
                 zero(k_t_den);
-                transpose_sep(k_t_den, k); 
+                transpose_sep(k_t_den, k);
+                cumulative_add(k_cumsum_a2_reg[t], k_t_den, block);
+
+                // store the cumsum for k in 4x4 [4] smem
                 auto k_smem_a2_subtile = subtile_inplace<4,1>(k_smem_a2, 0, warpid);   
-                store(k_smem_a2_subtile, k_t_den);
+                store(k_smem_a2_subtile, k_cumsum_a2_reg[t]);
                 __syncthreads();
-                
-                // 4x4 [4] smem
-                cumulative_add(cumsum_k_a2_s[t], k_smem_a2);   
-                __syncthreads();            
-                warpgroup::load(cumsum_k_a2_reg_tile, cumsum_k_a2_s[t]);   // load 
-                __syncthreads();
-                mul(q, q, cumsum_k_a2_reg_tile);                           // elementwise mult
-                __syncthreads();
-                row_sum(linear_norm_vec_a2, q, linear_norm_vec_a2);        // reduction along dimension
-                __syncthreads();
+
+                // compute norm in registers
+                warpgroup::load(cumsum_k_a2_reg_tile, k_smem_a2);      // load 
+                mul(q, q, cumsum_k_a2_reg_tile);                       // elementwise mult
+                row_sum(linear_norm_vec_a2, q, linear_norm_vec_a2);    // reduction along dimension
             }
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
@@ -436,7 +604,7 @@ void based_linear_attention(
         } tma::store_async_wait();
 
 
-        // // save stuff for the normalization terms
+        // save stuff for the normalization terms
         // warpgroup::store(cumsum_k_a1_s[tic], cumsum_k_a1_reg_tile);
         // warpgroup::store(norm_a1_s[tic], linear_norm_vec);
         // warpgroup::store(norm_a2_s[tic], linear_norm_vec_a2);
@@ -446,9 +614,9 @@ void based_linear_attention(
         //     tma::store_async(debug_norm_a2, norm_a2_s[tic], (blockIdx.x * n_blocks) + block);
         //     tma::store_async(debug_cumsum_k_a1, cumsum_k_a1_s[tic], (blockIdx.x * n_blocks) + block);  
         //     tma::store_async(debug_cumsum_k_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
-        //     for (int t = 0; t < 4; t++) {
-        //         tma::store_async(debug_cumsum_k_a2, cumsum_k_a2_s[t], 4*(blockIdx.x * n_blocks + block)+t);
-        //     }
+        //     // for (int t = 0; t < 4; t++) {
+        //     //     tma::store_async(debug_cumsum_k_a2, k_smem_a2[t], 4*(blockIdx.x * n_blocks + block)+t);
+        //     // }
         //     tma::store_commit_group();  
         // }
     }
@@ -528,8 +696,8 @@ void based_linear_attention(
     }
 }
 
-// #include "harness.impl"
 
+#ifdef TORCH_COMPILE
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 void based_fwd_tk(
@@ -624,4 +792,6 @@ void based_fwd_tk(
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
-
+#else
+#include "harness.impl"
+#endif

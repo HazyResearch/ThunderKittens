@@ -258,8 +258,7 @@ int main(int argc, char **argv) {
             tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
             tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d, 
             tma_k_a2_d, tma_k_a1_d
-            //,
-            // tma_norm_a1, tma_cumsum_k_a1, 
+            // ,tma_norm_a1, tma_cumsum_k_a1, 
             // tma_cumsum_k_a0, 
             // tma_norm_a2, tma_cumsum_k_a2
         );  
@@ -290,11 +289,19 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.1 || isnan(diff)) {
             good = false;
         }
+        if( isnan(diff) ) {
+            printf("Output NAN detected idx=%d,  diff = %f\n", i, diff);
+            break;
+        }
+        if( isinf(diff) ) {
+            printf("Output INF detected idx=%d,  diff = %f\n", i, diff);
+            break;
+        }
     }
-    printf("Checked 2048 of %d total elements\n", TOTAL_ELEMENTS_VO);
+    // printf("Checked 2048 of %d total elements\n", TOTAL_ELEMENTS_VO);
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
-    if(good) std::cout << "Correct :)\n";
-    else std::cout     << "Incorrect :(\n";
+    if(good) std::cout << "Correct :)\n" << std::endl;
+    else std::cout     << "Incorrect :(\n" << std::endl;
 
     // check kv-state
     cudaMemcpy(kv_a1_bf, d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
