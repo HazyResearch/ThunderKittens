@@ -6,7 +6,7 @@
 template<typename T>
 struct test_dsmem { // load with dsmem, write out normally
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*2<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*2<=kittens::MAX_SHARED_MEMORY-8192>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "dsmem_transfer_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "dsmem_transfer_gmem=half" :
                                                                                          "dsmem_transfer_gmem=float";

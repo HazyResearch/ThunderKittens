@@ -220,7 +220,7 @@ struct base<T_D, T_AB, 4, trans_a, trans_b> {
                 "{\n"
                 ".reg .pred p;\n" \
                 "setp.ne.b32 p, %18, 0;\n" \
-                "wgmma.mma_async.sync.aligned.m64n64k16.f16.bf16.bf16 " \
+                "wgmma.mma_async.sync.aligned.m64n64k16.f16.f16.f16 " \
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15}, " \
                 "%16, " \
                 "%17, " \

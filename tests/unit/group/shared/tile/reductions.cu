@@ -2,9 +2,9 @@
 
 #ifdef TEST_GROUP_SHARED_TILE_REDUCTIONS
 
-struct normalize_row {
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
-    static inline const std::string test_identifier = "shared_norm_row";
+struct group_normalize_row {
+    template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
+    static inline const std::string test_identifier = "group_shared_norm_row";
     template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -34,9 +34,9 @@ struct normalize_row {
         kittens::store(output, shared_tile, W*16);
     }
 };
-struct normalize_col {
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
-    static inline const std::string test_identifier = "shared_norm_col";
+struct group_normalize_col {
+    template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
+    static inline const std::string test_identifier = "group_shared_norm_col";
     template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -66,9 +66,9 @@ struct normalize_col {
         kittens::store(output, shared_tile, W*16);
     }
 };
-struct broadcast_row {
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is group-level
-    static inline const std::string test_identifier = "shared_broadcast_row";
+struct group_broadcast_row {
+    template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
+    static inline const std::string test_identifier = "group_shared_broadcast_row";
     template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -98,9 +98,9 @@ struct broadcast_row {
         kittens::store(output, shared_tile, W*16);
     }
 };
-struct broadcast_col {
+struct group_broadcast_col {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
-    static inline const std::string test_identifier = "shared_broadcast_col";
+    static inline const std::string test_identifier = "group_shared_broadcast_col";
     template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -138,25 +138,25 @@ void group::shared::tile::reductions::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    sweep_size_2d<normalize_row, SIZE, SIZE, 2>::run(results);
-    sweep_size_2d<normalize_col, SIZE, SIZE, 2>::run(results);
-    sweep_size_2d<broadcast_row, SIZE, SIZE, 2>::run(results);
-    sweep_size_2d<broadcast_col, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_normalize_row, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_normalize_col, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_broadcast_row, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_broadcast_col, SIZE, SIZE, 2>::run(results);
 
 
     if constexpr (TEST_INTENSITY > 1) {
 
-        sweep_size_2d<normalize_row, SIZE, SIZE, 4>::run(results);
-        sweep_size_2d<normalize_col, SIZE, SIZE, 4>::run(results);
-        sweep_size_2d<broadcast_row, SIZE, SIZE, 4>::run(results);
-        sweep_size_2d<broadcast_col, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<group_normalize_row, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<group_normalize_col, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<group_broadcast_row, SIZE, SIZE, 4>::run(results);
+        sweep_size_2d<group_broadcast_col, SIZE, SIZE, 4>::run(results);
 
         if constexpr (TEST_INTENSITY > 3) {
 
-            sweep_size_2d<normalize_row, 12, 5, 12>::run(results);
-            sweep_size_2d<normalize_col, 12, 5, 12>::run(results);
-            sweep_size_2d<broadcast_row, 12, 5, 12>::run(results);
-            sweep_size_2d<broadcast_col, 12, 5, 12>::run(results);
+            sweep_size_2d<group_normalize_row, 12, 5, 12>::run(results);
+            sweep_size_2d<group_normalize_col, 12, 5, 12>::run(results);
+            sweep_size_2d<group_broadcast_row, 12, 5, 12>::run(results);
+            sweep_size_2d<group_broadcast_col, 12, 5, 12>::run(results);
 
         }
     }
