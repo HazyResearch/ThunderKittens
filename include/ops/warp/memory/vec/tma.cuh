@@ -273,5 +273,40 @@ __device__ static inline void load_async(SV &dst, void const* const src_tma_map,
     }
 }
 
+namespace cluster {
+
+/**
+ * @brief Asynchronously loads data from global memory into a shared memory vector, broadcast across a cluster
+ *
+ * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
+ *
+ * @tparam SV A shared vector type with a TMA-compatible layout
+ * @param[out] dst The destination shared memory vector.
+ * @param[in] src_tma_map The source tensormap address in global memory
+ * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in] vec_idx The index of the requested vector.
+ * @param[in] cluster_mask The mask of the clusters to broadcast to.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx, uint16_t cluster_mask=0xFFFF) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
+
+        int32_t crd0 = vec_idx * (dst.length);
+
+        asm volatile (
+            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            " [%0], [%1, {%3}], [%2], %4;"
+            :
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0), "h"(cluster_mask)
+            : "memory"
+        );
+    }
+}
+
+
+} // namespace cluster
 } // namespace tma
 } // namespace kittens

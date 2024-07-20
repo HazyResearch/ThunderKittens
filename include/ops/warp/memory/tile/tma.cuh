@@ -339,5 +339,43 @@ __device__ static inline void load_async(ST &dst, void const* const src_tma_map,
     }
 }
 
+namespace cluster {
+
+/**
+ * @brief Asynchronously loads data from global memory into a shared memory tile, across a threadblock cluster
+ *
+ * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
+ *
+ * @tparam ST A shared tile type with a TMA-compatible layout
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src_tma_map The source tensormap address in global memory
+ * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
+ * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
+ * @param[in] cluster_mask The mask of the clusters to broadcast to.
+ */
+template<ducks::st::all ST>
+__device__ static inline void load_async(ST &dst, void const* const src_tma_map, barrier& bar, int tile_row_idx, int tile_col_idx=0, uint16_t cluster_mask=0xFFFF) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
+
+        int32_t crd0 = 0;
+        int32_t crd1 = tile_row_idx * (dst.rows);
+        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+
+        asm volatile (
+            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            " [%0], [%1, {%3, %4, %5}], [%2], %6;"
+            :
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2), "h"(cluster_mask)
+            : "memory"
+        );
+    }
+}
+
+} // namespace cluster
 } // namespace tma
 } // namespace kittens
