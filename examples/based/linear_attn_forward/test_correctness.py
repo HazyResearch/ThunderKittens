@@ -107,7 +107,7 @@ def pytorch_test_v1(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
     numerator = sum(numerators)
     denominator = sum(denominators) 
     if add_norm: 
-        y = numerator / ( denominator.unsqueeze(-1) + eps )
+        y = numerator.to(torch.float32) / ( denominator.to(torch.float32).unsqueeze(-1) + eps ).to(torch.bfloat16)
     else:
         y = numerator
 
@@ -219,7 +219,7 @@ def pytorch_test_v4(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=Fal
 def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=False, output_state=False):
     b, h, n, d = Q.shape
     dv = V.shape[-1]
-    o   = torch.zeros_like(V)
+    o  = torch.zeros_like(V)
 
     kv_state_a2 = torch.zeros((b, h, d*d, dv), dtype=dt, device='cuda')
     kv_state_a1 = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
@@ -243,10 +243,10 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
 ################### Benchmarking and Correctness Tests ####################
 
 def linear_attn_correct(dt):
-    b = 2
+    b = 1
     n = 2048
-    h = 8
-    head_idx = 2
+    h = 1
+    head_idx = 0
     d = 16
     dv = 64
     add_scale=True     
@@ -282,10 +282,14 @@ def linear_attn_correct(dt):
         print()
         __eq("PyTorch v2 - Based TK", pytorch_v2, tk_outputs)
         __eq("PyTorch v1 - Based TK", pytorch_v1, tk_outputs, debug=False)
-        __eq("PyTorch v1[0,0,:15] - Based TK[0,0,:15]", pytorch_v1[0,head_idx,:105], tk_outputs[0,head_idx,:105], debug=False)
-        print(pytorch_v1[0,head_idx,0,:8])
+        __eq("PyTorch v1[0,0,:15] - Based TK[0,0,:15]", pytorch_v4[0,head_idx,:105], tk_outputs[0,head_idx,:105], debug=False)
+        print(pytorch_v4[0,head_idx,0,:8])
         print(tk_outputs[0,head_idx,0,:8])
         print()
+
+    print(pytorch_v4[0,head_idx,128:132,:4])
+    print(tk_outputs[0,head_idx,128:132,:4])
+    breakpoint()
 
     print("---"*10)
 
@@ -371,4 +375,3 @@ def linear_attn_correct(dt):
 
 if __name__ == "__main__":
     linear_attn_correct(torch.bfloat16)
-

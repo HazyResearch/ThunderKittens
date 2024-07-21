@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     }
 
     // replicate into heads
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
         k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS_QK]);
     }
 
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16));
 
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_k_s>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16)); 
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<tile_k_s>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16)); 
     CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<tile_k_s>(d_cumsum_k_a1, (ATTN_B*ATTN_H*ATTN_N)/(1 * 16));  
 
     cudaDeviceSynchronize();
@@ -115,12 +115,13 @@ int main(int argc, char **argv) {
     float total_cumsum_k_a1_diff=0;
     for (int i = 0; i < TOTAL_ELEMENTS_CUMSUM_K1; i++) {
         float diff = cumsum_k_a1[i] - cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
-        if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1) {
-            cumsum_k_a1_ref_file << cumsum_k_a1_ref[i] << ' ';
+        if (i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1*3) {
+            cumsum_k_a1_ref_file << cumsum_k_a1_ref[i % TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1] << ' ';
             cumsum_k_a1_file << cumsum_k_a1[i] << ' ';
             cumsum_k_a1_diff_file << diff << ' ';
-            total_cumsum_k_a1_diff += abs(diff);
         }
+        total_cumsum_k_a1_diff += abs(diff);
+        
     }
     std::cout << "Cumsum avg_diff=" << (total_cumsum_k_a1_diff/TOTAL_ELEMENTS_CUMSUM_K1) << std::endl;
     std::cout << "Timing (microsec)=" << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << std::endl;

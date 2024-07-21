@@ -273,20 +273,31 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
         return CausalLMOutput(logits=lm_logits)
 
     @classmethod
-    def from_pretrained_hf(cls, pretrained_model_name, device=None, dtype=None, override_seqlen=None, **kwargs):
+    def from_pretrained_hf(cls, pretrained_model_name, device=None, dtype=None, override_seqlen=None, override_model_dims=None, **kwargs):
         config_data = load_config_hf(pretrained_model_name)
         config = MambaConfig(**config_data)
         if override_seqlen is not None: 
             config.n_positions = override_seqlen
+        if override_model_dims is not None: 
+            if override_model_dims == "7B":
+                config.d_model = 4416
+                config.n_embd = 4416
+                config.n_layer = 64
+                config.n_head = config.d_model // 64 
+            else:
+                assert 0, print("Unknown setting.")
         model = cls(config, device=device, dtype=dtype, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device, dtype=dtype)
+
+        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"{num_params=:.2e}")
 
         # remove the 'model.' prefix from the keys
         state_dict = {re.sub("^model\.", "", k): v for k, v in state_dict.items()}
         # remove Unexpected key(s) in state_dict: "train_metrics.num-tokens.count", "val_metrics.num-tokens.count", "test_metrics.num-tokens.count". from the state_dict
         state_dict = {k: v for k, v in state_dict.items() if "metrics" not in k}
 
-        model.load_state_dict(state_dict)
+        if override_model_dims is None and override_seqlen is None: model.load_state_dict(state_dict)
         return model
 
     def save_pretrained(self, save_directory):

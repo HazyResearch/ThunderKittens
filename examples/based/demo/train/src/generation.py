@@ -197,10 +197,10 @@ def decode(
         start.record()
     scores, sequences = [], [input_ids]
 
-    # breakpoint()
     # from transformers import AutoTokenizer
     # tokenizer = AutoTokenizer.from_pretrained("gpt2")
     while not should_stop(sequences[-1], inference_params):
+        # breakpoint()
         scores.append(get_logits(sequences[-1], inference_params))
         inference_params.seqlen_offset += sequences[-1].shape[1]
         sequences.append(sample_tokens(scores[-1], inference_params))
@@ -377,6 +377,8 @@ def decode_speculative(
             logits = model._decoding_cache.run(
                 input_ids, position_ids, inference_params.seqlen_offset
             )[:, -num_last_tokens:]
+
+        print(logits[0,0:10])
         return logits[..., :vocab_size] if vocab_size is not None else logits
 
     def sample_tokens(input_ids, get_logits_fn, inference_params, sample_fn, num_tokens=1):
@@ -787,7 +789,7 @@ def capture_graph(
                 position_ids=position_ids,
                 inference_params=inference_params,
                 num_last_tokens=decoding_seqlen,
-                stream=s,
+                # stream=s,
             ).logits
         s.synchronize()
         # This might be needed for correctness if we run with NCCL_GRAPH_MIXING_SUPPORT=0,

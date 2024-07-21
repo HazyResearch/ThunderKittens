@@ -1,7 +1,7 @@
+#define TORCH_COMPILE 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
-
 #include <cuda_runtime.h>
 #include <iostream>
 
@@ -214,9 +214,10 @@ void based_linear_attention(
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
-    tile_k_s (&k_s) [2] = al.allocate<tile_k_s, 2>();       // 4096 bytes
-    tile_k_s (&ks_smem_a1_tile) = al.allocate<tile_k_s>();  // 1024 bytes
-    warpgroup::zero(ks_smem_a1_tile);
+    tile_k_s (&k_s) [2] = al.allocate<tile_k_s, 2>();              // 4096 bytes
+    tile_k_s (&ks_smem_a1_tile) [2] = al.allocate<tile_k_s, 2>();  // 1024 bytes
+    warpgroup::zero(ks_smem_a1_tile[0]);
+    warpgroup::zero(ks_smem_a1_tile[1]);
 
     tile_k_reg k_cumsum_a1_reg;
     zero(k_cumsum_a1_reg);
@@ -240,7 +241,7 @@ void based_linear_attention(
         if (warpid == 0 && block+1<n_blocks) {   // go get the next K from HBM
             tma::set_bytes(bar, size_bytes<typeof(k_s[0])>  );
             int next_tile_idx = (blockIdx.x * n_blocks) + block + 1;
-            tma::load_async(k_s[toc],   tma_k,   bar, next_tile_idx);
+            tma::load_async(k_s[toc], tma_k, bar, next_tile_idx);
         }
 
         if ( use_reg > 0 ) {
@@ -249,21 +250,72 @@ void based_linear_attention(
             __syncthreads();
             cumulative_add(k_cumsum_a1_reg, k_src, block);  // cumsum in registers
             __syncthreads();
-            store(ks_smem_a1_tile, k_cumsum_a1_reg);
+            if (warpid == 0) {
+                store(ks_smem_a1_tile[tic], k_cumsum_a1_reg);
+            }
             __syncthreads();
         } else {
             __syncthreads(); 
-            cumulative_add(ks_smem_a1_tile, k_s[tic]);   // cumsum in smem
+            cumulative_add(ks_smem_a1_tile[tic], k_s[tic]);   // cumsum in smem
             __syncthreads();
         }
         
+        if (block > 0) tma::store_async_wait();
         if ( warpid == 0 ) { 
-            tma::store_async(debug_cumsum_k_a1, ks_smem_a1_tile, blockIdx.x*n_blocks + block); 
+            tma::store_async(
+                debug_cumsum_k_a1, 
+                ks_smem_a1_tile[tic], 
+                ( blockIdx.x * n_blocks ) + block
+            ); 
             tma::store_commit_group();   
         }
         tma::store_async_wait();
     }
 }
 
+
+#ifdef TORCH_COMPILE
+#include "src/common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void tk_cumulative_sum(
+    int use_reg, torch::Tensor k, torch::Tensor k_a1
+) {
+    CHECK_INPUT(k);
+    CHECK_INPUT(k_a1);
+
+    auto batch   = k.size(0);
+    auto heads   = k.size(1);
+    auto threads = NUM_THREADS; 
+    auto n       = k.size(2); 
+
+    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
+    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "n must be divisible by 64");
+
+    // convert to bf16
+    c10::BFloat16* k_ptr    = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_a1_ptr = k_a1.data_ptr<c10::BFloat16>();
+
+    const bf16* d_k  = reinterpret_cast<const bf16*>(k_ptr);
+          bf16* d_k_a1 = reinterpret_cast<bf16*>(k_a1_ptr);
+    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_k_s>(d_k, (batch*heads*n)/(1 * 16)); 
+    CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<tile_k_s>(d_k_a1, (batch*heads*n)/(1 * 16));  
+
+    unsigned long mem_size = 40000; 
+    using T = kittens::bf16;
+    using H = kittens::bf16;
+    cudaFuncSetAttribute(
+        based_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    ); 
+
+    based_linear_attention<<<batch*heads, threads, mem_size>>>(
+        n, use_reg, tma_k_d, tma_cumsum_k_a1
+    );
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
+#else
 #include "harness.impl"
+#endif
 
