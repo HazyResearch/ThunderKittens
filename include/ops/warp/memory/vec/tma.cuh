@@ -288,7 +288,7 @@ namespace cluster {
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
 template<ducks::sv::all SV>
-__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx, uint16_t cluster_mask=0xFFFF) {
+__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));

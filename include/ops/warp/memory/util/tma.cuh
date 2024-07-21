@@ -79,6 +79,30 @@ __device__ static inline void store_async_wait() {
 namespace cluster {
 
 /**
+* @brief Waits for the requested barrier phase, at cluster scope
+*
+* @param barrier Reference to the barrier variable.
+* @param kPhaseBit The phase bit used for the barrier.
+*/
+__device__ static inline void wait(barrier& bar, int kPhaseBit) {
+    void const* const ptr = &bar;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+    asm volatile (
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
+}
+
+/**
 * @brief Sets the number of bytes expected at the barrier, assuming a multicast instruction.
 *
 * This function sets the number of bytes expected at the barrier for the first thread in the warp.
@@ -88,13 +112,18 @@ namespace cluster {
 * @param barrier Reference to the barrier variable.
 * @param bytes The number of bytes expected at the barrier.
 */
-__device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
+__device__ static inline void expect_bytes(barrier& bar, uint32_t bytes, int dst_cta) {
     if (::kittens::laneid() == 0) {
-        void const* const ptr = &bar;
-        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+        uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+        uint32_t neighbor_mbar_addr;
+        asm volatile (
+            "mapa.shared::cluster.u32  %0, %1, %2;\n"
+            : "=r"(neighbor_mbar_addr)
+            : "r"(mbar_addr), "r"(dst_cta)
+        );
 
-        asm volatile ("mbarrier.arrive.expect_tx.cluster.shared::cta.b64 _, [%0], %1;\n"
-            :: "r"(bar_ptr), "r"(bytes));
+        asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
+            :: "r"(neighbor_mbar_addr), "r"(bytes));
     }
 }
 /**
@@ -108,8 +137,8 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
 * @param barrier Reference to the barrier variable.
 */
 template<typename T>
-__device__ static inline void expect(barrier& bar) {
-    expect_bytes(bar, sizeof(T));
+__device__ static inline void expect(barrier& bar, int dst_cta) {
+    expect_bytes(bar, sizeof(T), dst_cta);
 }
 
 /**
@@ -129,9 +158,9 @@ __device__ static inline void arrive(barrier& bar, int dst_cta) {
         : "r"(mbar_addr), "r"(dst_cta)
     );
     asm volatile (
-        "mbarrier.arrive.release.cluster.b64 _, [%0], %1;\n"
+        "mbarrier.arrive.shared::cluster.b64 _, [%0];\n"
         :
-        : "r"(neighbor_mbar_addr), "r"(1)
+        : "r"(neighbor_mbar_addr)
         : "memory"
     );
 }

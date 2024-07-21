@@ -4,10 +4,10 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int ATTN_H     = 16;
-constexpr int ATTN_N     = 6144; // 4096;
+constexpr int ATTN_N     = 8448; // 4096;
 constexpr int ATTN_D     = 128; // hardcoded into this harness
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
-constexpr int ITER = 1;
+constexpr int ITER = 30;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -105,10 +105,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_q>>(d_q, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
-    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_k>>(d_k, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
-    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_v>>(d_v, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
-    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width, layout_o>>(d_o, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
+    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_q, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
+    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_k, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
+    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_v, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
+    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_o, ATTN_B*ATTN_H*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
@@ -121,8 +121,8 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(NUM_WORKERS*kittens::TILE_DIM), ATTN_B*ATTN_H, 1);
-    static_assert(ATTN_N % (NUM_WORKERS*kittens::TILE_DIM) == 0);
+    dim3 grid(ATTN_N/(NUM_CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), ATTN_B*ATTN_H, 1);
+    static_assert(ATTN_N % (NUM_CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {    

@@ -2,12 +2,30 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-#define NUM_CONSUMER_WARPGROUPS (3)
-#define NUM_PRODUCER_WARPGROUPS (0)
+// ----- DEBUG -----
+#define RED  "\033[91m" 
+#define GREEN  "\033[92m" 
+#define YELLOW  "\033[93m" 
+#define BLUE  "\033[94m" 
+#define MAGENTA  "\033[95m" 
+#define CYAN  "\033[96m" 
+#define WHITE  "\033[97m" 
+#define RESET  "\033[0m" 
+template<typename... Args> __device__ void gprintf(Args... args) {
+    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x % 32 == 0) {
+        printf(args...);
+    }
+}
+// ----- DEBUG -----
+
+#define NUM_CONSUMER_WARPGROUPS (2)
+#define NUM_PRODUCER_WARPGROUPS (1) // hardcoded
 #define NUM_WARPGROUPS (NUM_CONSUMER_WARPGROUPS+NUM_PRODUCER_WARPGROUPS)
 #define NUM_WORKERS (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS)
+#define CLUSTER_SIZE (2)
 
 using namespace kittens;
+namespace cg = cooperative_groups;
 
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
@@ -18,17 +36,19 @@ template<> struct fwd_attend_ker_tile_dims<64> {
 template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = 128/kittens::TILE_DIM;
     constexpr static int qo_height  = 4;
-    constexpr static int kv_height  = 8;
+    constexpr static int kv_height  = 11;
 };
 
 template<int D>
-__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
+__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1) __cluster_dims__(CLUSTER_SIZE,1,1)
 void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
     int warpid      = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
+    cg::cluster_group cluster = cg::this_cluster();
+    int block_rank = cluster.block_rank(); // 0 or 1
 
     constexpr int tile_width = fwd_attend_ker_tile_dims<D>::tile_width; // constants
     constexpr int qo_height  = fwd_attend_ker_tile_dims<D>::qo_height;
@@ -43,108 +63,131 @@ void fwd_attend_ker_dim(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     k_tile (&k_smem)[2]                       = al.allocate<k_tile, 2                      >();
     v_tile (&v_smem)[2]                       = al.allocate<v_tile, 2                      >();
 
-    int tic = 0, toc = 1;
- 
-    rt_fl<1, kv_height> att_block;
-    rt_bf<1, kv_height> att_block_mma;
-    rt_fl<1, tile_width> o_prev;
-    col_vec<rt_fl<1, kv_height>> max_vec_last, max_vec;
-    col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
-
     int kv_blocks = N / (k_tile::rows);
 
-    __shared__ uint64_t qsmem_barrier, kvsmem_barrier;
-    __shared__ uint32_t producer_barrier;
+    __shared__ kittens::barrier qsmem_barrier, kvsmem_arrived[2], compute_done[2];
 
     if (threadIdx.x == 0) {
-        init_barrier(qsmem_barrier, 0, 1);
+        init_barrier(qsmem_barrier, 0, 1); // no threads, one transaction
+        init_barrier(kvsmem_arrived[0], 0, 1); // no threads, one transaction
+        init_barrier(kvsmem_arrived[1], 0, 1); // no threads, one transaction
+        init_barrier(compute_done[0], CLUSTER_SIZE*NUM_CONSUMER_WARPGROUPS*WARPGROUP_THREADS, 0); // all the consumer threads, no transactions
+        init_barrier(compute_done[1], CLUSTER_SIZE*NUM_CONSUMER_WARPGROUPS*WARPGROUP_THREADS, 0); // all the consumer threads, no transactions
+        
         tma::expect_bytes(qsmem_barrier, sizeof(q_tile)*NUM_CONSUMER_WARPGROUPS);
-        init_barrier(kvsmem_barrier, 0, 1);
-        tma::expect_bytes(kvsmem_barrier, sizeof(k_tile)*2);
-    }
-
-    if (threadIdx.x == 0) {
         for (int wg = 0; wg < NUM_CONSUMER_WARPGROUPS; wg++) { // load q
             int q_tile_idx = (blockIdx.y * NUM_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_CONSUMER_WARPGROUPS) + wg;
-            tma::load_async((q_smem[wg]), tma_q, qsmem_barrier, q_tile_idx); 
+            tma::load_async(q_smem[wg], tma_q, qsmem_barrier, q_tile_idx); 
         }
         int kv_tile_idx = (blockIdx.y * kv_blocks) + 0; 
-        tma::load_async((k_smem[0]), tma_k, kvsmem_barrier, kv_tile_idx); 
-        tma::load_async((v_smem[0]), tma_v, kvsmem_barrier, kv_tile_idx);
-        producer_barrier = 0; // nobody is done with them yet
+        tma::expect_bytes(kvsmem_arrived[0], sizeof(k_tile)*2);
+        tma::load_async(k_smem[0], tma_k, kvsmem_arrived[0], kv_tile_idx); 
+        tma::load_async(v_smem[0], tma_v, kvsmem_arrived[0], kv_tile_idx);
     }
 
-    neg_infty(max_vec); // zero registers for the Q chunk
-    zero(norm_vec);
-    zero(o_prev);
-    __syncthreads();
-
+    // __syncthreads();
+    cluster.sync();
     wait(qsmem_barrier, 0);
 
-    // premultiply by tempreature
-    if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.44269504089f)); }
-    else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.44269504089f)); }
+    // gprintf(GREEN "(warp %d) passed qsmem_barrier\n" RESET, warpid);
 
-    for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
+    int tic = 0, toc = 1;
+    if(warpgroupid == NUM_WARPGROUPS-1) { // producer warpgroup
+             if constexpr (NUM_CONSUMER_WARPGROUPS == 2) { asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(24)); }
+        else if constexpr (NUM_CONSUMER_WARPGROUPS == 3) { asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32)); }
         
-        wait(kvsmem_barrier, tic);
-        
-        if(threadIdx.x%32 == 0) {
-            int producer_barrier_old = atomicInc(&producer_barrier, NUM_WORKERS-1);
-            if (producer_barrier_old == NUM_WORKERS-1) { // last one to do it?
-                tma::expect_bytes(kvsmem_barrier, 2*sizeof(k_tile));
-                
-                if (kv_idx + 1 < kv_blocks) {    
-                    int tile_idx = (blockIdx.y * kv_blocks) + (kv_idx + 1);
-                    tma::load_async(k_smem[toc], tma_k, kvsmem_barrier, tile_idx); 
-                    tma::load_async(v_smem[toc], tma_v, kvsmem_barrier, tile_idx);
-                }
+        if(block_rank == 0 && warpid == NUM_WORKERS-4) {
+            for (auto kv_idx = 0; kv_idx < kv_blocks-1; kv_idx++, tic=tic^1, toc=toc^1) {
+                // issue load into toc
+                // gprintf(GREEN "(producer warp %d, iter=%d) local expect bytes\n" RESET, warpid, kv_idx, kv_idx+1, toc);
+                tma::cluster::expect_bytes(kvsmem_arrived[toc], 2*sizeof(k_tile), 0);
+                // gprintf(RED "(producer warp %d, iter=%d) remote expect bytes\n" RESET, warpid, kv_idx, kv_idx+1, toc);
+                tma::cluster::expect_bytes(kvsmem_arrived[toc], 2*sizeof(k_tile), 1);
+                int tile_idx = (blockIdx.y * kv_blocks) + (kv_idx + 1);
+                // gprintf(YELLOW "(producer warp %d, iter=%d) launching multicast loads\n" RESET, warpid, kv_idx, kv_idx+1, toc);
+                tma::cluster::load_async(k_smem[toc], tma_k, kvsmem_arrived[toc], tile_idx, 0, uint16_t(0xFFFF)>>(16-CLUSTER_SIZE));
+                tma::cluster::load_async(v_smem[toc], tma_v, kvsmem_arrived[toc], tile_idx, 0, uint16_t(0xFFFF)>>(16-CLUSTER_SIZE));
+
+                // gprintf(BLUE "(producer warp %d, iter=%d) waiting for compute_done[%d]\n" RESET, warpid, kv_idx, tic);
+                tma::cluster::wait(compute_done[tic], (kv_idx/2)%2);
+                // gprintf(CYAN "(producer warp %d, iter=%d) passed compute_done[%d]\n" RESET, warpid, kv_idx, tic);
             }
         }
-        
-        warpgroup::mma_fence(att_block);
-        warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic]);
-        warpgroup::mma_commit_group();
-
-        copy(norm_vec_last, norm_vec);
-        copy(max_vec_last,  max_vec);
-
-        warpgroup::mma_async_wait();
-
-        row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
-        sub_row(att_block, att_block, max_vec);
-        exp2(att_block, att_block);
-
-        sub(max_vec_last, max_vec_last, max_vec);
-        exp2(max_vec_last, max_vec_last);
-        mul(norm_vec, norm_vec, max_vec_last);
-
-        row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
-        div_row(att_block, att_block, norm_vec);
-
-        mul(norm_vec_last, norm_vec_last, max_vec_last);
-        div(norm_vec_last, norm_vec_last, norm_vec);
-
-        copy(att_block_mma, att_block); // convert to bf16 for mma
-        mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
-
-        warpgroup::mma_fence(o_prev);
-        warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic]);
-        warpgroup::mma_commit_group();
-        warpgroup::mma_async_wait();
+        __syncthreads();
     }
+    else { // consumer warpgroup
+             if constexpr (NUM_CONSUMER_WARPGROUPS == 2) { asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240)); }
+        else if constexpr (NUM_CONSUMER_WARPGROUPS == 3) { asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(160)); }
 
-    auto (*o_smem) = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
-    warpgroup::store(o_smem[warpgroupid], o_prev); 
-    __syncthreads();
+        // premultiply by temperature
+        if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f * 1.44269504089f)); }
+        else { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f * 1.44269504089f)); }
     
-    if (warpid % 4 == 0) { // store o
-        int tile_idx = (blockIdx.y * NUM_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_CONSUMER_WARPGROUPS) + warpgroupid;
-        tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
-        tma::store_commit_group(); 
-    }
+        rt_fl<1, kv_height> att_block;
+        rt_bf<1, kv_height> att_block_mma;
+        rt_fl<1, tile_width> o_prev;
+        col_vec<rt_fl<1, kv_height>> max_vec_last, max_vec;
+        col_vec<rt_fl<1, kv_height>> norm_vec_last, norm_vec;
 
-    tma::store_async_wait();
+        neg_infty(max_vec); // zero registers for the Q chunk
+        zero(norm_vec);
+        zero(o_prev);
+        
+        for (auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=tic^1, toc=toc^1) {
+            
+            // gprintf(WHITE "(consumer warp %d, iter=%d) waiting for kvsmem_arrived[%d]\n" RESET, warpid, kv_idx, tic);
+            tma::cluster::wait(kvsmem_arrived[tic], (kv_idx/2)%2);
+            // gprintf(MAGENTA "(consumer warp %d, iter=%d) passed kvsmem_arrived[%d]\n" RESET, warpid, kv_idx, tic);
+            
+            warpgroup::mma_fence(att_block);
+            warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[tic]);
+            warpgroup::mma_commit_group();
+
+            copy(norm_vec_last, norm_vec);
+            copy(max_vec_last,  max_vec);
+
+            warpgroup::mma_async_wait();
+
+            row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
+            sub_row(att_block, att_block, max_vec);
+            exp2(att_block, att_block);
+
+            sub(max_vec_last, max_vec_last, max_vec);
+            exp2(max_vec_last, max_vec_last);
+            mul(norm_vec, norm_vec, max_vec_last);
+
+            row_sum(norm_vec, att_block, norm_vec); // accumulate onto the norm_vec
+            div_row(att_block, att_block, norm_vec);
+
+            mul(norm_vec_last, norm_vec_last, max_vec_last);
+            div(norm_vec_last, norm_vec_last, norm_vec);
+
+            copy(att_block_mma, att_block); // convert to bf16 for mma
+            mul_row(o_prev, o_prev, norm_vec_last); // normalize o_prev in advance of mma'ing onto it
+
+            warpgroup::mma_fence(o_prev);
+            warpgroup::mma_AB(o_prev, att_block_mma, v_smem[tic]);
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait();
+
+            // gprintf(MAGENTA "(consumer warp %d, iter=%d) arriving at compute_done[%d]\n" RESET, warpid, kv_idx, tic);
+            tma::cluster::arrive(compute_done[tic], 0);
+            // gprintf(WHITE "(consumer warp %d, iter=%d) passed compute_done[%d]\n" RESET, warpid, kv_idx, tic);
+        }
+        // gprintf(GREEN "(warp %d, iter=%d) exited loop\n" RESET, warpid);
+        auto (*o_smem) = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
+        warpgroup::store(o_smem[warpgroupid], o_prev); 
+        __syncthreads();
+        
+        if (warpid % 4 == 0) { // store o
+            int tile_idx = (blockIdx.y * NUM_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * NUM_CONSUMER_WARPGROUPS) + warpgroupid;
+            tma::store_async(tma_o, (o_smem[warpgroupid]), tile_idx); 
+            tma::store_commit_group(); 
+        }
+
+        tma::store_async_wait();
+    }
+    cluster.sync();
 }
 
 // #include "common/pyutils/torch_helpers.cuh"
