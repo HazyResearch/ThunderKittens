@@ -249,7 +249,7 @@ def linear_attn_correct(dt):
     head_idx = 0
     d = 16
     dv = 64
-    add_scale=True     
+    add_scale=False     
     add_norm=True
     output_kv_state=True
     output_k_state=True
@@ -282,14 +282,18 @@ def linear_attn_correct(dt):
         print()
         __eq("PyTorch v2 - Based TK", pytorch_v2, tk_outputs)
         __eq("PyTorch v1 - Based TK", pytorch_v1, tk_outputs, debug=False)
-        __eq("PyTorch v1[0,0,:15] - Based TK[0,0,:15]", pytorch_v4[0,head_idx,:105], tk_outputs[0,head_idx,:105], debug=False)
-        print(pytorch_v4[0,head_idx,0,:8])
-        print(tk_outputs[0,head_idx,0,:8])
+        __eq("PyTorch v1[0,0,:15] - Based TK[0,0,:15]", pytorch_v1[0,head_idx,:105], tk_outputs[0,head_idx,:105], debug=False)
+        print(pytorch_v4[0,head_idx,0,:4])
+        print(tk_outputs[0,head_idx,0,:4])
         print()
+
+    print(pytorch_v4[0,head_idx,70:72,:4])
+    print(tk_outputs[0,head_idx,70:72,:4])
+    print()
 
     print(pytorch_v4[0,head_idx,128:132,:4])
     print(tk_outputs[0,head_idx,128:132,:4])
-    breakpoint()
+    # breakpoint()
 
     print("---"*10)
 
