@@ -225,6 +225,9 @@ class LinearAttention(nn.Module):
     def parallel_forward(self, x: torch.Tensor, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, decay: torch.Tensor=None, impl_choice: str="default"):
         b, l, _ = x.size()
 
+        if impl_choice == "default" and impl_choice != "tk":
+            impl_choice = self.parallel_implementation
+
         if impl_choice != "default" and impl_choice == "tk":
             if self.layer_idx <= 2 and not self.silent: print(f"parallel tk")
             b, h, l, d = v.shape
@@ -242,38 +245,10 @@ class LinearAttention(nn.Module):
                 self.kv_state_a2,self.kv_state_a1,self.kv_state_a0,
                 self.k_state_a2,self.k_state_a1
             )
-            # self.y = torch.randn_like(self.y) / n*d
-            # self.kv_state_a2 = torch.randn_like(self.kv_state_a2) / n*d
-            # self.kv_state_a1 = torch.randn_like(self.kv_state_a1) / n*d
-            # self.kv_state_a0 = torch.randn_like(self.kv_state_a0) / n*d
-            # self.k_state_a2 = torch.randn_like(self.k_state_a2) / n*d
-            # self.k_state_a1 = torch.randn_like(self.k_state_a1) / n*d
-
-            # print(f"{self.layer_idx=}")
-            # inf_count = torch.isinf(self.y).sum().item()
-            # print(f"Number of infinities in self.y: {inf_count}")
-            # inf_count = torch.isinf(q).sum().item()
-            # print(f"Number of infinities in q: {inf_count}")
-            # inf_count = torch.isinf(k).sum().item()
-            # print(f"Number of infinities in k: {inf_count}")
-            # inf_count = torch.isinf(v).sum().item()
-            # print(f"Number of infinities in v: {inf_count}")
-            # inf_count = torch.isinf(self.kv_state_a2).sum().item()
-            # print(f"Number of infinities in self.kv_state_a2: {inf_count}")
-            # inf_count = torch.isinf(self.kv_state_a1).sum().item()
-            # print(f"Number of infinities in self.kv_state_a1: {inf_count}")
-            # inf_count = torch.isinf(self.kv_state_a0).sum().item()
-            # print(f"Number of infinities in self.kv_state_a0: {inf_count}")
-            # inf_count = torch.isinf(self.k_state_a2).sum().item()
-            # print(f"Number of infinities in self.k_state_a2: {inf_count}")
-            # inf_count = torch.isinf(self.k_state_a1).sum().item()
-            # print(f"Number of infinities in self.k_state_a1: {inf_count}")
-            # import time; time.sleep(3)
-
             y = self.y[:, :, :l]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "quadratic" and impl_choice=='default':
+        elif self.parallel_implementation == "quadratic" and impl_choice=='quadratic':
             q, k = self.feature_map(q), self.feature_map(k)
             A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) 
             if decay is not None and self.use_decay_proj:
@@ -293,7 +268,7 @@ class LinearAttention(nn.Module):
             y = y * z[..., None]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "linear" and impl_choice=='default':
+        elif self.parallel_implementation == "linear" and impl_choice=='linear':
             assert decay is None, "Decay not for this view"
             
             q, k = self.feature_map(q), self.feature_map(k)
@@ -308,7 +283,7 @@ class LinearAttention(nn.Module):
             y = v * z[..., None]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "fla_parallel" or impl_choice=='fla_parallel':
+        elif self.parallel_implementation == "fla_parallel" and impl_choice=='fla_parallel':
             """ 
             Computes both the feature map and causal dot products.
             Booleans are for the denominator and the normalization 
