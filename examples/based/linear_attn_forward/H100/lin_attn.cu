@@ -1,4 +1,4 @@
-// #define TORCH_COMPILE 
+#define TORCH_COMPILE 
 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
@@ -10,14 +10,19 @@
 #define D_VO (64) // hardcoded but can be changed with some effort
 
 #define tile_smem_bf_4x1 st_bf_4x1<wgmma_interleave_l>
-#define tile_smem_bf_4x4 st_bf_4x4<swizzle_l>           
+#define tile_smem_fl_4x1 st<float, 4, 1, wgmma_interleave_l>
+#define tile_smem_bf_4x4 st_bf_4x4<swizzle_l>      
+#define tile_smem_fl_4x4 st<float, 4, 4, swizzle_l>      
 #define tile_smem_bf_4x4_wgmma_interleave st_bf_4x4<wgmma_interleave_l>
 #define vec_smem_bf_4 sv_bf<4>
 #define vec_smem_bf_1 sv_bf<1>
 #define row_vec_smem_bf_1x4 row_vec<st_bf_1x4<swizzle_l>> 
+#define row_vec_smem_fl_1x4 row_vec<st<float, 1, 4, swizzle_l>> 
 
 #define tile_k_reg rt_bf<4,1>
+#define tile_k_reg_fl rt_fl<4,1>
 #define tile_k_reg_loads rt_bf<1,1>
+#define tile_k_reg_loads_fl rt_fl<1,1>
 
 using namespace kittens;
 
@@ -170,8 +175,8 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
     else { leader_step_4 = laneid(); }
 
     // Extract the last row of dst from the prior block.
-    row_vec<tile_k_reg_loads> last_row_1, last_row_3;
-    tile_k_reg_loads broadcast_last_row_1, broadcast_last_row_3;
+    row_vec<tile_k_reg_loads_fl> last_row_1, last_row_3;
+    tile_k_reg_loads_fl broadcast_last_row_1, broadcast_last_row_3;
     dtype copy_accum_packed_1 = dst.tiles[dst.height-1][0].data[1];
     dtype copy_accum_packed_3 = dst.tiles[dst.height-1][0].data[3];
 
@@ -200,8 +205,8 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
         dtype (*broadcast_last_row_inner_1_), (*broadcast_last_row_inner_3_);
         if (i > 0) {
             // last row of the previous core matrix from src tiles.
-            row_vec<tile_k_reg_loads> last_row_inner_1, last_row_inner_3;
-            tile_k_reg_loads broadcast_last_row_inner_1, broadcast_last_row_inner_3;
+            row_vec<tile_k_reg_loads_fl> last_row_inner_1, last_row_inner_3;
+            tile_k_reg_loads_fl broadcast_last_row_inner_1, broadcast_last_row_inner_3;
             dtype copy_accum_packed_inner_1 = accum_packed_1;
             dtype copy_accum_packed_inner_3 = accum_packed_3;
 
@@ -264,8 +269,8 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
         __syncthreads();
 
         // step 4: each core matrix sends its last row to the ``next'' core matrix (0 to 1, 2 to 3)
-        row_vec<tile_k_reg_loads> last_row_0, last_row_2;
-        tile_k_reg_loads broadcast_last_row_0, broadcast_last_row_2;
+        row_vec<tile_k_reg_loads_fl> last_row_0, last_row_2;
+        tile_k_reg_loads_fl broadcast_last_row_0, broadcast_last_row_2;
         dtype copy_accum_packed_0 = accum_packed_0;
         dtype copy_accum_packed_2 = accum_packed_2;
 
@@ -310,22 +315,20 @@ __device__ inline void cumulative_add(RT &dst, const RT &src, const int block_id
 // the overall algorithm partitions across 1 warpgroup of 4 workers.
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(
+    int include_a0, int include_a1, int include_a2,
     int n, int add_scale, int add_norm, int output_state, 
     CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o, 
     CUtensorMap* tma_kv_a2, CUtensorMap* tma_kv_a1, CUtensorMap* tma_kv_a0, 
     CUtensorMap* tma_k_a2, CUtensorMap* tma_k_a1
-    // ,
-    // CUtensorMap* debug_norm_a1, CUtensorMap* debug_cumsum_k_a1,
-    // CUtensorMap* debug_cumsum_k_a0, CUtensorMap* debug_norm_a2, CUtensorMap* debug_cumsum_k_a2
+    // CUtensorMap* debug_norm_a1, CUtensorMap* debug_norm_a2
+    // CUtensorMap* debug_cumsum_k_a1,
+    // CUtensorMap* debug_cumsum_k_a0, 
+    // CUtensorMap* debug_cumsum_k_a2
 ) {
 
     int laneid = kittens::laneid(); // who am i? when am i?
     int warpid = kittens::warpid(); // who am i? when am i?
     int tic = 0, toc = 1;
-
-    const int include_a0 = 1;
-    const int include_a1 = 1;
-    const int include_a2 = 1;
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -345,10 +348,10 @@ void based_linear_attention(
     // k_state (a1 terms)
     row_vec<st_bf<4,1>> (&ks_smem_a1) = al.allocate<row_vec<st_bf<4,1>>>();  // 1024 bytes
     warpgroup::zero(ks_smem_a1);
-    tile_k_reg k_cumsum_a1_reg;
+    tile_k_reg_fl k_cumsum_a1_reg;
 
     // k_state (a2 terms)
-    tile_k_reg k_cumsum_a2_reg [4];
+    tile_k_reg_fl k_cumsum_a2_reg [4];
     col_vec<rt_bf<1,1>>  ks_a2[4];
     for(int i = 0; i < 4; i++) { zero(ks_a2[i]); } // everyone zeroes ks_a2.
     col_vec<st_bf<4,1>>  (&ks_a2_s) = al.allocate<col_vec<st_bf<4,1>>>();
@@ -357,23 +360,23 @@ void based_linear_attention(
     warpgroup::zero(k_smem_a2);
 
     // k_state (a0 terms)
-    row_vec_smem_bf_1x4 &a0_cumsum         = al.allocate<row_vec_smem_bf_1x4>(); 
-    row_vec_smem_bf_1x4 &a0_fixed_vec      = al.allocate<row_vec_smem_bf_1x4>(); 
+    row_vec_smem_fl_1x4 (&a0_cumsum) = al.allocate<row_vec_smem_fl_1x4>(); 
+    row_vec_smem_fl_1x4 &a0_fixed_vec  = al.allocate<row_vec_smem_fl_1x4>(); 
     warpgroup::zero(a0_cumsum);
     warpgroup::zero(a0_fixed_vec);
     if ( warpid == 0 && laneid < 32) { 
-        a0_cumsum[laneid] = __float2bfloat16(laneid+1);
-        a0_cumsum[32+laneid] = __float2bfloat16(32+laneid+1); 
-        a0_fixed_vec[laneid] =  __float2bfloat16(64);
-        a0_fixed_vec[laneid+32] = __float2bfloat16(64);
+        a0_cumsum[laneid] = (laneid+1.0f);
+        a0_cumsum[32+laneid] = 32.0+laneid+1.0; 
+        a0_fixed_vec[laneid] =  64.0;
+        a0_fixed_vec[laneid+32] = 64.0;
     }
     __syncthreads();
 
     // debugging
     // for (int i = 0; i < 4; i ++ )  { zero(k_cumsum_a2_reg[i]); }
     // tile_smem_bf_4x1 (&cumsum_k_a1_s) [2]  = al.allocate<tile_smem_bf_4x1,2>(); 
-    // row_vec_smem_bf_1x4  (&norm_a1_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>(); 
-    // row_vec_smem_bf_1x4  (&norm_a2_s) [2]  = al.allocate<row_vec_smem_bf_1x4, 2>();  
+    // row_vec_smem_fl_1x4  (&norm_a1_s) [2]  = al.allocate<row_vec_smem_fl_1x4, 2>(); 
+    // row_vec_smem_fl_1x4  (&norm_a2_s) [2]  = al.allocate<row_vec_smem_fl_1x4, 2>();  
 
     if(warpid == 0) { zero(a0_total); }
     warpgroup::zero(a1_trans_s);
@@ -399,7 +402,7 @@ void based_linear_attention(
         tma::load_async(v_s_2[tic], tma_v,   bar, tile_idx);
         tma::load_async(v_s_3[tic], tma_v_3, bar, tile_idx);
     }
-    // if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&a0_fixed_vec) - (uint64_t)(&__shm[0]));
+    // if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&a0_cumsum) - (uint64_t)(&__shm[0]));
 
     for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
         // each iteration, we handle 64 tokens x 16 feature dim (k, q).
@@ -434,13 +437,16 @@ void based_linear_attention(
         warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
 
         // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
-        if (add_scale > 0) { mul(local_attn, local_attn, 0.25f); } // divide by sqrt(d)
+        if (add_scale > 0) { 
+            mul(local_attn, local_attn, 0.25f);  // divide a1 term by sqrt(d)
+        } 
         copy(temp_attn_accum, local_attn);
+
         // BEGIN comment-out for removing T2 (debug)
         if ( include_a2 > 0 ) {
-            mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it; note this converts sqrt(d) to d
+            mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it; this is divided by D now 
             if (add_scale > 0) { 
-                mul(temp_attn_accum, temp_attn_accum, 0.5f);  
+                mul(temp_attn_accum, temp_attn_accum, 0.5f);        // divide a2 term by 2
             } // divide by 2
             add(temp_attn_accum, temp_attn_accum, local_attn);      // add back in 1x for the linear term
         }
@@ -463,8 +469,7 @@ void based_linear_attention(
         warpgroup::mma_commit_group();                      // dew it
         
         if (include_a1 > 0 ) {
-            // if(threadIdx.x ==0 && blockIdx.x == 0) printf("include_a1\n");
-            if (add_scale > 0 ) { mul(a1_trans_s, a1_trans_s, __float2bfloat16(0.5)); } // divides by math.sqrt(math.sqrt(D_QK))
+            if (add_scale > 0 ) { mul(a1_trans_s, a1_trans_s, __float2bfloat16(0.5)); } // div by sqrt(sqrt(D_QK))
             warpgroup::mma_ABt(o, q_s[tic], a1_trans_s);        // incorporate a1 onto o
         }
         warpgroup::mma_commit_group();                      // dew it
@@ -479,40 +484,46 @@ void based_linear_attention(
         warpgroup::load(q_src, q_s[tic]);
         if (add_scale > 0) { 
             mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices 
-            mul(q_src, q_src, __float2bfloat16(0.25));          // divide by sqrt(d=16) for A2 here.
+            mul(q_src, q_src, __float2bfloat16(0.25));          // divide by D for A2 here.
         } 
         rt_bf_4x1<> k_src_tmp;
+        rt_fl_4x1<> k_src_tmp_fl;
         rt_bf_1x4<> k_src;
         load(k_src_tmp, k_s[tic]);
+        copy(k_src_tmp_fl, k_src_tmp);
         transpose_sep(k_src, k_src_tmp); // transpose K into Kt
 
         // denominator for a1
-        rt_bf_1x1<> q_reg_a1_tile;
-        rt_bf_1x1<> cumsum_k_a1_reg_tile;
-        rt_bf_1x1<>::col_vec linear_norm_vec; 
+        rt_fl_1x1<> q_reg_a1_tile;
+        rt_fl_1x1<> cumsum_k_a1_reg_tile;
+        rt_fl_1x1<>::col_vec linear_norm_vec; 
         zero(q_reg_a1_tile);
         zero(linear_norm_vec); 
         if (output_state > 0) {
             cumulative_add(ks_smem_a1, k_s[tic]); // TODO: remove
         }
         if ( add_norm > 0) { 
-            cumulative_add(k_cumsum_a1_reg, k_src_tmp, block);
+            cumulative_add(k_cumsum_a1_reg, k_src_tmp_fl, block);
             __syncthreads();
             cumsum_k_a1_reg_tile.tiles[0][0] = k_cumsum_a1_reg.tiles[warpid][0];
             warpgroup::load(q_reg_a1_tile, q_s[tic]);  
             if (add_scale > 0) { 
-                mul(q_reg_a1_tile, q_reg_a1_tile,__float2bfloat16(0.25f)); 
+                mul(q_reg_a1_tile, q_reg_a1_tile, 0.25f); 
             } // for q and k scale sqrt(sqrt(D))**2
             mul(q_reg_a1_tile, q_reg_a1_tile, cumsum_k_a1_reg_tile);
             if (add_scale > 0) { 
-                mul(cumsum_k_a1_reg_tile, cumsum_k_a1_reg_tile,__float2bfloat16(0.5f)); 
+                mul(cumsum_k_a1_reg_tile, cumsum_k_a1_reg_tile,0.5f); 
             } 
             __syncthreads();
             row_sum(linear_norm_vec, q_reg_a1_tile, linear_norm_vec);
         }
         
         // about 75% of execution time is in this loop
-        rt_bf_1x1<>::col_vec linear_norm_vec_a2; // N/4 elements over 4 warps
+        rt_fl_1x1<>::col_vec linear_norm_vec_a2; // N/4 elements over 4 warps
+        rt_bf_4x1<> k_t_den;
+        rt_fl_4x1<> k_t_den_fl;
+        rt_fl_1x4<> q_fl;
+        rt_fl_1x4<> cumsum_k_a2_reg_tile;
         zero(linear_norm_vec_a2);
         #pragma unroll
         for(int t = 0; t < 4; t++) {
@@ -528,7 +539,6 @@ void based_linear_attention(
             warpgroup::mma_fence(a2[t]);   // av matmul fence
 
             if ( include_a2 > 0 ) { 
-                // if(threadIdx.x ==0 && blockIdx.x == 0) printf("include_a2\n");
                 warpgroup::mma_AB(o, q, a2_s); // incorporate a1 onto o
             }
             warpgroup::mma_commit_group(); // dew it
@@ -545,15 +555,18 @@ void based_linear_attention(
                 __syncthreads();
             }
 
-            // save
-            rt_bf_1x4<> cumsum_k_a2_reg_tile;
+            // *************** norm ***************
+            zero(k_t_den);
+            zero(k_t_den_fl);
+            zero(q_fl);
             zero(cumsum_k_a2_reg_tile);
             if ( add_norm > 0 ) {
                 // along the local 64 tokens, sum one feature dim.
-                rt_bf_4x1<> k_t_den;
-                zero(k_t_den);
                 transpose_sep(k_t_den, k);
-                cumulative_add(k_cumsum_a2_reg[t], k_t_den, block);
+                copy(k_t_den_fl, k_t_den);
+                copy(q_fl, q);
+                cumulative_add(k_cumsum_a2_reg[t], k_t_den_fl, block);
+                __syncthreads();
 
                 // store the 4 cumsum strips for 4 warps in 4x4 smem
                 auto k_smem_a2_subtile = subtile_inplace<4,1>(k_smem_a2, 0, warpid);   
@@ -562,8 +575,9 @@ void based_linear_attention(
 
                 // compute norm in registers
                 warpgroup::load(cumsum_k_a2_reg_tile, k_smem_a2);      // load 
-                mul(q, q, cumsum_k_a2_reg_tile);                       // elementwise mult
-                row_sum(linear_norm_vec_a2, q, linear_norm_vec_a2);    // reduction along dimension
+                mul(q_fl, q_fl, cumsum_k_a2_reg_tile);                       // elementwise mult
+                __syncthreads();
+                row_sum(linear_norm_vec_a2, q_fl, linear_norm_vec_a2);    // reduction along dimension
             }
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
         }
@@ -584,37 +598,33 @@ void based_linear_attention(
             }
         }
 
-        rt_fl_1x1<>::col_vec linear_norm_vec_fl_a0; 
-        rt_fl_1x1<>::col_vec linear_norm_vec_fl_a1;
-        rt_fl_1x1<>::col_vec linear_norm_vec_fl_a2;
-        zero(linear_norm_vec_fl_a0);
-        zero(linear_norm_vec_fl_a1);
-        zero(linear_norm_vec_fl_a2);
+        rt_fl_1x1<>::col_vec linear_norm_vec_a0; 
+        rt_fl_1x1<>::col_vec linear_norm_vec_total;
+        zero(linear_norm_vec_total);
         if ( add_norm > 0 ) { 
-            // norm d0
-            warpgroup::load(linear_norm_vec_fl_a0, a0_cumsum); 
-            __syncthreads();
-
             // norm d1
             if ( include_a1 > 0 ) { 
-                copy(linear_norm_vec_fl_a1, linear_norm_vec);
+                add(linear_norm_vec_total, linear_norm_vec_total, linear_norm_vec);
             }
 
             if ( include_a0 > 0 ) {
-                add(linear_norm_vec_fl_a1, linear_norm_vec_fl_a1, linear_norm_vec_fl_a0);
-                __syncthreads();
+                // norm d0
+                warpgroup::load(linear_norm_vec_a0, a0_cumsum); 
+                add(linear_norm_vec_total, linear_norm_vec_total, linear_norm_vec_a0);
             }
 
             // norm d2
             if ( include_a2 > 0 ) {
-                copy(linear_norm_vec_fl_a2, linear_norm_vec_a2); 
-                add(linear_norm_vec_fl_a1, linear_norm_vec_fl_a1, linear_norm_vec_fl_a2);
-                __syncthreads();
+                add(linear_norm_vec_total, linear_norm_vec_total, linear_norm_vec_a2);
             }
+
+            // eps
+            add(linear_norm_vec_total, linear_norm_vec_total, 1e-6);
+            __syncthreads();
 
             // divide
             if ( include_a0 > 0 | include_a1 > 0 | include_a2 > 0 ) { 
-                div_row(o, o, linear_norm_vec_fl_a1); 
+                div_row(o, o, linear_norm_vec_total); 
             }
             __syncthreads();
         }
@@ -623,7 +633,6 @@ void based_linear_attention(
         // do the cumulative sum last, after everything is stored
         accumulate_a0(a0_total, v_s_3[tic]); // cumulative sum of V onto O in shared memory
         if (block > 0 && warpid == 0) {  add(a0_cumsum, a0_cumsum, a0_fixed_vec);  } // denominator
-        __syncthreads();
 
         // save the chunks of output
         if (block>0) tma::store_async_wait();
@@ -633,16 +642,17 @@ void based_linear_attention(
         } tma::store_async_wait();
 
 
-        // for intermediate debugging: save stuff for the normalization terms
-        // warpgroup::store(cumsum_k_a1_s[tic], cumsum_k_a1_reg_tile);
+        // // for intermediate debugging: save stuff for the normalization terms
+        // // warpgroup::store(cumsum_k_a1_s[tic], cumsum_k_a1_reg_tile);
         // warpgroup::store(norm_a1_s[tic], linear_norm_vec);
         // warpgroup::store(norm_a2_s[tic], linear_norm_vec_a2);
-        // __syncthreads();
+        // // __syncthreads();
         // if (warpid == 0) { // go get the next K from HBM
+        // //     tma::store_async(debug_norm_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
         //     tma::store_async(debug_norm_a1, norm_a1_s[tic], (blockIdx.x * n_blocks) + block);
         //     tma::store_async(debug_norm_a2, norm_a2_s[tic], (blockIdx.x * n_blocks) + block);
-        //     tma::store_async(debug_cumsum_k_a1, cumsum_k_a1_s[tic], (blockIdx.x * n_blocks) + block);  
-        //     tma::store_async(debug_cumsum_k_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
+        // // //     tma::store_async(debug_cumsum_k_a1, cumsum_k_a1_s[tic], (blockIdx.x * n_blocks) + block);  
+        // // //     tma::store_async(debug_cumsum_k_a0, a0_cumsum, (blockIdx.x * n_blocks) + block);
         // }
         // tma::store_async_wait();
     }
@@ -670,7 +680,7 @@ void based_linear_attention(
 
         // save the KV state A1
         auto &kv_smem_1 = reinterpret_cast<tile_smem_bf_4x1&>(a1_trans_s);
-        // if (add_scale > 0 ) { mul(a1_trans, a1_trans, 0.5); } // divides by math.sqrt(math.sqrt(D_QK))
+        if (add_scale > 0 ) { mul(a1_trans, a1_trans, 0.5); } // divides by math.sqrt(math.sqrt(D_QK))
         warpgroup::store(kv_smem_1, a1_trans);                // from individual warps to shared address
         __syncthreads();
         if (warpid == 0) {                                    // one warp takes care of the write to HBM
@@ -724,6 +734,7 @@ void based_linear_attention(
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 void based_fwd_tk(
+    int include_0, int include_1, int include_2,
     int add_scale, int add_norm, int output_state,
     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
     torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0, 
@@ -783,8 +794,9 @@ void based_fwd_tk(
     CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>   (d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
     CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x1>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
     CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4_wgmma_interleave>(d_v, (batch*heads*n)/(tile_smem_bf_4x4_wgmma_interleave::rows)); 
-    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>(d_v, (batch*heads*n)/(4* kittens::TILE_DIM)); 
+    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>(d_o, (batch*heads*n)/(4* kittens::TILE_DIM)); 
+    
 
     // kv state maps
     CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4> (d_kv_a2, batch*heads*(D_QK*D_QK));
@@ -807,6 +819,7 @@ void based_fwd_tk(
     ); 
 
     based_linear_attention<<<batch*heads, threads, mem_size>>>(
+        include_0, include_1, include_2,
         n, add_scale, add_norm, output_state, 
         tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
         tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d, 

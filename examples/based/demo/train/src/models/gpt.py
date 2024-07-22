@@ -494,22 +494,25 @@ class GPTPreTrainedModel(nn.Module):
             config.alt_mixer['l_max'] = override_seqlen  
             config.mixer['l_max'] = override_seqlen 
 
-        # if override_model_dims is not None:
-        #     if override_model_dims == "7B":
-        #         config.n_embd = 4096
-        #         config.n_inner = 3 * config.n_embd 
-        #         config.n_head = config.n_embd // 64 
-        #         config.alt_mixer_2['num_heads'] = config.n_head
-        #         config.alt_mixer['num_heads'] = config.n_head
-        #         config.n_layer = 34
-        #         config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
-        #         config.alt_mixer_2_layers = [2, 7, 12, 17, 22, 27, 32]
-        #     elif override_model_dims == "Pure":
-        #         # breakpoint()
-        #         config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
-        #         config.alt_mixer_2_layers = []
-        #     else:
-        #         assert 0, print("Unknown setting.")
+        if override_model_dims is not None:
+            print(f"Overriding!")
+            import time; time.sleep(3)
+            if override_model_dims == "7B":
+                config.n_embd = 4096
+                config.n_inner = 3 * config.n_embd 
+                config.n_head = config.n_embd // 64 
+                config.alt_mixer_2['num_heads'] = config.n_head
+                config.alt_mixer['num_heads'] = config.n_head
+                config.n_layer = 34
+                config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
+                config.alt_mixer_2_layers = [2, 7, 12, 17, 22, 27, 32]
+            elif override_model_dims == "Pure":
+                # breakpoint()
+                # config.alt_mixer_2_layers = [1, 6, 11, 16, 21, 26, 31, 36]
+                config.alt_mixer_layers = []
+                pass
+            else:
+                assert 0, print("Unknown setting.")
 
         model = cls(config, device=device, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device)

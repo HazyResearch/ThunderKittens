@@ -11,7 +11,11 @@
 #define add_scale 1
 #define add_norm  1
 #define output_state 1
-#define do_debug 0  // for intermediate value inspection (e.g., norms)
+#define do_debug 1  // for intermediate value inspection (e.g., norms)
+
+int include_0 = 1;
+int include_1 = 1;
+int include_2 = 1;
 
 // Function to calculate the number of floating-point operations
 long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) {
@@ -124,16 +128,20 @@ int main(int argc, char **argv) {
     float *k_a2_state = new float[TOTAL_ELEMENTS_K_A2];
 
     // for debugging
+    float *norm_a0_ref = new float[TOTAL_UNIQUE_ELEMENTS_NORM_A1];
     float *norm_a1_ref = new float[TOTAL_UNIQUE_ELEMENTS_NORM_A1];
     float *norm_a2_ref = new float[TOTAL_UNIQUE_ELEMENTS_NORM_A2];
     float *cumsum_k_a1_ref = new float[TOTAL_UNIQUE_ELEMENTS_CUMSUM_K1];
     float *cumsum_k_a2_ref = new float[TOTAL_UNIQUE_ELEMENTS_CUMSUM_K2];
     float *cumsum_k_a0_ref = new float[TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0];
+    bf16 *norm_a0_bf = new bf16[TOTAL_ELEMENTS_NORM_A1];       
+    bf16 *debug_norm_a0_bf = new bf16[TOTAL_ELEMENTS_NORM_A1];       // to be filled
     bf16 *norm_a1_bf = new bf16[TOTAL_ELEMENTS_NORM_A1];       // to be filled
     bf16 *cumsum_k_a1_bf = new bf16[TOTAL_ELEMENTS_CUMSUM_K1]; // to be filled
     bf16 *norm_a2_bf = new bf16[TOTAL_ELEMENTS_NORM_A2];       // to be filled
     bf16 *cumsum_k_a2_bf = new bf16[TOTAL_ELEMENTS_CUMSUM_K2]; // to be filled
     bf16 *cumsum_k_a0_bf = new bf16[TOTAL_ELEMENTS_CUMSUM_K0]; // to be filled
+    float *norm_a0 = new float[TOTAL_ELEMENTS_NORM_A1];
     float *norm_a1 = new float[TOTAL_ELEMENTS_NORM_A1];
     float *cumsum_k_a1 = new float[TOTAL_ELEMENTS_CUMSUM_K1];
     float *norm_a2 = new float[TOTAL_ELEMENTS_NORM_A2];
@@ -177,6 +185,8 @@ int main(int argc, char **argv) {
         std::cout << "Finished loading NORM_A2_REF" << std::endl;
         for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS_CUMSUM_K0; i ++){  infile >> cumsum_k_a0_ref[i];  }
         std::cout << "Finished loading CUMSUM_K0_REF" << std::endl;
+        for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS_NORM_A1; i ++){  infile >> norm_a0_ref[i];  }
+        std::cout << "Finished loading NORM_A0_REF" << std::endl;
 
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
     }
@@ -189,9 +199,13 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
     }
+    for (int i = 0; i < TOTAL_UNIQUE_ELEMENTS_NORM_A1; i ++) { 
+        norm_a0_bf[i] = norm_a0_ref[i % TOTAL_UNIQUE_ELEMENTS_NORM_A1];
+    }
 
     bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_a2, *d_kv_a1, *d_kv_a0, *d_k_a2, *d_k_a1, *d_k_a0;
-    bf16 *d_norm_a1, *d_cumsum_k_a1, *d_norm_a2, *d_cumsum_k_a2, *d_cumsum_k_a0;
+    bf16 *d_norm_a1, *d_norm_a0, *d_cumsum_k_a1, *d_norm_a2, *d_cumsum_k_a2, *d_cumsum_k_a0;
+    bf16 *d_debug_norm_a0;
     cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
@@ -204,7 +218,9 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_k_a2, TOTAL_ELEMENTS_K_A2 * sizeof(bf16));
     cudaMalloc(&d_k_a1, TOTAL_ELEMENTS_K_A1 * sizeof(bf16));
     cudaMalloc(&d_k_a0, TOTAL_ELEMENTS_K_A0 * sizeof(bf16));
+    cudaMalloc(&d_norm_a0, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16));
     // debug norm
+    cudaMalloc(&d_debug_norm_a0, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16));
     cudaMalloc(&d_norm_a1, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16));
     cudaMalloc(&d_cumsum_k_a1, TOTAL_ELEMENTS_CUMSUM_K1 * sizeof(bf16));
     cudaMalloc(&d_norm_a2, TOTAL_ELEMENTS_NORM_A2 * sizeof(bf16));
@@ -215,6 +231,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_norm_a0, norm_a0_bf, TOTAL_UNIQUE_ELEMENTS_NORM_A1 * sizeof(bf16), cudaMemcpyHostToDevice);
 
     CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>(d_q, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
     CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
@@ -228,9 +245,13 @@ int main(int argc, char **argv) {
     // k state tensor maps 
     CUtensorMap* tma_k_a2_d   = tma::allocate_and_create_tensor_map<col_vec<tile_smem_bf_4x1>>(d_k_a2, 4*ATTN_B*ATTN_H); 
     CUtensorMap* tma_k_a1_d   = tma::allocate_and_create_tensor_map<vec_smem_bf_1>(d_k_a1, ATTN_B*ATTN_H); 
+
+    // CUtensorMap* debug_norm_a0  = tma::allocate_and_create_tensor_map<row_vec_smem_fl_1x4>(d_debug_norm_a0, ATTN_B*ATTN_H*ATTN_N);
+
     // debug norms
-    CUtensorMap* tma_norm_a2  = tma::allocate_and_create_tensor_map<row_vec_smem_bf_1x4>(d_norm_a2, ATTN_B*ATTN_H*ATTN_N);
-    CUtensorMap* tma_norm_a1  = tma::allocate_and_create_tensor_map<row_vec_smem_bf_1x4>(d_norm_a1, ATTN_B*ATTN_H*ATTN_N);
+    CUtensorMap* tma_norm_a2  = tma::allocate_and_create_tensor_map<row_vec_smem_fl_1x4>(d_norm_a2, ATTN_B*ATTN_H*ATTN_N);
+    CUtensorMap* tma_norm_a1  = tma::allocate_and_create_tensor_map<row_vec_smem_fl_1x4>(d_norm_a1, ATTN_B*ATTN_H*ATTN_N);
+    CUtensorMap* debug_norm_a0  = tma::allocate_and_create_tensor_map<row_vec_smem_fl_1x4>(d_debug_norm_a0, ATTN_B*ATTN_H*ATTN_N);
     CUtensorMap* tma_cumsum_k_a2 = tma::allocate_and_create_tensor_map<tile_smem_bf_4x4>(d_cumsum_k_a2, (ATTN_B*ATTN_H*ATTN_N)/(1*D_QK*D_QK));
     CUtensorMap* tma_cumsum_k_a1 = tma::allocate_and_create_tensor_map<tile_smem_bf_4x1>(d_cumsum_k_a1, (ATTN_B*ATTN_H*ATTN_N)/(1*D_QK));  
     CUtensorMap* tma_cumsum_k_a0 = tma::allocate_and_create_tensor_map<row_vec_smem_bf_1x4>(d_cumsum_k_a0, (ATTN_B*ATTN_H*ATTN_N)/1);
@@ -254,13 +275,15 @@ int main(int argc, char **argv) {
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) { 
         based_linear_attention<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
+            include_0, include_1, include_2,
             ATTN_N, add_scale, add_norm, output_state, 
             tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
             tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d, 
             tma_k_a2_d, tma_k_a1_d
-            // ,tma_norm_a1, tma_cumsum_k_a1, 
+            // tma_norm_a1, tma_norm_a2, 
+            // tma_cumsum_k_a1, 
             // tma_cumsum_k_a0, 
-            // tma_norm_a2, tma_cumsum_k_a2
+            // tma_cumsum_k_a2
         );  
     }
     cudaDeviceSynchronize();
@@ -283,12 +306,12 @@ int main(int argc, char **argv) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
         total_output_diff += abs(diff);
         // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
-        if(i < TOTAL_UNIQUE_ELEMENTS_VO) {
+        if(i < TOTAL_UNIQUE_ELEMENTS_VO*2) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
         }
-        if (i % ATTN_D-1 == 0 & i > 0) { 
+        if (i % ATTN_H*ATTN_B*ATTN_D-1 == 0 & i > 0) { 
             o_ref_file << '\n';
             o_file << '\n';
             diff_file << diff << '\n';
@@ -403,12 +426,26 @@ int main(int argc, char **argv) {
     std::cout << "K-State A2 | avg_diff=" << (total_k_diff_a2/TOTAL_ELEMENTS_K_A2) << std::endl;
     std::cout << " " << std::endl;
 
-
-
-
     if ( do_debug > 0 ) {
+        // norm a0
+        cudaMemcpy(debug_norm_a0_bf, d_debug_norm_a0, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) { norm_a0[i] = __bfloat162float(debug_norm_a0_bf[i]); }
+        std::ofstream norm_a0_file("printouts/norm_a0.txt");
+        std::ofstream norm_a0_ref_file("printouts/norm_a0_ref.txt");
+        std::ofstream norm_a0_diff_file("printouts/norm_a0_diff.txt");
+        float total_norm_a0_diff=0;
+        for (int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) {
+            float diff = norm_a0[i] - norm_a0_ref[i % TOTAL_UNIQUE_ELEMENTS_NORM_A1];
+            if (i < TOTAL_UNIQUE_ELEMENTS_NORM_A1) {
+                norm_a0_ref_file << norm_a0_ref[i] << ' ';
+                norm_a0_file << norm_a0[i] << ' ';
+                norm_a0_diff_file << diff << ' ';
+            }
+            total_norm_a0_diff += abs(diff);
+        }
+        std::cout << "Norm A0 | avg_diff=" << (total_norm_a0_diff/TOTAL_ELEMENTS_NORM_A1) << std::endl;
 
-                // norm a1
+        // norm a1
         cudaMemcpy(norm_a1_bf, d_norm_a1, TOTAL_ELEMENTS_NORM_A1 * sizeof(bf16), cudaMemcpyDeviceToHost);
         for(int i = 0; i < TOTAL_ELEMENTS_NORM_A1; i++) { norm_a1[i] = __bfloat162float(norm_a1_bf[i]); }
         std::ofstream norm_a1_file("printouts/norm_a1.txt");
@@ -421,8 +458,8 @@ int main(int argc, char **argv) {
                 norm_a1_ref_file << norm_a1_ref[i] << ' ';
                 norm_a1_file << norm_a1[i] << ' ';
                 norm_a1_diff_file << diff << ' ';
-                total_norm_a1_diff += abs(diff);
             }
+            total_norm_a1_diff += abs(diff);
         }
         std::cout << "Norm A1 | avg_diff=" << (total_norm_a1_diff/TOTAL_ELEMENTS_NORM_A1) << std::endl;
 
@@ -439,8 +476,8 @@ int main(int argc, char **argv) {
                 norm_a2_ref_file << norm_a2_ref[i] << ' ';
                 norm_a2_file << norm_a2[i] << ' ';
                 norm_a2_diff_file << diff << ' ';
-                total_norm_a2_diff += abs(diff);
             }
+            total_norm_a2_diff += abs(diff);
         }
         std::cout << "Norm A2 | avg_diff=" << (total_norm_a2_diff/TOTAL_ELEMENTS_NORM_A2) << std::endl;
         std::cout << " " << std::endl;
@@ -517,6 +554,14 @@ int main(int argc, char **argv) {
     cudaFree(d_k_a2);
     cudaFree(d_k_a1);
     cudaFree(d_k_a0);
+    cudaFree(d_norm_a0);
+
+    cudaFree(d_norm_a1);
+    cudaFree(d_debug_norm_a0);
+    cudaFree(d_norm_a2);
+    cudaFree(d_cumsum_k_a1);
+    cudaFree(d_cumsum_k_a2);
+    cudaFree(d_cumsum_k_a0);
 
     // tma maps
     cudaFree(tma_q_d);

@@ -236,11 +236,39 @@ class LinearAttention(nn.Module):
 
             add_scale, add_norm, output_state = 1, 1, 1
             mod.based_fwd_tk(
+                1, 1, 1,
                 int(add_scale),int(add_norm),int(output_state),
                 q.to(dtype=torch.bfloat16).contiguous(),k.to(dtype=torch.bfloat16).contiguous(),v.to(dtype=torch.bfloat16).contiguous(), self.y,
                 self.kv_state_a2,self.kv_state_a1,self.kv_state_a0,
                 self.k_state_a2,self.k_state_a1
             )
+            # self.y = torch.randn_like(self.y) / n*d
+            # self.kv_state_a2 = torch.randn_like(self.kv_state_a2) / n*d
+            # self.kv_state_a1 = torch.randn_like(self.kv_state_a1) / n*d
+            # self.kv_state_a0 = torch.randn_like(self.kv_state_a0) / n*d
+            # self.k_state_a2 = torch.randn_like(self.k_state_a2) / n*d
+            # self.k_state_a1 = torch.randn_like(self.k_state_a1) / n*d
+
+            # print(f"{self.layer_idx=}")
+            # inf_count = torch.isinf(self.y).sum().item()
+            # print(f"Number of infinities in self.y: {inf_count}")
+            # inf_count = torch.isinf(q).sum().item()
+            # print(f"Number of infinities in q: {inf_count}")
+            # inf_count = torch.isinf(k).sum().item()
+            # print(f"Number of infinities in k: {inf_count}")
+            # inf_count = torch.isinf(v).sum().item()
+            # print(f"Number of infinities in v: {inf_count}")
+            # inf_count = torch.isinf(self.kv_state_a2).sum().item()
+            # print(f"Number of infinities in self.kv_state_a2: {inf_count}")
+            # inf_count = torch.isinf(self.kv_state_a1).sum().item()
+            # print(f"Number of infinities in self.kv_state_a1: {inf_count}")
+            # inf_count = torch.isinf(self.kv_state_a0).sum().item()
+            # print(f"Number of infinities in self.kv_state_a0: {inf_count}")
+            # inf_count = torch.isinf(self.k_state_a2).sum().item()
+            # print(f"Number of infinities in self.k_state_a2: {inf_count}")
+            # inf_count = torch.isinf(self.k_state_a1).sum().item()
+            # print(f"Number of infinities in self.k_state_a1: {inf_count}")
+            # import time; time.sleep(3)
 
             y = self.y[:, :, :l]
             y = rearrange(y, 'b h l d -> b l (h d)')

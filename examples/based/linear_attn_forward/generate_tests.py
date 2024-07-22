@@ -30,7 +30,6 @@ else:
 
 def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     print("Adding scale:", add_scale)
-
     B, H, L, D = Q.shape
 
     def make_causal(X):
@@ -45,7 +44,7 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
         "bhnm,bhmd->bhnd", 
         O2.to(torch.float32), 
         V.to(torch.float32)
-    ).to(torch.bfloat16).to(torch.float32)
+    ).to(torch.float32)
     T1a = make_causal(
         torch.einsum("bhnd,bhmd->bhnm", 
         Q.to(torch.float32), K.to(torch.float32))
@@ -53,8 +52,8 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
     T1 = torch.einsum(
         "bhnm,bhme->bhne", 
         T1a.to(torch.float32), V.to(torch.float32)
-    ).to(torch.bfloat16).to(torch.float32)
-    T0  = V.cumsum(dim=2).to(torch.bfloat16).to(torch.float32)
+    ).to(torch.float32)
+    T0  = V.to(torch.float32).cumsum(dim=2)
 
     rd  = math.sqrt(D) if add_scale else 1    
     rrd = math.sqrt(rd) if add_scale else 1   
@@ -69,36 +68,37 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = True, TESTNAME='all'):
 
     # Denominator
     K0 = torch.ones(Q[..., :1].to(torch.float32).shape).to(Q.device)
+
     Q2 = torch.einsum("bhnd,bhne->bhnde", Q.to(torch.float32), Q.to(torch.float32)) / (rd * r2)
     K2 = torch.einsum("bhnd,bhne->bhnde", K.to(torch.float32), K.to(torch.float32)) / (rd * r2)
     k_a2_cumsum = K2.to(torch.float32).cumsum(dim=2)
     D2 = torch.einsum("bhnde,bhnde->bhn", Q2.to(torch.float32), k_a2_cumsum) 
+
     k_a1_cumsum =  K.to(torch.float32).cumsum(dim=2) / (rrd)
     D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32) / (rrd), k_a1_cumsum) 
     k_a0_cumsum =  K0.to(torch.float32).cumsum(dim=2).squeeze(-1)
 
-    o = 0
-    den = 0
-    norm_a0 = k_a0_cumsum.to(torch.bfloat16).to(torch.float32)
-    norm_a1 = D1.to(torch.bfloat16).to(torch.float32)
-    norm_a2 = D2.to(torch.bfloat16).to(torch.float32)
+    o, den = 0, 0
+    norm_a0 = k_a0_cumsum.to(torch.float32)
+    norm_a1 = D1.to(torch.float32)
+    norm_a2 = D2.to(torch.float32)
+        
+    o += T0.to(torch.float32)
+    o += T1.to(torch.float32) / (rrd * rrd)
+    o += T2.to(torch.float32) / (rd * r2 * rd * r2)
 
-    if add_norm: 
+    if add_norm and not (type(den) == int and den > 0):
+        print("normalizing!")
         den += norm_a0
         den += norm_a1
         den += norm_a2
-    o += T0.to(torch.bfloat16).to(torch.float32)
-    o += T1.to(torch.bfloat16).to(torch.float32) / (rrd * rrd)
-    o += T2.to(torch.bfloat16).to(torch.float32) / (rd * r2 * rd * r2)
-    if add_norm and not (type(den) == int and den > 0):
-        print("normalizing!")
         eps = 1e-12
         o = o / (den.unsqueeze(-1) + eps)
 
     k_a2_cumsum = rearrange(k_a2_cumsum, 'b h n d e -> b h n (d e)')
-    return o.to(torch.bfloat16), kv_a2, kv_a1, k_a2_cumsum[:,:,-1], k_a1_cumsum[:,:,-1], k_a0_cumsum[:,:,-1], norm_a1, norm_a2, k_a1_cumsum, k_a2_cumsum, k_a0_cumsum
+    return o.to(torch.bfloat16), kv_a2, kv_a1, k_a2_cumsum[:,:,-1], k_a1_cumsum[:,:,-1], k_a0_cumsum[:,:,-1], norm_a0, norm_a1, norm_a2, k_a1_cumsum, k_a2_cumsum, k_a0_cumsum
 
-o, kv_a2, kv_a1, k_a2, k_a1, k_a0, norm_a1, norm_a2, k_a1_cumsum, k_a2_cumsum, k_a0_cumsum = pytorch_test(q, k, v, TESTNAME=TESTNAME)
+o, kv_a2, kv_a1, k_a2, k_a1, k_a0, norm_a0, norm_a1, norm_a2, k_a1_cumsum, k_a2_cumsum, k_a0_cumsum = pytorch_test(q, k, v, TESTNAME=TESTNAME)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy()
@@ -108,6 +108,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     k_a2f = k_a2.to(torch.float32).flatten().cpu().numpy()
     k_a1f = k_a1.to(torch.float32).flatten().cpu().numpy()
     k_a0f = k_a0.to(torch.float32).flatten().cpu().numpy()
+    norm_a0f = norm_a0.to(torch.float32).flatten().cpu().numpy()
     norm_a1f = norm_a1.to(torch.float32).flatten().cpu().numpy()
     norm_a2f = norm_a2.to(torch.float32).flatten().cpu().numpy()
     k_a1_cumsumf = k_a1_cumsum.to(torch.float32).flatten().cpu().numpy()
@@ -162,5 +163,8 @@ with open(f'{TESTNAME}.txt', 'w') as f:
 
     for i in trange(B*H*N):
         f.write(repr(k_a0_cumsumf[i]))
+        f.write(' ')
+    for i in trange(B*H*N):
+        f.write(repr(norm_a0f[i]))
         f.write(' ')
 
