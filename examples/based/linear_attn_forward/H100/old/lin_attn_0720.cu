@@ -1,4 +1,4 @@
-// #define TORCH_COMPILE 
+#define TORCH_COMPILE 
 
 #include "src/kittens.cuh"
 #include <cuda/pipeline>
@@ -535,6 +535,7 @@ void based_linear_attention(
 #include "src/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 void based_fwd_tk(
+    int incl_0, int incl_1, int incl_2,
     int add_scale, int add_norm, int output_state,
     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
     torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0, 
