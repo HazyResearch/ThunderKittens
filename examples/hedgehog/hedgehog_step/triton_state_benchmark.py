@@ -17,7 +17,7 @@ def step_benchmark(dt, device='cuda'):
     method2mem = defaultdict(dict)
     for i, b in enumerate([2, 8, 16, 32, 64, 128, 256]):
         h = 16  
-        dv = 64
+        dv = 128
         d_state = 256   
         print(f"{b=}, {dv=}, {h=}, {d_state=}")
 

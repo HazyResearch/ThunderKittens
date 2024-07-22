@@ -129,17 +129,17 @@ def hedgehog_step_ref(kv_state, k_state, q, k, v, denom: bool=True, eps: float=1
     return num / den.unsqueeze(-1) #, den
 
 
-def hedgehog_step_tk(kv_state, kv_state_t, k_state, q, k, v, denom):
-    out_tk       = torch.zeros_like(v)
-    import based_inference as mod
-    mod.based_step(q, k, v, kv_state_t, k_state, out_tk, denom)
-    return out_tk
+# def hedgehog_step_tk(kv_state, kv_state_t, k_state, q, k, v, denom):
+#     out_tk       = torch.zeros_like(v)
+#     import based_inference as mod
+#     mod.based_step(q, k, v, kv_state_t, k_state, out_tk, denom)
+#     return out_tk
 
 
 def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     itype = dt
     batch_size = 32
-    d_model = 64
+    d_model = 128
     d_state = 256
 
     print(f"Running hedgehog test with {dt} -- benchmark={benchmark} -- ones={ones}")
@@ -172,11 +172,11 @@ def hedgehog_test(dt, device='cuda', benchmark=True, ones=False):
     out_triton    = hedgehog_step(kv_state=kv_state_tri, k_state=k_state_tri, v=v, k=k, q=q, denom=True)
     outputs.append((out_triton, kv_state_tri, k_state_tri, "Triton"))
     
-    if dt != torch.float32:
-        denom = torch.zeros(batch_size, 1, device=device, dtype=itype)/d_model
-        kv_state_t = kv_state_tk.transpose(1,2).contiguous()
-        out_tk = hedgehog_step_tk(kv_state_tk, kv_state_t, k_state_tk, q, k, v, denom)
-        outputs.append((out_tk, kv_state_tk, k_state_tk, "ThunderKittens"))
+    # if dt != torch.float32:
+    #     denom = torch.zeros(batch_size, 1, device=device, dtype=itype)/d_model
+    #     kv_state_t = kv_state_tk.transpose(1,2).contiguous()
+    #     out_tk = hedgehog_step_tk(kv_state_tk, kv_state_t, k_state_tk, q, k, v, denom)
+    #     outputs.append((kv_state_tk, k_state_tk, "ThunderKittens"))
 
     for (out, kv_state, k_state, name) in outputs:
         print(f"**** {name} dtype={dt} ****")
