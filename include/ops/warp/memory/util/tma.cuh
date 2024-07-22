@@ -43,9 +43,9 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
 * @tparam T The type of the data to be stored at the barrier.
 * @param barrier Reference to the barrier variable.
 */
-template<typename T>
+template<typename T, uint32_t... dims>
 __device__ static inline void expect(barrier& bar) {
-    expect_bytes(bar, sizeof(T));
+    expect_bytes(bar, size_bytes<T, dims...>);
 }
 
 /* ----------   Synchronization functions for async store  ---------- */
@@ -108,6 +108,10 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
 * This function sets the number of bytes expected at the barrier for the first thread in the warp.
 * It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
+* 
+* It's worth being aware that this function is particularly necessary for multicast loads, and
+* distributed shared memory can actually be done with a normal tma::expect followed by wait. See
+* the unit tests of dsmem for an example.
 *
 * @param barrier Reference to the barrier variable.
 * @param bytes The number of bytes expected at the barrier.
@@ -136,9 +140,9 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes, int dst
 * @tparam T The type of the data to be stored at the barrier.
 * @param barrier Reference to the barrier variable.
 */
-template<typename T>
+template<typename T, uint32_t... dims>
 __device__ static inline void expect(barrier& bar, int dst_cta) {
-    expect_bytes(bar, sizeof(T), dst_cta);
+    expect_bytes(bar, size_bytes<T, dims...>, dst_cta);
 }
 
 /**

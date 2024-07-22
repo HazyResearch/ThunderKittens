@@ -6,7 +6,7 @@
 template<typename T>
 struct test_dsmem_vec { // load with dsmem, write out normally
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>;
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && (S*kittens::TILE_DIM*sizeof(dtype))%128==0>; // note the 128 byte multiple requirement
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "dsmem_vec_transfer_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "dsmem_vec_transfer_gmem=half" :
                                                                                          "dsmem_vec_transfer_gmem=float";
@@ -20,21 +20,22 @@ struct test_dsmem_vec { // load with dsmem, write out normally
     template<int S, int NW>
     __device__ static void device_func(const dtype *input, dtype *output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, S, S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
         kittens::row_vec<kittens::st<dtype, S, S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
-        
-        __shared__ kittens::dsmem::barrier dsmem_barrier;
+
+        __shared__ kittens::barrier dsmem_barrier;
         kittens::load(src_vec, input + blockIdx.x*src_vec.length);
 
-        kittens::dsmem::init_barrier<typeof(src_vec)>(dsmem_barrier);
+        kittens::init_barrier(dsmem_barrier, 0, 1);
+        kittens::tma::expect<typeof(dst_vec)>(dsmem_barrier);
 
         auto cluster = cooperative_groups::this_cluster();
         cluster.sync(); // ensure everyone has initialized their barrier
 
-        kittens::dsmem::distribute(dst_vec, src_vec, 4, (blockIdx.x+3)%4, dsmem_barrier);
+        kittens::tma::cluster::store_async(dst_vec, src_vec, 4, (blockIdx.x+3)%4, dsmem_barrier);
 
-        kittens::dsmem::arrive_and_wait(dsmem_barrier, 0);
+        kittens::wait(dsmem_barrier, 0);
 
         kittens::store(output + blockIdx.x*dst_vec.length, dst_vec);
     }

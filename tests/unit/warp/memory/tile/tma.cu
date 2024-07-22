@@ -18,12 +18,13 @@ struct test_load { // load with TMA, write out normally
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
         
-        __shared__ kittens::tma::barrier smem_barrier; 
-        kittens::tma::init_barrier<typeof(shared_tile[0][0]), 2, 2>(smem_barrier);
+        __shared__ kittens::barrier smem_barrier; 
+        kittens::init_barrier(smem_barrier, 0, 1);
+        kittens::tma::expect<typeof(shared_tile[0][0]), 2, 2>(smem_barrier);
         for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
             kittens::tma::load_async(shared_tile[i][j], tma_desc_input, smem_barrier, i, j);
         }
-        kittens::tma::arrive_and_wait(smem_barrier, 0);
+        kittens::wait(smem_barrier, 0);
 
         kittens::store(output, shared_tile[0][0], 2*W*16);
         kittens::store(output + shared_tile[0][0].cols, shared_tile[0][1], 2*W*16);
