@@ -477,7 +477,7 @@ class GPTPreTrainedModel(nn.Module):
         return model
         
     @classmethod
-    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', recurrent_impl="default", inference_bs=1, override_seqlen=None, override_model_dims=None, silent=True, **kwargs):
+    def from_pretrained_hf(cls, pretrained_model_name, device=None, implementation='default', recurrent_impl="default", inference_bs=1, swa_inference_mode="default", override_seqlen=None, override_model_dims=None, silent=True, **kwargs):
 
         config_data = load_config_hf(pretrained_model_name)
         config = GPT2Config(**config_data)
@@ -489,10 +489,20 @@ class GPTPreTrainedModel(nn.Module):
         except:
             pass
 
+        try:
+            config.alt_mixer_2['inference_bs'] = inference_bs
+            config.alt_mixer_2['l_max'] = config.mixer['l_max'] 
+            config.alt_mixer_2['inference_mode'] = swa_inference_mode
+        except:
+            pass
+
+
+        # These two are for benchmarking purposes
         if override_seqlen is not None:
             # for benchmarking
             config.alt_mixer['l_max'] = override_seqlen  
             config.mixer['l_max'] = override_seqlen 
+            config.alt_mixer_2['l_max'] =override_seqlen
 
         if override_model_dims is not None:
             print(f"Overriding!")

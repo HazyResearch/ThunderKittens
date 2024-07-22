@@ -1,6 +1,7 @@
 
 import torch
 import time
+import os
 from transformers import AutoTokenizer
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,60 +26,78 @@ def get_model(model_name, impl, batch_size, seqlen):
             silent=True,          # prints info during inference if False
             inference_bs=batch_size,
             override_seqlen=seqlen,
-            recurrent_impl="default",
+            recurrent_impl="default", # not tk
+            swa_inference_mode="fast_rotary",
             # override_model_dims='Pure',
-            override_model_dims='7B',
+            # override_model_dims='7B',
         ).to(dtype=torch.bfloat16)
     elif model_name == 'mamba':
         return MambaLMHeadModel.from_pretrained_hf(
             "hazyresearch/mamba-360m",
             override_seqlen=seqlen,
-            override_model_dims='7B',
+            # override_model_dims='7B',
         ).to("cuda").to(dtype=torch.bfloat16)
+    elif model_name == "mamba2": 
+        return MambaLMHeadModel.from_pretrained_hf(
+            "state-spaces/mamba2-370m",
+            override_seqlen=seqlen,
+        ).to("cuda").to(torch.float16)
     elif model_name == "attn": 
         return GPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/attn-360m",
             override_seqlen=seqlen,
-            override_model_dims='7B',
+            # override_model_dims='7B',
         ).to("cuda").to(dtype=torch.bfloat16)
     else:
         assert 0, print("Unknown model.")
 
 # benchmark
-NUM_ITERS = 2
+NUM_ITERS = 5
 WARMUP_ITERS = 1
 assert NUM_ITERS > WARMUP_ITERS, print("Not enough iters.")
 toks_per_sec = []
 
-context_len, input_len, output_len, cg = 8192, 8128, 64, True
+context_len, input_len, output_len, cg = 16064, 16000, 1, True
 assert context_len % 64 == 0, print("Context length must be divisible by 64.")
 benchmark_dims = [ 
-    ('based', 'tk', 1, input_len, output_len), 
-    ('based', 'tk', 4, input_len, output_len), 
-    ('based', 'tk', 16, input_len, output_len), 
+    # ('based', 'tk', 1, input_len, output_len), 
+    # ('based', 'tk', 4, input_len, output_len), 
     ('based', 'tk', 64, input_len, output_len), 
+    # ('based', 'tk', 128, input_len, output_len), 
+    # ('based', 'tk', 256, input_len, output_len),
 
-    ('based', 'default', 1, input_len, output_len), 
-    ('based', 'default', 4, input_len, output_len), 
-    ('based', 'default', 16, input_len, output_len), 
+    ('based', 'fla_parallel', 64, input_len, output_len), 
+
+    # ('based', 'default', 1, input_len, output_len), 
+    # ('based', 'default', 4, input_len, output_len), 
     ('based', 'default', 64, input_len, output_len), 
+    # ('based', 'default', 128, input_len, output_len), 
 
-    ('mamba', 'default', 1, input_len, output_len), 
-    ('mamba', 'default', 4, input_len, output_len), 
-    ('mamba', 'default', 16, input_len, output_len), 
+    # ('mamba', 'default', 1, input_len, output_len), 
+    # ('mamba', 'default', 4, input_len, output_len), 
     ('mamba', 'default', 64, input_len, output_len), 
+    # ('mamba', 'default', 128, input_len, output_len), 
+    # ('mamba', 'default', 256, input_len, output_len), 
 
-    ('attn', 'default', 1, input_len, output_len), 
-    ('attn', 'default', 4, input_len, output_len), 
-    ('attn', 'default', 16, input_len, output_len), 
+    # ('mamba2', 'default', 1, input_len, output_len), 
+    # ('mamba2', 'default', 4, input_len, output_len), 
+    # ('mamba2', 'default', 32, input_len, output_len), 
+    # ('mamba2', 'default', 128, input_len, output_len), 
+    # ('mamba2', 'default', 256, input_len, output_len), 
+
+    # ('attn', 'default', 1, input_len, output_len), 
+    # ('attn', 'default', 4, input_len, output_len), 
     ('attn', 'default', 64, input_len, output_len), 
+    # ('attn', 'default', 128, input_len, output_len), 
 ]
 for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
 
     try:
         model = get_model(model_name, impl, batch_size, context_len)
-    except:
+    except Exception as e:
+        print(e)
         continue
+
     inputs = torch.randint(low=0, high=len(tokenizer), size=(batch_size, input_len), device="cuda")
     limit = inputs.shape[-1] + output_len
     start = inputs.shape[-1]
@@ -93,6 +112,7 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
     if 1:
         with torch.no_grad():
             try:
+            # if 1:
                 for i in range(NUM_ITERS): 
                     fn = model.generate
                     torch.cuda.synchronize()
@@ -110,8 +130,8 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
 
                     torch.cuda.synchronize()
                     end_t = time.time()
-                    tps = (input_len + output_len) / (end_t-start_t)
-                    otps = ( output_len ) / (end_t-start_t)
+                    tps = ( batch_size * (input_len + output_len) ) / (end_t-start_t)
+                    otps = ( batch_size * output_len ) / (end_t-start_t)
                     if i >= WARMUP_ITERS: 
                         ttps_iters.append(tps)
                         otps_iters.append(otps)
@@ -185,6 +205,7 @@ def plot_results(toks_per_sec):
     ax.legend(title='Implementation Model', bbox_to_anchor=(1.05, 1), loc='upper left')
 
     # Adjust layout and display the plot
+    if not os.path.exists("benchmarking/plots/"): os.makedirs("benchmarking/plots/")
     plt.tight_layout()
     plt.savefig(f'benchmarking/plots/performance_comparison_input{input_len}_output{output_len}.png', dpi=300, bbox_inches='tight')
     plt.close()

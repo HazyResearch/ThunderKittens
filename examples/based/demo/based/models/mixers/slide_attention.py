@@ -8,8 +8,6 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
-from flash_attn.utils.distributed import get_dim_for_local_rank
-
 from flash_attn import (
     flash_attn_kvpacked_func,
     flash_attn_qkvpacked_func,
@@ -19,11 +17,9 @@ from flash_attn import (
     flash_attn_func,
 )
 
-
 import inspect
 _flash_supports_window_size = "window_size" in list(inspect.signature(flash_attn_func).parameters)
 assert _flash_supports_window_size, "flash_attn_func does not support window_size"
-
 
 try:
     from flash_attn.ops.fused_dense import ColumnParallelLinear, FusedDense, RowParallelLinear
@@ -35,6 +31,7 @@ try:
 except ImportError:
     RotaryEmbedding = None
 
+from .rotary import get_rotary_embeddings, apply_rotary_pos_emb
 
 class FlashSelfAttention(nn.Module):
     """Implement the scaled dot product attention with softmax.
@@ -252,33 +249,67 @@ class LinearResidual(nn.Linear):
         return super().forward(input), input
 
 
-def _update_kv_cache(kv, inference_params, layer_idx):
+def _update_kv_cache(kv, inference_params, layer_idx, inference_mode='default', window_size=None):
     """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
-    # Pre-allocate memory for key-values for inference.
-    num_heads, head_dim = kv.shape[-2:]
-    if layer_idx not in inference_params.key_value_memory_dict:
-        kv_cache = torch.empty(
-            inference_params.max_batch_size,
-            inference_params.max_seqlen,
-            2,
-            num_heads,
-            head_dim,
-            dtype=kv.dtype,
-            device=kv.device,
-        )
-        inference_params.key_value_memory_dict[layer_idx] = kv_cache
+
+    if inference_mode == "default" or inference_mode == "default_rotary":
+        # Pre-allocate memory for key-values for inference.
+        num_heads, head_dim = kv.shape[-2:]
+        if layer_idx not in inference_params.key_value_memory_dict:
+            kv_cache = torch.empty(
+                inference_params.max_batch_size,
+                inference_params.max_seqlen,
+                2,
+                num_heads,
+                head_dim,
+                dtype=kv.dtype,
+                device=kv.device,
+            )
+            inference_params.key_value_memory_dict[layer_idx] = kv_cache
+        else:
+            kv_cache = inference_params.key_value_memory_dict[layer_idx]
+        # Adjust key and value for inference
+        batch_start = inference_params.batch_size_offset
+        batch_end = batch_start + kv.shape[0]
+        sequence_start = inference_params.seqlen_offset
+        sequence_end = sequence_start + kv.shape[1]
+        assert batch_end <= (kv_cache.shape[0] if kv_cache is not None else kv_cache.shape[0])
+        assert sequence_end <= (kv_cache.shape[1] if kv_cache is not None else kv_cache.shape[2])
+        assert kv_cache is not None
+        kv_cache[batch_start:batch_end, sequence_start:sequence_end, ...] = kv
+
+        return kv_cache[batch_start:batch_end, :sequence_end, ...], None, None
     else:
-        kv_cache = inference_params.key_value_memory_dict[layer_idx]
-    # Adjust key and value for inference
-    batch_start = inference_params.batch_size_offset
-    batch_end = batch_start + kv.shape[0]
-    sequence_start = inference_params.seqlen_offset
-    sequence_end = sequence_start + kv.shape[1]
-    assert batch_end <= (kv_cache.shape[0] if kv_cache is not None else kv_cache.shape[0])
-    assert sequence_end <= (kv_cache.shape[1] if kv_cache is not None else kv_cache.shape[2])
-    assert kv_cache is not None
-    kv_cache[batch_start:batch_end, sequence_start:sequence_end, ...] = kv
-    return kv_cache[batch_start:batch_end, :sequence_end, ...]
+        assert window_size is not None, print("Implementing this for SWA.")
+
+        cache_size = min(inference_params.max_seqlen, window_size) 
+        # Pre-allocate memory for key-values for inference.
+        num_heads, head_dim = kv.shape[-2:]
+        if layer_idx not in inference_params.key_value_memory_dict:
+            kv_cache = torch.empty(
+                inference_params.max_batch_size,
+                cache_size,    # SA: Change 1
+                2,
+                num_heads,
+                head_dim,
+                dtype=kv.dtype,
+                device=kv.device,
+            )
+            inference_params.key_value_memory_dict[layer_idx] = kv_cache
+        else:
+            kv_cache = inference_params.key_value_memory_dict[layer_idx]
+
+        # Adjust key and value for inference
+        batch_start = inference_params.batch_size_offset
+        batch_end = batch_start + kv.shape[0]
+        sequence_start = inference_params.seqlen_offset
+        sequence_end = sequence_start + kv.shape[1]
+        
+        assert batch_end <= (kv_cache.shape[0] if kv_cache is not None else kv_cache.shape[0])
+        # assert sequence_end <= (kv_cache.shape[1] if kv_cache is not None else kv_cache.shape[2]) # SA: Change 2
+        assert kv_cache is not None
+        kv_cache[batch_start:batch_end, :min(kv.shape[1], cache_size), ...] = kv[:, max(0,(kv.shape[1]-cache_size)):,:,:,:] # SA: Change 3]
+        return kv_cache[batch_start:batch_end, :sequence_end, ...], cache_size, kv
 
 
 class SlidingAttention(nn.Module):
@@ -305,6 +336,9 @@ class SlidingAttention(nn.Module):
         return_residual=False,
         checkpointing=False,
         window_size=128,
+        l_max=None,
+        inference_bs=1,
+        inference_mode="default",
         device=None,
         dtype=None,
     ) -> None:
@@ -334,6 +368,12 @@ class SlidingAttention(nn.Module):
             self.window = None
         else:
             self.window = (window_size//2, 0)
+        self.window_size = self.window[0]
+
+        # inference settings
+        self.inference_bs = inference_bs
+        self.inference_mode= inference_mode# "default_rotary" # SA: Flag 2
+        self.cache_size = self.window_size + 1
 
         self.num_heads = num_heads
         self.num_heads_kv = num_heads_kv if num_heads_kv is not None else num_heads
@@ -346,13 +386,26 @@ class SlidingAttention(nn.Module):
         if self.rotary_emb_dim > 0:
             assert not cross_attn, "MHA with rotary embedding does not support cross-attention yet"
             assert RotaryEmbedding is not None, "rotary_emb is not installed"
-            self.rotary_emb = RotaryEmbedding(
-                self.rotary_emb_dim,
-                base=rotary_emb_base,
-                scale_base=rotary_emb_scale_base,
-                interleaved=rotary_emb_interleaved,
-                device=device,
-            )
+            if self.inference_mode == "default":
+                self.rotary_emb = RotaryEmbedding(
+                    self.rotary_emb_dim,
+                    base=rotary_emb_base,
+                    scale_base=rotary_emb_scale_base,
+                    interleaved=rotary_emb_interleaved,
+                    device=device,
+                )
+            else:
+                position_ids = torch.arange(l_max).to(device)
+                self.position_ids = position_ids.unsqueeze(0).repeat(inference_bs, 1)
+                # Rotary embeddings
+                self.rotary_emb = get_rotary_embeddings(
+                    rope_scaling_type=None,
+                    head_dim=self.rotary_emb_dim,
+                    max_position_embeddings=l_max,
+                    rope_theta=rotary_emb_base,
+                    rope_scaling_factor=rotary_emb_scale_base, 
+                    device=device,
+                )
 
         if fused_bias_fc and FusedDense is None: raise ImportError("fused_dense is not installed")
         linear_cls = nn.Linear if not fused_bias_fc else FusedDense
@@ -374,12 +427,18 @@ class SlidingAttention(nn.Module):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None):
         dtype = self.out_proj.weight.dtype if dtype is None else dtype
         device = self.out_proj.weight.device
-        return torch.empty(batch_size,max_seqlen,2,self.num_heads_kv,self.head_dim,dtype=dtype,device=device,)
+        if self.inference_mode == "default" or self.inference_mode == "default_rotary": 
+            return torch.empty(batch_size,max_seqlen,2,self.num_heads_kv,self.head_dim,dtype=dtype,device=device,)
+        else:
+            return torch.empty(batch_size,self.window_size,2,self.num_heads_kv,self.head_dim,dtype=dtype,device=device,)
 
     def _update_kv_cache(self, kv, inference_params):
         """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
         assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
-        return _update_kv_cache(kv, inference_params, self.layer_idx)
+        kv_cache, cache_size, cur_kv =  _update_kv_cache(kv, inference_params, self.layer_idx, inference_mode = self.inference_mode, 
+        window_size=self.window_size)
+        self.cache_size = cache_size
+        return kv_cache, cur_kv
 
     def _apply_rotary_update_kvcache_attention(self, q, kv, inference_params):
         """
@@ -412,7 +471,6 @@ class SlidingAttention(nn.Module):
             else inference_params.seqlen_offset
         )
 
-        # breakpoint()
         context = flash_attn_with_kvcache(
             q,
             kv_cache[:, :, 0].to(q.dtype),
@@ -437,8 +495,11 @@ class SlidingAttention(nn.Module):
             or not self.use_flash_attn
         ):
             # TODO: this only uses seqlen_offset and not lengths_per_sample.
-            kv = self._update_kv_cache(kv, inference_params)
-            return self.inner_cross_attn(q, kv)
+            kv_cache, cur_kv = self._update_kv_cache(kv, inference_params)
+            if self.inference_mode == "default" or self.inference_mode == "default_rotary": 
+                return self.inner_cross_attn(q, kv_cache)
+            else:
+                return self.inner_cross_attn(q, cur_kv)
         else:
             batch = q.shape[0]
             kv_cache = inference_params.key_value_memory_dict[self.layer_idx][:batch]
@@ -465,17 +526,28 @@ class SlidingAttention(nn.Module):
                     causal=self.inner_cross_attn.causal,
                 ).to(in_dtype)
             else:
-                return flash_attn_with_kvcache(
+                if self.inference_mode == "default" or self.inference_mode == "default_rotary" or cache_seqlens < self.cache_size:
+                    length = cache_seqlens
+                else:
+                    length = self.cache_size-1
+
+                # circular buffering
+                if self.cache_size and self.cache_size < cache_seqlens:
+                    kv_cache = torch.roll(kv_cache, -1, dims=1) # make room at the end
+                    kv_cache[:,-1,:,:,:] = torch.zeros_like(kv_cache[:,-1,:,:,:])   # clear the end
+
+                out = flash_attn_with_kvcache(
                     q,
                     kv_cache[:, :, 0],
                     kv_cache[:, :, 1],
                     kv[:, :, 0],
                     kv[:, :, 1],
-                    cache_seqlens=cache_seqlens,
+                    cache_seqlens=length,
                     softmax_scale=self.inner_cross_attn.softmax_scale,
                     causal=self.inner_cross_attn.causal,
                     window_size=self.window,
                 ).to(in_dtype)
+                return out
 
     def forward(
         self,
@@ -545,12 +617,24 @@ class SlidingAttention(nn.Module):
                 inference_params is None
                 or inference_params.seqlen_offset == 0
                 or (self.rotary_emb_dim == 0 or self.rotary_emb_dim % 16 != 0)
-                or not self.use_flash_attn
+                or not self.use_flash_attn or 
+                self.inference_mode != "default"
             ):
-                if self.rotary_emb_dim > 0:
-                    qkv = self.rotary_emb(
-                        qkv, seqlen_offset=seqlen_offset, max_seqlen=rotary_max_seqlen
-                    )
+                if self.rotary_emb_dim > 0: 
+                    if self.inference_mode == "default":
+
+                        qkv = self.rotary_emb(
+                            qkv, seqlen_offset=seqlen_offset, max_seqlen=rotary_max_seqlen
+                        )
+                    else:
+                        cos, sin = self.rotary_emb(qkv, seq_len=rotary_max_seqlen)  
+                        q, k = apply_rotary_pos_emb(
+                            qkv[:,:,0,:,:].transpose(1,2), 
+                            qkv[:,:,1,:,:].transpose(1,2), 
+                            cos, sin, self.position_ids[:,:seqlen]
+                        )
+                        qkv = torch.concat([q.transpose(1,2).unsqueeze(2),k.transpose(1,2).unsqueeze(2), qkv[:,:,2,:,:].unsqueeze(2),], dim=2)
+
                 if inference_params is None:
                     if not self.checkpointing:
                         context = self.inner_attn(qkv, **kwargs)

@@ -145,7 +145,7 @@ class LinearAttention(nn.Module):
             self.k_state_a1 = torch.empty((bs, self.num_heads, self.feature_dim), dtype=torch.bfloat16, device='cuda')
             self.k_state_a0 = torch.ones((bs, self.num_heads), dtype=torch.bfloat16, device='cuda') * self.l_max
 
-            if self.recurrent_impl == "default": 
+            if self.recurrent_impl == "tk": 
                 self.padding = torch.zeros(bs, self.num_heads, self.d_state-self.expanded_size(), dtype=torch.bfloat16, device='cuda')
                 self.qk_padding = torch.zeros(bs*self.num_heads, self.d_state-self.expanded_size(), dtype=torch.bfloat16, device='cuda')
                 self.kv_padding = torch.zeros(bs, self.num_heads, self.d_state-self.expanded_size(), self.head_dim, dtype=torch.bfloat16, device='cuda')
@@ -185,7 +185,7 @@ class LinearAttention(nn.Module):
             else:  
                 # prefill
                 y = self.parallel_forward(hidden_states, q, k, v, decay=decay, impl_choice=impl_choice)
-                if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "default":
+                if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "tk":
                     if self.layer_idx < 2 and not self.silent: print("recurrent state tk")
                     
                     kv_state = torch.concat([self.kv_state_a0.unsqueeze(-2), self.kv_state_a1.transpose(2,3), self.kv_state_a2, self.kv_padding], dim=-2)
@@ -273,7 +273,7 @@ class LinearAttention(nn.Module):
             y = self.y[:, :, :l]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "quadratic":
+        elif self.parallel_implementation == "quadratic" and impl_choice=='default':
             q, k = self.feature_map(q), self.feature_map(k)
             A_qk = torch.einsum("bhnd,bhmd->bhnm", q, k) 
             if decay is not None and self.use_decay_proj:
@@ -293,7 +293,7 @@ class LinearAttention(nn.Module):
             y = y * z[..., None]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "linear": 
+        elif self.parallel_implementation == "linear" and impl_choice=='default':
             assert decay is None, "Decay not for this view"
             
             q, k = self.feature_map(q), self.feature_map(k)
@@ -308,7 +308,7 @@ class LinearAttention(nn.Module):
             y = v * z[..., None]
             y = rearrange(y, 'b h l d -> b l (h d)')
 
-        elif self.parallel_implementation == "fla_parallel":
+        elif self.parallel_implementation == "fla_parallel" or impl_choice=='fla_parallel':
             """ 
             Computes both the feature map and causal dot products.
             Booleans are for the denominator and the normalization 
@@ -342,7 +342,7 @@ class LinearAttention(nn.Module):
         b, h, l, dv = v.shape
         assert l == 1, f'q.shape is {q.shape} but should be ({b}, {h}, 1, {d})'
 
-        if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "default":
+        if impl_choice != "default" and impl_choice == "tk" and self.recurrent_impl == "tk":
             if self.layer_idx <= 2 and not self.silent: print(f"recurrent tk")
 
             q = rearrange(q, 'b h 1 d -> (b h) d')
@@ -388,7 +388,7 @@ class LinearAttention(nn.Module):
     def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype=None, **kwargs):
         """Creates a state tensor of shape ..."""
 
-        if self.inference_implementation == 'tk' and self.recurrent_impl == "default":
+        if self.inference_implementation == 'tk' and self.recurrent_impl == "tk":
             kv_shape = (batch_size, self.num_heads, self.d_state, self.head_dim, )
             k_shape = (batch_size, self.num_heads, self.d_state)
             kv_state = torch.zeros(*kv_shape, dtype=dtype, device=self.out_proj.weight.device)
