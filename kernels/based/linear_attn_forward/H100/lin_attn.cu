@@ -27,7 +27,7 @@ void based_linear_attention(
     k_tile (&k_smem)[2]      = al.allocate<k_tile, 2>(); //  4096 bytes
     v_tile (&v_smem)[2]      = al.allocate<v_tile, 2>(); // 16384 bytes
     o_tile (&o_smem)[2]      = al.allocate<o_tile, 2>(); // 16384 bytes
-    o_tile (&zero_o_smem)    = al.allocate<o_tile>(); // for clearing the next o_smem
+    // o_tile (&zero_o_smem)    = al.allocate<o_tile>(); // for clearing the next o_smem
 
     a0_vec        (&a0_smem)               = al.allocate<a0_vec>       ();
     a1_trans_tile (&a1_trans_smem)         = al.allocate<a1_trans_tile>(); // 2048 bytes
@@ -41,11 +41,11 @@ void based_linear_attention(
     }    
     if(warpgroupid == 2) {
         // zero a0
-        zero(a0_smem);
+        warpgroup::zero(a0_smem);
         // zero a1
         warpgroup::zero(a1_trans_smem);
         // zero the clearing smem for a2
-        warpgroup::zero(zero_o_smem);
+        // warpgroup::zero(zero_o_smem);
     }
 
     // initial load
@@ -71,14 +71,14 @@ void based_linear_attention(
         tma::load_async(v_smem[tic], tma_v, v_bar[tic], tile_idx);
     }
     else if(warpid == 2) {
-        init_barrier(compute_done_bar[tic], 2, 0);
-        init_barrier(compute_done_bar[toc], 2, 0);
+        init_barrier(compute_done_bar[tic], 8, 0); // 8 consumer warps need to sync
+        init_barrier(compute_done_bar[toc], 8, 0); // 8 consumer warps need to sync
     }
     __syncthreads();
 
     if(warpgroupid == 2) { // producer
         asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(24));
-        if(warpid == 0) {
+        if(warpid == 8) {
             for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
                 int next_tile_idx = (blockIdx.x * n_blocks) + block + 1;
                 tma::expect_bytes(qk_bar[toc],
@@ -96,15 +96,14 @@ void based_linear_attention(
         }
     }
     else if(warpgroupid == 0) { // consumer 1
-        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240));
+        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(224));
 
         // this is going to handle local attention and its part of a2
-        rt_fl_1x4<> a2_reg_0;     // 32 registers
-        rt_fl_1x4<> a2_reg_1;     // 32 registers
-        zero(a2_reg_0);
-        zero(a2_reg_1);
-        
-        for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
+        rt_fl_1x4<> a2_reg[2]; // 64 registers
+        zero(a2_reg[0]);
+        zero(a2_reg[1]);
+
+        for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) { // FIRST CONSUMER -- LOCAL FOCUSED
             rt_fl_1x4<> local_attn, temp_attn_accum; // 32 registers each -- 64. (But should be optimized down to ~40)
             rt_bf_1x4<> local_attn_bf; // 4 registers each -- 16
             rt_fl_1x4<> o_reg; // 32 registers
@@ -148,101 +147,76 @@ void based_linear_attention(
             
             rt_bf_4x1<> k_src_tmp;
             load(k_src_tmp, k_smem[tic]);
-            rt_bf_1x4<> k_src;
-            transpose_sep(k_src, k_src_tmp); // transpose K into Kt
+            rt_bf_1x4<> k_src_t;
+            transpose_sep(k_src_t, k_src_tmp); // transpose K into Kt
 
-            rt_bf_1x4<> q, k;
-            mul_slice_col(k, k_src, 0*8+warpid);
-            mul_slice_row(q, q_src, 0*8);
-
-            asm volatile("bar.sync 0, 128;\n"); // we need to ensure that shared memory has arrived
-
-            warpgroup::mma_fence(a2_reg_0); // matmul fence
-            warpgroup::mma_AB(a2_reg_0, k, v_smem[tic]); // incorporate KtV onto a2
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! a2 matmuls have now arrived, too.
-
-            warpgroup::mma_fence(o_reg); // av matmul fence
-            warpgroup::mm_AB(o_reg, q, a2_smem_working[0][0]); // incorporate a1 onto o_reg
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! o_reg matmuls have now arrived, too.
-
-            mul_slice_col(k, k_src, 1*8+warpid);
-            mul_slice_row(q, q_src, 1*8);
-
-            warpgroup::mma_fence(a2_reg_0); // matmul fence
-            warpgroup::mma_AB(a2_reg_0, k, v_smem[tic]); // incorporate KtV onto a2
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! a2 matmuls have now arrived, too.
-
-            warpgroup::mma_fence(o_reg); // av matmul fence
-            warpgroup::mma_AB(o_reg, q, a2_smem_working[0][1]); // incorporate a1 onto o_reg
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! o_reg matmuls have now arrived, too.
-
-            if(threadIdx.x == 0) arrive(compute_done_bar[tic]); // we have finished what we need with q, k, v
-
-            warpgroup::store(o_smem[0], o_reg);
             asm volatile("bar.sync 0, 128;\n");
-            // save the chunks of output
-            if (warpid == 0) { // go get the next K from HBM
-                tma::store_add_async(tma_o, o_smem[0], (blockIdx.x * n_blocks) + block); 
+            __threadfence_block(); // need memory to hit before we can go into this loop
+
+            #pragma unroll
+            for(int t = 0; t < 2; t++) {
+                rt_bf_1x4<> q, k_t;
+                mul_slice_row(q,   q_src,   8*t); // 0...3 and 8...11
+                
+                warpgroup::mma_fence(o_reg); // av matmul fence
+                warpgroup::mma_AB(o_reg, q, a2_smem_working[warpgroupid][t]); // incorporate a1 onto o
+                warpgroup::mma_commit_group(); // dew it
+
+                mul_slice_col(k_t, k_src_t, 8*t + warpid); // 0...3 and 8...11
+                
+                warpgroup::mma_fence(a2_reg[t]); // av matmul fence
+                warpgroup::mma_AB(a2_reg[t], k_t, v_smem[tic]); // incorporate KtV onto a2
+                warpgroup::mma_commit_group(); // dew it
+                warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
+            }
+
+            if(laneid == 0) arrive(compute_done_bar[tic]); // we have finished what we need with q, k, v
+
+            asm volatile("bar.sync 0, 128;\n");
+            warpgroup::store(o_smem[warpgroupid], o_reg);
+            __threadfence_block(); // need memory to hit before we can launch tma store
+            if (warpid == 0) { // launch o as a store_add_async, since we don't seem to be memory bound anyways
+                tma::store_add_async(tma_o, o_smem[warpgroupid], (blockIdx.x * n_blocks) + block); 
                 tma::store_commit_group(); // dew it
             }
             // store smem for next time around
-            warpgroup::store(a2_smem_working[0][0], a2_reg_0);
-            warpgroup::store(a2_smem_working[0][1], a2_reg_1);
+            #pragma unroll
+            for(int t = 0; t < 2; t++) {
+                warpgroup::store(a2_smem_working[warpgroupid][t], a2_reg[t]); // take previous one and move up to smem for wgmma.
+            }
             tma::store_async_wait();
         }
     }
-    else { // consumer 2
-        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240));
+    else if(warpgroupid == 1) { // consumer 2
+        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(256));
 
         // this is going to handle a0, a1 and its part of a2
-        rt_fl_1x1<> a1_trans_reg; // 8 registers -- transposed chunk of a1. This one needs to be persistent
-        rt_fl_1x4<> a2_reg_0;     // 32 registers
-        rt_fl_1x4<> a2_reg_1;     // 32 registers
+        rt_fl_1x1<> a1_trans_reg; //  8 registers -- transposed chunk of a1. This one needs to be persistent
+        rt_fl_1x4<> a2_reg[2];    // 64 registers
         zero(a1_trans_reg);
-        zero(a2_reg_0);
-        zero(a2_reg_1);
+        zero(a2_reg[0]);
+        zero(a2_reg[1]);
 
-        for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
+        // gprintf("(warp %d) outside loop\n", warpid);
+        for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) { // SECOND CONSUMER -- A1 FOCUSED
+            // gprintf("(warp %d) inside loop %d\n", warpid, block);
             rt_fl_1x4<> o_reg; // 32 registers
 
             wait(qk_bar[tic], (block/2)%2);
 
+            __threadfence_block(); // we need to make sure the a1_trans_smem is loaded before we launch the matmul
             warpgroup::mma_fence(o_reg);                            // q@a1 matmul fence
             warpgroup::mm_ABt(o_reg, q_smem[tic], a1_trans_smem);  // incorporate the last a1, in smem, onto o_reg
-            warpgroup::mma_commit_group();  
-
-            warpgroup::store(a2_smem_working[1][0], a2_reg_0);
-            warpgroup::store(a2_smem_working[1][1], a2_reg_1);
-
+            warpgroup::mma_commit_group();
             wait(v_bar[tic], (block/2)%2); // wait on V
-
-            warpgroup::mma_async_wait();
-
             warpgroup::mma_fence(a1_trans_reg);                   // a1 accumulation matmul fence
             warpgroup::mma_AtB(a1_trans_reg, v_smem[tic], k_smem[tic]); // we now have 4 1x4 registers that need to eventually be summed.
             warpgroup::mma_commit_group(); // dew it
-
-            // while we matmul, let's initialize o_reg with the previous a0
             #pragma unroll
-            for(int i = 0; i < 4; i++) {
-                #pragma unroll
-                for(int j = 0; j < 2; j++) {
-                    int col = i*16 + j*8 + (laneid%4)*2;
-                    float2 data = *(float2*)&a0_smem[col];
-                    o_reg.tiles[0][i].data[2*j].x   = data.x;
-                    o_reg.tiles[0][i].data[2*j].y   = data.y;
-                    o_reg.tiles[0][i].data[2*j+1].x = data.x;
-                    o_reg.tiles[0][i].data[2*j+1].y = data.y;
-                }
+            for(int t = 0; t < 2; t++) {
+                warpgroup::store(a2_smem_working[warpgroupid][t], a2_reg[t]); // take previous one and move up to smem for wgmma.
             }
-
             warpgroup::mma_async_wait();
-
-            accumulate_a0(a0_smem, v_smem[tic]); // while we wait for matmul, do the cumulative sum for the next iteration
 
             // ----- now common stuff around a2 and store out -----
 
@@ -253,49 +227,56 @@ void based_linear_attention(
             
             rt_bf_4x1<> k_src_tmp;
             load(k_src_tmp, k_smem[tic]);
-            rt_bf_1x4<> k_src;
-            transpose_sep(k_src, k_src_tmp); // transpose K into Kt
-
-            rt_bf_1x4<> q, k;
-            mul_slice_col(k, k_src, 0*8+warpid);
-            mul_slice_row(q, q_src, 0*8+4);
+            rt_bf_1x4<> k_src_t;
+            transpose_sep(k_src_t, k_src_tmp); // transpose K into Kt
 
             asm volatile("bar.sync 1, 128;\n");
+            __threadfence_block(); // need memory to hit before we can go into this loop
 
-            warpgroup::mma_fence(a2_reg_0); // matmul fence
-            warpgroup::mma_AB(a2_reg_0, k, v_smem[tic]); // incorporate KtV onto a2
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! a2 matmuls have now arrived, too.
+            #pragma unroll
+            for(int t = 0; t < 2; t++) {
+                rt_bf_1x4<> q, k_t;
+                mul_slice_row(q,   q_src,   8*t + 4); // 4...7 and 12...15
+                
+                warpgroup::mma_fence(o_reg); // av matmul fence
+                warpgroup::mma_AB(o_reg, q, a2_smem_working[warpgroupid][t]); // incorporate a2 onto o
+                warpgroup::mma_commit_group(); // dew it
 
-            warpgroup::mma_fence(o_reg); // av matmul fence
-            warpgroup::mma_AB(o_reg, q, a2_smem_working[1][0]); // incorporate a1 onto o_reg
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! o_reg matmuls have now arrived, too.
+                mul_slice_col(k_t, k_src_t, 8*t + warpid); // 4...7 and 12...15
+                
+                warpgroup::mma_fence(a2_reg[t]); // av matmul fence
+                warpgroup::mma_AB(a2_reg[t], k_t, v_smem[tic]); // incorporate KtV onto a2
+                warpgroup::mma_commit_group(); // dew it
+                warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
+            }
 
-            mul_slice_col(k, k_src, 1*8+warpid);
-            mul_slice_row(q, q_src, 1*8+4);
+            // while we matmul, let's initialize o_reg with the previous a0
+            #pragma unroll
+            for(int i = 0; i < 4; i++) {
+                #pragma unroll
+                for(int j = 0; j < 2; j++) {
+                    int col = i*16 + j*8 + (laneid%4)*2;
+                    float2 data;
+                    kittens::move<float2>::lds(data, &a0_smem[col]);
+                    o_reg.tiles[0][i].data[2*j].x   += data.x;
+                    o_reg.tiles[0][i].data[2*j].y   += data.y;
+                    o_reg.tiles[0][i].data[2*j+1].x += data.x;
+                    o_reg.tiles[0][i].data[2*j+1].y += data.y;
+                }
+            }
 
-            warpgroup::mma_fence(a2_reg_0); // matmul fence
-            warpgroup::mma_AB(a2_reg_0, k, v_smem[tic]); // incorporate KtV onto a2
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! a2 matmuls have now arrived, too.
-
-            warpgroup::mma_fence(o_reg); // av matmul fence
-            warpgroup::mma_AB(o_reg, q, a2_smem_working[1][1]); // incorporate a1 onto o_reg
-            warpgroup::mma_commit_group(); // dew it
-            warpgroup::mma_async_wait(); // ding dong! o_reg matmuls have now arrived, too.
-
-            if(threadIdx.x == 128) arrive(compute_done_bar[tic]); // we have finished what we need with q, k, v
-
-            warpgroup::store(o_smem[1], o_reg);
+            warpgroup::store(o_smem[warpgroupid], o_reg);
             asm volatile("bar.sync 1, 128;\n");
+            __threadfence_block(); // need memory to hit before we can launch tma store
             // save the chunks of output
-            if (warpid == 4) { // go get the next K from HBM
-                tma::store_add_async(tma_o, o_smem[1], (blockIdx.x * n_blocks) + block); 
+            if (warpid == 4) { // launch o as a store_add_async, since we don't seem to be memory bound anyways
+                tma::store_add_async(tma_o, o_smem[warpgroupid], (blockIdx.x * n_blocks) + block); 
                 tma::store_commit_group(); // dew it
             }
             // store smem for next time around
             warpgroup::store(a1_trans_smem, a1_trans_reg);
+            accumulate_a0(a0_smem, v_smem[tic]); // while we wait for matmul, do the cumulative sum for the next iteration
+            if(laneid == 0) arrive(compute_done_bar[tic]); // we have finished what we need with q, k, v
             tma::store_async_wait();
         }
     }

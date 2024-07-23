@@ -244,6 +244,32 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
 /* ----------  CAUSAL  ---------- */
 
+template<ducks::rt_base::row_layout RT>
+__device__ static inline void make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+    dst.data[1] = src.data[1]; // below diagonal, copy
+    dst.data[2] = packed_val; // above diagonal, zero
+    if((MASK_X >> laneid()) & 1) {
+        dst.data[0].x = src.data[0].x;
+        dst.data[3].x = src.data[3].x;
+    }
+    else {
+        dst.data[0].x = val;
+        dst.data[3].x = val;
+    }
+    __syncwarp();
+    if((MASK_Y >> laneid()) & 1) {
+        dst.data[0].y = src.data[0].y;
+        dst.data[3].y = src.data[3].y;
+    }
+    else {
+        dst.data[0].y = val;
+        dst.data[3].y = val;
+    }
+    __syncwarp();
+}
+
 /**
  * @brief Makes a square register tile causal by zeroing elements above the main diagonal.
  *
@@ -276,25 +302,7 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
                 }
             }
             else { // on the diagonal, interesting!
-                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
-                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
-                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
-                if((MASK_X >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
-                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
-                }
-                else {
-                    dst.tiles[i][j].data[0].x = val;
-                    dst.tiles[i][j].data[3].x = val;
-                }
-                if((MASK_Y >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
-                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
-                }
-                else {
-                    dst.tiles[i][j].data[0].y = val;
-                    dst.tiles[i][j].data[3].y = val;
-                }
+                make_causal(dst.tiles[i][j], src.tiles[i][j], val);
             }
         }
     }

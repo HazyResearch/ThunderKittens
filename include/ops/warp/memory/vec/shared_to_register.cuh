@@ -9,6 +9,7 @@
 
 #include "../../../../common/common.cuh"
 #include "../../../../types/types.cuh"
+#include "../util/util.cuh"
 
 namespace kittens {
 
@@ -39,8 +40,11 @@ __device__ inline static void load(RV &dst, const SV &src) {
             int o_dim = w*4 + (laneid/4) / 2;
             int i_dim = (laneid/4) % 2;
             // this should be a maximally coalesced load.
-            if(idx < dst.outer_dim*16)
-                dst[o_dim][i_dim] = base_types::convertor<T2, U2>::convert(*(U2*)&src[idx]);
+            if(idx < dst.outer_dim*16) {
+                U2 tmp;
+                move<U2>::lds(tmp, &src[idx]);
+                dst[o_dim][i_dim] = base_types::convertor<T2, U2>::convert(tmp);
+            }
         }
         __syncwarp();
         // now we need to do a bunch of shuffle_sync's to make sure everyone has everything they need.
@@ -60,9 +64,10 @@ __device__ inline static void load(RV &dst, const SV &src) {
             int o_dim = w*2 + (laneid%4) / 2;
             // this should be a maximally coalesced load.
             if(idx < dst.outer_dim*16) {
-                T tmp = base_types::convertor<T, U>::convert(src[idx]);
-                if(laneid%2==0) dst[o_dim][0].x = tmp;
-                else dst[o_dim][0].y = tmp;
+                U tmp;
+                move<U>::lds(tmp, &src[idx]);
+                if(laneid%2==0) dst[o_dim][0].x =  base_types::convertor<T, U>::convert(tmp);
+                else dst[o_dim][0].y = base_types::convertor<T, U>::convert(tmp);
             }
         }
         __syncwarp();
@@ -103,8 +108,10 @@ __device__ inline static void store(SV &dst, const RV &src) {
             int o_dim = w*4 + (laneid/4) / 2;
             int i_dim = (laneid/4) % 2;
             // this should be a maximally coalesced store. I hope!
-            if(idx < src.outer_dim*16)
-                *(U2*)&dst[idx] = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
+            if(idx < src.outer_dim*16) {
+                U2 tmp = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
+                move<U2>::sts(&dst[idx], tmp);
+            }
         }
     }
     else {
@@ -119,7 +126,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
                 U tmp;
                 if(laneid%2==0) tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
                 else tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
-                dst[idx] = tmp;
+                move<U>::sts(&dst[idx], tmp);
             }
         }
     }
