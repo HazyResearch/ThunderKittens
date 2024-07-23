@@ -22,51 +22,6 @@ template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int kv_height  = (8);
 };
 
-template<ducks::rt::row_layout RT>
-__device__ static inline void wg_make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
-    #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
-        #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
-
-            if(j < ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // below the diagonal, copy
-                #pragma unroll
-                for(int k = 0; k < dst.packed_per_tile; k++) {
-                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
-                }
-            }
-            else if(j > ((warpid() % kittens::WARPGROUP_WARPS) * dst.height) + i) { // above the diagonal, zero
-                #pragma unroll
-                for(int k = 0; k < dst.packed_per_tile; k++) {
-                    dst.tiles[i][j].data[k] = packed_val;
-                }
-            }
-            else { // on the diagonal, interesting!
-                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
-                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
-                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
-                if((MASK_X >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
-                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
-                }
-                else {
-                    dst.tiles[i][j].data[0].x = val;
-                    dst.tiles[i][j].data[3].x = val;
-                }
-                if((MASK_Y >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
-                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
-                }
-                else {
-                    dst.tiles[i][j].data[0].y = val;
-                    dst.tiles[i][j].data[3].y = val;
-                }
-            }
-        }
-    }
-}
-
 template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
@@ -116,7 +71,7 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
 
     int tic = 0, toc = 1;
     if(warpgroupid == NUM_WARPGROUPS-1) { // producer warpgroup
-        // asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32));           
+        asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32));           
         
         int kv_iters; 
         if constexpr (is_causal) {
@@ -143,7 +98,7 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
         __syncthreads();
     }
     else { // consumer warpgroup
-        // asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(160));
+        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(160));
 
         // premultiply by temperature and lg(e)
         wait(qsmem_barrier, 0);
