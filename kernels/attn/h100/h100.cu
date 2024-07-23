@@ -2,29 +2,13 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-#define CONSUMER_WARPGROUPS (3) // hardcoded
-#define PRODUCER_WARPGROUPS (1) // hardcoded
-#define NUM_WARPGROUPS (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS)
-#define NUM_WORKERS (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS)
+constexpr int CONSUMER_WARPGROUPS = (3); 
+constexpr int PRODUCER_WARPGROUPS = (1); 
+constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS); 
+constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS); 
 
 using namespace kittens;
 namespace cg = cooperative_groups;
-
-// ----- DEBUG -----
-#define RED  "\033[91m" 
-#define GREEN  "\033[92m" 
-#define YELLOW  "\033[93m" 
-#define BLUE  "\033[94m" 
-#define MAGENTA  "\033[95m" 
-#define CYAN  "\033[96m" 
-#define WHITE  "\033[97m" 
-#define RESET  "\033[0m" 
-template<typename... Args> __device__ void gprintf(Args... args) {
-    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x % 32 == 0) {
-        printf(args...);
-    }
-}
-// ----- DEBUG -----
 
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
@@ -91,11 +75,18 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
     int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     using K = fwd_attend_ker_tile_dims<D>;
+
+    using q_tile    = st_bf<K::qo_height, K::tile_width>;
+    using k_tile    = st_bf<K::kv_height, K::tile_width>;
+    using v_tile    = st_bf<K::kv_height, K::tile_width>;
+    using l_col_vec = col_vec<st_fl<K::qo_height, K::tile_width>>;
+    using o_tile    = st_bf<K::qo_height, K::tile_width>;
     
-    st_bf<K::qo_height, K::tile_width>          (&q_smem)[CONSUMER_WARPGROUPS] = al.allocate<st_bf<K::qo_height, K::tile_width>,          CONSUMER_WARPGROUPS>();
-    st_bf<K::kv_height, K::tile_width>          (&k_smem)[2]                   = al.allocate<st_bf<K::kv_height, K::tile_width>,          2                  >();
-    st_bf<K::kv_height, K::tile_width>          (&v_smem)[2]                   = al.allocate<st_bf<K::kv_height, K::tile_width>,          2                  >();
-    col_vec<st_fl<K::qo_height, K::tile_width>> (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<col_vec<st_fl<K::qo_height, K::tile_width>>, CONSUMER_WARPGROUPS>();
+    q_tile    (&q_smem)[CONSUMER_WARPGROUPS] = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
+    k_tile    (&k_smem)[2]                   = al.allocate<k_tile, 2                  >();
+    v_tile    (&v_smem)[2]                   = al.allocate<v_tile, 2                  >();
+    l_col_vec (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
+    auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
     
     int kv_blocks = N / (K::kv_height*TILE_DIM);
 
@@ -237,7 +228,6 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
             }
         }
 
-        auto (*o_smem) = reinterpret_cast<st_bf<K::qo_height, K::tile_width>(*)>(q_smem); // reuse q memory
         warpgroup::store(o_smem[warpgroupid], o_reg); 
         __syncthreads();
 
@@ -272,13 +262,24 @@ void bwd_attend_prep_ker(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tm
 
     int warpid = kittens::warpid();
 
-    st_bf<4,         D/kittens::TILE_DIM>  (&og_smem)[4] = al.allocate<        st_bf<4, D/kittens::TILE_DIM>,  4>();
-    st_bf<4,         D/kittens::TILE_DIM>  (&o_smem) [4] = al.allocate<        st_bf<4, D/kittens::TILE_DIM>,  4>();
-    col_vec<st_fl<4, D/kittens::TILE_DIM>> (&d_smem) [4] = al.allocate<col_vec<st_fl<4, D/kittens::TILE_DIM>>, 4>();
+    // initialize shared memory
+    using og_tile = st_bf<4, D/kittens::TILE_DIM>;
+    using o_tile  = st_bf<4, D/kittens::TILE_DIM>;
+    using d_tile  = col_vec<st_fl<4, D/kittens::TILE_DIM>>;
 
-            rt_fl<4, D/kittens::TILE_DIM> og_reg;
-            rt_fl<4, D/kittens::TILE_DIM>  o_reg; 
-    col_vec<rt_fl<4, D/kittens::TILE_DIM>> d_reg;
+    og_tile (&og_smem)[4] = al.allocate<og_tile, 4>();
+    o_tile  (&o_smem) [4] = al.allocate<o_tile , 4>();
+    d_tile  (&d_smem) [4] = al.allocate<d_tile , 4>();
+    //////////////////////
+
+    // initialize registers
+    using fl_reg_tile = rt_fl<4, D/kittens::TILE_DIM>;
+    using fl_reg_col  = col_vec<rt_fl<4, D/kittens::TILE_DIM>>;
+    
+    fl_reg_tile og_reg;
+    fl_reg_tile  o_reg; 
+    fl_reg_col d_reg;
+    //////////////////////
 
     __shared__ kittens::barrier smem_barrier;
 
@@ -349,34 +350,62 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
     const int kv_iters = (is_causal) ? (1) : (2); 
 
     // initialize kg and vg (outputs) shared memory (reused for k and v (inputs))
-    st_fl<G::tile_h, G::tile_width> (&kg_smem) [NUM_WARPGROUPS_BWD] = al.allocate<st_fl<G::tile_h, G::tile_width>, NUM_WARPGROUPS_BWD>();
-    st_fl<G::tile_h, G::tile_width> (&vg_smem) [NUM_WARPGROUPS_BWD] = al.allocate<st_fl<G::tile_h, G::tile_width>, NUM_WARPGROUPS_BWD>();
-    auto                             (*k_smem)                      = reinterpret_cast<st_bf<G::tile_h, G::tile_width>(*)>(kg_smem);
-    auto                             (*v_smem)                      = reinterpret_cast<st_bf<G::tile_h, G::tile_width>(*)>(vg_smem);
+    using kg_tile = st_fl<G::tile_h, G::tile_width>;
+    using vg_tile = st_fl<G::tile_h, G::tile_width>;
+
+    using k_tile = st_bf<G::tile_h, G::tile_width>;
+    using v_tile = st_bf<G::tile_h, G::tile_width>;
+
+    kg_tile (&kg_smem) [NUM_WARPGROUPS_BWD] = al.allocate<kg_tile, NUM_WARPGROUPS_BWD>();
+    vg_tile (&vg_smem) [NUM_WARPGROUPS_BWD] = al.allocate<vg_tile, NUM_WARPGROUPS_BWD>();
+    auto     (*k_smem)                      = reinterpret_cast<k_tile(*)>(kg_smem);
+    auto     (*v_smem)                      = reinterpret_cast<v_tile(*)>(vg_smem);
 
     // initialize q, og (inputs) and qg (output) shared memory
-    st_bf<G::tile_h_qo, G::tile_width> (&q_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<st_bf<G::tile_h_qo, G::tile_width>, 2, NUM_WARPGROUPS_BWD_QO>();
-    st_bf<G::tile_h_qo, G::tile_width> (&og_smem)[2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<st_bf<G::tile_h_qo, G::tile_width>, 2, NUM_WARPGROUPS_BWD_QO>();
-    st_fl<G::tile_h_qo, G::tile_width> (&qg_smem)[2][NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = al.allocate<st_fl<G::tile_h_qo, G::tile_width>, 2, NUM_WARPGROUPS_BWD_QO, NUM_WARPGROUPS_BWD>();
+    using q_tile  = st_bf<G::tile_h_qo, G::tile_width>;
+    using og_tile = st_bf<G::tile_h_qo, G::tile_width>;
+    using qg_tile = st_fl<G::tile_h_qo, G::tile_width>;
+
+    q_tile  (&q_smem) [2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<q_tile , 2, NUM_WARPGROUPS_BWD_QO>();
+    og_tile (&og_smem)[2][NUM_WARPGROUPS_BWD_QO]                     = al.allocate<og_tile, 2, NUM_WARPGROUPS_BWD_QO>();
+    qg_tile (&qg_smem)[2][NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = al.allocate<qg_tile, 2, NUM_WARPGROUPS_BWD_QO, NUM_WARPGROUPS_BWD>();
 
     // initialize l and d (inputs) shared memory
-    col_vec<st_fl<G::tile_h_qo, G::tile_width>> (&l_smem)[2][NUM_WARPGROUPS_BWD_QO] = al.allocate<col_vec<st_fl<G::tile_h_qo, G::tile_width>>,  2, NUM_WARPGROUPS_BWD_QO>();
-    col_vec<st_fl<G::tile_h_qo, G::tile_width>> (&d_smem)[2][NUM_WARPGROUPS_BWD_QO] = al.allocate<col_vec<st_fl<G::tile_h_qo, G::tile_width>>,  2, NUM_WARPGROUPS_BWD_QO>();
+    using l_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
+    using d_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
+
+    l_tile (&l_smem)[2][NUM_WARPGROUPS_BWD_QO] = al.allocate<l_tile, 2, NUM_WARPGROUPS_BWD_QO>();
+    d_tile (&d_smem)[2][NUM_WARPGROUPS_BWD_QO] = al.allocate<d_tile, 2, NUM_WARPGROUPS_BWD_QO>();
 
     // initialize attention shared memory (temporary)
-    st_bf<G::tile_h_qo, G::tile_h> (&att_smem)[2][NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = al.allocate<st_bf<G::tile_h_qo, G::tile_h>, 2, NUM_WARPGROUPS_BWD_QO, NUM_WARPGROUPS_BWD>();
+    using attn_tile = st_bf<G::tile_h_qo, G::tile_h>; 
+    
+    attn_tile (&att_smem)[2][NUM_WARPGROUPS_BWD_QO][NUM_WARPGROUPS_BWD] = al.allocate<attn_tile, 2, NUM_WARPGROUPS_BWD_QO, NUM_WARPGROUPS_BWD>();
+    //////////////////////
 
-    rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>         kg_reg;
-    rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>         vg_reg;
+    // initialize registers
+    using kg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
+    using vg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
+    using qg_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_width>; 
+    
+    using l_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
+    using d_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
 
-    rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_width>      qg_reg;
+    using attn_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
+    using attn_mma_tile = rt_bf<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
+    using temp_tile     = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
 
-    col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>> l_reg; 
-    col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>> d_reg;
+    kg_reg_tile kg_reg;
+    vg_reg_tile vg_reg;
+    qg_reg_tile qg_reg;
 
-    rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>          att_block; 
-    rt_bf<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>          att_block_mma;
-    rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>          temp_block;
+    l_reg_vec l_reg; 
+    d_reg_vec d_reg;
+
+    attn_reg_tile att_block; 
+    attn_mma_tile att_block_mma;
+    temp_tile     temp_block;
+    //////////////////////
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -386,10 +415,6 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
     __shared__ kittens::barrier kv_b, qo_b, vec_b;
 
     int tic = 0, toc = 1;
-
-    int vec_phasebit = 0;
-    int qo_phasebit  = 0;
-    int kv_phasebit  = 0;
 
     if (threadIdx.x == 0) {
         init_barrier(qo_b,  0, 1); // q, og
@@ -432,15 +457,13 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
 
         for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
 
-            wait(vec_b, vec_phasebit);
-            wait(qo_b,  qo_phasebit);
-            vec_phasebit ^= 1;
-            qo_phasebit  ^= 1;
+            wait(vec_b, tic);
+            wait(qo_b,  tic);
 
             if (qo_idx + 1 < qo_blocks) {
                 if (warpid == 0) {
                     tma::expect_bytes(qo_b,  (sizeof(q_smem[0][0]) + sizeof(og_smem[0][0])) * NUM_WARPGROUPS_BWD_QO);
-                    tma::expect_bytes(vec_b, (sizeof(l_smem[0][0]) + sizeof(d_smem[0][0])) * NUM_WARPGROUPS_BWD_QO);
+                    tma::expect_bytes(vec_b, (sizeof(l_smem[0][0]) + sizeof(d_smem[0][0]))  * NUM_WARPGROUPS_BWD_QO);
     
                     for (int w = 0; w < NUM_WARPGROUPS_BWD_QO; w++) {
                         int tile_idx = (blockIdx.y * NUM_WARPGROUPS_BWD_QO * qo_blocks) + ((qo_idx + 1) * NUM_WARPGROUPS_BWD_QO) + w;
@@ -469,8 +492,7 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
             }
 
             if (qo_idx == q_start) {
-                wait(kv_b, kv_phasebit);
-                kv_phasebit ^= 1;
+                wait(kv_b, kv_idx % 2);
             }
 
             if (qo_idx > 0 || kv_idx > 0) {
@@ -490,7 +512,12 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
 
             if constexpr (is_causal) {
                 if (blockIdx.x == qo_idx) {
-                    wg_make_causal(att_block, att_block, kittens::base_types::constants<float>::neg_infty());
+                    #pragma unroll
+                    for(int j = 0; j < G::tile_h; j++) {
+                        auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block.tiles[0][j]);
+                        if      (j>warpid)  neg_infty(attn_subtile);
+                        else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
+                    }
                 }
             }
 
@@ -500,7 +527,6 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
             copy(att_block_mma, att_block);
 
             warpgroup::store(att_smem[tic][0][warpgroupid], att_block_mma); 
-            __syncthreads();
 
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, og_smem[tic][0], v_smem[warpgroupid]);
@@ -524,7 +550,6 @@ void bwd_attend_ker(int N, int heads_ratio, CUtensorMap* tma_q, CUtensorMap* tma
 
             warpgroup::mma_async_wait(); 
             warpgroup::store(att_smem[tic][0][warpgroupid], att_block_mma);
-            __syncthreads();
 
             zero(qg_reg);
             warpgroup::mma_fence(qg_reg);

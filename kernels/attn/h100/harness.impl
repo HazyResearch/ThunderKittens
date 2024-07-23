@@ -15,7 +15,7 @@ constexpr int ATTN_D     = 128;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
 constexpr int ITER       = 1;
 
-constexpr bool causal    = false; 
+constexpr bool causal    = true; 
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
