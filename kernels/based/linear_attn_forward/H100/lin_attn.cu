@@ -26,6 +26,7 @@ void based_linear_attention(
     q_tile (&q_smem)[2]      = al.allocate<q_tile, 2>(); //  4096 bytes
     k_tile (&k_smem)[2]      = al.allocate<k_tile, 2>(); //  4096 bytes
     v_tile (&v_smem)[2]      = al.allocate<v_tile, 2>(); // 16384 bytes
+    v_tile (&v2_smem)[2]      = al.allocate<v_tile, 2>(); // 16384 bytes (needed because wgmma's are haunted)
     o_tile (&o_smem)[2]      = al.allocate<o_tile, 2>(); // 16384 bytes
     // o_tile (&zero_o_smem)    = al.allocate<o_tile>(); // for clearing the next o_smem
 
@@ -65,10 +66,11 @@ void based_linear_attention(
         init_barrier(v_bar[tic], 0, 1);
         init_barrier(v_bar[toc], 0, 1);
         tma::expect_bytes(v_bar[tic],
-            size_bytes<typeof(v_smem[0])>
+            size_bytes<typeof(v_smem[0])> * 2
         );
         int tile_idx = blockIdx.x * n_blocks; // submit initial loads
         tma::load_async(v_smem[tic], tma_v, v_bar[tic], tile_idx);
+        tma::load_async(v2_smem[tic], tma_v, v_bar[tic], tile_idx);
     }
     else if(warpid == 2) {
         init_barrier(compute_done_bar[tic], 8, 0); // 8 consumer warps need to sync
@@ -88,9 +90,10 @@ void based_linear_attention(
                 tma::load_async(q_smem[toc], tma_q, qk_bar[toc], next_tile_idx);
                 tma::load_async(k_smem[toc], tma_k, qk_bar[toc], next_tile_idx);
                 tma::expect_bytes(v_bar[toc],
-                    size_bytes<typeof(v_smem[0])>
+                    size_bytes<typeof(v_smem[0])>*2
                 );
                 tma::load_async(v_smem[toc], tma_v, v_bar[toc], next_tile_idx);
+                tma::load_async(v2_smem[toc], tma_v, v_bar[toc], next_tile_idx);
                 wait(compute_done_bar[tic], (block/2)%2); // wait for consumers to all be done
             }
         }
@@ -197,9 +200,7 @@ void based_linear_attention(
         zero(a2_reg[0]);
         zero(a2_reg[1]);
 
-        // gprintf("(warp %d) outside loop\n", warpid);
         for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) { // SECOND CONSUMER -- A1 FOCUSED
-            // gprintf("(warp %d) inside loop %d\n", warpid, block);
             rt_fl_1x4<> o_reg; // 32 registers
 
             wait(qk_bar[tic], (block/2)%2);
@@ -210,13 +211,10 @@ void based_linear_attention(
             warpgroup::mma_commit_group();
             wait(v_bar[tic], (block/2)%2); // wait on V
             warpgroup::mma_fence(a1_trans_reg);                   // a1 accumulation matmul fence
-            warpgroup::mma_AtB(a1_trans_reg, v_smem[tic], k_smem[tic]); // we now have 4 1x4 registers that need to eventually be summed.
+            warpgroup::mma_AtB(a1_trans_reg, v2_smem[tic], k_smem[tic]); // we now have 4 1x4 registers that need to eventually be summed.
             warpgroup::mma_commit_group(); // dew it
-            #pragma unroll
-            for(int t = 0; t < 2; t++) {
-                warpgroup::store(a2_smem_working[warpgroupid][t], a2_reg[t]); // take previous one and move up to smem for wgmma.
-            }
             warpgroup::mma_async_wait();
+            __threadfence_block(); // need memory to hit before we can go into this loop
 
             // ----- now common stuff around a2 and store out -----
 
@@ -277,6 +275,10 @@ void based_linear_attention(
             warpgroup::store(a1_trans_smem, a1_trans_reg);
             accumulate_a0(a0_smem, v_smem[tic]); // while we wait for matmul, do the cumulative sum for the next iteration
             if(laneid == 0) arrive(compute_done_bar[tic]); // we have finished what we need with q, k, v
+            #pragma unroll
+            for(int t = 0; t < 2; t++) {
+                warpgroup::store(a2_smem_working[warpgroupid][t], a2_reg[t]); // take previous one and move up to smem for wgmma.
+            }
             tma::store_async_wait();
         }
     }
