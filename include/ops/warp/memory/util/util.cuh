@@ -42,15 +42,16 @@ __device__ static inline void init_barrier(barrier& bar, int thread_count, int t
 * @param barrier Reference to the barrier variable.
 * @param kPhaseBit The phase bit used for the barrier.
 */
-__device__ static inline void arrive(barrier& bar) {
+__device__ static inline void arrive(barrier& bar, uint32_t count=1) {
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     asm volatile (
         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
         :
-        : "r"(mbar_ptr), "r"(1)
+        : "r"(mbar_ptr), "r"(count)
         : "memory"
     );
 }
+
 
 /**
 * @brief Waits for the requested barrier phase.

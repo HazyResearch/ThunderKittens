@@ -149,7 +149,7 @@ __device__ static inline void expect(barrier& bar, int dst_cta) {
 * @param barrier Reference to the barrier variable.
 * @param kPhaseBit The phase bit used for the barrier.
 */
-__device__ static inline void arrive(barrier& bar, int dst_cta) {
+__device__ static inline void arrive(barrier& bar, int dst_cta, uint32_t count=1) {
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     uint32_t neighbor_mbar_addr;
     asm volatile (
@@ -158,9 +158,9 @@ __device__ static inline void arrive(barrier& bar, int dst_cta) {
         : "r"(mbar_addr), "r"(dst_cta)
     );
     asm volatile (
-        "mbarrier.arrive.shared::cluster.b64 _, [%0];\n"
+        "mbarrier.arrive.shared::cluster.b64 _, [%0], %1;\n"
         :
-        : "r"(neighbor_mbar_addr)
+        : "r"(neighbor_mbar_addr), "r" (count)
         : "memory"
     );
 }
