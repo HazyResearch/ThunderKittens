@@ -9,4 +9,3 @@
 #include "util.cuh"
 #include "base_types.cuh"
 #include "base_ops.cuh"
-// alloc relies on type info and so must be done later.

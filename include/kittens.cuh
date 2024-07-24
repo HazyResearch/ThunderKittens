@@ -7,8 +7,9 @@
 
 #include "common/common.cuh"
 #include "types/types.cuh"
-#include "common/alloc.cuh"
 #include "ops/ops.cuh"
+
+
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
