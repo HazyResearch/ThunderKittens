@@ -154,16 +154,15 @@ void hedgehog_linear_attention_smd (int n,
 
             neg_infty(max_vec); // zero registers for the Q chunk
 
+            #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
-                if (block + subtile >= 1) { // ensure tile has been loaded by now.
-                    warpgroup::mma_fence(att_block[subtile]);
-                    warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
-                    warpgroup::mma_commit_group();
-                    warpgroup::mma_async_wait();
-                }
-                else {
-                    neg_infty(att_block[subtile]); // initial blocks must be zero
-                }
+                warpgroup::mma_fence(att_block[subtile]);
+                warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
+                warpgroup::mma_commit_group();
+            }
+            warpgroup::mma_async_wait();
+            if(block == 0) { // initial block must be zero in the first 64x64 chunk
+                neg_infty(att_block[0]);
             }
             // make last block causal
             #pragma unroll
