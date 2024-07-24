@@ -354,14 +354,14 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     ///////////////////////////////////////////////////////////////////////////////
 
     // initialize shared memory
-    kg_tile (&kg_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<kg_tile, BWD_CONSUMER_WARPGROUPS>(); // 4 * 8 * 1024 = 32KB
-    vg_tile (&vg_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<vg_tile, BWD_CONSUMER_WARPGROUPS>(); // 4 * 8 * 1024 = 32KB
-    auto     (*k_smem)                      = reinterpret_cast<k_tile(*)>(kg_smem);
-    auto     (*v_smem)                      = reinterpret_cast<v_tile(*)>(vg_smem);
+    kg_tile (&kg_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<kg_tile, BWD_CONSUMER_WARPGROUPS>();
+    vg_tile (&vg_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<vg_tile, BWD_CONSUMER_WARPGROUPS>();
+    auto     (*k_smem)                           = reinterpret_cast<k_tile(*)>(kg_smem);
+    auto     (*v_smem)                           = reinterpret_cast<v_tile(*)>(vg_smem);
 
-    q_tile  (&q_smem) [2]                          = al.allocate<q_tile , 2>();                     // 4 * 8 * 2 * 512  = 32KB
-    og_tile (&og_smem)[2]                          = al.allocate<og_tile, 2>();                     // 4 * 8 * 2 * 512  = 32KB
-    qg_tile (&qg_smem)[2][BWD_CONSUMER_WARPGROUPS] = al.allocate<qg_tile, 2, BWD_CONSUMER_WARPGROUPS>(); // 4 * 8 * 2 * 1024 = 64KB
+    q_tile  (&q_smem) [2]                          = al.allocate<q_tile , 2>();                     
+    og_tile (&og_smem)[2]                          = al.allocate<og_tile, 2>();                     
+    qg_tile (&qg_smem)[2][BWD_CONSUMER_WARPGROUPS] = al.allocate<qg_tile, 2, BWD_CONSUMER_WARPGROUPS>();
 
     l_tile (&l_smem)[2] = al.allocate<l_tile, 2>();
     d_tile (&d_smem)[2] = al.allocate<d_tile, 2>();
@@ -374,7 +374,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
     const int qo_blocks = N / (G::tile_h_qo * kittens::TILE_DIM);
 
-    __shared__ kittens::barrier kv_b, qo_b[2], vec_b[2];
+    __shared__ kittens::barrier kv_b, q_b[2], o_b[2], vec_b[2];
     __shared__ kittens::barrier compute_done[2], qg_done[2], qg_ready[2];
 
     int tic = 0, toc = 1;
@@ -384,7 +384,8 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         // initialize barriers
         init_barrier(kv_b,  0, 1); // k, v
         for (int s = 0; s < 2; s++) {
-            init_barrier(qo_b[s],  0, 1); // q, og
+            init_barrier(q_b[s],  0, 1); // q
+            init_barrier(o_b[s],  0, 1); // o
             init_barrier(vec_b[s], 0, 1); // l, d
             
             init_barrier(compute_done[s], BWD_CONSUMER_WARPGROUPS, 0);
@@ -401,13 +402,14 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         }
 
         // load q, og, l, d into tic
-        tma::expect_bytes(qo_b[tic],  sizeof(q_smem[0]) + sizeof(og_smem[0]));
+        tma::expect_bytes(q_b[tic],  sizeof(q_smem[0]));
+        tma::expect_bytes(o_b[tic],  sizeof(og_smem[0]));
         tma::expect_bytes(vec_b[tic], sizeof(l_smem[0]) + sizeof(d_smem[0]));
 
         int tile_idx = (blockIdx.y * qo_blocks) + (q_start); 
 
-        tma::load_async( q_smem[tic], tma_q,      qo_b[tic], tile_idx); 
-        tma::load_async(og_smem[tic], tma_og,     qo_b[tic], tile_idx);
+        tma::load_async( q_smem[tic], tma_q,       q_b[tic], tile_idx); 
+        tma::load_async(og_smem[tic], tma_og,      o_b[tic], tile_idx);
         tma::load_async( l_smem[tic], tma_l_vec, vec_b[tic], tile_idx);
         tma::load_async( d_smem[tic], tma_d_vec, vec_b[tic], tile_idx);
     }
@@ -420,23 +422,24 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         //     asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32));
         // }
         // if constexpr (BWD_NUM_WARPGROUPS == 3) {
-        //     asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(24));
+            // asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(24));
         // }
 
         if (warpid % kittens::WARPGROUP_WARPS == 0) {
             for (auto qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 if (qo_idx + 1 < qo_blocks) {
-                    tma::expect_bytes(qo_b[toc],  sizeof(q_smem[0]) + sizeof(og_smem[0]));
+                    tma::expect_bytes(q_b[toc],   sizeof(q_smem[0])); 
+                    tma::expect_bytes(o_b[toc],   sizeof(og_smem[0]));
                     tma::expect_bytes(vec_b[toc], sizeof(l_smem[0]) + sizeof(d_smem[0]));
                     
                     int tile_idx = (blockIdx.y * qo_blocks) + (qo_idx + 1);
                     
-                    tma::load_async(q_smem [toc], tma_q,      qo_b[toc], tile_idx); 
-                    tma::load_async(og_smem[toc], tma_og,     qo_b[toc], tile_idx);
+                    tma::load_async(q_smem [toc], tma_q,      q_b[toc], tile_idx); 
+                    tma::load_async(og_smem[toc], tma_og,     o_b[toc], tile_idx);
                     tma::load_async( l_smem[toc], tma_l_vec, vec_b[toc], tile_idx);
                     tma::load_async( d_smem[toc], tma_d_vec, vec_b[toc], tile_idx);
                 }
-
+                
                 wait(compute_done[tic], ((qo_idx - q_start)/(2))%2);
             }
         }
@@ -447,7 +450,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         //     asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(160));
         // }
         // if constexpr (BWD_NUM_WARPGROUPS == 3) { 
-        //     asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240));
+            // asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(256));
         // }
 
         // initialize registers
@@ -470,7 +473,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
         for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
 
-            wait(qo_b[tic], ((qo_idx - q_start)/2)%2);
+            wait(q_b[tic], ((qo_idx - q_start)/2)%2);
             
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, q_smem[tic], k_smem[warpgroupid]);
@@ -504,6 +507,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
             warpgroup::store(att_smem[tic][warpgroupid], att_block_mma); 
 
+            wait(o_b[tic], ((qo_idx - q_start)/2)%2);
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, og_smem[tic], v_smem[warpgroupid]);
             warpgroup::mma_commit_group();
