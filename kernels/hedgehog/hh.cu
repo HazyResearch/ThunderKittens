@@ -175,13 +175,13 @@ void hedgehog_linear_attention_smd (int n,
             // now do the softmax. first we subtract max for numerical stability. then exp.
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
-                mul(att_block[subtile], att_block[subtile], 0.08838834764); // temperature adjustment.
+                mul(att_block[subtile], att_block[subtile], 0.08838834764 * 1.44269504089); // temperature adjustment, with lg(e) so we can use exp2
                 row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
             }
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
                 sub_row(att_block[subtile], att_block[subtile], max_vec);
-                exp(att_block[subtile], att_block[subtile]);
+                exp2(att_block[subtile], att_block[subtile]);
                 mul(att_block[subtile], att_block[subtile], beta);
             }
             // now we sum so that we can divide (normalize) later
@@ -252,7 +252,6 @@ void hedgehog_linear_attention_smd (int n,
 
             // matmul to generate linear_k before softmax
             warpgroup::mma_fence(linear_k);
-            asm volatile ("fence.proxy.async;\n" ::: "memory");
             warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // k is now projected
@@ -265,7 +264,6 @@ void hedgehog_linear_attention_smd (int n,
             __syncthreads();
             cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
             warpgroup::mma_fence(local_kv);
-            asm volatile ("fence.proxy.async;\n" ::: "memory");
             warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
@@ -273,22 +271,22 @@ void hedgehog_linear_attention_smd (int n,
         tma::store_async_wait();
 
         // next step is to sum two norm vecs
-        add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
-        warpgroup::store(norm_exchange[warpgroupid], sliding_norm_vec);
-        __syncthreads();
-        col_vec<rt_fl_1x1<>> total_norm;
-        warpgroup::load(total_norm, norm_exchange[warpgroupid^1]);
-        add(total_norm, total_norm, sliding_norm_vec);
-        // we have now finally accumulated the total norm for everything
-        add(sliding_o, sliding_o, linear_o); // local o
-        div_row(sliding_o, sliding_o, total_norm); // this half is now normalized
+        
         if(warpgroupid == 1) {
-            warpgroup::store(o_smem, sliding_o);
+            warpgroup::store(o_smem, linear_o);
+            warpgroup::store(norm_exchange[0], linear_norm_vec);
+        }
+        else {
+            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
+            add(sliding_o, sliding_o, linear_o);
         }
         __syncthreads();
         if(warpgroupid == 0) {
             warpgroup::load(linear_o, o_smem);
+            warpgroup::load(linear_norm_vec, norm_exchange[0]);
             add(sliding_o, sliding_o, linear_o);
+            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
+            div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
             warpgroup::store(o_smem, sliding_o);
         }
         __syncthreads();
@@ -308,8 +306,6 @@ void hedgehog_linear_attention_smd (int n,
     kv_state_tile (&kv_state_smem) = reinterpret_cast<kv_state_tile&>(q_smem[0].data[0]); // we can overwrite early stuff, it's fine
     group<8>::store(kv_state_smem, local_kv); // all 8 warps store their own chunk.
     __syncthreads();
-    __syncthreads(); // this second one is legit necessary for correctness lmao which means something scary is wrong but tbh i don't want to find it.
-    __syncthreads(); // third one is just for good luck
     // write out kv state
     if(warpid == 0){
         tma::store_async(tma_kv_state, kv_state_smem, batch_head_id);
