@@ -13,16 +13,23 @@ namespace kittens {
 /* ----------  LAYOUT SWAPS  ---------- */
 
 /**
- * @brief Perform a matrix transpose on a block of 8 bf16_2 elements using inline assembly.
+ * @brief Perform a matrix transpose on a block of 8 2-packed 16-bit elements using inline assembly.
  *
  * This low-level operation is utilized by higher-level layout swap functions to transpose
- * the layout of bf16_2 elements within a register tile. The function leverages inline PTX
+ * the layout of elements within a register tile. The function leverages inline PTX
  * assembly to efficiently swap the layout of the given block.
  *
- * @param[out] dst A reference to the destination bf16_2 element where the transposed result is stored.
- * @param[in] src A reference to the source bf16_2 element to be transposed.
+ * @param[out] dst A reference to the destination bf16_2 or half_2 element where the transposed result is stored.
+ * @param[in] src A reference to the source bf16_2 or half_2 element to be transposed.
  */
 __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
+    asm volatile (
+        "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
+    :   "+r"(*(uint32_t*)(&dst))
+    :   "r"(*(uint32_t*)(&src))
+    );
+}
+__device__ inline void swap_layout_8(half_2 &dst, const half_2 &src) {
     asm volatile (
         "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
     :   "+r"(*(uint32_t*)(&dst))
