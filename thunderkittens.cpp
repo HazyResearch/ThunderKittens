@@ -40,6 +40,15 @@ extern void attention_train_forward_causal(torch::Tensor q, torch::Tensor k, tor
 extern void attention_train_backward_causal(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg);
 #endif
 
+#ifdef TK_COMPILE_HEDGEHOG
+extern void hedgehog_forward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o,
+    torch::Tensor k_state, torch::Tensor kv_state,
+    torch::Tensor q_map, torch::Tensor k_map,
+    torch::Tensor alphas, torch::Tensor betas
+);
+#endif
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -59,6 +68,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #ifdef TK_COMPILE_ATTN_CAUSAL_TRAINING
     m.def("mha_causal_train", attention_train_forward_causal, "Causal forward MHA meant for training. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
     m.def("mha_causal_train_backward", attention_train_backward_causal, "Causal backward MHA meant for training. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
+#endif
+
+#ifdef TK_COMPILE_HEDGEHOG
+    m.def("hedgehog", hedgehog_forward, """Hedgehog forward. Takes tensors (Q, K, V, O, k_state, kv_state, q_maps, k_maps, alphas, betas). Q,K,V,O are bf16 (B,H,N,128), q_maps and k_maps are bf16 (H,128,64), k_state is fp32 (B,H,128), kv_state is fp32 (B,H,128,128), and alphas and betas are fp32 (H,). Finally, N must be a multiple of 64.""");
 #endif
 }
  
