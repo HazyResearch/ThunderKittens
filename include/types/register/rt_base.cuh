@@ -84,6 +84,26 @@ namespace rt_base {
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rt::identifier
+/**
+* @brief Concept for register base tiles with row layout.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T is a register tile.
+* - T has an internal type layout that is ducks::rt_layout::row.
+*/
+template<typename T>
+concept row_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::row>;
+/**
+* @brief Concept for register base tiles with col layout.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T is a register tile.
+* - T has an internal type layout that is ducks::rt_layout::col.
+*/
+template<typename T>
+concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::col>;
 } // namespace rt
 } // namespace ducks
 

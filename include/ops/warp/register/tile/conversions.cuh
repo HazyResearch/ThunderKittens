@@ -13,16 +13,23 @@ namespace kittens {
 /* ----------  LAYOUT SWAPS  ---------- */
 
 /**
- * @brief Perform a matrix transpose on a block of 8 bf16_2 elements using inline assembly.
+ * @brief Perform a matrix transpose on a block of 8 2-packed 16-bit elements using inline assembly.
  *
  * This low-level operation is utilized by higher-level layout swap functions to transpose
- * the layout of bf16_2 elements within a register tile. The function leverages inline PTX
+ * the layout of elements within a register tile. The function leverages inline PTX
  * assembly to efficiently swap the layout of the given block.
  *
- * @param[out] dst A reference to the destination bf16_2 element where the transposed result is stored.
- * @param[in] src A reference to the source bf16_2 element to be transposed.
+ * @param[out] dst A reference to the destination bf16_2 or half_2 element where the transposed result is stored.
+ * @param[in] src A reference to the source bf16_2 or half_2 element to be transposed.
  */
 __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
+    asm volatile (
+        "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
+    :   "+r"(*(uint32_t*)(&dst))
+    :   "r"(*(uint32_t*)(&src))
+    );
+}
+__device__ inline void swap_layout_8(half_2 &dst, const half_2 &src) {
     asm volatile (
         "movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n"
     :   "+r"(*(uint32_t*)(&dst))
@@ -244,6 +251,32 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
 /* ----------  CAUSAL  ---------- */
 
+template<ducks::rt_base::row_layout RT>
+__device__ static inline void make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+    dst.data[1] = src.data[1]; // below diagonal, copy
+    dst.data[2] = packed_val; // above diagonal, zero
+    if((MASK_X >> laneid()) & 1) {
+        dst.data[0].x = src.data[0].x;
+        dst.data[3].x = src.data[3].x;
+    }
+    else {
+        dst.data[0].x = val;
+        dst.data[3].x = val;
+    }
+    __syncwarp();
+    if((MASK_Y >> laneid()) & 1) {
+        dst.data[0].y = src.data[0].y;
+        dst.data[3].y = src.data[3].y;
+    }
+    else {
+        dst.data[0].y = val;
+        dst.data[3].y = val;
+    }
+    __syncwarp();
+}
+
 /**
  * @brief Makes a square register tile causal by zeroing elements above the main diagonal.
  *
@@ -276,25 +309,7 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
                 }
             }
             else { // on the diagonal, interesting!
-                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
-                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
-                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
-                if((MASK_X >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
-                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
-                }
-                else {
-                    dst.tiles[i][j].data[0].x = val;
-                    dst.tiles[i][j].data[3].x = val;
-                }
-                if((MASK_Y >> laneid()) & 1) {
-                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
-                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
-                }
-                else {
-                    dst.tiles[i][j].data[0].y = val;
-                    dst.tiles[i][j].data[3].y = val;
-                }
+                make_causal(dst.tiles[i][j], src.tiles[i][j], val);
             }
         }
     }
