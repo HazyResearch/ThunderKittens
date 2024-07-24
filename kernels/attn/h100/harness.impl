@@ -365,13 +365,13 @@ int main(int argc, char **argv) {
         (kittens::MAX_SHARED_MEMORY/bwd_attend_ker_tile_dims<ATTN_D>::blocks_sm)
     );
 
-    dim3 grid_bwd_2(ATTN_N/(WORKERS_BWD*kittens::TILE_DIM), ATTN_B*QO_HEADS, 1);
-    static_assert(ATTN_N % (WORKERS_BWD*kittens::TILE_DIM) == 0);
+    dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), ATTN_B*QO_HEADS, 1);
+    static_assert(ATTN_N % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0);
 
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for (int i = 0; i < ITER; i++) {
-        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*WORKERS_BWD), (kittens::MAX_SHARED_MEMORY/bwd_attend_ker_tile_dims<ATTN_D>::blocks_sm)>>>(ATTN_N, QK_HEAD_RATIO, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
+        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), (kittens::MAX_SHARED_MEMORY/bwd_attend_ker_tile_dims<ATTN_D>::blocks_sm)>>>(ATTN_N, QK_HEAD_RATIO, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
@@ -384,7 +384,7 @@ int main(int argc, char **argv) {
         cudaDeviceSynchronize();
         const auto start_bwd2 = std::chrono::high_resolution_clock::now();
 
-        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*WORKERS_BWD), (kittens::MAX_SHARED_MEMORY/bwd_attend_ker_tile_dims<ATTN_D>::blocks_sm)>>>(ATTN_N, QK_HEAD_RATIO, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
+        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), (kittens::MAX_SHARED_MEMORY/bwd_attend_ker_tile_dims<ATTN_D>::blocks_sm)>>>(ATTN_N, QK_HEAD_RATIO, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
         cudaDeviceSynchronize();
 
         const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
