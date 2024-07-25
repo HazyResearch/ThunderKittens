@@ -121,16 +121,25 @@ def print_errors(name, x_true, x):
 def run_test(testname, B, H, N):
     assert(N%64==0)
     q, k, v, qmap, kmap, alphas, betas = generate_inputs(testname, B, H, N)
-    o, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
+    o_ref, kv_state_ref, k_state_ref = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
 
-    o2 = torch.zeros_like(o)
-    kv_state2 = torch.zeros_like(kv_state)
-    k_state2 = torch.zeros_like(k_state)
-    tk.hedgehog(q, k, v, o2, k_state2, kv_state2, qmap, kmap, alphas, betas)
+    o = torch.zeros_like(o_ref)
+    kv_state = torch.zeros_like(kv_state_ref)
+    k_state = torch.zeros_like(k_state_ref)
+    """
+    Q, K, V, O are bf16 (B,H,N,128)
+    k_state is fp32 (B,H,128)
+    kv_state is fp32 (B,H,128,128)
+    qmap is bf16 (H,128,64)
+    kmap is bf16 (H,128,64)
+    alphas is fp32 (H,)
+    betas is fp32 (H,)
+    """
+    tk.hedgehog(q, k, v, o, k_state, kv_state, qmap, kmap, alphas, betas)
 
-    print_errors('O', o, o2)
-    print_errors('kv_state', kv_state, kv_state2)
-    print_errors('k_state', k_state, k_state2)
+    print_errors('O', o_ref, o)
+    print_errors('kv_state', kv_state_ref, kv_state)
+    print_errors('k_state', k_state_ref, k_state)
 
 tests = {
     'testname': ['randn', 'ones', 'qk_test', 'v_or', 'dbg'],
@@ -142,11 +151,3 @@ tests = {
 for values in itertools.product(*tests.values()):
     print(f' ---------------------------------- Running test {values[0]} with (B={values[1]}, H={values[2]}, N={values[3]}) ----------------------------------')
     run_test(*values)
-
-# print('Avg O diff             :', torch.mean(torch.abs(o2.to(torch.float32) - o.to(torch.float32))).item())
-# print('Avg O magnitude        :', torch.mean(torch.abs(o.to(torch.float32))).item())
-# print('Avg O error %          :', torch.mean(torch.abs(o.to(torch.float32))).item())
-# print('Avg kv_state diff      :', torch.mean(torch.abs(kv_state2.to(torch.float32) - kv_state.to(torch.float32))).item())
-# print('Avg kv_state magnitude :', torch.mean(torch.abs(kv_state.to(torch.float32))).item())
-# print('Avg k_state diff       :', torch.mean(torch.abs(k_state2.to(torch.float32) - k_state.to(torch.float32))).item())
-# print('Avg k_state magnitude  :', torch.mean(torch.abs(k_state.to(torch.float32))).item())
