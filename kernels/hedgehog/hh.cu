@@ -1,24 +1,42 @@
 // #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
 
 #include "kittens.cuh"
+#include <cuda/pipeline>
+#include <cooperative_groups.h>
 
-#define NUM_WORKERS (8)
+
+#define NUM_WORKERS (12)
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 #define NUM_WARPGROUPS (NUM_WORKERS/kittens::WARPGROUP_WARPS)
 
 using namespace kittens;
 
-template<ducks::sv::all SV, ducks::st::all ST>
-__device__ inline void cumulative_add(SV &dst, const ST &src) {
+// ----- DEBUG -----
+#define RED  "\033[91m" 
+#define GREEN  "\033[92m" 
+#define YELLOW  "\033[93m" 
+#define BLUE  "\033[94m" 
+#define MAGENTA  "\033[95m" 
+#define CYAN  "\033[96m" 
+#define WHITE  "\033[97m" 
+#define RESET  "\033[0m" 
+template<typename... Args> __device__ void gprintf(Args... args) {
+    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x % 32 == 0) {
+        printf(args...);
+    }
+}
+// ----- DEBUG -----
+
+template<ducks::sv::all SV>
+__device__ inline void cumulative_add(SV &dst, const SV (&src)[4]) {
     // this is called along a warpgroup
-    static_assert(ST::cols <= 128);
-    static_assert(ST::cols == SV::length);
-    int lane = threadIdx.x % 128;
-    if(lane < ST::cols) {
+    static_assert(SV::length <= 64);
+    int lane = threadIdx.x % 64;
+    if(lane < SV::length) {
         float f = dst[lane];
         // acc equal to the last row of dst
-        for (auto i = 0; i < ST::rows; i++) {
-            f += __bfloat162float(src[{i, lane}]);
+        for (auto i = 0; i < 4; i++) {
+            f += src[i][lane];
         }
         dst[lane] = f;
     }
@@ -55,16 +73,18 @@ void hedgehog_linear_attention_smd (int n,
                                     CUtensorMap* tma_k_state, CUtensorMap* tma_kv_state, // global outputs of K state and KV state
                                     const CUtensorMap* tma_qmap, const CUtensorMap* tma_kmap,
                                     const float *alphas, const float *betas)  { // alpha is for linear component, beta is for sliding window component. Array, per head.
-
-    extern __shared__ int __shm[]; // this is the CUDA shared memory
-    tma_swizzle_allocator al((int*)&__shm[0]);
-
     const int batch_id = blockIdx.y;
     const int head_id  = blockIdx.x;
     const int batch_head_id = batch_id*gridDim.x + head_id;
-    // if(threadIdx.x == 0) printf("head_id: %d, batch_id: %d, batch_head_id: %d\n", head_id, batch_id, batch_head_id);
-    float alpha = alphas[head_id];
-    float beta  = betas [head_id];
+    float alpha = alphas[head_id]; // the weighting of linear vs sliding window attention for this head. alpha controls linear.
+    float beta  = betas [head_id]; // the weighting of the sliding window attention for this head. beta controls the sliding window.
+    int warpid = kittens::warpid(), warpgroupid = warpid/WARPGROUP_WARPS;
+    int tic = 0, toc = 1; // for the double buffer of Q, and the replicated barriers in a producer consumer model
+    int ring_id = 0; // for the circular buffer of K and V
+    int blocks = n / (q_tile::rows);
+    
+    extern __shared__ int __shm[]; // this is the CUDA shared memory
+    tma_swizzle_allocator al((int*)&__shm[0]);
 
     q_tile (&q_smem)[2] = al.allocate<q_tile, 2>(); // 32k, (tic/toc)*16k
     k_tile (&k_smem)[3] = al.allocate<k_tile, 3>(); // 48k, (3-ring)*(64x128)
@@ -76,83 +96,98 @@ void hedgehog_linear_attention_smd (int n,
 
     st_bf<4, 8> (&kv_smem)[2] = al.allocate<st_bf<4, 8>, 2>(); // 32k, 64x128 featurized 
     
-    row_vec<st_fl<4,4>> (&cumsum_k_smem)[2] = al.allocate<row_vec<st_fl<4,4>>, 2>(); // smol
-    col_vec<st_fl<4,4>> (&norm_exchange)[2] = al.allocate<col_vec<st_fl<4,4>>, 2>(); // smol
+    row_vec<st_fl<4,4>> (&cumsum_k_smem)[2]            = al.allocate<row_vec<st_fl<4,4>>, 2   >(); // smol (<1024)
+    row_vec<st_fl<4,4>> (&cumsum_k_smem_scratch)[2][4] = al.allocate<row_vec<st_fl<4,4>>, 2, 4>(); // fairly smol (2048)
+    col_vec<st_fl<4,4>> (&norm_exchange)               = al.allocate<col_vec<st_fl<4,4>>      >(); // smol (<1024)
 
-    st_bf<4, 4> (*k_scratch_smem)     = reinterpret_cast<st_bf<4, 4>*>(&kv_smem[0].data[0]);
+    st_bf<4, 4> (*k_scratch_smem) = reinterpret_cast<st_bf<4, 4>*>(&kv_smem[0].data[0]);
 
-    int warpid = kittens::warpid();
-    int warpgroupid = warpid/4;
-
-    int tic = 0, toc = 1;
-    int ring_id = 0;
-    __shared__ barrier qkv_barrier;
-
-    int blocks = n / (q_tile::rows);
-
+    __shared__ kittens::barrier qk_smem_arrived[2], v_smem_arrived[2], compute_done[2], inter_stored, inter_retrieved;
     if (warpid == 0) {
-        init_barrier(qkv_barrier, 0, 1);
-        tma::expect_bytes(qkv_barrier, 
-            size_bytes<typeof(q_smem[0])> + 
-            size_bytes<typeof(k_smem[0])> + 
-            size_bytes<typeof(v_smem[0])> +
+        init_barrier(qk_smem_arrived[0], 0, 1);
+        init_barrier(qk_smem_arrived[1], 0, 1);
+        tma::expect_bytes(qk_smem_arrived[0], 
+            size_bytes<q_tile> + 
+            size_bytes<k_tile> + 
             // we need qk maps to be loaded on this first iter, too.
-            size_bytes<typeof(qf_map)> +
-            size_bytes<typeof(kf_map)>
+            size_bytes<qk_map_tile> +
+            size_bytes<qk_map_tile>
         );
         int tile_idx = (batch_head_id * blocks) + 0;
         // first thing we need to do is load the QK map
-        tma::load_async(qf_map, tma_qmap, qkv_barrier, head_id); // need to load the right head
-        tma::load_async(kf_map, tma_kmap, qkv_barrier, head_id);
+        tma::load_async(qf_map, tma_qmap, qk_smem_arrived[0], head_id); // need to load the right head
+        tma::load_async(kf_map, tma_kmap, qk_smem_arrived[0], head_id);
         // now we also load the first data we need
-        tma::load_async(q_smem[tic],       tma_q, qkv_barrier, tile_idx);
-        tma::load_async(k_smem[ring_id+1], tma_k, qkv_barrier, tile_idx);
-        tma::load_async(v_smem[ring_id+1], tma_v, qkv_barrier, tile_idx);
+        tma::load_async(q_smem[tic],       tma_q, qk_smem_arrived[0], tile_idx);
+        tma::load_async(k_smem[ring_id+1], tma_k, qk_smem_arrived[0], tile_idx);
     }
-
-    rt_fl<1, 8> local_kv; // this is going to be split across the two warpgroups involved.
-
-    zero(local_kv);
-    warpgroup::zero(v_smem[ring_id]);
-    warpgroup::zero(cumsum_k_smem[warpgroupid]);
+    else if(warpid == 1) {
+        init_barrier(v_smem_arrived[0], 0, 1);
+        init_barrier(v_smem_arrived[1], 0, 1);
+        tma::expect_bytes(v_smem_arrived[0], size_bytes<v_tile>);
+        int tile_idx = (batch_head_id * blocks) + 0;
+        tma::load_async(v_smem[ring_id+1], tma_v, v_smem_arrived[0],  tile_idx); // load v to its own barrier
+    }
+    else if(warpid < 4) {
+        init_barrier(compute_done[warpid-2], 0, 8); // both consumer warpgroups have to hit these
+        if(warpid == 2) {
+            init_barrier(inter_stored, 0, 4); // just one consumer warpgroup hits each of these
+            init_barrier(inter_retrieved, 0, 4); // just one consumer warpgroup hits each of these
+        }
+    }
+    else if(warpgroupid == 1) {
+        warpgroup::zero(v_smem[ring_id]);
+        warpgroup::zero(cumsum_k_smem[0]);
+    }
+    else if(warpgroupid == 2) {
+        warpgroup::zero(cumsum_k_smem[1]);
+    }
 
     __syncthreads();
 
-    for (int block = 0; block < blocks; block++, tic^=1, toc^=1, ring_id=(ring_id+1)%3) {
-
-        wait(qkv_barrier, tic);  // ding! memory arrived
-        __syncthreads();
-
-        if (warpid == 0 && block < blocks-1) {
-            tma::expect_bytes(qkv_barrier,
-                size_bytes<typeof(q_smem[0])> + 
-                size_bytes<typeof(k_smem[0])> + 
-                size_bytes<typeof(v_smem[0])>
-            );
-
-            int tile_idx = (batch_head_id * blocks) + block + 1;
-            tma::load_async(q_smem[toc],           tma_q, qkv_barrier, tile_idx); 
-            tma::load_async(k_smem[(ring_id+2)%3], tma_k, qkv_barrier, tile_idx); 
-            tma::load_async(v_smem[(ring_id+2)%3], tma_v, qkv_barrier, tile_idx);
+    if(warpgroupid == 2) { // producer
+        asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32));
+   
+        if(warpid == 8) {
+            for (auto block = 0; block < blocks-1; block++, tic=tic^1, toc=toc^1, ring_id=(ring_id+1)%3) {
+                int next_tile_idx = (batch_head_id * blocks) + block + 1;
+                tma::expect_bytes(qk_smem_arrived[toc], size_bytes<q_tile> + size_bytes<k_tile>);
+                tma::load_async(q_smem[toc],           tma_q, qk_smem_arrived[toc], next_tile_idx);
+                tma::load_async(k_smem[(ring_id+2)%3], tma_k, qk_smem_arrived[toc], next_tile_idx);
+                wait(compute_done[tic], (block/2)%2);
+            }
         }
-        __syncthreads();
+        else if(warpid == 9) {
+            for (auto block = 0; block < blocks-1; block++, tic=tic^1, toc=toc^1, ring_id=(ring_id+1)%3) {
+                int next_tile_idx = (batch_head_id * blocks) + block + 1;
+                tma::expect_bytes(v_smem_arrived[toc], size_bytes<v_tile>);
+                tma::load_async(v_smem[(ring_id+2)%3], tma_v, v_smem_arrived[toc], next_tile_idx);
+                wait(compute_done[tic], (block/2)%2);
+            }
+        }
+    }
+    else if(warpgroupid == 0) { // sliding window attn consumer
+        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(216));
 
-        // ----- let's do sliding window first -----
-        // only warps 0-4 need to be involved in this
+        // tell the other warpgroup it's allowed to store into the exchange buffer
+        if(laneid() == 0) arrive(inter_retrieved);
 
-        rt_fl<1, 8> sliding_o;
-        rt_fl<1, 4>::col_vec sliding_norm_vec;
-        zero(sliding_o);
-        zero(sliding_norm_vec);
-        if(warpgroupid == 0) {
+        for (int block = 0; block < blocks; block++, tic^=1, toc^=1, ring_id=(ring_id+1)%3) {
 
             // ******* sliding window attn ******* // 
+
+            rt_fl<1, 8> sliding_o, linear_o;
+            rt_fl<1, 4>::col_vec sliding_norm_vec, linear_norm_vec;
+            zero(sliding_o);
+            zero(sliding_norm_vec);
 
             rt_fl<1, 4> att_block[2];
             rt_bf<1, 4> att_block_bf[2];
             rt_fl<1, 4>::col_vec max_vec;
 
             neg_infty(max_vec); // zero registers for the Q chunk
+            
+            wait(qk_smem_arrived[tic], (block/2)%2);  // ding! memory arrived
 
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
@@ -160,8 +195,9 @@ void hedgehog_linear_attention_smd (int n,
                 warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
                 warpgroup::mma_commit_group();
             }
+            wait(v_smem_arrived[tic], (block/2)%2);  // ding! memory arrived
             warpgroup::mma_async_wait();
-            if(block == 0) { // initial block must be zero in the first 64x64 chunk
+            if(block == 0) { // initial block must be zeroed in the first 64x64 chunk
                 neg_infty(att_block[0]);
             }
             // make last block causal
@@ -190,124 +226,174 @@ void hedgehog_linear_attention_smd (int n,
                 copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
             }
             warpgroup::mma_fence(sliding_o);
+            #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
                 warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
                 warpgroup::mma_commit_group();
             }
             warpgroup::mma_async_wait();
-        }
-        __syncthreads();
 
-        rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
-        rt_fl<1, 4>::col_vec linear_norm_vec;
-        zero(linear_norm_vec);
-        if(block == 0) {
-            zero(linear_o);
+            if(laneid() == 0) arrive(compute_done[tic]); // we are done with Q, K, V now
+
+            // exchange
+            wait(inter_stored, tic); // this is on tic, so it does wait
+            warpgroup::load(linear_norm_vec, norm_exchange);
+            warpgroup::load(linear_o, o_smem);
+            asm volatile("bar.sync 10, 128;\n");
+
+            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
+            add(sliding_o, sliding_o, linear_o);
+            div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
+
+            // tma::store_async_wait();
+            warpgroup::store(o_smem, sliding_o);
+            asm volatile("bar.sync 10, 128;\n"); // just this warpgroup needs to hit this
+
+            if(warpid == 0) {
+                tma::store_async(tma_o, o_smem, batch_head_id*blocks + block);
+                tma::store_commit_group();
+            }
+            asm volatile("bar.sync 10, 128;\n"); // just this warpgroup needs to hit this
+            if(laneid() == 0) arrive(inter_retrieved); // we have successfully retrieved the norm vector, so the next one can be stored
         }
-        else { // if not in at least the second block, no need for linear attention.
+    }
+    else { // lin attn consumer
+        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(256));
+
+        rt_fl<1, 8> local_kv[2]; // this is going to be split across the two warpgroups involved.
+        for(int i = 0; i < 2; i++) zero(local_kv[i]);
+
+        // we don't do anything here on the first block
+        wait(qk_smem_arrived[tic], 0);  // ding! memory arrived
+        wait(v_smem_arrived[tic], 0);  // ding! memory arrived
+
+        // For the first iteration, we just need to send zeros.
+        warpgroup::zero(o_smem);
+        warpgroup::zero(norm_exchange);
+        if(laneid() == 0) arrive(inter_stored);
+
+        // mark all compute as being done
+        if(laneid() == 0) arrive(compute_done[tic]);
+
+        // we now need to get to the next block
+        tic ^= 1;
+        toc ^= 1;
+        ring_id = (ring_id+1)%3;
+
+        for (int block = 1; block < blocks; block++, tic^=1, toc^=1, ring_id=(ring_id+1)%3) {
+            // gprintf(RED "(warp %d) linear made it to block %d\n" RESET, warpid, block);
+            
+            wait(qk_smem_arrived[tic], (block/2)%2);  // ding! memory arrived
+            wait(v_smem_arrived[tic], (block/2)%2);  // ding! memory arrived
 
             // ******* linear attn ******** // 
 
-            // matmul to generate linear_q before softmax
-
-            rt_fl<1, 4> linear_q;
-            rt_bf<1, 4> linear_q_bf;
-
-            warpgroup::mma_fence(linear_q);
-            warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
-            warpgroup::mma_commit_group();
-            warpgroup::mma_async_wait(); // q is now projected
-            if(warpgroupid) mul(linear_q, linear_q, -1.f);
-            // now we need to run q through a local softmax to featurize
-            softmax_featuremap_inplace(linear_q);
-            mul(linear_q, linear_q, alpha);
-            copy(linear_q_bf, linear_q); // now to bf16
-
-            // copy the local KV cache into shared memory to shared memory and do matmul
-            warpgroup::store(kv_smem[warpgroupid], local_kv);
-            __syncthreads(); // this should probably be a cooperative group of just the 4 warps
-            warpgroup::mma_fence(linear_o);
-            warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
-            warpgroup::mma_commit_group();
-            warpgroup::mma_async_wait();
-
-            // next we need to go figure out the norm.
-            // first we load sum(k) from smem to registers.
-            row_vec<rt_bf<1,4>> cumsum_k_reg;
-            load(cumsum_k_reg, cumsum_k_smem[warpgroupid]);
-            // now we can project this up into a register tile
-            // we're broadcasting along the column axis (filling all rows with the same value)
-            rt_bf<1,4> cumsum_k_reg_tile;
-            broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
-            // next we matmul! this gives us a tile.
+            rt_fl<1, 8> linear_o; // this is partitioned across the two warpgroups.
+            rt_fl<1, 4>::col_vec linear_norm_vec; // sliding filled in through norm exchange
             rt_fl_1x1<> norm_tile;
             zero(norm_tile);
-            mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
-            row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ
-            // ^ note this incorporates alpha since it was premultiplied onto linear_q!
+            zero(linear_o);
+
+            // matmul to generate linear_q and linear_k before softmax
+
+            rt_fl<1, 4> linear_q[2];
+
+            warpgroup::mma_fence(linear_q[1]);
+            warpgroup::mm_AB(linear_q[1], q_smem[tic], qf_map); // reset
+            warpgroup::mma_commit_group();
+            warpgroup::mma_async_wait(); // q is now projected
+
+            copy(linear_q[0], linear_q[1]);
+            mul(linear_q[1], linear_q[1], -1.f); // 1 is the negative version
+
+            #pragma unroll
+            for(int i = 0; i < 2; i++) {
+                softmax_featuremap_inplace(linear_q[i]);
+                mul(linear_q[i], linear_q[i], alpha);
+                rt_bf<1, 4> linear_q_bf;
+                copy(linear_q_bf, linear_q[i]); // now to bf16
+
+                // copy the local KV cache into shared memory to shared memory and do matmul
+                warpgroup::store(kv_smem[i], local_kv[i]);
+                asm volatile("bar.sync 11, 128;\n"); // just this warpgroup needs to hit this
+                warpgroup::mma_fence(linear_o);
+                warpgroup::mma_AB(linear_o, linear_q_bf, kv_smem[i]);
+                warpgroup::mma_commit_group();
+                warpgroup::mma_async_wait();
+
+                // next we need to go figure out the norm.
+                // first we load sum(k) from smem to registers.
+                row_vec<rt_bf<1,4>> cumsum_k_reg;
+                load(cumsum_k_reg, cumsum_k_smem[i]);
+                // now we can project this up into a register tile
+                // we're broadcasting along the column axis (filling all rows with the same value)
+                rt_bf<1,4> cumsum_k_reg_tile;
+                broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
+                // next we matmul! this gives us a tile.
+                mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
+                // ^ note this incorporates alpha since it was premultiplied onto linear_q!
+            }
+            row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ PZ
+
+            // we can now do the first chunk of our norm exchange
+            tma::store_async_wait(); // make sure o_smem is not in flight
+            wait(inter_retrieved, tic); // although this is on tic, it's okay because the other warpgroup arrives at the start.
+            warpgroup::store(norm_exchange, linear_norm_vec);
+            warpgroup::store(o_smem, linear_o);
+            asm volatile("bar.sync 11, 128;\n");
+            if(laneid() == 0) arrive(inter_stored); // we have successfully stored the norm vector and our o, and will leave the rest to the other warpgroup
             
             // now accumulate KV onto the matmul for the future.
-            rt_fl<1, 4> linear_k;
+            rt_fl<1, 4> linear_k[2];
+            row_vec<rt_fl<1,4>> k_sum;
 
             // matmul to generate linear_k before softmax
-            warpgroup::mma_fence(linear_k);
-            warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
+            warpgroup::mma_fence(linear_k[1]);
+            warpgroup::mm_AB(linear_k[1], k_smem[ring_id], kf_map); // reset
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // k is now projected
-            if(warpgroupid) mul(linear_k, linear_k, -1.f);
-            // now we need to run q through a local softmax to featurize
-            softmax_featuremap_inplace(linear_k);
 
-            // copy the local K into shared memory & do matmul
-            warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
-            __syncthreads();
-            cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
-            warpgroup::mma_fence(local_kv);
-            warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
+            copy(linear_k[0], linear_k[1]);
+            mul(linear_k[1], linear_k[1], -1.f); // again, 1 means the negative version
+            #pragma unroll
+            for(int i = 0; i < 2; i++) {
+                softmax_featuremap_inplace(linear_k[i]);
+                col_sum(k_sum, linear_k[i]);
+                store(cumsum_k_smem_scratch[i][warpid-4], k_sum);
+            }
+
+            warpgroup::store(k_scratch_smem[0], linear_k[0]); // screw it, this is now just a scratchpad.
+            warpgroup::store(k_scratch_smem[1], linear_k[1]); // screw it, this is now just a scratchpad.
+            asm volatile("bar.sync 11, 128;\n");
+
+            warpgroup::mma_fence(local_kv[0]);
+            warpgroup::mma_fence(local_kv[1]);
+            warpgroup::mma_AtB(local_kv[0], k_scratch_smem[0], v_smem[ring_id]);
+            warpgroup::mma_AtB(local_kv[1], k_scratch_smem[1], v_smem[ring_id]);
             warpgroup::mma_commit_group();
+            if(warpid == 4 || warpid == 5) cumulative_add(cumsum_k_smem[0], cumsum_k_smem_scratch[0]);
+            else                           cumulative_add(cumsum_k_smem[1], cumsum_k_smem_scratch[1]);
             warpgroup::mma_async_wait();
-        }
-        tma::store_async_wait();
 
-        // next step is to sum two norm vecs
-        
-        if(warpgroupid == 1) {
-            warpgroup::store(o_smem, linear_o);
-            warpgroup::store(norm_exchange[0], linear_norm_vec);
+            if(laneid() == 0) arrive(compute_done[tic]);
         }
-        else {
-            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
-            add(sliding_o, sliding_o, linear_o);
-        }
-        __syncthreads();
-        if(warpgroupid == 0) {
-            warpgroup::load(linear_o, o_smem);
-            warpgroup::load(linear_norm_vec, norm_exchange[0]);
-            add(sliding_o, sliding_o, linear_o);
-            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
-            div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
-            warpgroup::store(o_smem, sliding_o);
-        }
-        __syncthreads();
-
-        if(warpid == 0) {
-            tma::store_async(tma_o, o_smem, batch_head_id*blocks + block);
-            tma::store_commit_group();
-        }
+        wait(compute_done[toc], ((blocks-1)/2)%2); // ensure other warpgroup has finished, too, before we overwrite q_smem and k_smem
+        kv_state_tile (&kv_state_smem_tmp) = reinterpret_cast<kv_state_tile&>(q_smem[0].data[0]); // could also do this using a subtile but i like this
+        auto st1 = subtile_inplace<4,8>(kv_state_smem_tmp, 0, 0);
+        warpgroup::store(st1, local_kv[0]);
+        auto st2 = subtile_inplace<4,8>(kv_state_smem_tmp, 1, 0);
+        warpgroup::store(st2, local_kv[1]);
     }
-    tma::store_async_wait();
 
     // Finally we want to write out the kv state and the k state
-    
-    // reinterpret k state as a vector of length 128, to save a tma call
-    k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
-    // store out kv state into smem.
-    kv_state_tile (&kv_state_smem) = reinterpret_cast<kv_state_tile&>(q_smem[0].data[0]); // we can overwrite early stuff, it's fine
-    group<8>::store(kv_state_smem, local_kv); // all 8 warps store their own chunk.
     __syncthreads();
-    // write out kv state
-    if(warpid == 0){
-        tma::store_async(tma_kv_state, kv_state_smem, batch_head_id);
+    if(warpid == 0) {
+        // write out kv state
+        kv_state_tile (&kv_state_smem_st)  = reinterpret_cast<kv_state_tile&>(q_smem[0].data[0]); // we can overwrite early stuff, it's fine
+        tma::store_async(tma_kv_state, kv_state_smem_st, batch_head_id);
+        tma::store_commit_group();
+        // reinterpret k state as a vector of length 128, to save a tma call
+        k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
         tma::store_async(tma_k_state, k_state_smem, batch_head_id);
         tma::store_commit_group();
     }
