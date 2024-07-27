@@ -1,7 +1,6 @@
 import torch
 import sys
-sys.path.append('build/lib.linux-x86_64-cpython-311')
-import based_inference as mod
+import thunderkittens as tk
 
 
 def make_causal(X):
@@ -52,7 +51,7 @@ def based_test(dt, device='cuda', benchmark=True):
     k_state_ref  = k_state.detach().clone()
     out_ref, den_ref    = based_step_ref(kv_state=kv_state_ref, k_state=k_state_ref, v=v, k=k, q=q)
     out_tc       = torch.zeros_like(v)
-    mod.based_step(q, k, v, kv_state_t, k_state, out_tc)
+    tk.based_step(q, k, v, kv_state_t, k_state, out_tc)
     _kv_state = kv_state_t.transpose(1,2) 
 
     # Overall correctness

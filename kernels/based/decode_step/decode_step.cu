@@ -4,8 +4,8 @@
 #include <mma.h>
 using namespace nvcuda;
 
-# include "src/kittens.cuh" // needs to come before torch_helpers, since torch_helpers relies on kittens.
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "kittens.cuh" // needs to come before torch_helpers, since torch_helpers relies on kittens.
+#include "common/pyutils/torch_helpers.cuh"
 #include <cuda/pipeline>
 #include <cuda/barrier>
 #include <cooperative_groups.h>
@@ -212,8 +212,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     }
 }
 
-void 
-based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
+void based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
             torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -235,7 +234,7 @@ based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
     int threads = workers * kittens::WARP_THREADS;
-    printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
+    // printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
     based_simple_ker<H,T><<<batch,threads,0,stream>>>(

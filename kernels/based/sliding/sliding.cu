@@ -1,4 +1,4 @@
-#include "src/kittens.cuh"
+#include "kittens.cuh"
 
 #define NUM_WORKERS (4) // this comes from the fact that we want a 64-long sliding window
 using namespace kittens;
@@ -21,8 +21,8 @@ void sliding_window(int n, int d, const bf16* __restrict__ __q__, const bf16* __
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
     
-    st_bf_1x4<ducks::st_layout::swizzle> (&k_smem)[WINDOW_TILES][NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::swizzle>, WINDOW_TILES, NUM_WORKERS>();
-    st_bf_1x4<ducks::st_layout::swizzle> (&v_smem)[WINDOW_TILES][NUM_WORKERS] = al.allocate<st_bf_1x4<ducks::st_layout::swizzle>, WINDOW_TILES, NUM_WORKERS>();
+    st_bf_1x4 (&k_smem)[WINDOW_TILES][NUM_WORKERS] = al.allocate<st_bf_1x4, WINDOW_TILES, NUM_WORKERS>();
+    st_bf_1x4 (&v_smem)[WINDOW_TILES][NUM_WORKERS] = al.allocate<st_bf_1x4, WINDOW_TILES, NUM_WORKERS>();
 
     rt_bf_1x4<> q_reg, k_reg, v_reg;
     rt_fl_1x1<> att_block[WINDOW_MINI_TILES];
@@ -100,15 +100,10 @@ void sliding_window(int n, int d, const bf16* __restrict__ __q__, const bf16* __
     }
 }
 
-
-// For testing via C++
-// #include "harness.impl" // (comment out when using the code below)
-
-
 // For binding to PyTorch (comment out include for harness.imple when using the code below)
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
-void sliding_window_tk(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
+void based_sliding_window(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o) {
     std::cout << "Entered Sliding window handler" << std::endl;
     CHECK_INPUT(q);
     CHECK_INPUT(k);
