@@ -52,7 +52,10 @@ source_files = ['thunderkittens.cpp']
 for k in kernels:
     if target not in sources[k]['source_files']:
         raise KeyError(f'Target {target} not found in source files for kernel {k}')
-    source_files.append(sources[k]['source_files'][target])
+    if type(sources[k]['source_files'][target]) == list:
+        source_files.extend(sources[k]['source_files'][target])
+    else:
+        source_files.append(sources[k]['source_files'][target])
     cpp_flags.append(f'-DTK_COMPILE_{k.replace(" ", "_").upper()}')
 
 setup(

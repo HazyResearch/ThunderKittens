@@ -1,4 +1,4 @@
-#include "src/kittens.cuh"
+#include "kittens.cuh"
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
@@ -7,12 +7,11 @@
 #define D_QK (16) // hardcoded, don't change
 #define D_VO (64) // hardcoded but can be changed with some effort
 
-#define tile_kv_a2_2_smem st_bf_4x4<wgmma_swizzle_l>
-#define tile_kv_a1_2_smem st_bf_4x1<wgmma_swizzle_l>
-#define tile_kv_a0_2_smem sv_bf<4>
-
 using namespace kittens;
 
+using tile_kv_a2_2_smem = st_bf_4x4;
+using tile_kv_a1_2_smem = st_bf_4x1;
+using tile_kv_a0_2_smem = sv_bf<4>;
 
 // cumulative sum of v onto a0_total
 template<kittens::ducks::st::all ST>
@@ -99,17 +98,17 @@ void based_linear_attention(
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
-    st_bf_4x1<wgmma_swizzle_l>    (&q_s)  [2]   = al.allocate<st_bf_4x1<wgmma_swizzle_l>,    2>(); // 4096 bytes
-    st_bf_4x1<wgmma_interleave_l> (&k_s)  [2]   = al.allocate<st_bf_4x1<wgmma_interleave_l>, 2>(); // 4096 bytes
-    st_bf_4x4<wgmma_interleave_l> (&v_s)  [2]   = al.allocate<st_bf_4x4<wgmma_interleave_l>, 2>(); // 16384 bytes
-    st_bf_4x4<wgmma_interleave_l> (&v_s_2)[2]   = al.allocate<st_bf_4x4<wgmma_interleave_l>, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
-    st_bf_4x4<swizzle_l>          (&v_s_3)[2]   = al.allocate<st_bf_4x4<swizzle_l>,          2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
-    st_bf_4x4<swizzle_l>          (&o_s)  [2]   = al.allocate<st_bf_4x4<swizzle_l>,          2>(); // 16384 bytes
+    st_bf_4x1 (&q_s)  [2]   = al.allocate<st_bf_4x1, 2>(); // 4096 bytes
+    st_bf_4x1 (&k_s)  [2]   = al.allocate<st_bf_4x1, 2>(); // 4096 bytes
+    st_bf_4x4 (&v_s)  [2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes
+    st_bf_4x4 (&v_s_2)[2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
+    st_bf_4x4 (&v_s_3)[2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
+    st_bf_4x4 (&o_s)  [2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes
 
     rt_fl_1x1<> a1_trans; // transposed chunk of a1.
     rt_fl_1x4<> a2[4]; // a2 gets propagated through here.
-    st_bf_4x1<wgmma_swizzle_l>    (&a1_trans_s) = al.allocate<st_bf_4x1<wgmma_swizzle_l>    >(); // 2048 bytes
-    st_bf_4x4<wgmma_interleave_l> (&a2_s)       = al.allocate<st_bf_4x4<wgmma_interleave_l> >(); // 8192 bytes
+    st_bf_4x1 (&a1_trans_s) = al.allocate<st_bf_4x1>(); // 2048 bytes
+    st_bf_4x4 (&a2_s)       = al.allocate<st_bf_4x4>(); // 8192 bytes
 
     sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
 
@@ -126,11 +125,11 @@ void based_linear_attention(
     int n_blocks = n / (q_s[0].rows);
 
     // initial load
-    __shared__ tma::barrier bar;
-    if (warpid == 0) tma::init_barrier(bar);
+    __shared__ barrier bar;
+    if (warpid == 0) init_barrier(bar, 0, 1); // don't wait on threads, do wait on one memory transaction
     __syncthreads();
     if (warpid == 0) {
-        tma::set_bytes(bar,
+        tma::expect_bytes(bar,
             size_bytes<typeof(q_s[0])> +
             size_bytes<typeof(k_s[0])> +
             size_bytes<typeof(v_s[0])>*3
@@ -149,10 +148,10 @@ void based_linear_attention(
         rt_fl_1x4<> o; // 32 registers each -- 64
 
         // arrive memory
-        tma::arrive_and_wait(bar, tic);
+        wait(bar, tic);
         __syncthreads(); // everybody on the same page?
         if (warpid == 0 && block+1<n_blocks) { // go get the next K from HBM
-            tma::set_bytes(bar,
+            tma::expect_bytes(bar,
                 size_bytes<typeof(q_s[0])> +
                 size_bytes<typeof(k_s[0])> +
                 size_bytes<typeof(v_s[0])>*3
@@ -267,13 +266,12 @@ void based_linear_attention(
     }
 
     if (output_state > 0) {
-        // if (warpid == 0 && threadIdx.x == 0) {printf("output state");}
 
         // save the KV state (A2)
         for (int rt = 0; rt < 4; rt++) {
             // The reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
-            // Instead, it tells the compiler to treat the memory location of a2_s as if it were a reference to st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>.
-            auto &kv_smem_2 = reinterpret_cast<st_bf<4, 4, kittens::ducks::st_layout::wgmma_swizzle>&>(a2_s); // this layout is better for global HBM stores so we cast.
+            // Instead, it tells the compiler to treat the memory location of a2_s as if it were a reference to st_bf<4, 4>.
+            auto &kv_smem_2 = reinterpret_cast<st_bf_4x4&>(a2_s); // this layout is better for global HBM stores so we cast.
             mul(a2[rt], a2[rt], 0.70710678118); // Taylor normalization
             if (add_scale > 0) {
                 // if (warpid==0 and threadIdx.x==0) {printf("scale 3.");}
@@ -290,7 +288,7 @@ void based_linear_attention(
         }
 
         // save the KV state A1
-        auto &kv_smem_1 = reinterpret_cast<st_bf<4, 1, kittens::ducks::st_layout::wgmma_swizzle>&>(a1_trans_s);
+        auto &kv_smem_1 = reinterpret_cast<st_bf_4x1&>(a1_trans_s);
         if (add_scale > 0 ) {
             // if (warpid==0 and threadIdx.x==0) {printf("scale 4.");} 
             mul(a1_trans, a1_trans, 0.5);       // divides by math.sqrt(math.sqrt(D_QK))
@@ -317,9 +315,9 @@ void based_linear_attention(
 
 // #include "harness.impl"
 
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
-void based_fwd_tk(
+void based_linear_prefill(
     int add_scale, int output_state,
     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
     torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0
@@ -357,9 +355,9 @@ void based_fwd_tk(
     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
     c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a2_ptr    = kv_a2.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a1_ptr    = kv_a1.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a0_ptr    = kv_a0.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_a2_ptr = kv_a2.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_a1_ptr = kv_a1.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kv_a0_ptr = kv_a0.data_ptr<c10::BFloat16>();
 
     const bf16* d_q  = reinterpret_cast<const bf16*>(q_ptr);
     const bf16* d_k  = reinterpret_cast<const bf16*>(k_ptr);
@@ -369,11 +367,11 @@ void based_fwd_tk(
           bf16* d_kv_a1 = reinterpret_cast<bf16*>(kv_a1_ptr); 
           bf16* d_kv_a0 = reinterpret_cast<bf16*>(kv_a0_ptr);
 
-    CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>   (d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (batch*heads*n)/(kittens::st_bf_4x4<wgmma_interleave_l>::rows)); 
-    CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>         (d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_q_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1>(d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_k_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_v_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_v_3_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
+    CUtensorMap* tma_o_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
     CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, batch*heads*(D_QK*D_QK));
     CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, batch*heads*(D_QK));
     CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a0, batch*heads);

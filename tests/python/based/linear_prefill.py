@@ -9,20 +9,17 @@ from collections import defaultdict
 from statistics import median
 import torch.nn as nn
 from einops import rearrange
-
-# These installs are for pulling in the TK source
-sys.path.append('../../../')
-from src.common.pyutils.test_build_utils import __eq
-sys.path.append('build/lib.linux-x86_64-cpython-311')
+sys.path.append('../')
+from util import __eq
 
 loaded_correctly = []
 
 # To import the ThunderKittens based kernels
 try:
-    sys.path.append("../linear_attn_forward/H100")
-    import lin_attn as mod
-    import lin_attn_4090 as mod_4090
+    import thunderkittens as tk
     print(f"Successfully imported TK based_H100 kernel")
+    if tk.based_linear_prefill is None:
+        raise Exception("Based linear prefill is not compiled")
 except:
     loaded_correctly.append('Based TK')
     mod = None
@@ -186,7 +183,7 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
     kv_state_a1 = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
     kv_state_a0 = torch.zeros((b, h, dv), dtype=dt, device='cuda')
 
-    mod.based_fwd_tk(int(add_scale),int(output_state),Q,K,V,o,kv_state_a2,kv_state_a1,kv_state_a0)
+    tk.based_linear_prefill(int(add_scale),int(output_state),Q,K,V,o,kv_state_a2,kv_state_a1,kv_state_a0)
 
     o += torch.zeros_like(o) # trigger an error if one exists
     kv_state_a2 = kv_state_a2.transpose(2,3)
