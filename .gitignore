@@ -4,5 +4,6 @@
 *.ptx
 *.cubin
 *.fatbin
+*.d
 .idea
 venv
