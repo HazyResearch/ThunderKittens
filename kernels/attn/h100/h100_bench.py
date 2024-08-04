@@ -13,9 +13,9 @@ def efficiency(flop, time):
     return flop / time
 
 def benchmark_attention(configurations):
-    for B, H, N, D in configurations:
+    for B, H, N, D, causal in configurations:
         print("=" * 60)
-        print(f"Timing forward and backward pass for B={B}, H={H}, N={N}, D={D}")
+        print(f"Timing forward and backward pass for B={B}, H={H}, N={N}, D={D}, causal={causal}")
 
         q = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
         k = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
@@ -33,7 +33,7 @@ def benchmark_attention(configurations):
 
         # Warmup for forward pass
         for _ in range(10):
-            tk_train.attention_forward(q, k, v, o, l_vec, False)
+            tk_train.attention_forward(q, k, v, o, l_vec, causal)
 
         # Prepare for timing forward pass
         start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
@@ -46,7 +46,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_fwd[i].record()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, False)
+            tk_train.attention_forward(q, k, v, o, l_vec, causal)
             
             torch.cuda.synchronize()
             end_events_fwd[i].record()
@@ -56,14 +56,15 @@ def benchmark_attention(configurations):
         time_us_fwd = np.mean(times_fwd) * 1000
 
         print(f"Average time for forward pass in us: {time_us_fwd:.2f}")
-        print(f"Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, H, D, False, 'fwd'), time_us_fwd)}")
+        print(f"Average efficiency for forward pass in TFLOPS: {efficiency(flops(B, N, H, D, causal, 'fwd'), time_us_fwd)}")
         print("-" * 60)
+        
         # Warmup for backward pass
         for _ in range(10):
             o.zero_()
             l_vec.zero_()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, False)
+            tk_train.attention_forward(q, k, v, o, l_vec, causal)
             
             # zero out gradients
             qg.zero_()
@@ -71,7 +72,7 @@ def benchmark_attention(configurations):
             vg.zero_()
             d_vec.zero_()
             
-            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, False)
+            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
 
         # Prepare for timing backward pass
         start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
@@ -82,7 +83,7 @@ def benchmark_attention(configurations):
             o.zero_()
             l_vec.zero_()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, False)
+            tk_train.attention_forward(q, k, v, o, l_vec, causal)
             
             # zero out gradients
             qg.zero_()
@@ -93,7 +94,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_bwd[i].record()
             
-            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, False)
+            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
             
             torch.cuda.synchronize()
             end_events_bwd[i].record()
@@ -103,17 +104,35 @@ def benchmark_attention(configurations):
         time_us_bwd = np.mean(times_bwd) * 1000
 
         print(f"Average time for backward pass in us: {time_us_bwd:.2f}")
-        print(f"Average efficiency for backward pass in TFLOPS: {efficiency(flops(B, N, H, D, False, 'bwd'), time_us_bwd)}")
+        print(f"Average efficiency for backward pass in TFLOPS: {efficiency(flops(B, N, H, D, causal, 'bwd'), time_us_bwd)}")
         print("=" * 60)
-        
+
 # Example list of configurations to test
 configurations = [
-    (32, 16, 768, 128),
-    (16, 16, 768*2, 128),
-    (8, 16, 768*4, 128),
-    (4, 16, 768*8, 128), 
-    (2, 16, 768*16, 128), 
-    (1, 16, 768*32, 128)
+    (32, 16, 768,    128, False),
+    (16, 16, 768*2,  128, False),
+    (8,  16, 768*4,  128, False),
+    (4,  16, 768*8,  128, False),
+    (2,  16, 768*16, 128, False),
+    (1,  16, 768*32, 128, False),
+    (32, 16, 768,    128, True),
+    (16, 16, 768*2,  128, True),
+    (8,  16, 768*4,  128, True),
+    (4,  16, 768*8,  128, True),
+    (2,  16, 768*16, 128, True),
+    (1,  16, 768*32, 128, True), 
+    (32, 32, 768,    64,  False),
+    (16, 32, 768*2,  64,  False),
+    (8,  32, 768*4,  64,  False),
+    (4,  32, 768*8,  64,  False),
+    (2,  32, 768*16, 64,  False),
+    (1,  32, 768*32, 64,  False),
+    (32, 32, 768,    64,  True),
+    (16, 32, 768*2,  64,  True),
+    (8,  32, 768*4,  64,  True),
+    (4,  32, 768*8,  64,  True),
+    (2,  32, 768*16, 64,  True),
+    (1,  32, 768*32, 64,  True),
 ]
 
 benchmark_attention(configurations)
