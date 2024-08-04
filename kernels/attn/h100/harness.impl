@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 20;
+constexpr int ATTN_B     = 1;
 constexpr int QO_HEADS   = 16;
 constexpr int KV_HEADS   = 16;
 

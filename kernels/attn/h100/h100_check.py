@@ -26,14 +26,15 @@ def pytorch_test(Q, K, V, dO):
 def h100_fwd_kernel_test(Q, K, V, dO):
     o = torch.zeros_like(Q)
     l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-    tk_train.attention_forward_causal(Q, K, V, o, l_vec)
+    
+    tk_train.attention_forward(Q, K, V, o, l_vec, True)
 
     d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
     qg = torch.zeros_like(Q, dtype=torch.float)
     kg = torch.zeros_like(K, dtype=torch.float)
     vg = torch.zeros_like(V, dtype=torch.float)
 
-    tk_train.attention_backward_causal(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg)
+    tk_train.attention_backward(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg, True)
 
     return o, qg, kg, vg
 
@@ -57,7 +58,14 @@ def check_correctness(b, h, n, d=64):
 
     for key, (pt, tk) in results.items():
         diff = pt - tk
+
+        tol = torch.mean(torch.abs(pt)).item() * 0.01
+        print(f"{key} - max acceptable magnitude of diff: {tol:.6f}")
         print(f"{key} - avg magnitude of diff: {torch.mean(torch.abs(diff)).item():.6f}")
+        
+        # if avg mag < 1% of avg mag of pt, then pass
+        assert(torch.mean(torch.abs(diff)).item() < tol)
+        print(f"{key} - pass: {torch.mean(torch.abs(diff)).item() < tol}")
         print("-" * 40)
 
 print("Correctness Tests: ")
