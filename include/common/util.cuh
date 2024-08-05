@@ -156,7 +156,11 @@ struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
  * @brief Very simple allocator for dynamic shared memory. Advances pointer and tracks alignments.
  * @tparam default_alignment The default alignment this allocator will enforce. If <=0 (default -1) it will not align.
  */
+#ifdef KITTENS_HOPPER
+template<int default_alignment=1024> // 
+#else
 template<int default_alignment=-1> // 
+#endif
 struct shared_allocator {
     int *ptr;
 
@@ -222,8 +226,8 @@ struct shared_allocator {
 /**
  * @brief A wrapper for an allocator that enforces sufficient alignment to be used for TMA loads and stores.
  */
-using tma_allocator = shared_allocator<128>;
-using tma_swizzle_allocator = shared_allocator<1024>; // swizzled TMA modes require up to 1024 byte alignments :/
+using tma_allocator = shared_allocator<1024>;
+using tma_swizzle_allocator = tma_allocator; // swizzled TMA modes require up to 1024 byte alignments :/
 #endif
 
 }

@@ -56,7 +56,8 @@ __device__ static inline void expect(barrier& bar) {
 __device__ static inline void store_commit_group() {
     if (::kittens::laneid() == 0) {
         asm volatile("cp.async.bulk.commit_group;");
-    } 
+    }
+    __syncwarp();
 }
 /**
  * @brief Waits for previous committed TMA store groups to complete.
@@ -65,12 +66,31 @@ __device__ static inline void store_commit_group() {
 */
 template <int N=0>
 __device__ static inline void store_async_wait() {
+    if (::kittens::laneid() == 0) {
+        asm volatile (
+            "cp.async.bulk.wait_group %0;"
+            :
+            : "n"(N)
+            : "memory"
+        );
+    }
+    __syncwarp();
+}
+/**
+ * @brief Waits for previous committed TMA store groups to finish reading from shared memory.
+ *
+ * @tparam N The maximum number of remaining TMA store groups. Defaults to 0.
+*/
+template <int N=0>
+__device__ static inline void store_async_read_wait() {
+    if (::kittens::laneid() == 0) {
     asm volatile (
-        "cp.async.bulk.wait_group %0;"
-        :
-        : "n"(N)
-        : "memory"
-    );
+        "cp.async.bulk.wait_group.read %0;"
+            :
+            : "n"(N)
+            : "memory"
+        );
+    }
     __syncwarp();
 }
 
@@ -210,8 +230,7 @@ __device__ static inline void store_async(void *dst, void *src, int cluster_size
 // Templated transfer for convenience
 template<typename T>
 __device__ static inline void store_async(T &dst_, T &src_, int cluster_size, int dst_cta, barrier& bar) {
-    constexpr uint32_t size_bytes = sizeof(T);
-    store_async((void*)&dst_, (void*)&src_, cluster_size, dst_cta, size_bytes, bar);
+    store_async((void*)&dst_, (void*)&src_, cluster_size, dst_cta, size_bytes<T>, bar);
 }
 
 } // namespace cluster
