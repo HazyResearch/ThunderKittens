@@ -12,8 +12,10 @@ from based.models.mixers.mamba.ops.selective_scan_interface import selective_sca
 
 try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
+    print(f"Successfully loaded causal_conv1d mamba")
 except ImportError:
     causal_conv1d_fn, causal_conv1d_update = None
+    print(f"Could not load causal_conv1d mamba")
 
 try:
     from based.models.mixers.mamba.ops.triton.selective_state_update import selective_state_update

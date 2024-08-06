@@ -110,7 +110,7 @@ def pytorch_test_v1(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
     else:
         y = numerator
 
-    return y, A2, A1, A0, k_state_a2[:, :, -1], k_state_a1[:, :, -1], D0[:, :, -1]
+    return y, A2, A1, A0#s, k_state_a2[:, :, -1], k_state_a1[:, :, -1], D0[:, :, -1]
 
 
 def pytorch_test_v2(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=False, **kwargs):
@@ -127,7 +127,7 @@ def pytorch_test_v2(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
         den = (Q * k_state).sum(dim=-1) + eps
         y = y / den.unsqueeze(-1)
 
-    return y, k_state[:,:,-1]
+    return y#, k_state[:,:,-1]
 
 
 def pytorch_test_v3(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=False, **kwargs):
@@ -166,7 +166,7 @@ def pytorch_test_v3(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=Fal
     K0 = torch.ones(Q[..., :1].to(torch.float32).shape).to(Q.device)
     D0 =  K0.cumsum(dim=2).squeeze(-1)[:,:,-1]
 
-    return out, A2, A1, A0, k_state_a2, k_state_a1, D0
+    return out, A2, A1, A0#, k_state_a2, k_state_a1, D0
 
 
 def pytorch_test_v4(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=False, **kwargs):
@@ -215,7 +215,7 @@ def pytorch_test_v4(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=Fal
         o = o / (den + eps)
 
     k_state_a2 = rearrange(k_state_a2, 'b h n d e -> b h n (d e)')
-    return o, k_state_a2[:,:,-1], k_state_a1[:,:,-1], D0[:,:,-1]
+    return o #, k_state_a2[:,:,-1], k_state_a1[:,:,-1], D0[:,:,-1]
 
 
 def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=False, output_state=False):
@@ -227,20 +227,14 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=Fa
     kv_state_a1 = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
     kv_state_a0 = torch.zeros((b, h, dv), dtype=dt, device='cuda')
 
-    k_state_a2 = torch.zeros((b, h, d*d), dtype=dt, device='cuda')
-    k_state_a1 = torch.zeros((b, h, d), dtype=dt, device='cuda')
-    k_state_a0 = torch.ones((b, h), dtype=dt, device='cuda') * n
-
     mod.based_fwd_tk(
-        int(0 in TERMS), int(1 in TERMS), int(2 in TERMS),
-        int(add_scale),int(add_norm),int(output_state),
+        int(add_scale),int(output_state),
         Q,K,V,o,
-        kv_state_a2,kv_state_a1,kv_state_a0,
-        k_state_a2,k_state_a1
+        kv_state_a2,kv_state_a1,kv_state_a0
     )
 
     o += torch.zeros_like(o) # trigger an error if one exists
-    return o, kv_state_a2, kv_state_a1, kv_state_a0, k_state_a2, k_state_a1, k_state_a0
+    return o, kv_state_a2, kv_state_a1, kv_state_a0
 
 
 ################### Benchmarking and Correctness Tests ####################
@@ -252,27 +246,25 @@ def linear_attn_correct(dt):
     head_idx = 0
     d = 16
     dv = 64
-    add_scale=False     
-    add_norm=True
-    output_kv_state=False
-    output_k_state=False
+    add_scale=True     
+    add_norm=False
+    output_kv_state=True
     print(f"{b=}, {n=}, {d=}, {h=}")
 
-    Q   = torch.ones(b,h,n,d, dtype=dt, device='cuda')/d
-    K   = torch.ones(b,h,n,d, dtype=dt, device='cuda')/d
-    V   = torch.ones(b,h,n,dv, dtype=dt, device='cuda')/dv
+    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
 
     # get outputs from different methods
     tk_outputs = None 
     fla_parallel_out = None
-    pytorch_v1, kv_a2_v1, kv_a1_v1, kv_a0_v1, k_a2_v1, k_a1_v1, k_a0_v1  = pytorch_test_v1(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
+    pytorch_v1, kv_a2_v1, kv_a1_v1, kv_a0_v1  = pytorch_test_v1(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
     # pytorch 2 uses a quadratic view so doesn't expose the recurrent state
-    pytorch_v2, k_state_v2_full  = pytorch_test_v2(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
-    pytorch_v3, kv_a2_v3, kv_a1_v3, kv_a0_v3, k_a2_v3, k_a1_v3, k_a0_v3  = pytorch_test_v3(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
-    pytorch_v4, k_a2_v4, k_a1_v4, k_a0_v4  = pytorch_test_v4(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
-    tk_outputs, kv_a2_tk, kv_a1_tk, kv_a0_tk, k_a2_tk, k_a1_tk, k_a0_tk  = based_kernel_test(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale, output_state=output_kv_state)
+    pytorch_v2  = pytorch_test_v2(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
+    pytorch_v3, kv_a2_v3, kv_a1_v3, kv_a0_v3 = pytorch_test_v3(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
+    pytorch_v4 = pytorch_test_v4(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale)
+    tk_outputs, kv_a2_tk, kv_a1_tk, kv_a0_tk  = based_kernel_test(dt, Q, K, V, d, add_norm=add_norm, add_scale=add_scale, output_state=output_kv_state)
     torch.set_printoptions(sci_mode=False)
-
 
     # check overall outputs
     print(f"Note we find numerical differences upon inspecting the tensor outputs:\n")
@@ -303,11 +295,6 @@ def linear_attn_correct(dt):
     print(pytorch_v4[0,head_idx,500:502,:4])
     print(tk_outputs[0,head_idx,500:502,:4])
     print()
-
-    print(pytorch_v4[0,head_idx,1000:1004,:4])
-    print(pytorch_v1[0,head_idx,1000:1004,:4])
-    print()
-    breakpoint()
 
     print("---"*10)
 
@@ -341,57 +328,6 @@ def linear_attn_correct(dt):
         if tk_outputs is not None: 
             kv_state = torch.concat((kv_a2_tk, kv_a1_tk.transpose(2,3), kv_a0_tk.unsqueeze(2)), dim=-2)
 
-    print("---"*10)
-
-    if output_k_state:
-        print("\nChecking K States (D2)")
-        print(f"{k_a2_v1.shape=}, {k_a2_v3.shape=}")
-        __eq("PyTorch v1 D2 - PyTorch v3 D2", k_a2_v1, k_a2_v3, debug=False)
-        __eq("PyTorch v1 D2 - PyTorch v4 D2", k_a2_v1, k_a2_v4, debug=False)
-        if tk_outputs is not None: 
-            __eq("PyTorch v1 D2 - PyTorch tk D2", k_a2_v1, k_a2_tk, debug=False) # SA: currently has sporadic nans
-            __eq("PyTorch v1 D2 [0,0,:64] - PyTorch tk D2 [0,0,:64]", k_a2_v1[0,0,:64], k_a2_tk[0,0,:64], debug=False)
-            __eq("PyTorch v1 D2 [0,0]     - PyTorch tk D2 [0,0]    ", k_a2_v1[0,0], k_a2_tk[0,0], debug=False)
-            nan_count = torch.isnan(k_a2_tk).sum().item()
-            inf_count = len(
-                [i for i, a in enumerate(k_a2_tk.to(torch.float32).flatten().cpu().numpy()) if abs(a) > 1000000]
-            )
-            print(k_a2_tk[0,head_idx,:8])
-            print(k_a2_v1[0,head_idx,:8])
-            print(f"Number of nans: {nan_count}; number of infs: {inf_count}")
-            if inf_count: breakpoint()
-
-        print("\nChecking K States (D1)")
-        print(f"{k_a1_v1.shape=}, {k_a1_v3.shape=}")
-        __eq("PyTorch v1 D1 - PyTorch v3 D1", k_a1_v1, k_a1_v3, debug=False)
-        __eq("PyTorch v1 D1 - PyTorch v4 D1", k_a1_v1, k_a1_v4, debug=False)
-        if tk_outputs is not None:
-            __eq("PyTorch v1 D1 - PyTorch TK D1", k_a1_v1, k_a1_tk, debug=False)
-            __eq("PyTorch v3 D1 - PyTorch TK D1", k_a1_v3, k_a1_tk, debug=False)
-            print(k_a1_tk[0,head_idx,:8])
-            print(k_a1_v1[0,head_idx,:8])
-
-        print(f"\nChecking K States (D0)")
-        print(f"{k_a0_v1.shape=}")
-        __eq("PyTorch v1 D0 - PyTorch v3 D0", k_a0_v1, k_a0_v3, debug=False)
-        __eq("PyTorch v1 D0 - PyTorch v4 D0", k_a0_v1, k_a0_v4, debug=False)
-        if tk_outputs is not None:
-            __eq("PyTorch v1 D0 - PyTorch TK D0", k_a0_v1, k_a0_tk, debug=False)
-            print(k_a0_tk[0,head_idx])
-            print(k_a0_v1[0,head_idx])
-
-        print(f"\nChecking K States (Full)")
-        k_state_v1_full = torch.concat([k_a0_v1.unsqueeze(-1), k_a1_v1, k_a2_v1], dim=-1)
-        k_state_v3_full = torch.concat([k_a0_v3.unsqueeze(-1), k_a1_v3, k_a2_v3], dim=-1)
-        # k_state_v4_full = torch.concat([k_a0_v4.unsqueeze(-1), k_a1_v4, k_a2_v4], dim=-1)
-        if tk_outputs is not None:
-            k_state_tk_full = torch.concat([k_a0_tk.unsqueeze(-1), k_a1_tk, k_a2_tk], dim=-1)
-        print(f"{k_state_v1_full.shape=}, {k_state_v2_full.shape=}")
-        __eq("PyTorch v1 - PyTorch v2", k_state_v1_full, k_state_v2_full, debug=False)
-        __eq("PyTorch v1 - PyTorch v3", k_state_v1_full, k_state_v3_full, debug=False)
-        # __eq("PyTorch v1 - PyTorch v4", k_state_v1_full, k_state_v4_full, debug=False)
-        if tk_outputs is not None:
-            __eq("PyTorch v1 - PyTorch tk", k_state_v1_full, k_state_tk_full, debug=False)
 
 if __name__ == "__main__":
     linear_attn_correct(torch.bfloat16)

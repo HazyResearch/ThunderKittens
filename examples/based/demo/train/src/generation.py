@@ -710,11 +710,13 @@ def update_graph_cache(
     device = param_example.device
     if dtype is None:
         dtype = param_example.dtype
+
     if (
         (device, dtype) != (cache.device, cache.dtype)
         or batch_size > cache.max_batch_size
         or max_seqlen > cache.max_seqlen
     ):  # Invalidate the cache
+
         cache.callables = {}
         cache.mempool = None
         cache.inference_params = None
@@ -747,6 +749,8 @@ def update_graph_cache(
             lengths_per_sample=lengths_per_sample,
         )
         cache.mempool = torch.cuda.graphs.graph_pool_handle()
+    
+    
     for decoding_seqlen in decoding_seqlens:
         if (batch_size, decoding_seqlen) not in cache.callables:
             cache.callables[batch_size, decoding_seqlen] = capture_graph(

@@ -14,7 +14,7 @@ using namespace nvcuda;
 
 using namespace kittens;
 
-const int d_model =  64; 
+const int d_model = 64; 
 const int d_state = 320;
 const int workers = 8;
 
@@ -27,7 +27,11 @@ template<> __device__ inline __nv_bfloat16 __typeconvert<float,__nv_bfloat16>(fl
 
 template <typename H, typename T>
 __global__
-void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T* __k_state, T* __out) { 
+void based_simple_ker(
+    const T* __q, const T* __k, const T* __v, 
+    T* __kv_state, 
+    T* __out
+) { 
 
     auto block_start = blockIdx.x;
     auto warpid = kittens::warpid();
@@ -36,13 +40,10 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
     // Data size information
     const int kv_state_size = d_model * d_state;
-    const int k_state_size  = d_state;
-
     const H *q_g = device_cast(__q)+block_start*d_state;
     const H *k_g = device_cast(__k)+block_start*d_state;
     const H *v_g = device_cast(__v)+block_start*d_model;
           H *kv_state_g = device_cast(__kv_state)+block_start*kv_state_size;
-          H *k_state_g  = device_cast(__k_state)+block_start*k_state_size;
           H *num_g      = device_cast(__out)+block_start*d_model;
 
     // Setup the extended shared memory. We want to be 128 byte aligned.
@@ -57,11 +58,9 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     __shared__ alignas(alignof(float4)) H q[d_state];
     __shared__ alignas(alignof(float4)) H k[d_state];
     __shared__ alignas(alignof(float4)) H kq[d_state];
-    __shared__ alignas(alignof(float4)) H k_state[d_state];
     __shared__ alignas(alignof(float4)) H v[d_model];
     __shared__ alignas(alignof(float4)) H num[d_model];
     __shared__ alignas(alignof(float4)) H num_help[workers][d_model];
-    __shared__ alignas(alignof(float4)) H den[1];
 
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier;
@@ -79,7 +78,6 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
     cuda::memcpy_async(block, q, q_g, d_state_shape, barrier_cheat);
     cuda::memcpy_async(block, k, k_g, d_state_shape, barrier_cheat);
-    cuda::memcpy_async(block, k_state, k_state_g, d_state_shape, barrier_cheat);
     cuda::memcpy_async(block, v, v_g, d_model_shape, barrier_cheat);
 
     int tic = 0;
@@ -88,30 +86,6 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
     // Read the initial buffer slice of kv_state
     const auto buffer_row_shape = cuda::aligned_size_t<alignof(float4)>(buffer_rows*d_model*sizeof(H)); 
     cuda::memcpy_async(block, kv_state[tic], kv_state_g, buffer_row_shape, barrier);
-
-    // Sum k to kstate and do kv. k_state += k 
-    barrier_cheat.arrive_and_wait(); // Make sure q,k,v have arrived.
-    for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
-        k_state[i] += k[i]; 
-    }
-    
-    // Compute den = torch.einsum("f,f->1", q, k_state) + eps;
-    // 1. perform the elementwise product, using all threads
-    __syncthreads();
-    for(auto i = threadIdx.x; i < d_state; i+=nThreads) { 
-        kq[i] = __typeconvert<float,H>(0.f);
-        kq[i] = (q[i]*k_state[i]); 
-    }
-
-    // 2. perform the reduction, using one thread
-    __syncthreads();
-    if (warpid == 0 && lane == 0) { 
-        den[0] = __typeconvert<float,H>(0.f); 
-        for (auto i = 0; i < d_state; i++) { 
-            den[0] += kq[i]; 
-        }
-        den[0] += __typeconvert<float,H>(1e-6f);
-    }
 
     // Store v across threads for the next phase; 
     // Assumes d_model fits in register and is a multiple of 32
@@ -182,11 +156,6 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
         for(auto j = threadIdx.x; j < _stores; j+=nThreads) {
             _f4p(kv_state_g + cur_batch_idx)[j] = _f4p(kv_state[tic])[j];
         }
-        
-        __syncthreads(); // Write back k_state
-        for(auto i = threadIdx.x; i < d_state*sizeof(H)/sizeof(float4); i+=nThreads) {
-            _f4p(k_state_g)[i] = _f4p(k_state)[i];
-        }
 
     }
     
@@ -203,7 +172,7 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
         H nj = num_help[0][j];
         #pragma unroll
         for(auto w = 1; w < workers; w++) { nj += num_help[w][j]; }
-        num[j] = nj / den[0];
+        num[j] = nj;
     }
 
     __syncthreads();
@@ -214,32 +183,32 @@ void based_simple_ker(const T* __q, const T* __k, const T* __v, T* __kv_state, T
 
 void 
 based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out) {
+            torch::Tensor kv_state, 
+            torch::Tensor out
+    ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
     CHECK_INPUT(kv_state);
-    CHECK_INPUT(k_state);
     CHECK_INPUT(out);
 
     int batch = q.size(0);
-    TORCH_CHECK(batch == k.size(0) && batch == v.size(0) && batch == kv_state.size(0) && k_state.size(0) == batch && out.size(0) == batch, "Differing batch sizes?");
+    TORCH_CHECK(batch == k.size(0) && batch == v.size(0) && batch == kv_state.size(0) && out.size(0) == batch, "Differing batch sizes?");
+    // && k_state.size(0) == batch
     TORCH_CHECK(q.size(1) == d_state, "Q is d_state?");
     TORCH_CHECK(k.size(1) == d_state, "K is d_state?");
     TORCH_CHECK(v.size(1) == d_model, "V is d_model?");
     TORCH_CHECK(kv_state.size(1) == d_state && kv_state.size(2) == d_model);
-    TORCH_CHECK(k_state.size(1) == d_state, "k_state is d_state");
     TORCH_CHECK(out.size(1) == d_model, "out is d_model (the size of v)");
 
     const int workers = 8;
     using H = __nv_bfloat16;
     using T = c10::BFloat16;
     int threads = workers * kittens::WARP_THREADS;
-    // printf("[based_inference] Requesting %d threads for %d batches\n", threads, batch); 
     auto stream_wrapper = at::cuda::getCurrentCUDAStream(q.device().index());
     cudaStream_t stream = stream_wrapper.stream();
     based_simple_ker<H,T><<<batch,threads,0,stream>>>(
                 q.data_ptr<T>(), k.data_ptr<T>(), v.data_ptr<T>(),
-                kv_state.data_ptr<T>(), k_state.data_ptr<T>(),
+                kv_state.data_ptr<T>(), 
                 out.data_ptr<T>());
 }

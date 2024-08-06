@@ -9,13 +9,10 @@
 
 
 extern void based_fwd_tk(
-    int include_0, int include_1, int include_2,
-    int add_scale, int add_norm, int output_state, 
+    int add_scale, int output_state, 
     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
-    torch::Tensor kv_state_a2, torch::Tensor kv_state_a1, torch::Tensor kv_state_a0, 
-    torch::Tensor k_state_a2, torch::Tensor k_state_a1
+    torch::Tensor kv_state_a2, torch::Tensor kv_state_a1, torch::Tensor kv_state_a0
 );
-
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "Test handler for warp test"; // optional module docstring

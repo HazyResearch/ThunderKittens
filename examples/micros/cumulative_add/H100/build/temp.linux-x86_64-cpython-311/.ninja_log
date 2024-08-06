@@ -1,0 +1,6 @@
+# ninja log v5
+2	15798	1721512807419006425	/home/bfs/simran/clean2/ThunderKittens/examples/based/cumulative_add/H100/build/temp.linux-x86_64-cpython-311/add_frontend.o	3fb68fb07158be5
+34	53691	1721513058219265673	/home/bfs/simran/clean2/ThunderKittens/examples/based/cumulative_add/H100/build/temp.linux-x86_64-cpython-311/add.o	eebcefb3923821fa
+597	16398	1721513532084726406	/home/bfs/simran/clean2/ThunderKittens/examples/based/cumulative_add/H100/build/temp.linux-x86_64-cpython-311/add_frontend.o	3fb68fb07158be5
+597	55502	1721513571155541810	/home/bfs/simran/clean2/ThunderKittens/examples/based/cumulative_add/H100/build/temp.linux-x86_64-cpython-311/add.o	eebcefb3923821fa
+486	56650	1721515353846925629	/home/bfs/simran/clean2/ThunderKittens/examples/based/cumulative_add/H100/build/temp.linux-x86_64-cpython-311/add.o	eebcefb3923821fa

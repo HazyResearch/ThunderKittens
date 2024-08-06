@@ -1,26 +1,20 @@
 
 import torch
-import time
-from transformers import AutoTokenizer
+import sys
 
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 
-# Load pretrained models
-print("\nLoading pretrained models...")
-from train.src.models.gpt import GPTLMHeadModel as BasedGPTLMHeadModel
-from based.models.mamba import MambaLMHeadModel
-from based.models.transformer.gpt import GPTLMHeadModel
-based_model = BasedGPTLMHeadModel.from_pretrained_hf(
-    "hazyresearch/based-360m", 
+sys.path.append("/home/bfs/simran/clean2/ThunderKittens/examples/based/demo/")
+from train.src.models.gpt import GPTLMHeadModel
+model_hf = GPTLMHeadModel.from_pretrained_hf(
+    "hazyresearch/my-awesome-model",
     device="cuda", 
     implementation='tk',           # choices are [default, tk]
-    swa_inference_mode="fast_rotary", # choices [default, default_rotary, fast_rotary]
+    # swa_inference_mode="fast_rotary", # choices [default, default_rotary, fast_rotary]
     silent=True           # will print more info during inference if set to False
 ).to(torch.bfloat16)
-mamba_model = MambaLMHeadModel.from_pretrained_hf("hazyresearch/mamba-360m").to("cuda").to(torch.bfloat16)
-mamba_2_model = MambaLMHeadModel.from_pretrained_hf("state-spaces/mamba2-370m").to("cuda").to(torch.float16)
-attn_model = GPTLMHeadModel.from_pretrained_hf("hazyresearch/attn-360m").to("cuda").to(torch.bfloat16)
+from transformers import AutoTokenizer
 
 # Inputs
 sample_inputs = [ 
@@ -41,10 +35,6 @@ tokenizer.padding_side = "left"
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.pad_token_id = tokenizer.eos_token_id
 
-tokenizer_mamba2 = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-tokenizer_mamba2.padding_side = "left"
-tokenizer_mamba2.pad_token = tokenizer.eos_token
-tokenizer_mamba2.pad_token_id = tokenizer.eos_token_id
 
 # Generate
 print("\n\nStarting generation demo:\n\n")
@@ -56,26 +46,17 @@ for input_text in sample_inputs:
     start = inputs.shape[-1]
     print(f"{start=}, {limit=}")
 
-    mamba2_inputs = tokenizer_mamba2.batch_encode_plus(
-        [input_text], return_tensors="pt", padding=True, truncation=True, max_length=context_length
-    ).input_ids.to("cuda")
-    mamba2_limit = mamba2_inputs.shape[-1] + generation_length
-    mamba2_start = mamba2_inputs.shape[-1]
-    print(f"{mamba2_start=}, {mamba2_limit=}")
-
     for model_name, model in zip([
         'based', 
-        'mamba', 'mamba2', 'attn'
-        ], [based_model, 
-        mamba_model, mamba_2_model, attn_model
+        ], [model_hf, 
         ]):
         model.eval()
         fn = model.generate
-        cur_inputs = mamba2_inputs if 'mamba2' in model_name else inputs
-        cur_limit = mamba2_limit if 'mamba2' in model_name else limit
+        cur_inputs =  inputs
+        cur_limit = limit
 
-        if 'based' in model_name:
-            with torch.no_grad():
+        with torch.no_grad():
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16): 
                 generations = fn(
                     input_ids=cur_inputs,
                     max_length=cur_limit,
@@ -84,31 +65,18 @@ for input_text in sample_inputs:
                     top_p=1.0,
                     implementation="tk"
                 )
-        else:
-            with torch.no_grad():
-                generations = fn(
-                    input_ids=cur_inputs,
-                    max_length=cur_limit,
-                    temperature=0.1,
-                    top_k=1,
-                    top_p=1.0
-                )
 
-        cur_start = mamba2_start if 'mamba2' in model_name else start
+        cur_start =start
         preds = generations[:, cur_start:]
         pred_ids =  preds[0].tolist()
-        if 'mamba2' in model_name:
-            pred = tokenizer_mamba2.decode(pred_ids)
-            input_text = tokenizer_mamba2.decode(cur_inputs[0].tolist()) 
-        else:
-            input_text = tokenizer.decode(cur_inputs[0].tolist()) 
-            pred = tokenizer.decode(pred_ids)
+        input_text = tokenizer.decode(cur_inputs[0].tolist()) 
+        pred = tokenizer.decode(pred_ids)
         input_text = input_text.replace("\n", " ")
         if len(input_text) > 300:
-            # truncate long prompts for inspection 
             input_text = input_text[:150] + " ... [more tokens] ... " + input_text[-150:]
         pred = pred.replace("\n", " ") 
 
         # after the SWA
         print(f"{model_name=}: {input_text} -> {pred}\n")
     print()
+

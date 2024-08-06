@@ -504,10 +504,12 @@ class SlidingAttention(nn.Module):
             batch = q.shape[0]
             kv_cache = inference_params.key_value_memory_dict[self.layer_idx][:batch]
             cache_seqlens = (
-                inference_params.lengths_per_sample[:batch]
-                if inference_params.lengths_per_sample is not None
-                else inference_params.seqlen_offset
+                # inference_params.lengths_per_sample[:batch]
+                # if inference_params.lengths_per_sample is not None
+                # else 
+                inference_params.seqlen_offset
             )
+            # breakpoint()
             in_dtype = q.dtype
             if q.dtype not in [torch.float16, torch.bfloat16]:
                 q = q.to(torch.float16)
@@ -526,6 +528,7 @@ class SlidingAttention(nn.Module):
                     causal=self.inner_cross_attn.causal,
                 ).to(in_dtype)
             else:
+                
                 if self.inference_mode == "default" or self.inference_mode == "default_rotary" or cache_seqlens < self.cache_size:
                     length = cache_seqlens
                 else:

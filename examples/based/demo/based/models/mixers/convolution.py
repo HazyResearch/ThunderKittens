@@ -31,9 +31,7 @@ class ShortConvolution(nn.Module):
         self.d_model = d_model 
         self.kernel_size = kernel_size
         self.layer_idx = layer_idx
-        self.use_cuda = use_cuda and causal_conv1d_fn is not None
-        if self.use_cuda:
-            conv_bias = True
+        self.use_cuda = causal_conv1d_fn is not None
         self.conv = nn.Conv1d(
             in_channels=d_model,
             out_channels=d_model,
@@ -42,6 +40,7 @@ class ShortConvolution(nn.Module):
             padding=kernel_size - 1,
             bias=conv_bias
         )
+        self.act = nn.SiLU()
     
 
     def forward(
@@ -67,12 +66,7 @@ class ShortConvolution(nn.Module):
                 k = min(self.kernel_size, x.shape[1])
                 state[..., -k: ] = x[:, -k:].transpose(1, 2)
 
-
         if self.use_cuda:
-            if state is not None:
-                # If we just take x[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
-                # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
-                state.copy_(F.pad(x, (self.kernel_size - x.shape[-1], 0)))  # Update state (B D W)
             y = causal_conv1d_fn(
                 x=x.transpose(1,2),
                 weight=rearrange(self.conv.weight, "d 1 w -> d w"),
@@ -85,23 +79,22 @@ class ShortConvolution(nn.Module):
 
     def step(self, x: torch.Tensor, state: torch.Tensor):
         if self.use_cuda:
-            # Conv step
             if causal_conv1d_update is None:
                 state.copy_(torch.roll(state, shifts=-1, dims=-1))  # Update state (B D W)
-                state[:, :, -1] = x
+                state[:, :, -1] = x.squeeze(1)
                 x = torch.sum(state * rearrange(self.conv.weight, "d 1 w -> d w"), dim=-1)  # (B D)
                 if self.conv.bias is not None:
                     x = x + self.conv1d.bias
                 x = self.act(x).to(dtype=x.dtype)
             else:
                 x = causal_conv1d_update(
-                    x.squeeze(),
+                    x.squeeze(1).to(state.dtype),
                     state,
-                    rearrange(self.conv.weight, "d 1 w -> d w"),
-                    self.conv.bias,
-                    "silu",
-                ).unsqueeze(1)
-            return x
+                    weight=rearrange(self.conv.weight, "d 1 w -> d w"),
+                    bias=self.conv.bias,
+                    activation="silu",
+                )
+            return x.unsqueeze(1).to(x.dtype)
         else:
             state.copy_(torch.roll(state, shifts=-1, dims=-1))  # Update state (B D W)
             state[:, :, -1] = x.squeeze(1)
@@ -179,6 +172,7 @@ class BaseConv(nn.Module):
     ):
         super().__init__()
         
+        use_cuda = causal_conv1d_fn is not None
         self.d_model = d_model
         self.l_max = l_max
         self.layer_idx=layer_idx
@@ -187,7 +181,7 @@ class BaseConv(nn.Module):
         self.in_proj = nn.Linear(self.d_model,  expand_proj*self.d_model, bias=use_bias)
         self.out_proj = nn.Linear(self.d_inner,  self.d_model, bias=use_bias)
 
-        self.use_cuda = use_cuda and causal_conv1d_fn is not None
+        self.use_cuda = causal_conv1d_fn is not None
 
         # prepare convolution
         self.conv = ShortConvolution(self.d_inner, kernel_size=kernel_size, use_cuda=self.use_cuda, layer_idx=(layer_idx, "conv"))

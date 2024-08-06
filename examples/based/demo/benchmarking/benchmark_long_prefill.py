@@ -13,29 +13,25 @@ tokenizer.pad_token = tokenizer.eos_token
 tokenizer.pad_token_id = tokenizer.eos_token_id
 
 # models
-from train.src.models.gpt import GPTLMHeadModel as BasedGPTLMHeadModel # based
-from based.models.mamba import MambaLMHeadModel # mamba
-from based.models.transformer.gpt import GPTLMHeadModel # attn
+from train.src.models.gpt import GPTLMHeadModel as BasedGPTLMHeadModel 
+from based.models.mamba import MambaLMHeadModel 
+from based.models.transformer.gpt import GPTLMHeadModel 
 
 def get_model(model_name, impl, batch_size, seqlen):
     if model_name == 'based': 
         return BasedGPTLMHeadModel.from_pretrained_hf(
-            "hazyresearch/based-360m", 
-            device="cuda", 
-            implementation=impl,  # choices are [default, tk]
-            silent=True,          # prints info during inference if False
-            inference_bs=batch_size,
-            override_seqlen=seqlen,
-            recurrent_impl="default", # not tk
-            swa_inference_mode="fast_rotary",
-            # override_model_dims='Pure',
-            # override_model_dims='7B',
-        ).to(dtype=torch.bfloat16)
+                 "hazyresearch/my-awesome-model", 
+                device="cuda", 
+                implementation=impl,  # choices are [default, tk]
+                silent=True,          # prints info during inference if False
+                inference_bs=batch_size,
+                override_seqlen=seqlen,
+                swa_inference_mode="fast_rotary",
+            ).to(dtype=torch.bfloat16)
     elif model_name == 'mamba':
         return MambaLMHeadModel.from_pretrained_hf(
             "hazyresearch/mamba-360m",
             override_seqlen=seqlen,
-            # override_model_dims='7B',
         ).to("cuda").to(dtype=torch.bfloat16)
     elif model_name == "mamba2": 
         return MambaLMHeadModel.from_pretrained_hf(
@@ -46,7 +42,6 @@ def get_model(model_name, impl, batch_size, seqlen):
         return GPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/attn-360m",
             override_seqlen=seqlen,
-            # override_model_dims='7B',
         ).to("cuda").to(dtype=torch.bfloat16)
     else:
         assert 0, print("Unknown model.")
@@ -57,37 +52,49 @@ WARMUP_ITERS = 1
 assert NUM_ITERS > WARMUP_ITERS, print("Not enough iters.")
 toks_per_sec = []
 
-context_len, input_len, output_len, cg = 16064, 16000, 1, True
+context_len, input_len, output_len, cg = 8192, 8000, 64, True
+context_len, input_len, output_len, cg = 16384, 16000, 1, True
 assert context_len % 64 == 0, print("Context length must be divisible by 64.")
 benchmark_dims = [ 
-    # ('based', 'tk', 1, input_len, output_len), 
+    # ('based', 'tk', 2, input_len, output_len), 
     # ('based', 'tk', 4, input_len, output_len), 
-    ('based', 'tk', 64, input_len, output_len), 
-    # ('based', 'tk', 128, input_len, output_len), 
-    # ('based', 'tk', 256, input_len, output_len),
+    ('based', 'tk', 16, input_len, output_len), 
+    ('based', 'tk', 32, input_len, output_len), 
+    # ('based', 'tk', 64, input_len, output_len), 
+    # ('based', 'tk', 128, input_len, output_len),
 
-    ('based', 'fla_parallel', 64, input_len, output_len), 
+    # ('based', 'fla_parallel', 4, input_len, output_len), 
+    # ('based', 'fla_parallel', 16, input_len, output_len), 
+    # ('based', 'fla_parallel', 32, input_len, output_len), 
+    # ('based', 'fla_parallel', 64, input_len, output_len), 
+    # ('based', 'fla_parallel', 128, input_len, output_len), 
 
     # ('based', 'default', 1, input_len, output_len), 
     # ('based', 'default', 4, input_len, output_len), 
-    ('based', 'default', 64, input_len, output_len), 
+    # ('based', 'default', 64, input_len, output_len), 
     # ('based', 'default', 128, input_len, output_len), 
 
     # ('mamba', 'default', 1, input_len, output_len), 
     # ('mamba', 'default', 4, input_len, output_len), 
-    ('mamba', 'default', 64, input_len, output_len), 
+    # ('mamba', 'default', 32, input_len, output_len), 
+    # ('mamba', 'default', 64, input_len, output_len), 
+    # ('mamba', 'default', 16, input_len, output_len), 
     # ('mamba', 'default', 128, input_len, output_len), 
     # ('mamba', 'default', 256, input_len, output_len), 
 
     # ('mamba2', 'default', 1, input_len, output_len), 
     # ('mamba2', 'default', 4, input_len, output_len), 
     # ('mamba2', 'default', 32, input_len, output_len), 
+    # ('mamba2', 'default', 64, input_len, output_len), 
+    # ('mamba2', 'default', 16, input_len, output_len), 
     # ('mamba2', 'default', 128, input_len, output_len), 
     # ('mamba2', 'default', 256, input_len, output_len), 
 
     # ('attn', 'default', 1, input_len, output_len), 
-    # ('attn', 'default', 4, input_len, output_len), 
-    ('attn', 'default', 64, input_len, output_len), 
+    # ('attn', 'default', 4, input_len, output_len),
+    # ('attn', 'default', 32, input_len, output_len),  
+    # ('attn', 'default', 64, input_len, output_len), 
+    # ('attn', 'default', 16, input_len, output_len), 
     # ('attn', 'default', 128, input_len, output_len), 
 ]
 for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
@@ -111,8 +118,8 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
     model.eval()
     if 1:
         with torch.no_grad():
-            try:
-            # if 1:
+            # try:
+            if 1:
                 for i in range(NUM_ITERS): 
                     fn = model.generate
                     torch.cuda.synchronize()
@@ -148,9 +155,9 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
                     'time': sum(times_iters)/len(times_iters),
                     'cg': cg
                 })
-            except Exception as e:
-                print(e)
-                pass
+            # except Exception as e:
+            #     print(e)
+            #     pass
     import gc
     try:
         del model;gc.collect();torch.cuda.empty_cache()
