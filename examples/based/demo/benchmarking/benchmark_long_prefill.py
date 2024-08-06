@@ -56,46 +56,33 @@ context_len, input_len, output_len, cg = 8192, 8000, 64, True
 context_len, input_len, output_len, cg = 16384, 16000, 1, True
 assert context_len % 64 == 0, print("Context length must be divisible by 64.")
 benchmark_dims = [ 
-    # ('based', 'tk', 2, input_len, output_len), 
-    # ('based', 'tk', 4, input_len, output_len), 
+    ('based', 'tk', 4, input_len, output_len), 
     ('based', 'tk', 16, input_len, output_len), 
     ('based', 'tk', 32, input_len, output_len), 
-    # ('based', 'tk', 64, input_len, output_len), 
-    # ('based', 'tk', 128, input_len, output_len),
+    ('based', 'tk', 64, input_len, output_len), 
 
-    # ('based', 'fla_parallel', 4, input_len, output_len), 
-    # ('based', 'fla_parallel', 16, input_len, output_len), 
-    # ('based', 'fla_parallel', 32, input_len, output_len), 
-    # ('based', 'fla_parallel', 64, input_len, output_len), 
-    # ('based', 'fla_parallel', 128, input_len, output_len), 
+    ('based', 'fla_parallel', 4, input_len, output_len), 
+    ('based', 'fla_parallel', 16, input_len, output_len), 
+    ('based', 'fla_parallel', 32, input_len, output_len), 
+    ('based', 'fla_parallel', 64, input_len, output_len), 
 
-    # ('based', 'default', 1, input_len, output_len), 
-    # ('based', 'default', 4, input_len, output_len), 
-    # ('based', 'default', 64, input_len, output_len), 
-    # ('based', 'default', 128, input_len, output_len), 
+    ('based', 'default', 4, input_len, output_len), 
+    ('based', 'default', 64, input_len, output_len), 
 
-    # ('mamba', 'default', 1, input_len, output_len), 
-    # ('mamba', 'default', 4, input_len, output_len), 
-    # ('mamba', 'default', 32, input_len, output_len), 
-    # ('mamba', 'default', 64, input_len, output_len), 
-    # ('mamba', 'default', 16, input_len, output_len), 
-    # ('mamba', 'default', 128, input_len, output_len), 
-    # ('mamba', 'default', 256, input_len, output_len), 
+    ('mamba', 'default', 4, input_len, output_len),
+    ('mamba', 'default', 16, input_len, output_len),  
+    ('mamba', 'default', 32, input_len, output_len), 
+    ('mamba', 'default', 64, input_len, output_len), 
 
-    # ('mamba2', 'default', 1, input_len, output_len), 
-    # ('mamba2', 'default', 4, input_len, output_len), 
-    # ('mamba2', 'default', 32, input_len, output_len), 
-    # ('mamba2', 'default', 64, input_len, output_len), 
-    # ('mamba2', 'default', 16, input_len, output_len), 
-    # ('mamba2', 'default', 128, input_len, output_len), 
-    # ('mamba2', 'default', 256, input_len, output_len), 
+    ('mamba2', 'default', 4, input_len, output_len), 
+    ('mamba2', 'default', 16, input_len, output_len), 
+    ('mamba2', 'default', 32, input_len, output_len), 
+    ('mamba2', 'default', 64, input_len, output_len), 
 
-    # ('attn', 'default', 1, input_len, output_len), 
-    # ('attn', 'default', 4, input_len, output_len),
-    # ('attn', 'default', 32, input_len, output_len),  
-    # ('attn', 'default', 64, input_len, output_len), 
-    # ('attn', 'default', 16, input_len, output_len), 
-    # ('attn', 'default', 128, input_len, output_len), 
+    ('attn', 'default', 4, input_len, output_len),
+    ('attn', 'default', 16, input_len, output_len), 
+    ('attn', 'default', 32, input_len, output_len),  
+    ('attn', 'default', 64, input_len, output_len), 
 ]
 for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
 
@@ -118,8 +105,8 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
     model.eval()
     if 1:
         with torch.no_grad():
-            # try:
-            if 1:
+            try:
+            # if 1:
                 for i in range(NUM_ITERS): 
                     fn = model.generate
                     torch.cuda.synchronize()
@@ -155,9 +142,9 @@ for model_name, impl, batch_size, input_len, output_len in benchmark_dims:
                     'time': sum(times_iters)/len(times_iters),
                     'cg': cg
                 })
-            # except Exception as e:
-            #     print(e)
-            #     pass
+            except Exception as e:
+                print(e)
+                pass
     import gc
     try:
         del model;gc.collect();torch.cuda.empty_cache()

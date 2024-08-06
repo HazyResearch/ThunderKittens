@@ -37,6 +37,16 @@ python based_inference_setup.py install
 ```
 
 ## Run the generation demo with pretrained LMs!
+
+Run benchmarks that really stress test the *in context learning ability* of different pretrained models. Examples of these tasks are documentQA and document information extraction! We report accuracy and the total time to complete the task.
+```bash
+cd ThunderKittens/examples/based/demo/
+python document_ie_based.py -- model_name based
+python document_ie_based.py -- model_name attn
+python document_ie_based.py -- model_name mamba
+```
+
+Provide prompts of your choice!
 ```bash
 cd ThunderKittens/examples/based/demo/
 python generate_based.py
@@ -45,7 +55,6 @@ python generate_based.py
 ## Benchmarking!
 ```bash
 cd ThunderKittens/examples/based/demo/
-python benchmark/benchmark.py
-python benchmark/benchmark_seqlen.py
+python benchmark/benchmark_long_prefill.py
 ```
 

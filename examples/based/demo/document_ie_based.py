@@ -23,7 +23,6 @@ def get_model(args, model_name="attn"):
             "hazyresearch/my-awesome-model",
             device="cuda", 
             implementation='tk',           # choices are [fla_parallel, tk]
-            # swa_inference_mode="fast_rotary", # choices [default, default_rotary, fast_rotary]
             silent=True,           
             inference_bs=args.bs,
         ).to(torch.bfloat16)
@@ -132,34 +131,19 @@ def main(args):
 
         model.eval()
         fn = model.generate
-        if 'based' in model_name:
-            with torch.no_grad():
-                # with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    torch.cuda.synchronize()
-                    start_time = time.time()
-                    generations = fn(
-                        input_ids=inputs,
-                        max_length=limit,
-                        temperature=0.1,
-                        top_k=1,
-                        top_p=1.0,
-                        cg=True
-                    )
-                    torch.cuda.synchronize()
-                    end_time = time.time()
-        else:
-            with torch.no_grad():
-                torch.cuda.synchronize()
-                start_time = time.time()
-                generations = fn(
-                    input_ids=inputs,
-                    max_length=limit,
-                    temperature=0.1,
-                    top_k=1,
-                    top_p=1.0
-                )
-                torch.cuda.synchronize()
-                end_time = time.time()
+        with torch.no_grad():
+            torch.cuda.synchronize()
+            start_time = time.time()
+            generations = fn(
+                input_ids=inputs,
+                max_length=limit,
+                temperature=0.1,
+                top_k=1,
+                top_p=1.0,
+                cg=True
+            )
+            torch.cuda.synchronize()
+            end_time = time.time()
 
         preds = generations[:, start:]
         preds = preds.tolist()
