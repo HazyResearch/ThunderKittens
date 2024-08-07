@@ -190,7 +190,7 @@ __device__ static inline void arrive(barrier& bar, int dst_cta, uint32_t count=1
 }
 
 // Generic transfer
-__device__ static inline void store_async(void *dst, void *src, int cluster_size, int dst_cta, uint32_t size_bytes, barrier& bar) {
+__device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, barrier& bar) {
     if (laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t mbarrier_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -229,8 +229,8 @@ __device__ static inline void store_async(void *dst, void *src, int cluster_size
 
 // Templated transfer for convenience
 template<typename T>
-__device__ static inline void store_async(T &dst_, T &src_, int cluster_size, int dst_cta, barrier& bar) {
-    store_async((void*)&dst_, (void*)&src_, cluster_size, dst_cta, size_bytes<T>, bar);
+__device__ static inline void store_async(T &dst_, T &src_, int dst_cta, barrier& bar) {
+    store_async((void*)&dst_, (void*)&src_, dst_cta, size_bytes<T>, bar);
 }
 
 } // namespace cluster
