@@ -516,13 +516,11 @@ void bwd_attend_ker(const int N, const int heads_ratio,
             warpgroup::mma_commit_group();
 
             if (qo_idx > 0) tma::store_async_wait();
-            warpgroup::mma_async_wait<1>(); 
+            warpgroup::mma_async_wait(); 
 
             asm volatile("bar.sync 10, 256;\n");
             warpgroup::store(qg_smem[warpgroupid], qg_reg);
             asm volatile("bar.sync 10, 256;\n");
-
-            warpgroup::mma_async_wait(); 
 
             if (warpgroup::laneid() == 0) arrive(compute_done[tic]); 
             wait(compute_done[tic], ((qo_idx - q_start)/(2))%2);
@@ -694,6 +692,7 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     }
 
     CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
 }
 
 void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg, bool causal)
@@ -909,4 +908,5 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
     }
 
     CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
 }

@@ -41,15 +41,15 @@ def benchmark_attention(configurations):
         d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32)
         
         # Prepare for timing forward pass
-        start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(1000)]
-        end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(1000)]
+        start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+        end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
         
         # Warmup for forward pass
         for _ in range(10):
             tk_train.attention_forward(q, k, v, o, l_vec, causal)
 
         # Time the forward pass
-        for i in range(1000):
+        for i in range(100):
             o.zero_()
             
             torch.cuda.synchronize()
@@ -81,8 +81,8 @@ def benchmark_attention(configurations):
         time.sleep(5)
         
         # Prepare for timing backward pass
-        start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(1000)]
-        end_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(1000)]
+        start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+        end_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
         
         # Warmup for backward pass
         for _ in range(10):
@@ -100,7 +100,7 @@ def benchmark_attention(configurations):
             tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
 
         # Time the backward pass
-        for i in range(1000):
+        for i in range(100):
             o.zero_()
             l_vec.zero_()
             
