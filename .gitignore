@@ -6,4 +6,6 @@
 *.fatbin
 *.d
 .idea
+.ninja
+*/.egg-info
 venv
