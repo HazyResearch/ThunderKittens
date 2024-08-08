@@ -7,6 +7,63 @@
 
 namespace kittens {
 
+/* ----------   To prevent generic addressing, PTX  ---------- */
+
+template<typename T> struct move {
+    template<typename U> __device__ static inline void lds(T& dst, U* src);
+    template<typename U> __device__ static inline void sts(U* dst, T& src);
+};
+// unpacked types
+template<> struct move<bf16> {
+    template<typename U> __device__ static inline void lds(bf16& dst, U* src) {
+        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, bf16& src) {
+        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+    }
+};
+template<> struct move<half> {
+    template<typename U> __device__ static inline void lds(half& dst, U* src) {
+        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, half& src) {
+        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+    }
+};
+template<> struct move<float> {
+    template<typename U> __device__ static inline void lds(float& dst, U* src) {
+        asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(dst) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, float& src) {
+        asm volatile("st.shared.f32 [%1], %0;\n" : : "f"(src), "l"(dst));
+    }
+};
+// packed types
+template<> struct move<bf16_2> {
+    template<typename U> __device__ static inline void lds(bf16_2& dst, U* src) {
+        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, bf16_2& src) {
+        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+    }
+};
+template<> struct move<half_2> {
+    template<typename U> __device__ static inline void lds(half_2& dst, U* src) {
+        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, half_2& src) {
+        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+    }
+};
+template<> struct move<float2> {
+    template<typename U> __device__ static inline void lds(float2& dst, U* src) {
+        asm volatile("ld.shared.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src));
+    }
+    template<typename U> __device__ static inline void sts(U* dst, float2& src) {
+        asm volatile("st.shared.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst));
+    }
+};
+
 /* ----------   Generic (non-Hopper specific) barrier functions  ---------- */
 
 using barrier = uint64_t;
