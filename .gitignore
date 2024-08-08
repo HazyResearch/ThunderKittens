@@ -7,5 +7,9 @@
 *.d
 .idea
 .ninja
-*/.egg-info
+**/build
+**/*.egg-info
+*.egg
+**/printouts
+*.pyc
 venv
