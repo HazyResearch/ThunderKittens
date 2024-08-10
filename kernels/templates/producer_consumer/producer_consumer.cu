@@ -1,85 +1,119 @@
 #include "kittens.cuh"
 using namespace kittens;
 
-constexpr int NUM_CONSUMER_WARPGROUPS = 3; // 2 and 3 are likely cases for real kernels.
-static_assert(NUM_CONSUMER_WARPGROUPS >= 2 && NUM_CONSUMER_WARPGROUPS <= 6); // The register alloc is only set up for this range.
-constexpr int NUM_CONSUMER_WARPS = NUM_CONSUMER_WARPGROUPS * WARPGROUP_WARPS;
-constexpr int NUM_WARPS = NUM_CONSUMER_WARPS + WARPGROUP_WARPS; // producers, too
-constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
+template<int _NUM_CONSUMER_WARPGROUPS>
+struct producer_consumer_parameters {
+    static constexpr int NUM_CONSUMER_WARPGROUPS = _NUM_CONSUMER_WARPGROUPS;
+    static_assert(NUM_CONSUMER_WARPGROUPS >= 2 && NUM_CONSUMER_WARPGROUPS <= 6); // The register alloc is only set up for this range.
+    static constexpr int NUM_CONSUMER_WARPS      = NUM_CONSUMER_WARPGROUPS * WARPGROUP_WARPS;
+    static constexpr int NUM_WARPS               = NUM_CONSUMER_WARPS + WARPGROUP_WARPS; // producers, too
+    static constexpr int NUM_THREADS             = NUM_WARPS * WARP_THREADS;
+    static constexpr int NUM_PRODUCER_REG        = NUM_CONSUMER_WARPGROUPS == 2 ? 32 : 24;
+    static constexpr int NUM_CONSUMER_REG        = NUM_CONSUMER_WARPGROUPS <= 3 ? 480/NUM_CONSUMER_WARPGROUPS : 480/NUM_CONSUMER_WARPGROUPS-8; // valid up to 6 consumer warpgroups
+};
+
+struct globals {
+    int n_blocks;
+    const CUtensorMap* input_global;
+    CUtensorMap* output_global;
+    __host__ __device__ inline globals(int n_blocks, const CUtensorMap* input_global, CUtensorMap* output_global) :
+        n_blocks(n_blocks), input_global(input_global), output_global(output_global) {}
+};
+
+struct block { // the chunk of data that the producer and consumer are working on
+    st_fl_4x4 &input;
+    st_fl_4x4 &output;
+    __device__ inline block(st_fl_4x4 &input, st_fl_4x4 &output) : input(input), output(output) {}
+};
+
+template<int NUM_CONSUMER_WARPGROUPS>
+struct producer_consumer {
+    using params = producer_consumer_parameters<NUM_CONSUMER_WARPGROUPS>;
+
+    struct producer {
+        struct locals {}; // persistent between phases
+        __device__ static void setup(locals &l, globals &g) { // setup and load the first iteration
+            warpgroup::decrease_registers<params::NUM_PRODUCER_REG>(); // decrease registers for the producer warpgroup
+        }
+        __device__ static void load(int iter, locals &l, block &b, globals &g, kittens::barrier &bar) { // barrier for the producer to load into
+            if(warpgroup::warpid() == 0) {
+                tma::expect<st_fl_4x4>(bar);
+                tma::load_async(b.input, g.input_global, bar, iter);
+            }
+        }
+    };
+
+    struct consumer {
+        struct locals {}; // persistent between compute phases
+        __device__ static void setup(locals &l, globals &g) { // setup locals for before the first iteration
+            warpgroup::increase_registers<params::NUM_CONSUMER_REG>();
+        }
+        __device__ static void compute(int iter, locals &l, block &b, globals &g) {
+
+            // do work. in this case, we'll just have the first consumer warpgroup copy the input to the output, and then launch a tma store to global memory.
+            if(warpgroup::groupid() == 0) {
+                rt_fl_1x4 tmp;
+                warpgroup::load(tmp, b.input);
+                warpgroup::store(b.output, tmp);
+            }
+            tma::store_async_read_wait(); // this will cause thread 1 to wait for previous stores to complete, so that there's never more than one active.
+            warpgroup::sync(); // writes to shared memory are now visible
+            if(warpid() == 0) { // first warp stores
+                tma::store_async(g.output_global, b.output, iter);
+                tma::store_commit_group();
+            }
+        }
+    };
+};
 
 // This is a producer+consumer copy kernel that demonstrates the use of TMA to implement a two-stage pipeline.
-__global__ __launch_bounds__(NUM_THREADS, 1)
-void producer_consumer_template(int n_blocks, const CUtensorMap* example_input_global, CUtensorMap* example_output_global)  {
-
-    int laneid = kittens::laneid(), warpid = kittens::warpid(), warpgroupid = warpgroup::groupid();
-    int tic = 0, toc = 1; // these are used to track the two-stage pipeline.
+template<int NUM_CONSUMER_WARPGROUPS>
+__global__ __launch_bounds__(producer_consumer<NUM_CONSUMER_WARPGROUPS>::params::NUM_THREADS, 1)
+void producer_consumer_template(globals g) {
+    using pc = producer_consumer<NUM_CONSUMER_WARPGROUPS>;
 
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
     st_fl_4x4 (&example_input_smem) [2] = alloc.allocate<st_fl_4x4, 2>();
     st_fl_4x4 (&example_output_smem)[2] = alloc.allocate<st_fl_4x4, 2>();
+    block blocks[] = {
+        block(example_input_smem[0], example_output_smem[0]),
+        block(example_input_smem[1], example_output_smem[1])
+    };
 
-    // Initialize barriers
+    // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
     __shared__ kittens::barrier producer_arrived[2], consumer_arrived[2];
-    if (warpid == 0) {
-        init_barrier(producer_arrived[0], 0, 1); // needs to wait on just one memory transaction, each
-        init_barrier(producer_arrived[1], 0, 1);
-        init_barrier(consumer_arrived[0], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-        init_barrier(consumer_arrived[1], NUM_CONSUMER_WARPS, 0);
-    }
-    // Launch first load. No sync needed since thread 0 is doing these, too.
-    if(warpid == 0) {
-        tma::expect<st_fl_4x4>(producer_arrived[0]); // register a transaction of a full st_fl_4x4.
-        int block_idx = 0;
-        tma::load_async(example_input_smem[tic], example_input_global, producer_arrived[0], block_idx); // launch the initial load
+    int tic = 0, toc = 1; // these are used to track the two-stage pipeline.
+    if (warpid() == 0) { // a single warp (in fact a single thread) does these.
+        init_barrier(producer_arrived[tic], 0, 1); // needs to wait on just one memory transaction, each
+        init_barrier(producer_arrived[toc], 0, 1);
+        init_barrier(consumer_arrived[tic], pc::params::NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+        init_barrier(consumer_arrived[toc], pc::params::NUM_CONSUMER_WARPS, 0);
     }
 
     __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
 
-    if(warpgroupid == NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
-        warpgroup::decrease_registers<24>();
-   
-        if(warpid == NUM_CONSUMER_WARPS) { // just need a single warp to do this
-            for (int block_idx = 1; block_idx < n_blocks; block_idx++, tic=tic^1, toc=toc^1) {
-                tma::expect<st_fl_4x4>(producer_arrived[toc]); // register that another block is coming in
-                tma::load_async(example_input_smem[toc], example_input_global, producer_arrived[toc], block_idx); // load that block
-                wait(consumer_arrived[tic], ((block_idx-1)/2)%2); // phase changes at half the rate of the tic/toc
-            }
+    if(warpgroup::groupid() == pc::params::NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
+        typename pc::producer::locals l;
+        pc::producer::setup(l, g);
+        pc::producer::load(0, l, blocks[tic], g, producer_arrived[tic]); // load initial block
+        for (int block_idx = 1; block_idx < g.n_blocks; block_idx++, tic=tic^1, toc=toc^1) {
+            pc::producer::load(block_idx, l, blocks[toc], g, producer_arrived[toc]);
+            wait(consumer_arrived[tic], ((block_idx-1)/2)%2); // phase changes at half the rate of the tic/toc
         }
     }
     else { // other warpgroups are consumers
-        constexpr int n_reg = NUM_CONSUMER_WARPGROUPS <= 3 ? 480/NUM_CONSUMER_WARPGROUPS : 480/NUM_CONSUMER_WARPGROUPS - 8;
-        warpgroup::increase_registers<n_reg>(); // valid up to 6 consumer warpgroups, and I can't imagine wanting more
-
-        for (int block_idx = 0; block_idx < n_blocks; block_idx++, tic^=1, toc^=1) {
-            
+        typename pc::consumer::locals l;
+        pc::consumer::setup(l, g);
+        for (int block_idx = 0; block_idx < g.n_blocks; block_idx++, tic^=1, toc^=1) {
             wait(producer_arrived[tic], (block_idx/2)%2); // wait for memory to arrive
-
-            // do work. in this case, we'll just have the first consumer warpgroup copy the input to the output
-
-            tma::store_async_read_wait(); // this will cause thread 1 to wait for previous stores to complete
-            warpgroup::sync(); // no thread may start to store until thread 1 confirms previous store has completed.
-            if(warpgroupid == 0) {
-                rt_fl_1x4 tmp;
-                warpgroup::load(tmp, example_input_smem[tic]);
-                warpgroup::store(example_output_smem[tic], tmp);
-            }
-            warpgroup::sync(); // writes to shared memory are now visible
-
-            if(laneid == 0) arrive(consumer_arrived[tic]); // work is complete, signal to the producer that it may start the next load.
-
-            // This particular example has consumers launch an async store to global memory, which is usually the right approach from our experience.
-            // Sometimes it does make sense have the producer do the store (such as on pre-Hopper GPUs). In those cases, additional barrier signals
-            // will be necessary to ensure the store memory is synchronized, too.
-
-            if(warpid == 0) { // first warp stores
-                tma::store_async(example_output_global, example_output_smem[tic], block_idx);
-                tma::store_commit_group();
-            }
+            pc::consumer::compute(block_idx, l, blocks[tic], g);
+            if(laneid() == 0) arrive(consumer_arrived[tic]); // work is complete, signal to the producer that it may start the next load.
         }
     }
 }
 
+// This is just a demo function to call the kernel with some test data and sanity-check.
 #include <iostream>
 int main() {
     // Create arrays
@@ -103,8 +137,15 @@ int main() {
     CUtensorMap* output_tma = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_output, 100);
 
     // Launch kernel
-    cudaFuncSetAttribute(producer_consumer_template, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
-    producer_consumer_template<<<1, NUM_THREADS, 100000>>>(100, input_tma, output_tma);
+    constexpr int NUM_CONSUMER_WARPGROUPS = 4;
+    cudaFuncSetAttribute(producer_consumer_template<NUM_CONSUMER_WARPGROUPS>, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    producer_consumer_template<NUM_CONSUMER_WARPGROUPS><<<1, producer_consumer_parameters<NUM_CONSUMER_WARPGROUPS>::NUM_THREADS, 100000>>>(
+        globals{
+            100,
+            input_tma,
+            output_tma
+        }
+    );
 
     // Wait for kernel to finish
     cudaDeviceSynchronize();
