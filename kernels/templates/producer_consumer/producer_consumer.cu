@@ -31,25 +31,25 @@ struct producer_consumer {
     using params = producer_consumer_parameters<NUM_CONSUMER_WARPGROUPS>;
 
     struct producer {
-        struct locals {}; // persistent between phases
-        __device__ static void setup(locals &l, globals &g) { // setup and load the first iteration
+        struct state {}; // persistent registers
+        __device__ static void setup(state &s, globals &g) { // setup and load the first iteration
             warpgroup::decrease_registers<params::NUM_PRODUCER_REG>(); // decrease registers for the producer warpgroup
         }
-        __device__ static void load(int iter, locals &l, block &b, globals &g, kittens::barrier &bar) { // barrier for the producer to load into
+        __device__ static void load(state &s, block &b, globals &g, kittens::barrier &bar, int iter) { // barrier for the producer to load into
             if(warpgroup::warpid() == 0) {
                 tma::expect<st_fl_4x4>(bar);
                 tma::load_async(b.input, g.input_global, bar, iter);
             }
         }
+        __device__ static void finish(state &s, globals &g) {}
     };
 
     struct consumer {
-        struct locals {}; // persistent between compute phases
-        __device__ static void setup(locals &l, globals &g) { // setup locals for before the first iteration
+        struct state {}; // persistent registers
+        __device__ static void setup(state &s, globals &g) { // setup locals for before the first iteration
             warpgroup::increase_registers<params::NUM_CONSUMER_REG>();
         }
-        __device__ static void compute(int iter, locals &l, block &b, globals &g) {
-
+        __device__ static void compute(state &s, block &b, globals &g, int iter) {
             // do work. in this case, we'll just have the first consumer warpgroup copy the input to the output, and then launch a tma store to global memory.
             if(warpgroup::groupid() == 0) {
                 rt_fl_1x4 tmp;
@@ -62,6 +62,10 @@ struct producer_consumer {
                 tma::store_async(g.output_global, b.output, iter);
                 tma::store_commit_group();
             }
+        }
+        __device__ static void finish(state &s, globals &g) {
+            tma::store_async_read_wait(); // this isn't really necessary, but it illustrates the principle.
+            warpgroup::sync();
         }
     };
 };
@@ -94,22 +98,24 @@ void producer_consumer_template(globals g) {
     __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
 
     if(warpgroup::groupid() == pc::params::NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
-        typename pc::producer::locals l;
-        pc::producer::setup(l, g);
-        pc::producer::load(0, l, blocks[tic], g, producer_arrived[tic]); // load initial block
+        typename pc::producer::state s;
+        pc::producer::setup(s, g);
+        pc::producer::load(s, blocks[tic], g, producer_arrived[tic], 0); // load initial block
         for (int block_idx = 1; block_idx < g.n_blocks; block_idx++, tic=tic^1, toc=toc^1) {
-            pc::producer::load(block_idx, l, blocks[toc], g, producer_arrived[toc]);
+            pc::producer::load(s, blocks[toc], g, producer_arrived[toc], block_idx);
             wait(consumer_arrived[tic], ((block_idx-1)/2)%2); // phase changes at half the rate of the tic/toc
         }
+        pc::producer::finish(s, g);
     }
     else { // other warpgroups are consumers
-        typename pc::consumer::locals l;
-        pc::consumer::setup(l, g);
+        typename pc::consumer::state s;
+        pc::consumer::setup(s, g);
         for (int block_idx = 0; block_idx < g.n_blocks; block_idx++, tic^=1, toc^=1) {
             wait(producer_arrived[tic], (block_idx/2)%2); // wait for memory to arrive
-            pc::consumer::compute(block_idx, l, blocks[tic], g);
+            pc::consumer::compute(s, blocks[tic], g, block_idx);
             if(laneid() == 0) arrive(consumer_arrived[tic]); // work is complete, signal to the producer that it may start the next load.
         }
+        pc::consumer::finish(s, g);
     }
 }
 
@@ -139,6 +145,7 @@ int main() {
     // Launch kernel
     constexpr int NUM_CONSUMER_WARPGROUPS = 4;
     cudaFuncSetAttribute(producer_consumer_template<NUM_CONSUMER_WARPGROUPS>, cudaFuncAttributeMaxDynamicSharedMemorySize, 100000);
+    std::cout << "Launching kernel" << std::endl;
     producer_consumer_template<NUM_CONSUMER_WARPGROUPS><<<1, producer_consumer_parameters<NUM_CONSUMER_WARPGROUPS>::NUM_THREADS, 100000>>>(
         globals{
             100,
