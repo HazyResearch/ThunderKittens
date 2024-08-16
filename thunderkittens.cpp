@@ -60,6 +60,18 @@ extern void based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 extern void based_sliding_window(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
 #endif
 
+#ifdef TK_COMPILE_FUSED_LAYERNORM
+extern void fused_layernorm(
+    int has_residual,
+    float dropout_p,
+    torch::Tensor x,
+    torch::Tensor residual, 
+    torch::Tensor norm_weight, torch::Tensor norm_bias, 
+    torch::Tensor o, torch::Tensor out_resid
+);
+#endif
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -89,6 +101,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("based_linear_prefill", based_linear_prefill, "Based linear prefill. Takes tensors (q, k, v, o, kv_a2, kv_a1, kv_a0). q, k, v, o are bf16 (B,H,N,128), kv_a2 is bf16 (B,H,256,64), kv_a1 is bf16 (B,H,16,64), and kv_a0 is bf16 (B,H,1,64). Finally, N must be a multiple of 64.");
     m.def("based_step", based_step, "Based step. Takes tensors (q, k, v, kv_state, k_state, out). q, k, v, out are bf16 (B,H,N,128), kv_state is bf16 (B,H,273,64), and k_state is bf16 (B,H,64).");
     m.def("based_sliding_window", based_sliding_window, "Based sliding window. Takes tensors (q, k, v, o). q, k, v, o are bf16 (B,H,N,64).");
+#endif
+
+#ifdef TK_COMPILE_FUSED_LAYERNORM
+    m.def("fused_layernorm", fused_layernorm, "Fuses the dropout, residual, and layernorm computation in standard language modeling blocks. Takes tensors x, residual, norm_weight, norm_bias. Outputs are output o and the output residual.");
 #endif
 }
  

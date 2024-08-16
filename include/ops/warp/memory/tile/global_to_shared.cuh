@@ -157,4 +157,61 @@ __device__ static inline void store_async(typename ST::dtype *dst, const ST &src
     }
 }
 
+/**
+ * @brief Asynchronously loads bf16 data from global memory into a shared memory vec with a row layout using CUDA barriers.
+ * @tparam SV The type of the shared vec.
+ * @param[out] dst The destination shared memory vec.
+ * @param[in] src The source global memory array.
+ * @param row_stride[in] The stride between rows in the source array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void load_async(SV &dst, const bf16 *src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
+    #pragma unroll
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
+        if(i * elem_per_transfer < dst.length) {
+            cuda::memcpy_async(
+                (void*)(&dst[i*elem_per_transfer]),
+                (void*)(&src[i*elem_per_transfer]),
+                cuda::aligned_size_t<16>(sizeof(float4)),
+                barrier
+            );
+        }
+    }
+}
+
+/**
+ * @brief Asynchronously stores bf16 data from a shared memory vec with a row layout into global memory using CUDA barriers.
+ *
+ * @tparam SV The type of the shared vec
+ * @param[out] dst The destination global memory array.
+ * @param[in] src The source shared memory vec.
+ * @param row_stride[in] The stride between rows in the destination array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ *
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void store_async(bf16 *dst, const SV &src, const int row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
+    __syncwarp();
+    #pragma unroll
+    for(int i = ::kittens::laneid(); i < total_calls; i+=WARP_THREADS) {
+        if(i * elem_per_transfer < src.length) {
+            cuda::memcpy_async(
+                (void*)(&dst[i*elem_per_transfer]),
+                (void*)(&src[i*elem_per_transfer]),
+                cuda::aligned_size_t<16>(sizeof(float4)),
+                barrier
+            );
+        }
+    }
+}
+
+
 }

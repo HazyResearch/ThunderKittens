@@ -28,9 +28,14 @@ sources = {
     'based': {
         'source_files': {
             'h100': [
-                'kernels/based/decode_step/decode_step.cu',
                 'kernels/based/linear_prefill/linear_prefill.cu',
-                'kernels/based/sliding/sliding.cu' # this is not working and I'm not... sure we need it?
+            ]
+        }
+    },
+    'fused_layernorm': {
+        'source_files': {
+            'h100': [
+                'kernels/fused_layernorm/layer_norm.cu',
             ]
         }
     }
@@ -39,7 +44,9 @@ sources = {
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
 # kernels = ['attn_inference', 'attn_causal_inference', 'attn_training', 'attn_causal_training', 'hedgehog']
-kernels = ['based']
+# kernels = ['based']
+kernels = ['attn_training']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'
+
