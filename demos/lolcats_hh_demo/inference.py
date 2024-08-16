@@ -146,11 +146,11 @@ def main(
     tk_seq_length_results = {sl: [] for sl in seq_lengths}
     
     # version without TK (using flash_attention)
-    # for bs in batch_sizes:
-    #     for sl in seq_lengths:
-    #         inference_time, actual_seq_length = inference(user_prompt[:sl], temperature, top_p, top_k, max_new_tokens, bs, True)
-    #         flash_batch_size_results[bs].append(inference_time)
-    #         # flash_seq_length_results[sl].append(inference_time)
+    for bs in batch_sizes:
+        for sl in seq_lengths:
+            inference_time, actual_seq_length = inference(user_prompt[:sl], temperature, top_p, top_k, max_new_tokens, bs, True)
+            flash_batch_size_results[bs].append(inference_time)
+            # flash_seq_length_results[sl].append(inference_time)
     
     for bs in batch_sizes:
         for sl in seq_lengths:
@@ -174,16 +174,16 @@ def main(
     plt.yscale('log')
     
     # Sequence length plot
-    # plt.subplot(1, 2, 2)
-    # for sl in seq_lengths:
-    #     plt.plot(batch_sizes, flash_seq_length_results[sl], marker='o', linestyle='-', label=f'Flash Attn SL {sl}')
-    #     plt.plot(batch_sizes, tk_seq_length_results[sl], marker='s', linestyle='--', label=f'TK SL {sl}')
-    # plt.xlabel('Batch Size')
-    # plt.ylabel('Inference Time (ms)')
-    # plt.title('Inference Time vs Batch Size')
-    # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    # plt.xscale('log')
-    # plt.yscale('log')
+    plt.subplot(1, 2, 2)
+    for sl in seq_lengths:
+        plt.plot(batch_sizes, flash_seq_length_results[sl], marker='o', linestyle='-', label=f'Flash Attn SL {sl}')
+        plt.plot(batch_sizes, tk_seq_length_results[sl], marker='s', linestyle='--', label=f'TK SL {sl}')
+    plt.xlabel('Batch Size')
+    plt.ylabel('Inference Time (ms)')
+    plt.title('Inference Time vs Batch Size')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.xscale('log')
+    plt.yscale('log')
 
     plt.tight_layout()
     plt.savefig('inference_time_comparison_plots.png', bbox_inches='tight')

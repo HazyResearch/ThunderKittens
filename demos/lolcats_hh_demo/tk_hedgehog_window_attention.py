@@ -194,6 +194,7 @@ class TKHedgehogWindowAttention(LlamaAttention):
             
             # q_map = self.feature_map_q.mlp.layer
             # k_map = self.feature_map_k.mlp.layer
+            breakpoint()
             q_map = self.feature_map_q(q)
             k_map = self.feature_map_k(k)
             
