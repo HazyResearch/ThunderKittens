@@ -91,6 +91,7 @@ def main(
             model = load_peft_model(model, peft_model)
 
         model.eval()
+        model.to(device="cuda:0")
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.pad_token = tokenizer.eos_token
@@ -146,11 +147,11 @@ def main(
     tk_seq_length_results = {sl: [] for sl in seq_lengths}
     
     # version without TK (using flash_attention)
-    for bs in batch_sizes:
-        for sl in seq_lengths:
-            inference_time, actual_seq_length = inference(user_prompt[:sl], temperature, top_p, top_k, max_new_tokens, bs, True)
-            flash_batch_size_results[bs].append(inference_time)
-            # flash_seq_length_results[sl].append(inference_time)
+    # for bs in batch_sizes:
+    #     for sl in seq_lengths:
+    #         inference_time, actual_seq_length = inference(user_prompt[:sl], temperature, top_p, top_k, max_new_tokens, bs, True)
+    #         flash_batch_size_results[bs].append(inference_time)
+    #         # flash_seq_length_results[sl].append(inference_time)
     
     for bs in batch_sizes:
         for sl in seq_lengths:
