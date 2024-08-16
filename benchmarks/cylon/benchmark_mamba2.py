@@ -117,7 +117,7 @@ def get_timings(x, dt, A, B, C, chunk_size, warmup_iters=10):
 
 # Construct inputs 
 # Dimensions. Denoted (B, T, Q, D, P) in the paper
-batch, seqlen, chunk_size, dim, headdim = 16, 2048, 64, 2048, 256
+batch, seqlen, chunk_size, dim, headdim = 16, 2048, 64, 2048, 64
 nheads = dim // headdim  # (H) in the paper
 ngroups = 1 # (G) in the paper
 dstate =  128 # (N) in the paper
