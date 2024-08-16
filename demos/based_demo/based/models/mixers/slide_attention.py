@@ -407,7 +407,10 @@ class SlidingAttention(nn.Module):
                     device=device,
                 )
 
-        if fused_bias_fc and FusedDense is None: raise ImportError("fused_dense is not installed")
+        # if fused_bias_fc and FusedDense is None: raise ImportError("fused_dense is not installed")
+        if FusedDense is None:
+            fused_bias_fc = False
+
         linear_cls = nn.Linear if not fused_bias_fc else FusedDense
         linear_resid_cls = (
             LinearResidual if not fused_bias_fc else partial(FusedDense, return_residual=True)

@@ -47,6 +47,8 @@ try:
     from flash_attn.ops.rms_norm import RMSNorm, dropout_add_rms_norm
 except ImportError:
     RMSNorm, dropout_add_rms_norm = None, None
+    from based.ops.layer_norm import RMSNorm
+    print("Using triton RMSNorm; may see slight output differences.")
 
 try:
     from flash_attn.ops.triton.mlp import FusedDenseSqreluDense
@@ -468,6 +470,7 @@ class GPTPreTrainedModel(nn.Module):
 
         config_data = load_config_hf(pretrained_model_name)
         config = GPT2Config(**config_data)
+
         try:
             config.alt_mixer['inference_implementation'] = implementation
             config.alt_mixer['recurrent_impl'] = recurrent_impl
@@ -487,29 +490,12 @@ class GPTPreTrainedModel(nn.Module):
         # These two are for benchmarking purposes
         if override_seqlen is not None:
             # for benchmarking
-            config.alt_mixer['l_max'] = override_seqlen  
-            config.mixer['l_max'] = override_seqlen 
-            config.alt_mixer_2['l_max'] =override_seqlen
-
-        if override_model_dims is not None:
-            print(f"Overriding!")
-            import time; time.sleep(3)
-            if override_model_dims == "7B":
-                config.n_embd = 4096
-                config.n_inner = 3 * config.n_embd 
-                config.n_head = config.n_embd // 64 
-                config.alt_mixer_2['num_heads'] = config.n_head
-                config.alt_mixer['num_heads'] = config.n_head
-                config.n_layer = 34
-                config.alt_mixer_layers = [1, 6, 11, 16, 21, 26, 31, 36]
-                config.alt_mixer_2_layers = [2, 7, 12, 17, 22, 27, 32]
-            elif override_model_dims == "Pure":
-                # breakpoint()
-                # config.alt_mixer_2_layers = [1, 6, 11, 16, 21, 26, 31, 36]
-                config.alt_mixer_layers = []
+            try:
+                config.alt_mixer['l_max'] = override_seqlen  
+                config.mixer['l_max'] = override_seqlen 
+                config.alt_mixer_2['l_max'] =override_seqlen
+            except:
                 pass
-            else:
-                assert 0, print("Unknown setting.")
 
         model = cls(config, device=device, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device)

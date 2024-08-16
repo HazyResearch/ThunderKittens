@@ -26,7 +26,7 @@ try:
     from flash_attn.ops.rms_norm import RMSNorm, dropout_add_rms_norm
 except ImportError:
     RMSNorm, dropout_add_rms_norm = None, None
-    from based.ops.triton.layer_norm import RMSNorm
+    from based.ops.layer_norm import RMSNorm
     print("Using triton RMSNorm; may see slight output differences.")
 
 try:

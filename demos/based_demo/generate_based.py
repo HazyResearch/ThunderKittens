@@ -70,8 +70,6 @@ for input_text in sample_inputs:
         if len(input_text) > 300:
             input_text = input_text[:150] + " ... [more tokens] ... " + input_text[-150:]
         pred = pred.replace("\n", " ") 
-
-        # after the SWA
         print(f"{model_name=}: {input_text} -> {pred}\n")
     print()
 

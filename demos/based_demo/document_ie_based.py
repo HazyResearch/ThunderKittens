@@ -6,7 +6,6 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
-# from based.models.transformer.gpt import GPTLMHeadModel
 from based.models.baselines.mamba_model import MambaLMHeadModel
 from train.src.models.gpt import GPTLMHeadModel as BasedGPTLMHeadModel
 
@@ -16,15 +15,15 @@ torch.cuda.manual_seed(0)
 # Load pretrained models
 def get_model(args, model_name="attn"): 
     print("\nLoading pretrained models...")
-    if 'attn' in model_name:
+    if 'attn' == model_name:
         return BasedGPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/attn-360m"
         ).to("cuda").to(torch.bfloat16)
-    elif 'mamba' in model_name:
+    elif 'mamba' == model_name:
         return MambaLMHeadModel.from_pretrained_hf(
             "hazyresearch/mamba-360m"
         ).to("cuda").to(torch.bfloat16) 
-    else:
+    elif "based" == model_name:
         return BasedGPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/my-awesome-model",
             device="cuda", 
@@ -32,6 +31,8 @@ def get_model(args, model_name="attn"):
             silent=True,           
             inference_bs=args.bs,
         ).to(torch.bfloat16)
+    else:
+        assert 0, print("Unknown model selected.")
 
 
 # Setup tokenizer
@@ -97,12 +98,9 @@ def get_inputs(tokenizer, batch, context_length, task_name):
         if any(e in task_name for e in ["fda", "swde"]): 
             question = question + ":"
         short_context = short_context + ". " + question 
-
-        # print(short_context[-50:])
         short_texts.append(short_context)
 
     input_texts = short_texts
-
     inputs = tokenizer.batch_encode_plus(
         input_texts, 
         return_tensors="pt", 
