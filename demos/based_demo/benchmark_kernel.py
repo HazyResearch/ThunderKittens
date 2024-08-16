@@ -20,8 +20,6 @@ except:
     print("Could not import causal_attention_cuda")
 
 try:
-    # To compare to Flash Linear Attention
-    # Install from https://github.com/sustcsonglin/flash-linear-attention
     from fla.ops.based import fused_chunk_based, parallel_based
     from fla.ops.based.naive import naive_parallel_based
     from fla.ops.gla import chunk_gla, fused_chunk_gla, fused_recurrent_gla
@@ -29,7 +27,21 @@ try:
 except:
     fused_chunk_based, parallel_based, naive_parallel_based = None, None
     chunk_gla, fused_chunk_gla, fused_recurrent_gla = None, None, None
-    print("Could not import flash_linear_attention")
+    print("Could not import flash_linear_attention. Install from https://github.com/sustcsonglin/flash-linear-attention")
+
+try:
+    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    print(f"Successfully imported mamba_chunk_scan_combined")
+except:
+    mamba_chunk_scan_combined = None 
+    print("Could not import mamba_chunk_scan_combined. Please: pip install mamba_ssm")
+
+try:
+    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
+    print(f"Successfully imported selective_scan_fn")
+except:
+    selective_scan_fn = None 
+    print("Could not import selective_scan_fn. Please: pip install mamba_ssm")
 
 try:
     # To compare to Flash Attention
@@ -37,17 +49,18 @@ try:
     print(f"Successfully imported flash_attention")
 except:
     flash_attn_func = None
-    print("Could not import flash_attention")
+    print("Could not import flash_attention. Please: pip install flash-attn")
 
 
 ################ Flash Attention ################
 
 def flash_attention_test(dt, q, k, v, d, verbose=True, **kwargs):
-    q = torch.randn_like(v).transpose(1,2)
-    k = torch.randn_like(v).transpose(1,2)
-    v = torch.randn_like(v).transpose(1,2)
 
     try:
+        q = torch.randn_like(v).transpose(1,2)
+        k = torch.randn_like(v).transpose(1,2)
+        v = torch.randn_like(v).transpose(1,2)
+
         torch.cuda.synchronize()
         t0 = time.time()
 
@@ -60,7 +73,7 @@ def flash_attention_test(dt, q, k, v, d, verbose=True, **kwargs):
         t1 = time.time()
         tot = t1-t0
     except Exception as e:
-        print(f"Error: {e}")
+        # print(f"Error: {e}")
         tot = -1
         y = None
     return y, tot
@@ -145,7 +158,76 @@ def fla_parallel_based_test(dt, q, k, v, d, verbose=True, **kwargs):
         tot = -1
         y = None
     return y, tot
+
+def mamba2_kernel_test(dt, q, k, v, d, verbose=True, **kwargs):
+
+    b, h, n, d = q.shape
+    dv = v.shape[-1]
+
+    try:
+        # Set so Mamba-2's (2 * dim * dstate) is ~ Based's (dim * (1 + 16 + 16^2))
+        import torch.nn.functional as F
+        dt = F.softplus(torch.randn(b, n, h, dtype=torch.float32, device=q.device) - 4)
+        A = (-torch.exp(torch.rand(h, dtype=torch.float32, device=q.device)))
+        k = torch.randn(b, n, 1, 256, dtype=torch.bfloat16, device=q.device)
+        q = torch.randn(b, n, 1, 256, dtype=torch.bfloat16, device=q.device)    
+        v = torch.randn(b, n, h, dv*2, dtype=torch.bfloat16, device=q.device)
+
+        torch.cuda.synchronize()
+        t0 = time.time()
+
+        y = mamba_chunk_scan_combined(v, dt, A, k, q, chunk_size=64, D=None)
+
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except Exception as e:
+        # print(f"Error: {e}")
+        tot = -1
+        y = None
+    return y, tot
     
+def mamba_kernel_test(dt, q, k, v, d, verbose=True, **kwargs):
+
+    b, h, n, d = q.shape
+    dv = v.shape[-1]
+    dstate = 16 # from Mamba paper, note state is 8x smaller then Based
+
+    try:
+        dmodel = dv*h*2
+        A = torch.randn(dmodel, dstate, dtype=torch.float32, device=q.device)
+        x = torch.randn(b, dmodel, n, dtype=torch.bfloat16, device=q.device)
+        dt = torch.randn(b, dmodel,n, dtype=torch.bfloat16, device=q.device)    
+        B = torch.randn(b, dstate, n, dtype=torch.bfloat16, device=q.device)
+        C = torch.randn(b, dstate, n, dtype=torch.bfloat16, device=q.device)
+        D = torch.randn(dmodel, dtype=torch.bfloat16, device=q.device)
+        z = torch.randn(b, dmodel, n, dtype=torch.bfloat16, device=q.device)
+        dt_proj_bias = torch.randn(dmodel, dtype=torch.bfloat16, device=q.device)
+
+        torch.cuda.synchronize()
+        t0 = time.time()
+
+        y = selective_scan_fn(
+            x,
+            dt,
+            A,
+            B,
+            C,
+            D.float(),
+            z=z,
+            delta_bias=dt_proj_bias.float(),
+            delta_softplus=True,
+            return_last_state=False,
+        )
+
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except Exception as e:
+        # print(f"Error: {e}")
+        tot = -1
+        y = None
+    return y, tot
 
 def based_kernel_test(dt, Q, K, V, d, verbose=True, device='4090'):
     o   = torch.zeros_like(V)
@@ -155,8 +237,6 @@ def based_kernel_test(dt, Q, K, V, d, verbose=True, device='4090'):
     kv_state_a2 = torch.empty((b, h, d*d, dv), dtype=torch.bfloat16, device='cuda')
     kv_state_a1 = torch.empty((b, h, dv, d), dtype=torch.bfloat16, device='cuda')
     kv_state_a0 = torch.empty((b, h, d), dtype=torch.bfloat16, device='cuda')
-
-    tk_fn = tk.based_linear_prefill
     add_scale, output_state = int(1), int(0)
 
     try:
@@ -192,16 +272,23 @@ def linear_attn_forward_benchmark_batch(dt, methods, verbose=False, use_ones=Fal
         dv = 64
         print(f"{b=}, {n=}, {d=}, {h=}")
 
-        Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-        K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-        V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
-
         for name, fn, in methods.items():
-            print(f"Running {name}...")
-            lst = [fn(dt, Q, K, V, d) for _ in range(num_iters)]
-            lst_time = [x[-1] for x in lst]
-            _time = median(lst_time)
-            if b > 1 and _time > 0: method2timing[name][b] = _time * 1000
+            if "mamba" in name and (b*h*dv*256) > 500000000: continue
+
+            try:
+                Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+                K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+                V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+
+                print(f"Running {name}...")
+                lst = [fn(dt, Q, K, V, d) for _ in range(num_iters)]
+                lst_time = [x[-1] for x in lst]
+                _time = median(lst_time)
+                if b > 1 and _time > 0: method2timing[name][b] = _time * 1000
+            
+                torch.cuda.empty_cache()
+            except:
+                pass 
 
     # plot: time vs. batch
     fig, ax = plt.subplots()
@@ -223,16 +310,22 @@ def linear_attn_forward_benchmark_seqlen(dt, methods, verbose=False, use_ones=Fa
         dv = 64
         print(f"{b=}, {n=}, {d=}, {h=}")
 
-        Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-        K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-        V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
-
         for name, fn, in methods.items():
-            print(f"Running {name}...")
-            lst = [fn(dt, Q, K, V, d) for _ in range(num_iters)]
-            lst_time = [x[-1] for x in lst]
-            _time = median(lst_time)
-            if n > 256 and _time > 0: method2timing[name][n] = _time * 1000
+            if "mamba" in name and (b*h*dv*256) > 100000000: continue
+
+            try:
+                Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+                K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+                V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+
+                print(f"Running {name}...")
+                lst = [fn(dt, Q, K, V, d) for _ in range(num_iters)]
+                lst_time = [x[-1] for x in lst]
+                _time = median(lst_time)
+                if n > 256 and _time > 0: method2timing[name][n] = _time * 1000
+                torch.cuda.empty_cache()
+            except:
+                pass
 
     # plot: time vs. batch
     fig, ax = plt.subplots()
@@ -275,15 +368,15 @@ def measure_efficiency(dt, methods, verbose=False, use_ones=False, profile=False
     dv = 64
     print(f"{b=}, {n=}, {d=}, {h=}")
 
-    Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
-    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
-
     for method_name, fn in methods.items():
         if "based" not in method_name.lower(): continue
         try:
+            Q   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+            K   = torch.randn(b,h,n,d, dtype=dt, device='cuda')/d
+            V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+
             lst = [fn(dt, Q, K, V, d) for _ in range(num_iters)]
-            lst_time = [x[-1] for x in lst][1:]
+            lst_time = [x[-1] for x in lst][2:]
             _time = median(lst_time)
             if _time < 0: continue
 
@@ -291,6 +384,7 @@ def measure_efficiency(dt, methods, verbose=False, use_ones=False, profile=False
             microseconds = _time * 1000000
             eff = efficiency(flops, microseconds)
             print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS")
+            torch.cuda.empty_cache()  
         except:
             pass
 
@@ -311,6 +405,10 @@ if __name__ == "__main__":
 
             # FA2
             'Flash Attention': flash_attention_test,
+
+            # Mamba-2
+            "Mamba": mamba_kernel_test,
+            "Mamba-2": mamba2_kernel_test,
         }
 
     linear_attn_forward_benchmark_batch(torch.bfloat16, methods, verbose=False)
