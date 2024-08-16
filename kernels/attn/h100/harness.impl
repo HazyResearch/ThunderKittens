@@ -2,9 +2,9 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
-constexpr int QO_HEADS   = 16;
-constexpr int KV_HEADS   = 16;
+constexpr int ATTN_B     = 1;
+constexpr int QO_HEADS   = 1;
+constexpr int KV_HEADS   = 1;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
@@ -12,7 +12,7 @@ static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 constexpr int ATTN_N     = 12288/16; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS);
-constexpr int ITER       = 100;
+constexpr int ITER       = 1;
 
 constexpr bool causal    = false; 
 
@@ -355,8 +355,8 @@ int main(int argc, char **argv) {
     CUtensorMap* tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_vg, (ATTN_B*KV_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h    * 16));
     CUtensorMap* tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>>(d_og, (ATTN_B*QO_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo * 16));
     
-    CUtensorMap* tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>>>(d_l,  (ATTN_B*QO_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo * 16));
-    CUtensorMap* tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>>>(d_d,  (ATTN_B*QO_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo * 16));
+    CUtensorMap* tma_l_b_d = tma::allocate_and_create_tensor_map<row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>>   (d_l,  (ATTN_B*QO_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo * 16));
+    CUtensorMap* tma_d_b_d = tma::allocate_and_create_tensor_map<row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>>   (d_d,  (ATTN_B*QO_HEADS*ATTN_N)/(bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo * 16));
 
     cudaFuncSetAttribute(
         bwd_attend_ker<ATTN_D, causal>,

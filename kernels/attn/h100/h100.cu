@@ -318,24 +318,11 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     using og_tile = st_bf<G::tile_h_qo, G::tile_width>;
     using qg_tile = st_fl<G::tile_h_qo, G::tile_width>;
 
-    using l_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
-    using d_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
+    using l_tile = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
+    using d_tile = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
 
     using attn_tile = st_bf<G::tile_h_qo, G::tile_h>; 
     /////////////////////////////////////////////////////////////////////////////
-
-    ////////////////////////////// REGISTERS ////////////////////////////////////
-    using kg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
-    using vg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
-    using qg_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_width>; 
-
-    using l_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
-    using d_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
-
-    using attn_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
-    using attn_mma_tile = rt_bf<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
-    using temp_tile     = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>;
-    ///////////////////////////////////////////////////////////////////////////////
 
     // initialize shared memory
     k_tile  (&k_smem) [BWD_CONSUMER_WARPGROUPS]     = al.allocate<k_tile, BWD_CONSUMER_WARPGROUPS>(); 
@@ -350,7 +337,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     l_tile (&l_smem)[2] = al.allocate<l_tile, 2>();
     d_tile (&d_smem)[2] = al.allocate<d_tile, 2>();
 
-    attn_tile (&att_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>(); 
+    attn_tile (&ds_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>(); 
     //////////////////////
 
     int warpid = kittens::warpid();
@@ -426,16 +413,20 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240));
 
         // initialize registers
-        kg_reg_tile kg_reg;
-        vg_reg_tile vg_reg;
-        qg_reg_tile qg_reg;
+        rt_fl<1, G::tile_width> kg_reg;
+        rt_fl<1, G::tile_width> vg_reg;
+        rt_fl<1, G::tile_width> qg_reg;
 
-        l_reg_vec l_reg; 
-        d_reg_vec d_reg;
+        row_vec<rt_fl<1, 4>> row_reg; 
 
-        attn_reg_tile att_block; 
-        attn_mma_tile att_block_mma;
-        temp_tile     temp_block;
+        rt_fl<1, 4> s_block_t; 
+        rt_fl<1, 4> dp_block_t;
+
+        rt_fl<1, 4> p_block_t;
+        rt_fl<1, 4> ds_block_t;
+
+        rt_bf<1, 4> p_block_t_mma;
+        rt_bf<1, 4> ds_block_t_mma;
         //////////////////////
 
         zero(kg_reg);
@@ -445,79 +436,80 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
         for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
 
-            wait(q_b[tic], ((qo_idx - q_start)/2)%2);
-            
-            warpgroup::mma_fence(att_block);
-            warpgroup::mm_ABt(att_block, q_smem[tic], k_smem[warpgroupid]);
-            warpgroup::mma_commit_group();
+            zero(s_block_t); 
 
             wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
-            warpgroup::load(l_reg, l_smem[tic]);
+            load(row_reg, l_smem[tic]);
+
+            if constexpr (D == 64) { mul(row_reg, row_reg, 8.0f); }
+            else                   { mul(row_reg, row_reg, 11.3137085f); }
+
+            sub_col(s_block_t, s_block_t, row_reg);
+
+            wait(q_b[tic], ((qo_idx - q_start)/2)%2);
+
+            warpgroup::mma_fence(s_block_t);
+            warpgroup::mma_ABt(s_block_t, k_smem[warpgroupid], q_smem[tic]);
+            warpgroup::mma_commit_group();
 
             wait(o_b[tic], ((qo_idx - q_start)/2)%2);
 
-            warpgroup::mma_async_wait();
-
-            if constexpr (D == 64) { mul(att_block, att_block, 0.125f); }
-            else                   { mul(att_block, att_block, 0.08838834764f); }
-
-            if constexpr (is_causal) {
-                int q_blk = (qo_idx * G::tile_h_qo) + (warpid % kittens::WARPGROUP_WARPS);
-                int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * G::tile_h) + (warpgroupid * G::tile_h);
-
-                for (int j = 0; j < G::tile_h; j++) {
-                    int k_idx = k_blk + j;
-                    auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block.tiles[0][j]);
-
-                    if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
-                    else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
-                }
-            }
-
-            sub_row(att_block, att_block, l_reg);
-            exp(att_block, att_block);
-            copy(temp_block, att_block);
-            copy(att_block_mma, att_block);
-
-            warpgroup::store(att_smem[warpgroupid], att_block_mma);
-            asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroupid));
-
-            warpgroup::mma_fence(att_block);
-            warpgroup::mm_ABt(att_block, og_smem[tic], v_smem[warpgroupid]);
+            warpgroup::mma_fence(dp_block_t);
+            warpgroup::mm_ABt(dp_block_t, v_smem[warpgroupid], og_smem[tic]);
             warpgroup::mma_commit_group();
 
-            warpgroup::load(d_reg, d_smem[tic]);
-
-            warpgroup::mma_fence(vg_reg);
-            warpgroup::mma_AtB(vg_reg, att_smem[warpgroupid], og_smem[tic]);
-            warpgroup::mma_commit_group();
-            
             warpgroup::mma_async_wait<1>();
 
-            sub_row(att_block, att_block, d_reg);
-            mul(temp_block, temp_block, att_block);
+            if constexpr (D == 64) { mul(s_block_t, s_block_t, 0.125f); }
+            else                   { mul(s_block_t, s_block_t, 0.08838834764f); }
+
+            // if constexpr (is_causal) {
+            //     int q_blk = (qo_idx * G::tile_h_qo) + (warpid % kittens::WARPGROUP_WARPS);
+            //     int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * G::tile_h) + (warpgroupid * G::tile_h);
+
+            //     for (int j = 0; j < G::tile_h; j++) {
+            //         int k_idx = k_blk + j;
+            //         auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block.tiles[0][j]);
+
+            //         if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+            //         else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+            //     }
+            // }
             
-            if constexpr (D == 64) { mul(temp_block, temp_block, 0.125f); }
-            else                   { mul(temp_block, temp_block, 0.08838834764f); }
-            
-            copy(att_block_mma, temp_block);
 
-            warpgroup::mma_async_wait(); 
-            
-            warpgroup::store(att_smem[warpgroupid], att_block_mma);
+            exp(s_block_t, s_block_t);
+            copy(p_block_t, s_block_t);
+            copy(p_block_t_mma, s_block_t);
 
-            warpgroup::mma_fence(qg_reg);
-            warpgroup::mm_AB(qg_reg, att_block_mma, k_smem[warpgroupid]);
-            warpgroup::mma_commit_group(); 
+            warpgroup::mma_async_wait();
 
-            asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroupid));
+            load(row_reg, d_smem[tic]);
+            sub_col(dp_block_t, dp_block_t, row_reg);
+            mul(ds_block_t, p_block_t, dp_block_t);
 
-            warpgroup::mma_fence(kg_reg);
-            warpgroup::mma_AtB(kg_reg, att_smem[warpgroupid], q_smem[tic]);
+            if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
+            else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
+
+            copy(ds_block_t_mma, ds_block_t);
+            warpgroup::store(ds_smem[warpgroupid], ds_block_t);
+
+            warpgroup::mma_fence(vg_reg);
+            warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
             warpgroup::mma_commit_group();
 
-            if (qo_idx > 0) tma::store_async_wait();
+            warpgroup::mma_fence(kg_reg);
+            warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
+            warpgroup::mma_commit_group();
+            
             warpgroup::mma_async_wait(); 
+            asm volatile("bar.sync 10, 256;\n");
+
+            warpgroup::mma_fence(qg_reg);
+            warpgroup::mm_AtB(qg_reg, ds_smem[warpgroupid], k_smem[warpgroupid]);
+            warpgroup::mma_commit_group(); 
+
+            warpgroup::mma_async_wait(); 
+            if (qo_idx > 0) tma::store_async_wait();
 
             asm volatile("bar.sync 10, 256;\n");
             warpgroup::store(qg_smem[warpgroupid], qg_reg);
