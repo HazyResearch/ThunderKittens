@@ -22,16 +22,16 @@ from thunderkittens import hedgehog as tk_window_hedgehog_attention
 from grouped_query_attention_pytorch.attention import scaled_dot_product_gqa
 
 
-def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
-    bs, slen, n_kv_heads, head_dim = x.shape
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
-        return x
-    return (
-        x[:, :, :, None, :]
-        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
-        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
-    )
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 def get_pad_to_multiple(n: int, m: int = 64) -> int:
@@ -136,14 +136,18 @@ class TKHedgehogWindowAttention(LlamaAttention):
         q = q.to(torch.bfloat16)
         k = k.to(torch.bfloat16)
         v = v.to(torch.bfloat16)
-
+        
         k = repeat_kv(k, self.num_key_value_groups)
         v = repeat_kv(v, self.num_key_value_groups)
 
         # Convert `past_key_values` to TKHedgehogWindowAttentionState object
-        if past_key_value is not None and self.layer_idx == 0:
+        if past_key_value is not None:
             if not isinstance(past_key_value, TKHedgehogWindowAttentionState):
-                past_key_value = TKHedgehogWindowAttentionState  # This then gets passed thru the rest of the network
+                past_key_value = TKHedgehogWindowAttentionState()  # This then gets passed thru the rest of the network
+                
+        # if past_key_value is not None:
+        #     if not isinstance(past_key_value, TKHedgehogWindowAttentionState):
+        #         past_key_value = TKHedgehogWindowAttentionState()  # Initialize it if it's not the right type
 
         # When we are generating after prefill
         if q.shape[2] == 1 and kv_seq_len > 1:
@@ -191,8 +195,12 @@ class TKHedgehogWindowAttention(LlamaAttention):
             betas    = F.sigmoid(self.window_factors[0, :, 0, 0].to(dtype=torch.float32))
             alphas   = (1 - betas if self.affine_attention_factors else 
                         torch.ones(betas.shape, dtype=torch.float32, device=device))
-            q_map = self.feature_map_q.mlp.layer
-            k_map = self.feature_map_k.mlp.layer
+            
+            q_map = self.feature_map_q.layer
+            k_map = self.feature_map_k.layer
+            # q_map = self.feature_map_q(q).permute(0, 1, 3, 2)
+            # k_map = self.feature_map_k(k).permute(0, 1, 3, 2)
+            
             # Saves outputs to y_true, k_state, kv_state, where we fuse:
             # 1. f_q, f_k = self.feature_map_q(q), self.feature_map_k(k)
             # 2. y_true = attention(q, k, f_q, f_k, v)  # b, h, l, d
@@ -202,10 +210,10 @@ class TKHedgehogWindowAttention(LlamaAttention):
             # 4. k_state = f_k[:, :, :-self.window_size].sum(dim=-2)   # b, h, d
             tk_window_hedgehog_attention(q.contiguous(), k.contiguous(), v.contiguous(), 
                                          y_true, k_state, kv_state, 
-                                         q_map, k_map, alphas, betas)
+                                         q_map.contiguous(), k_map.contiguous(), 
+                                         alphas, betas)
             # Save the KV and K states
-            past_key_value.update_with_kv(kv_state, k_state.unsqueeze(-2), k, v, 
-                                          x_len, tk_pad, self.layer_idx)
+            past_key_value.update_with_kv(kv_state, k_state.unsqueeze(-2), k, v, x_len, tk_pad, self.layer_idx)
             if tk_pad > 0:
                 y_true = y_true[:, :, :x_len]  # b, h, l, d
         
@@ -233,10 +241,7 @@ class TKHedgehogWindowAttentionState(Cache):
         self.k_cache: List[torch.Tensor] = []
         self.v_cache: List[torch.Tensor] = []
 
-    def update_with_kv(self, 
-                       kv_state: torch.Tensor, k_state: torch.Tensor,
-                       k: torch.Tensor, v: torch.Tensor,
-                       seq_len: int, tk_pad: int, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def update_with_kv(self, kv_state: torch.Tensor, k_state: torch.Tensor, k: torch.Tensor, v: torch.Tensor, seq_len: int, tk_pad: int, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Update the cache with new KV and K states
         """
