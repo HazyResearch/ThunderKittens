@@ -71,6 +71,15 @@ extern void fused_layernorm(
 );
 #endif
 
+#ifdef TK_COMPILE_FUSED_ROTARY
+extern void fused_rotary(
+    torch::Tensor x, 
+    torch::Tensor cos_in, 
+    torch::Tensor sin_in, 
+    torch::Tensor o
+);
+#endif
+
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
@@ -105,6 +114,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_FUSED_LAYERNORM
     m.def("fused_layernorm", fused_layernorm, "Fuses the dropout, residual, and layernorm computation in standard language modeling blocks. Takes tensors x, residual, norm_weight, norm_bias. Outputs are output o and the output residual.");
+#endif
+
+#ifdef TK_COMPILE_FUSED_ROTARY
+    m.def("fused_rotary", fused_rotary, "Kernel for rotary computation.");
 #endif
 }
  
