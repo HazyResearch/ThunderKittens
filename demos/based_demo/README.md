@@ -3,7 +3,7 @@
 Here we provide a demo for running inference for pretrained [Based architecture language models](https://arxiv.org/abs/2402.18668) using TK kernels on an NVidia H100 GPU! 
 The Based architecture is notable for (1) showing the value of **hybridizing local attention (window sizes $\leq 128$)** with linear attention and (2) building a method to **increase the linear attention state size in hardware efficient ways**. 
 
-Emphasizing this, Based expands the Pareto frontier of the quality-efficiency tradeoff space. In the figure below, for **end-to-end pretrained models**, Based computes inference prefill over $2.3\times$ as fast as Mamba (with $8\times$ smaller recurrent state), and is also faster than Mamba-2 and Based implemented with Flash Linear Attention! Explore our hardware-efficient architecture and algorithm in the demo below!
+Emphasizing this, Based expands the Pareto frontier of the quality-efficiency tradeoff space. In the figure below, for **end-to-end pretrained models**, Based computes inference prefill over $2.3\times$ as fast as Mamba, even though Mamba's recurrent state is $8\times$ smaller than Based linear attention! Based is also faster than Mamba-2 and Based implemented with Flash Linear Attention in end-to-end speed! Explore our hardware-efficient architecture and algorithm in the demo below!
 
 <div align="center" >
     <img src="plots/benchmark_input8000_output1.png" height=350 alt="Benchmark models" style="margin-bottom:px"/> 
