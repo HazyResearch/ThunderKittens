@@ -191,8 +191,12 @@ class TKHedgehogWindowAttention(LlamaAttention):
             betas    = F.sigmoid(self.window_factors[0, :, 0, 0].to(dtype=torch.float32))
             alphas   = (1 - betas if self.affine_attention_factors else 
                         torch.ones(betas.shape, dtype=torch.float32, device=device))
-            q_map = self.feature_map_q.mlp.layer
-            k_map = self.feature_map_k.mlp.layer
+            
+            # q_map = self.feature_map_q.mlp.layer
+            # k_map = self.feature_map_k.mlp.layer
+            q_map = self.feature_map_q(q)
+            k_map = self.feature_map_k(k)
+            
             # Saves outputs to y_true, k_state, kv_state, where we fuse:
             # 1. f_q, f_k = self.feature_map_q(q), self.feature_map_k(k)
             # 2. y_true = attention(q, k, f_q, f_k, v)  # b, h, l, d
