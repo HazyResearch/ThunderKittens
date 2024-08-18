@@ -25,24 +25,26 @@ struct globals {
         n_blocks(n_blocks), A_tma(A_tma), B_tma(B_tma), C_tma(C_tma) {}
 };
 
+template<int _NUM_CONSUMER_WARPGROUPS>
 struct block { // the chunk of data that the producer and consumer are working on
-    a_tile (&a_block)[2];
+    a_tile (&a_block)[_NUM_CONSUMER_WARPGROUPS];
     b_tile (&b_block);
-    __device__ inline block(a_tile (&a_block)[2], b_tile (&b_block)) : a_block(a_block), b_block(b_block) {}
+    __device__ inline block(a_tile (&a_block)[_NUM_CONSUMER_WARPGROUPS], b_tile (&b_block)) : a_block(a_block), b_block(b_block) {}
 };
 
 struct producer_consumer {
     static constexpr int NUM_CONSUMER_WARPGROUPS = 2;
     using params = producer_consumer_parameters<NUM_CONSUMER_WARPGROUPS>;
+    using block = block<NUM_CONSUMER_WARPGROUPS>;
 
     struct producer {
         struct state {
-            int row_idx, col_idx;
-        }; // persistent registers; none needed for this kernel.
+            int row_idx, col_idx; // persistent registers
+        };
         __device__ static void setup(state &s, globals &g) { // setup and load the first iteration
             warpgroup::decrease_registers<params::NUM_PRODUCER_REG>(); // decrease registers for the producer warpgroup
-            s.row_idx = blockIdx.x * 2; // 2 tiles vertical per block
-            s.col_idx = blockIdx.y; // 1 tile horizontal per block
+            s.row_idx = blockIdx.x * NUM_CONSUMER_WARPGROUPS; // tiles vertical per block
+            s.col_idx = blockIdx.y; // just 1 tile horizontal per block
         }
         __device__ static void load(state &s, block &b, globals &g, kittens::barrier &bar, int iter) { // barrier for the producer to load into
             if(warpgroup::warpid() == 0) {
@@ -59,7 +61,7 @@ struct producer_consumer {
 
     struct consumer {
         struct state {
-            rt_fl<1,16> acc;
+            rt_fl<1,c_tile::width> acc;
             c_tile &out_block;
             __host__ __device__ inline state(c_tile &out_block) : out_block(out_block) {}
         }; // persistent registers; none needed for this kernel.
@@ -77,7 +79,7 @@ struct producer_consumer {
             warpgroup::store(s.out_block, s.acc);
             warpgroup::sync(); // writes to shared memory are now visible
             if(warpgroup::warpid() == 0) { // first warp stores
-                tma::store_async(g.C_tma, s.out_block, blockIdx.x * 2 + warpgroup::groupid(), blockIdx.y);
+                tma::store_async(g.C_tma, s.out_block, blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), blockIdx.y);
                 tma::store_commit_group();
             }
             tma::store_async_read_wait(); // this isn't really necessary, but it illustrates the principle.
@@ -86,6 +88,10 @@ struct producer_consumer {
     };
 };
 
+constexpr int PIPE_STAGES = 4;
+__device__ inline int advance(int ring) { return (ring + 1) % PIPE_STAGES; }
+__device__ inline int retreat(int ring) { return (ring + PIPE_STAGES-1) % PIPE_STAGES; }
+
 // This is a producer+consumer copy kernel that demonstrates the use of TMA to implement a two-stage pipeline.
 __global__ __launch_bounds__(producer_consumer::params::NUM_THREADS, 1)
 void gpu_gemm(globals g) {
@@ -93,22 +99,22 @@ void gpu_gemm(globals g) {
 
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
-    a_tile (&a_smem) [2][producer_consumer::params::NUM_CONSUMER_WARPGROUPS] = alloc.allocate<a_tile, 2, producer_consumer::params::NUM_CONSUMER_WARPGROUPS>();
-    b_tile (&b_smem) [2]                                                     = alloc.allocate<b_tile, 2>();
-    c_tile (&c_smem) [producer_consumer::params::NUM_CONSUMER_WARPGROUPS]    = alloc.allocate<c_tile, producer_consumer::params::NUM_CONSUMER_WARPGROUPS>();
-    block blocks[] = {
+    a_tile (&a_smem) [PIPE_STAGES][producer_consumer::params::NUM_CONSUMER_WARPGROUPS] = alloc.allocate<a_tile, PIPE_STAGES, producer_consumer::params::NUM_CONSUMER_WARPGROUPS>();
+    b_tile (&b_smem) [PIPE_STAGES]                                                     = alloc.allocate<b_tile, PIPE_STAGES>();
+    c_tile (&c_smem) [producer_consumer::params::NUM_CONSUMER_WARPGROUPS]              = reinterpret_cast<c_tile(&)[producer_consumer::params::NUM_CONSUMER_WARPGROUPS]>(a_smem); // ovewrwrite at the end
+    block<producer_consumer::params::NUM_CONSUMER_WARPGROUPS> blocks[] = {
         block(a_smem[0], b_smem[0]),
-        block(a_smem[1], b_smem[1])
+        block(a_smem[1], b_smem[1]),
+        block(a_smem[2], b_smem[2]),
+        block(a_smem[3], b_smem[3])
     };
 
     // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
-    __shared__ kittens::barrier producer_arrived[2], consumer_arrived[2];
-    int tic = 0, toc = 1; // these are used to track the two-stage pipeline.
-    if (warpid() == 0) { // a single warp (in fact a single thread) does these.
-        init_barrier(producer_arrived[tic], 0, 1); // needs to wait on just one memory transaction, each
-        init_barrier(producer_arrived[toc], 0, 1);
-        init_barrier(consumer_arrived[tic], pc::params::NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-        init_barrier(consumer_arrived[toc], pc::params::NUM_CONSUMER_WARPS, 0);
+    __shared__ kittens::barrier producer_arrived[PIPE_STAGES], consumer_arrived[PIPE_STAGES];
+    int ring = 0; // these are used to track the two-stage pipeline.
+    if (warpid() < PIPE_STAGES) { // a single warp (in fact a single thread) does these.
+        init_barrier(producer_arrived[warpid()], 0, 1); // needs to wait on just one memory transaction, each
+        init_barrier(consumer_arrived[warpid()], pc::params::NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
     }
 
     __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
@@ -116,25 +122,45 @@ void gpu_gemm(globals g) {
     if(warpgroup::groupid() == pc::params::NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
         typename pc::producer::state s;
         pc::producer::setup(s, g);
-        pc::producer::load(s, blocks[tic], g, producer_arrived[tic], 0); // load initial block
-        for (int block_idx = 1; block_idx < g.n_blocks; block_idx++, tic=tic^1, toc=toc^1) {
-            pc::producer::load(s, blocks[toc], g, producer_arrived[toc], block_idx);
-            wait(consumer_arrived[tic], ((block_idx-1)/2)%2); // phase changes at half the rate of the tic/toc
+        pc::producer::load(s, blocks[ring], g, producer_arrived[ring], 0); // load initial block
+        if constexpr (PIPE_STAGES>2) pc::producer::load(s, blocks[advance(ring)], g, producer_arrived[advance(ring)], 1); // load second block for pipeline
+        if constexpr (PIPE_STAGES>3) pc::producer::load(s, blocks[advance(advance(ring))], g, producer_arrived[advance(advance(ring))], 2); // load third block for pipeline
+        for (int block_idx = PIPE_STAGES-1; block_idx < g.n_blocks; block_idx++, ring=advance(ring)) {
+            int ring_load = retreat(ring); // maximally advanced, pipe_stages-1 times
+            pc::producer::load(s, blocks[ring_load], g, producer_arrived[ring_load], block_idx);
+            wait(consumer_arrived[ring], ((block_idx-(PIPE_STAGES-1))/PIPE_STAGES)%2); // phase changes at half the rate of the tic/toc
         }
         pc::producer::finish(s, g);
     }
     else { // other warpgroups are consumers
         typename pc::consumer::state s(c_smem[warpgroup::groupid()]);
         pc::consumer::setup(s, g);
-        for (int block_idx = 0; block_idx < g.n_blocks; block_idx++, tic^=1, toc^=1) {
-            wait(producer_arrived[tic], (block_idx/2)%2); // wait for memory to arrive
-            pc::consumer::compute(s, blocks[tic], g, block_idx);
-            if(laneid() == 0) arrive(consumer_arrived[tic]); // work is complete, signal to the producer that it may start the next load.
+        // Option 1: simple PC
+        // for (int block_idx = 0; block_idx < g.n_blocks; block_idx++, ring=advance(ring)) {
+        //     wait(producer_arrived[ring], (block_idx/PIPE_STAGES)%2); // wait for memory to arrive
+        //     pc::consumer::compute(s, blocks[ring], g, block_idx);
+        //     if(laneid() == 0) arrive(consumer_arrived[ring]); // overlap arrival for previous with this matmul
+        // }
+        // Option 2: hide barrier stuff during the wgmma's, which gives another ~20 TFLOPs
+        wait(producer_arrived[ring], 0); // wait for initial memory to arrive
+        warpgroup::mma_fence(s.acc);
+        warpgroup::mma_AB(s.acc, blocks[ring].a_block[warpgroup::groupid()], blocks[ring].b_block); // launch first one, don't wait.
+        warpgroup::mma_commit_group();
+        ring = advance(ring);
+        for (int block_idx = 1; block_idx < g.n_blocks; block_idx++, ring=advance(ring)) {
+            wait(producer_arrived[ring], (block_idx/PIPE_STAGES)%2); // wait for next memory to arrive while we wait for tensor cores
+            warpgroup::mma_async_wait(); // previous is finished
+            warpgroup::mma_fence(s.acc);
+            warpgroup::mma_AB(s.acc, blocks[ring].a_block[warpgroup::groupid()], blocks[ring].b_block);
+            warpgroup::mma_commit_group();
+            if(laneid() == 0) arrive(consumer_arrived[retreat(ring)]); // overlap arrival for previous with this matmul
         }
+        warpgroup::mma_async_wait();
+        if(laneid() == 0) arrive(consumer_arrived[retreat(ring)]); // final one finished
+        // Common writeout
         pc::consumer::finish(s, g);
     }
 }
-
 
 #include <iostream>
 #include <random>
@@ -215,7 +241,7 @@ int main() {
     
     cudaFuncSetAttribute(gpu_gemm, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
-    dim3 grid(M / c_tile::rows, N / c_tile::cols); // rows, cols
+    dim3 grid(M / (c_tile::rows*producer_consumer::params::NUM_CONSUMER_WARPGROUPS), N / c_tile::cols); // rows, cols
     dim3 block(producer_consumer::params::NUM_THREADS);
 
     // Start timing
@@ -223,7 +249,8 @@ int main() {
     std::cout << "Launching kernel" << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
-    for(int i = 0; i < 10; i++) {
+    constexpr int ITERS = 100;
+    for(int i = 0; i < ITERS; i++) {
         gpu_gemm<<<grid, block, mem_size>>>(globals(K/a_tile::cols, tma_A_d, tma_B_d, tma_C_d));
     }
     cudaDeviceSynchronize();
@@ -236,10 +263,10 @@ int main() {
     double seconds = diff.count();
 
     // Calculate TFLOPs
-    double flops = double(2.0) * M * N * K * 10; // 2 FLOPs per multiply-add
+    double flops = double(2.0) * M * N * K * ITERS; // 2 FLOPs per multiply-add
     double tflops = (flops / seconds) / 1e12;
 
-    std::cout << "Launched kernel with grid (" << grid.x << ", " << grid.y << ") and block (" << block.x << ")\n";
+    std::cout << "Launched kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/a_tile::cols << " reduction block dimension\n";
     std::cout << "Kernel execution time: " << seconds << " seconds\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
     
