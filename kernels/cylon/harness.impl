@@ -1,0 +1,215 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <cmath>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+
+constexpr int B     = 1;
+constexpr int N     = 4096;
+constexpr int D_QK  = 64;
+constexpr int D_VO  = 128;
+
+// Error checking macro
+#define CudaCheckError() { \
+    cudaError_t e=cudaGetLastError(); \
+    if(e!=cudaSuccess) { \
+        printf("Cuda failure %s:%d: '%s'\n",__FILE__,__LINE__,cudaGetErrorString(e)); \
+        exit(0); \
+    } \
+}
+
+uint64_t flops(int b, int n, int d_qk, int d_vo, int collab_size) {
+    uint64_t flops_per_sm = (64*d_qk*d_vo*2);
+    flops_per_sm *= 2;
+    flops_per_sm *= 2;
+    flops_per_sm *= 2;
+    flops_per_sm *= n / 64;
+    return flops_per_sm * b * collab_size;
+}
+
+std::vector<float> loadDataFromFile(const std::string& filename, int expectedSize) {
+    std::vector<float> data;
+    std::ifstream file(filename);
+    
+    if (!file.is_open()) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return data;
+    }
+
+    float value;
+    while (file >> value) {
+        data.push_back(value);
+    }
+
+    if (data.size() != expectedSize) {
+        std::cerr << "Warning: File " << filename << " contains " << data.size() 
+                  << " elements, expected " << expectedSize << std::endl;
+    }
+
+    return data;
+}
+
+void convertToBF16(const std::vector<float>& input, bf16* output, int size) {
+    for (int i = 0; i < size; ++i) {
+        output[i] = __float2bfloat16(input[i]);
+    }
+}
+
+void compareOutputs(const bf16* computed, const std::vector<float>& reference, int size, float tolerance) {
+    int mismatches[4] = {0, 0, 0, 0};
+    float total_error = 0.0f;
+    float total_magnitude = 0.0f;
+
+    for (int i = 0; i < size; ++i) {
+        float comp = __bfloat162float(computed[i]);
+        float ref = reference[i];
+        float diff = std::abs(comp - ref);
+        
+        total_error += diff;
+        total_magnitude += std::abs(ref);
+
+        if (diff > 0.0001) mismatches[0]++;
+        if (diff > 0.001) mismatches[1]++;
+        if (diff > 0.01) mismatches[2]++;
+        if (diff > 0.1) mismatches[3]++;
+
+        if (diff > tolerance && mismatches[0] <= 10) {
+            std::cout << "Mismatch at index " << i << ": Computed = " << comp << ", Reference = " << ref << std::endl;
+        }
+    }
+    
+    float avg_error = total_error / size;
+    float avg_magnitude = total_magnitude / size;
+    float avg_percent_diff = (avg_error / avg_magnitude) * 100;
+
+    std::cout << "Mismatches > 0.0001: " << mismatches[0] << " (" << (float)mismatches[0] / size * 100 << "%)" << std::endl;
+    std::cout << "Mismatches > 0.001: " << mismatches[1] << " (" << (float)mismatches[1] / size * 100 << "%)" << std::endl;
+    std::cout << "Mismatches > 0.01: " << mismatches[2] << " (" << (float)mismatches[2] / size * 100 << "%)" << std::endl;
+    std::cout << "Mismatches > 0.1: " << mismatches[3] << " (" << (float)mismatches[3] / size * 100 << "%)" << std::endl;
+    std::cout << "Average error: " << avg_error << std::endl;
+    std::cout << "Average magnitude of reference: " << avg_magnitude << std::endl;
+    std::cout << "Average percent difference: " << avg_percent_diff << "%" << std::endl;
+}
+
+int main() {
+    // Load data from files
+    auto q_data = loadDataFromFile("q.txt", B * N * D_QK);
+    auto k_data = loadDataFromFile("k.txt", B * N * D_QK);
+    auto v_data = loadDataFromFile("v.txt", B * N * D_VO);
+    auto q_map_data = loadDataFromFile("q_map.txt", COLLABORATIVE_SMS * D_QK * D_QK * 2);
+    auto k_map_data = loadDataFromFile("k_map.txt", COLLABORATIVE_SMS * D_QK * D_QK * 2);
+    auto ref_output_data = loadDataFromFile("reference_output.txt", B * N * D_VO);
+    std::cout << "Loaded data from files" << std::endl;
+
+    // Create arrays and convert data to bf16
+    bf16* q = new bf16[B * N * D_QK];
+    bf16* k = new bf16[B * N * D_QK];
+    bf16* v = new bf16[B * N * D_VO];
+    bf16* o = new bf16[B * N * D_VO];
+    bf16* q_map = new bf16[COLLABORATIVE_SMS * D_QK * D_QK * 2];
+    bf16* k_map = new bf16[COLLABORATIVE_SMS * D_QK * D_QK * 2];
+
+    convertToBF16(q_data, q, B * N * D_QK);
+    convertToBF16(k_data, k, B * N * D_QK);
+    convertToBF16(v_data, v, B * N * D_VO);
+    convertToBF16(q_map_data, q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2);
+    convertToBF16(k_map_data, k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2);
+    std::cout << "Converted data to bf16" << std::endl;
+
+    // Create CUDA tensors
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_q_map, *d_k_map;
+    cudaMalloc(&d_q, B * N * D_QK * sizeof(bf16));
+    cudaMalloc(&d_k, B * N * D_QK * sizeof(bf16));
+    cudaMalloc(&d_v, B * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_o, B * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16));
+    cudaMalloc(&d_k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16));
+    std::cout << "Allocated CUDA tensors" << std::endl;
+
+    // Copy data to GPU
+    cudaMemcpy(d_q, q, B * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k, B * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v, B * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q_map, q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_map, k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16), cudaMemcpyHostToDevice);
+    std::cout << "Copied data to GPU" << std::endl;
+
+    // Create tma descriptors
+    CUtensorMap* q_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, B * N / 64);
+    CUtensorMap* k_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * N / 64);
+    CUtensorMap* v_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, B * N / 64, 2);
+    CUtensorMap* o_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, B * N / 64, 2);
+    CUtensorMap* q_map_tma  = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, COLLABORATIVE_SMS*2);
+    CUtensorMap* k_map_tma  = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, COLLABORATIVE_SMS*2);
+    std::cout << "Created TMA descriptors" << std::endl;
+
+    // Launch kernel
+    cudaFuncSetAttribute(cylon_forwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 200000);
+
+    std::cout << "Launching kernel" << std::endl;
+    auto start = std::chrono::high_resolution_clock::now();
+
+    cylon_forwards<<<B*COLLABORATIVE_SMS, NUM_THREADS, 200000>>>(N, q_tma, k_tma, v_tma, o_tma, q_map_tma, k_map_tma);
+    CudaCheckError();
+
+    // Wait for kernel to finish
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Kernel finished" << std::endl;
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << "Kernel execution time: " << duration.count() << " microseconds" << std::endl;
+    uint64_t flops_executed = flops(B, N, D_QK, D_VO, COLLABORATIVE_SMS);
+    std::cout << "FLOPs executed: " << flops_executed/1e12 << "T\n";
+    std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
+
+    // Copy data from GPU
+    cudaMemcpy(o, d_o, B * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+
+    // Compare outputs
+    std::cout << "Comparing outputs..." << std::endl;
+    compareOutputs(o, ref_output_data, B * N * D_VO, 1e-3f); // Adjust tolerance as needed
+
+    // Dump o to a text file
+    std::ofstream outfile("output.txt");
+    if (outfile.is_open()) {
+        for (int i = 0; i < N * D_VO; i++) { // only dump one head
+            outfile << __bfloat162float(o[i]) << " ";
+            if ((i + 1) % 128 == 0) { // write out each line of o independently
+                outfile << "\n";
+            }
+        }
+        outfile.close();
+        std::cout << "Output dumped to output.txt" << std::endl;
+    } else {
+        std::cerr << "Unable to open output file" << std::endl;
+        return 1;
+    }
+
+    // Free memory
+    delete[] q;
+    delete[] k;
+    delete[] v;
+    delete[] o;
+    delete[] q_map;
+    delete[] k_map;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+    cudaFree(d_q_map);
+    cudaFree(d_k_map);
+    cudaFree(q_tma);
+    cudaFree(k_tma);
+    cudaFree(v_tma);
+    cudaFree(o_tma);
+    cudaFree(q_map_tma);
+    cudaFree(k_map_tma);
+
+    std::cout << "Execution completed successfully!" << std::endl;
+    return 0;
+}
