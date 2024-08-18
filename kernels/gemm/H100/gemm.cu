@@ -181,9 +181,7 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 int main() {
-    const int M = 4096, N = 4096, K = 4096;
-    const size_t size_bytes = M * N * sizeof(float);
-    const size_t size_bytes_bf16 = M * N * sizeof(__nv_bfloat16);
+    const int M = 3968, N = 4352, K = 8192; // Current constraints: M%128=0, N%256=0, K%64=0
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -211,9 +209,9 @@ int main() {
 
     // Allocate device memory
     __nv_bfloat16 *d_A, *d_B, *d_C;
-    cudaMalloc(&d_A, size_bytes_bf16);
-    cudaMalloc(&d_B, size_bytes_bf16);
-    cudaMalloc(&d_C, size_bytes_bf16);
+    cudaMalloc(&d_A, M*K*2);
+    cudaMalloc(&d_B, K*N*2);
+    cudaMalloc(&d_C, M*N*2);
 
     std::cout << "Allocated device memory" << std::endl;
 
@@ -232,8 +230,8 @@ int main() {
     for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
     for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
 
-    cudaMemcpy(d_A, h_A_bf16, size_bytes_bf16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B_bf16, size_bytes_bf16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
 
     std::cout << "Copied matrices to device" << std::endl;
 
@@ -280,7 +278,7 @@ int main() {
 
     // Copy result back to host
     __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
-    cudaMemcpy(h_C_bf16, d_C, size_bytes_bf16, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
