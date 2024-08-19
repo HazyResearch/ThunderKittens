@@ -5,6 +5,7 @@ torch.manual_seed(42)
 
 # Constants
 B = 1     # Batch size
+H = 1     # Heads, which we're currently ignoring in this Python code.
 N = 4096    # Sequence length
 D_QK = 64   # Query/Key dimension
 D_VO = 128  # Value/Output dimension
@@ -54,9 +55,49 @@ def save_tensors_to_file(tensor, filename, width=64):
     with open(filename, 'w') as f:
         f.write(rep)
 
-def terraced_linear_attention_backward(grad_output, q, k, v, q_map, k_map):
+def terraced_linear_attention_backward(kv_state, grad_output, q, k, v, q_map, k_map):
+    q_grad, k_grad, v_grad = torch.zeros_like(q).to(torch.float32), torch.zeros_like(k).to(torch.float32), torch.zeros_like(v).to(torch.float32)
+    q_map_grad, k_map_grad = torch.zeros_like(q_map).to(torch.float32), torch.zeros_like(k_map).to(torch.float32)
+
+    # We need to iterate backwards through the blocks in chunks of 64
+    for b in range(B):
+        for s in range(EXPANSION_FACTOR):
+            kv = -kv_state[b, s, :, :].to(torch.float32) # negate at first, so that we can do mma's onto it with + later. And we'll just invert everything at the end.
+            kv_grad = torch.zeros_like(kv).to(torch.float32)
+            for _id in range(N // 64):
+                chunk_id = (N//64)-_id-1
+                qm, km = -q_map[s].to(torch.float32), -k_map[s].to(torch.float32)
+                q_chunk = q[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
+                k_chunk = k[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
+                v_chunk = v[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
+                o_grad_chunk = grad_output[b, chunk_id*64:(chunk_id+1)*64]
+                # First we need to subtract (add, since negated) the KV contribution from that local state.
+                k_head_prerelu = torch.einsum('dk,nd->nk', km, k_chunk)
+                kv += torch.einsum('nk,nv->kv', torch.relu(-k_head_prerelu), v_chunk) # we now have the kv state as it was before the last iter forwards
+
+                # next, we need to compute q_head pre-relu and its corresponding gradients
+                q_head_prerelu = torch.einsum('dk,nd->nk', qm, q_chunk)
+                q_head_chunk_grad = torch.einsum('nv,kv->nk', o_grad_chunk, kv) * (q_head_prerelu<0) # incorporate grad of relu
+                q_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,dk->nd', q_head_chunk_grad, qm)
+                q_map_grad[s] += torch.einsum('dn,nk->dk', q_chunk.T, q_head_chunk_grad)
+
+                # next we accumulate the gradient on the current kv state
+                kv_grad += torch.einsum('nk,nv->kv', (q_head_prerelu<0)*q_head_prerelu, o_grad_chunk)
+
+                v_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('kv,nk->nv', kv_grad, (k_head_prerelu<0)*k_head_prerelu)
+                
+                k_head_chunk_grad = torch.einsum('nv,kv->nk', v_chunk, kv_grad) * (k_head_prerelu<0)
+                k_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,dk->nd', k_head_chunk_grad, km)
+                k_map_grad[s] += torch.einsum('dn,nk->dk', k_chunk.T, k_head_chunk_grad)
+
+                print(f'iter {_id} kv.abs().mean().item(): {kv.abs().mean().item()}')
+
+    for s in range(EXPANSION_FACTOR):
+        q_map_grad[s] = -q_map_grad[s]
+        k_map_grad[s] = -k_map_grad[s]
+
     # Todo
-    return torch.zeros_like(q), torch.zeros_like(k), torch.zeros_like(v), torch.zeros_like(q_map), torch.zeros_like(k_map)
+    return q_grad, k_grad, v_grad, q_map_grad, k_map_grad
 
 def main():
     # Initialize mask
@@ -77,7 +118,7 @@ def main():
     print('Computed output')
 
     # Create a random gradient for the output
-    o_grad = torch.randn_like(output)
+    o_grad = torch.randn_like(output).to(torch.float32)
     print('Generated random gradient for output')
 
     # Compute backward pass
@@ -93,27 +134,24 @@ def main():
     print('k_map_grad:', k_map.grad.shape)
 
     # Compute grad the other way, with the same output
-    grad_q, grad_k, grad_v, grad_q_map, grad_k_map = terraced_linear_attention_backward(o_grad, q, k, v, q_map, k_map)
+    grad_q, grad_k, grad_v, grad_q_map, grad_k_map = terraced_linear_attention_backward(kv_state, o_grad, q, k, v, q_map, k_map)
     print('Computed backward pass')
 
     # Print some gradient statistics
-    def print_grad_stats(name, grad):
-        if grad is not None:
-            print(f'{name} grad - min: {grad.min().item():.6f}, max: {grad.max().item():.6f}, mean: {grad.mean().item():.6f}, std: {grad.std().item():.6f}')
-        else:
-            print(f'{name} grad is None')
+    def print_grad_stats(name, grad, gref):
+        print(f'{name} REF - min: {gref.min().item():.6f}, max: {gref.max().item():.6f}, mean: {gref.mean().item():.6f}, abs mean: {gref.abs().mean().item():.6f}, std: {gref.std().item():.6f}')
+        print(f'{name} NEW - min: {grad.min().item():.6f}, max: {grad.max().item():.6f}, mean: {grad.mean().item():.6f}, abs mean: {grad.abs().mean().item():.6f}, std: {grad.std().item():.6f}')
+        print(f'{name} avg % error: {100*((grad-gref).abs().mean()/gref.abs().mean()).item():.6f}%')
 
     print('\nGradient statistics:')
-    print_grad_stats('grad_q_1', q.grad)
-    print_grad_stats('grad_q_2', grad_q)
-    print_grad_stats('grad_k_1', k.grad)
-    print_grad_stats('grad_k_2', grad_k)
-    print_grad_stats('grad_v_1', v.grad)
-    print_grad_stats('grad_v_2', grad_v)
-    print_grad_stats('grad_v_q_map_1', q_map.grad)
-    print_grad_stats('grad_v_q_map_2', grad_q_map)
-    print_grad_stats('grad_v_k_map_1', k_map.grad)
-    print_grad_stats('grad_v_k_map_2', grad_k_map)
+    print_grad_stats('grad_q', grad_q, q.grad)
+    print_grad_stats('grad_k', grad_k, k.grad)
+    print_grad_stats('grad_v', grad_v, v.grad)
+    print_grad_stats('grad_q_map', grad_q_map, q_map.grad)
+    print_grad_stats('grad_k_map', grad_k_map, k_map.grad)
+
+    print(grad_k[0,0,:10])
+    print(k.grad[0,0,:10])
 
     # Save tensors to files
     save_tensors_to_file(q, 'q.txt', D_QK)
@@ -124,8 +162,9 @@ def main():
     save_tensors_to_file(output, 'reference_output.txt', D_VO)
     save_tensors_to_file(kv_state, 'reference_kv_state.txt', D_QK*D_VO)
 
-    # print("Tensors have been initialized and saved to files.")
-    # print("Output shape:", output.shape)
+    print("Tensors have been initialized and saved to files.")
+    print("Output shape:", output.shape)
+    print("KV state shape:", kv_state.shape)
 
 if __name__ == "__main__":
     main()
