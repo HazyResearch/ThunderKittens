@@ -44,10 +44,11 @@ def compute_output(q, k, v, q_map, k_map, mask):
     attn = torch.einsum('benk,bemk->benm', q_heads, k_heads) * mask
     output = torch.einsum('benm,bmv->benv', attn.to(torch.bfloat16), v).to(torch.bfloat16)
     output = torch.sum(output, dim=1) # sum over projections
-    return output.to(torch.bfloat16)
+    kv_state = torch.einsum('benk,bnv->bekv', k_heads, v)
+    return output.to(torch.bfloat16), kv_state.to(torch.bfloat16)
 
 def save_tensors_to_file(tensor, filename, width=64):
-    np_array = tensor.to(torch.float32).cpu().numpy().reshape((-1,width))
+    np_array = tensor.detach().to(torch.float32).cpu().numpy().reshape((-1,width))
     rep = '\n'.join([' '.join([f'{x:0.6f}' for x in row]) for row in np_array])
     print(f'Writing shape {np_array.shape} to {filename}')
     with open(filename, 'w') as f:
@@ -72,7 +73,7 @@ def main():
     print('Initialized tensors')
 
     # Compute output (you'll implement this function)
-    output = compute_output(q, k, v, q_map, k_map, mask)
+    output, kv_state = compute_output(q, k, v, q_map, k_map, mask)
     print('Computed output')
 
     # Create a random gradient for the output
@@ -115,12 +116,13 @@ def main():
     print_grad_stats('grad_v_k_map_2', grad_k_map)
 
     # Save tensors to files
-    # save_tensors_to_file(q, 'q.txt', D_QK)
-    # save_tensors_to_file(k, 'k.txt', D_QK)
-    # save_tensors_to_file(v, 'v.txt', D_VO)
-    # save_tensors_to_file(q_map, 'q_map.txt', D_QK)
-    # save_tensors_to_file(k_map, 'k_map.txt', D_QK)
-    # save_tensors_to_file(output, 'reference_output.txt', D_VO)
+    save_tensors_to_file(q, 'q.txt', D_QK)
+    save_tensors_to_file(k, 'k.txt', D_QK)
+    save_tensors_to_file(v, 'v.txt', D_VO)
+    save_tensors_to_file(q_map, 'q_map.txt', D_QK)
+    save_tensors_to_file(k_map, 'k_map.txt', D_QK)
+    save_tensors_to_file(output, 'reference_output.txt', D_VO)
+    save_tensors_to_file(kv_state, 'reference_kv_state.txt', D_QK*D_VO)
 
     # print("Tensors have been initialized and saved to files.")
     # print("Output shape:", output.shape)

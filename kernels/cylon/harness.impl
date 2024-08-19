@@ -7,9 +7,11 @@
 #include <cuda_bf16.h>
 
 constexpr int B     = 1;
+constexpr int H     = 1;
 constexpr int N     = 4096;
 constexpr int D_QK  = 64;
 constexpr int D_VO  = 128;
+constexpr int COLLABORATIVE_SMS = 1;
 
 // Error checking macro
 #define CudaCheckError() { \
@@ -51,19 +53,25 @@ std::vector<float> loadDataFromFile(const std::string& filename, int expectedSiz
     return data;
 }
 
-void convertToBF16(const std::vector<float>& input, bf16* output, int size) {
-    for (int i = 0; i < size; ++i) {
+void convertToBF16(const std::vector<float>& input, bf16* output) {
+    for (int i = 0; i < input.size(); ++i) {
         output[i] = __float2bfloat16(input[i]);
     }
 }
 
-void compareOutputs(const bf16* computed, const std::vector<float>& reference, int size, float tolerance) {
+template<typename T>
+void compareOutputs(const T* computed, const std::vector<float>& reference, int size, float tolerance) {
     int mismatches[4] = {0, 0, 0, 0};
     float total_error = 0.0f;
     float total_magnitude = 0.0f;
 
     for (int i = 0; i < size; ++i) {
-        float comp = __bfloat162float(computed[i]);
+        float comp;
+        if constexpr (std::is_same_v<T, bf16>) {
+            comp = __bfloat162float(computed[i]);
+        } else if constexpr (std::is_same_v<T, float>) {
+            comp = computed[i];
+        }
         float ref = reference[i];
         float diff = std::abs(comp - ref);
         
@@ -95,63 +103,69 @@ void compareOutputs(const bf16* computed, const std::vector<float>& reference, i
 
 int main() {
     // Load data from files
-    auto q_data = loadDataFromFile("q.txt", B * N * D_QK);
-    auto k_data = loadDataFromFile("k.txt", B * N * D_QK);
-    auto v_data = loadDataFromFile("v.txt", B * N * D_VO);
-    auto q_map_data = loadDataFromFile("q_map.txt", COLLABORATIVE_SMS * D_QK * D_QK * 2);
-    auto k_map_data = loadDataFromFile("k_map.txt", COLLABORATIVE_SMS * D_QK * D_QK * 2);
-    auto ref_output_data = loadDataFromFile("reference_output.txt", B * N * D_VO);
+    auto q_data = loadDataFromFile("q.txt", B * H * N * D_QK);
+    auto k_data = loadDataFromFile("k.txt", B * H * N * D_QK);
+    auto v_data = loadDataFromFile("v.txt", B * H * N * D_VO);
+    auto q_map_data = loadDataFromFile("q_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    auto k_map_data = loadDataFromFile("k_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    auto ref_output_data = loadDataFromFile("reference_output.txt", B * H * N * D_VO);
+    auto ref_kv_state_data = loadDataFromFile("reference_kv_state.txt", B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
     std::cout << "Loaded data from files" << std::endl;
 
     // Create arrays and convert data to bf16
-    bf16* q = new bf16[B * N * D_QK];
-    bf16* k = new bf16[B * N * D_QK];
-    bf16* v = new bf16[B * N * D_VO];
-    bf16* o = new bf16[B * N * D_VO];
-    bf16* q_map = new bf16[COLLABORATIVE_SMS * D_QK * D_QK * 2];
-    bf16* k_map = new bf16[COLLABORATIVE_SMS * D_QK * D_QK * 2];
+    bf16* q = new bf16[B * H * N * D_QK];
+    bf16* k = new bf16[B * H * N * D_QK];
+    bf16* v = new bf16[B * H * N * D_VO];
+    bf16* o = new bf16[B * H * N * D_VO];
+    float* kv_state = new float[B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO];
+    bf16* q_map = new bf16[H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM];
+    bf16* k_map = new bf16[H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM];
 
-    convertToBF16(q_data, q, B * N * D_QK);
-    convertToBF16(k_data, k, B * N * D_QK);
-    convertToBF16(v_data, v, B * N * D_VO);
-    convertToBF16(q_map_data, q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2);
-    convertToBF16(k_map_data, k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2);
+    convertToBF16(q_data, q);
+    convertToBF16(k_data, k);
+    convertToBF16(v_data, v);
+    convertToBF16(q_map_data, q_map);
+    convertToBF16(k_map_data, k_map);
     std::cout << "Converted data to bf16" << std::endl;
 
     // Create CUDA tensors
     bf16 *d_q, *d_k, *d_v, *d_o, *d_q_map, *d_k_map;
-    cudaMalloc(&d_q, B * N * D_QK * sizeof(bf16));
-    cudaMalloc(&d_k, B * N * D_QK * sizeof(bf16));
-    cudaMalloc(&d_v, B * N * D_VO * sizeof(bf16));
-    cudaMalloc(&d_o, B * N * D_VO * sizeof(bf16));
-    cudaMalloc(&d_q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16));
-    cudaMalloc(&d_k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16));
+    float *d_kv_state;
+    cudaMalloc(&d_q, B * H * N * D_QK * sizeof(bf16));
+    cudaMalloc(&d_k, B * H * N * D_QK * sizeof(bf16));
+    cudaMalloc(&d_v, B * H * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_o, B * H * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float));
+    cudaMalloc(&d_q_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16));
+    cudaMalloc(&d_k_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16));
     std::cout << "Allocated CUDA tensors" << std::endl;
 
     // Copy data to GPU
-    cudaMemcpy(d_q, q, B * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, k, B * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, v, B * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_q_map, q_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k_map, k_map, COLLABORATIVE_SMS * D_QK * D_QK * 2 * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, q, B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k, B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v, B * H * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q_map, q_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_map, k_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
     std::cout << "Copied data to GPU" << std::endl;
 
     // Create tma descriptors
-    CUtensorMap* q_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, B * N / 64);
-    CUtensorMap* k_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * N / 64);
-    CUtensorMap* v_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, B * N / 64, 2);
-    CUtensorMap* o_tma      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, B * N / 64, 2);
-    CUtensorMap* q_map_tma  = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, COLLABORATIVE_SMS*2);
-    CUtensorMap* k_map_tma  = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, COLLABORATIVE_SMS*2);
+    CUtensorMap* q_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, B * H * N / 64);
+    CUtensorMap* k_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * H * N / 64);
+    CUtensorMap* v_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, B * H * N / 64, 2);
+    CUtensorMap* o_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, B * H * N / 64, 2);
+    CUtensorMap* kv_state_tma = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, B * H * COLLABORATIVE_SMS * STATE_PER_SM, 2);
+    CUtensorMap* q_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
+    CUtensorMap* k_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
     std::cout << "Created TMA descriptors" << std::endl;
 
     // Launch kernel
-    cudaFuncSetAttribute(cylon_forwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 200000);
+    cudaFuncSetAttribute(cylon_forwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 225000);
 
-    std::cout << "Launching kernel" << std::endl;
+    dim3 grid(B, H, COLLABORATIVE_SMS);
+    std::cout << "Launching kernel with grid of " << B << "x" << H << "x" << COLLABORATIVE_SMS << " and blocks of " << NUM_THREADS << " threads" << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
-    cylon_forwards<<<B*COLLABORATIVE_SMS, NUM_THREADS, 200000>>>(N, q_tma, k_tma, v_tma, o_tma, q_map_tma, k_map_tma);
+    cylon_forwards<<<grid, NUM_THREADS, 225000>>>(N, q_tma, k_tma, v_tma, o_tma, kv_state_tma, q_map_tma, k_map_tma);
     CudaCheckError();
 
     // Wait for kernel to finish
@@ -167,11 +181,14 @@ int main() {
     std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
 
     // Copy data from GPU
-    cudaMemcpy(o, d_o, B * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(o, d_o, B * H * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kv_state, d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
 
     // Compare outputs
     std::cout << "Comparing outputs..." << std::endl;
-    compareOutputs(o, ref_output_data, B * N * D_VO, 1e-3f); // Adjust tolerance as needed
+    compareOutputs(o, ref_output_data, B * H * N * D_VO, 1e-3f); // Adjust tolerance as needed
+    std::cout << "Comparing kv_state..." << std::endl;
+    compareOutputs(kv_state, ref_kv_state_data, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, 1e-3f); // Adjust tolerance as needed
 
     // Dump o to a text file
     std::ofstream outfile("output.txt");
@@ -186,6 +203,21 @@ int main() {
         std::cout << "Output dumped to output.txt" << std::endl;
     } else {
         std::cerr << "Unable to open output file" << std::endl;
+        return 1;
+    }
+    // Dump kv_state to a text file
+    std::ofstream kv_state_file("kv_state.txt");
+    if (kv_state_file.is_open()) {
+        for (int i = 0; i < B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO; i++) { // only dump one head
+            kv_state_file << kv_state[i] << " ";
+            if ((i + 1) % 128 == 0) { // write out each line of o independently
+                kv_state_file << "\n";
+            }
+        }
+        kv_state_file.close();
+        std::cout << "KV state dumped to kv_state.txt" << std::endl;
+    } else {
+        std::cerr << "Unable to open kv_state file" << std::endl;
         return 1;
     }
 
