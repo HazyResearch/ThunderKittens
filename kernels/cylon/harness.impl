@@ -6,11 +6,12 @@
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 
-constexpr int B     = 1;
-constexpr int H     = 1;
-constexpr int N     = 4096;
-constexpr int D_QK  = 64;
-constexpr int D_VO  = 128;
+constexpr int LOAD_B            = 1;
+constexpr int B                 = 528;
+constexpr int H                 = 1;
+constexpr int N                 = 4096;
+constexpr int D_QK              = 64;
+constexpr int D_VO              = 128;
 constexpr int COLLABORATIVE_SMS = 1;
 
 // Error checking macro
@@ -23,10 +24,7 @@ constexpr int COLLABORATIVE_SMS = 1;
 }
 
 uint64_t flops(int b, int n, int d_qk, int d_vo, int collab_size) {
-    uint64_t flops_per_sm = (64*d_qk*d_vo*2);
-    flops_per_sm *= 2;
-    flops_per_sm *= 2;
-    flops_per_sm *= 2;
+    uint64_t flops_per_sm = (64*64*64*2 * 8 * 2); // 8 MMA's, two consumer warpgroups
     flops_per_sm *= n / 64;
     return flops_per_sm * b * collab_size;
 }
@@ -53,14 +51,14 @@ std::vector<float> loadDataFromFile(const std::string& filename, int expectedSiz
     return data;
 }
 
-void convertToBF16(const std::vector<float>& input, bf16* output) {
-    for (int i = 0; i < input.size(); ++i) {
-        output[i] = __float2bfloat16(input[i]);
+void convertToBF16(const std::vector<float>& input, std::vector<bf16>& output) {
+    for (int i = 0; i < output.size(); ++i) {
+        output[i] = __float2bfloat16(input[i%input.size()]);
     }
 }
 
 template<typename T>
-void compareOutputs(const T* computed, const std::vector<float>& reference, int size, float tolerance) {
+void compareOutputs(const std::vector<T>& computed, const std::vector<float>& reference, int size, float tolerance) {
     int mismatches[4] = {0, 0, 0, 0};
     float total_error = 0.0f;
     float total_magnitude = 0.0f;
@@ -72,7 +70,7 @@ void compareOutputs(const T* computed, const std::vector<float>& reference, int 
         } else if constexpr (std::is_same_v<T, float>) {
             comp = computed[i];
         }
-        float ref = reference[i];
+        float ref = reference[i%reference.size()];
         float diff = std::abs(comp - ref);
         
         total_error += diff;
@@ -103,23 +101,23 @@ void compareOutputs(const T* computed, const std::vector<float>& reference, int 
 
 int main() {
     // Load data from files
-    auto q_data = loadDataFromFile("q.txt", B * H * N * D_QK);
-    auto k_data = loadDataFromFile("k.txt", B * H * N * D_QK);
-    auto v_data = loadDataFromFile("v.txt", B * H * N * D_VO);
+    auto q_data = loadDataFromFile("q.txt", LOAD_B * H * N * D_QK);
+    auto k_data = loadDataFromFile("k.txt", LOAD_B * H * N * D_QK);
+    auto v_data = loadDataFromFile("v.txt", LOAD_B * H * N * D_VO);
     auto q_map_data = loadDataFromFile("q_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
     auto k_map_data = loadDataFromFile("k_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
-    auto ref_output_data = loadDataFromFile("reference_output.txt", B * H * N * D_VO);
-    auto ref_kv_state_data = loadDataFromFile("reference_kv_state.txt", B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
+    auto ref_output_data = loadDataFromFile("reference_output.txt", LOAD_B * H * N * D_VO);
+    auto ref_kv_state_data = loadDataFromFile("reference_kv_state.txt", LOAD_B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
     std::cout << "Loaded data from files" << std::endl;
 
     // Create arrays and convert data to bf16
-    bf16* q = new bf16[B * H * N * D_QK];
-    bf16* k = new bf16[B * H * N * D_QK];
-    bf16* v = new bf16[B * H * N * D_VO];
-    bf16* o = new bf16[B * H * N * D_VO];
-    float* kv_state = new float[B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO];
-    bf16* q_map = new bf16[H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM];
-    bf16* k_map = new bf16[H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM];
+    std::vector<bf16> q(B * H * N * D_QK);
+    std::vector<bf16> k(B * H * N * D_QK);
+    std::vector<bf16> v(B * H * N * D_VO);
+    std::vector<bf16> o(B * H * N * D_VO);
+    std::vector<float> kv_state(B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
+    std::vector<bf16> q_map(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    std::vector<bf16> k_map(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
 
     convertToBF16(q_data, q);
     convertToBF16(k_data, k);
@@ -141,11 +139,11 @@ int main() {
     std::cout << "Allocated CUDA tensors" << std::endl;
 
     // Copy data to GPU
-    cudaMemcpy(d_q, q, B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, k, B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, v, B * H * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_q_map, q_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k_map, k_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, q.data(), B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k.data(), B * H * N * D_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v.data(), B * H * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q_map, q_map.data(), H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_map, k_map.data(), H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
     std::cout << "Copied data to GPU" << std::endl;
 
     // Create tma descriptors
@@ -181,8 +179,8 @@ int main() {
     std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
 
     // Copy data from GPU
-    cudaMemcpy(o, d_o, B * H * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
-    cudaMemcpy(kv_state, d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(o.data(), d_o, B * H * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kv_state.data(), d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
 
     // Compare outputs
     std::cout << "Comparing outputs..." << std::endl;
@@ -222,13 +220,6 @@ int main() {
     }
 
     // Free memory
-    delete[] q;
-    delete[] k;
-    delete[] v;
-    delete[] o;
-    delete[] q_map;
-    delete[] k_map;
-
     cudaFree(d_q);
     cudaFree(d_k);
     cudaFree(d_v);

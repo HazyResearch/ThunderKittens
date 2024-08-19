@@ -44,7 +44,6 @@ void cylon_forwards(int N,
     st_bf_4x4 (&k_map)[2] = alloc.allocate<st_bf_4x4, 2>(); // featurized k (16384)
 
     st_fl_4x4 (&kv_state_smem)[2][2] = reinterpret_cast<st_fl_4x4(&)[2][2]>(q_smem); // we can reuse old memory for the writeout at the end
-    // st_fl_4x4 (&kv_state_smem)[2] = alloc.allocate<st_fl_4x4, 2>(); // 64x128, but easier to work with when split up. (32768)
 
     // Initialize barriers
     __shared__ kittens::barrier inputs_arrived[2], inputs_finished[2], outputs_ready[2];
@@ -94,7 +93,7 @@ void cylon_forwards(int N,
         else if(warpid == NUM_CONSUMER_WARPS + 1) { // responsible for storing outputs
             for (int chunk_idx = 0; chunk_idx < n_chunks; chunk_idx++, tic=tic^1, toc=toc^1) {
                 wait(outputs_ready[tic], (chunk_idx/2)%2); // phase changes at half the rate of the tic/toc
-                int store_idx = n_chunks * batch_id + chunk_idx;
+                int store_idx = ((batch_id * gridDim.y) + head_id) * n_chunks + chunk_idx;
                 tma::store_add_async(tma_o, o_smem[0], store_idx, 0); // store
                 tma::store_add_async(tma_o, o_smem[1], store_idx, 1);
                 tma::store_commit_group();
