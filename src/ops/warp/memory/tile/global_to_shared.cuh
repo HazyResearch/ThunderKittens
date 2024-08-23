@@ -47,6 +47,21 @@ __device__ static inline void load(ST &dst, const bf16 *src, const int row_strid
     }
 }
 /**
+ * @brief Loads bf16 data from global memory into a complex shared memory tile with a row layout.
+ *
+ * @tparam CST The type of the complex shared tile.
+ * @param[out] dst The destination complex shared memory tile.
+ * @param[in] resrc The source global memory array for the real component.
+ * @param[in] imsrc The source global memory array for the imaginary component.
+ * @param re_row_stride[in] The stride between rows in the source real component array.
+ * @param im_row_stride[in] The stride between rows in the source imaginary component array.
+ */
+template<ducks::st::complex CST>
+__device__ static inline void load(CST &dst, const bf16 *resrc, const bf16 *imsrc, const int re_row_stride, const int im_row_stride) {
+    load(dst.real, resrc, re_row_stride);
+    load(dst.imag, imsrc, im_row_stride);
+}
+/**
  * @brief Stores bf16 data from a shared memory tile with a row layout into global memory.
  *
  * @tparam ST The type of the shared tile.
@@ -75,7 +90,21 @@ __device__ static inline void store(bf16 *dst, const ST &src, const int row_stri
         *(float4*)(&dst[row*row_stride + col]) = *(float4*)(&src[{row, col}]);
     }
 }
-
+/**
+ * @brief Stores bf16 data from a complex shared memory tile with a row layout into global memory.
+ *
+ * @tparam CST The type of the complex shared tile.
+ * @param[out] redst The destination global memory array for the real component.
+ * @param[out] imdst The destination global memory array for the imaginary component.
+ * @param[in] src The source complex shared memory tile.
+ * @param re_row_stride[in] The stride between rows in the destination real component array.
+ * @param im_row_stride[in] The stride between rows in the destination imaginary component array.
+ */
+template<ducks::st::complex CST>
+__device__ static inline void store(const bf16 *redst, const bf16 *imdst, CST &src, const int re_row_stride, const int im_row_stride) {
+    store(redst, src.real, re_row_stride);
+    store(imdst, src.imag, im_row_stride);
+}
 /**
  * @brief Asynchronously loads bf16 data from global memory into a shared memory tile with a row layout using CUDA barriers.
  *
