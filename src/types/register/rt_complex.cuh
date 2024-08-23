@@ -43,13 +43,6 @@ struct rt_cmplx {
     // Real/imag tiles have same internal layout and size
     dtype real;
     dtype imag;
-
-    // // Treat complex tile as single tile w/ all these same properties
-    // static constexpr int height              = _height; ///< Height in subtiles.
-    // static constexpr int width               = _width; ///< Width in subtiles.
-    // static constexpr int rows                = height  * rt_base<typename dtype::dtype, layout>::tile_size; ///< Total number of rows.
-    // static constexpr int cols                = width * rt_base<typename dtype::dtype, layout>::tile_size; ///< Total number of columns.
-    // static constexpr int tile_size           = rt_base<typename dtype::dtype, layout>::tile_size; ///< Size of the base tile.
 };
 
 /* ----------  CONCEPTS  ---------- */

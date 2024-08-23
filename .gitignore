@@ -11,6 +11,7 @@
 **/*.egg-info
 *.egg
 **/printouts
+**/old
 *.txt
 *.pyc
 venv

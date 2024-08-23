@@ -226,13 +226,13 @@ __device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T
  * @param src[in] Reference to the register tile to be transposed.
  * @return A reference to the transposed register tile.
  */
-// template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-// __device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
-//     tile.real = transpose_inplace(tile.real);
-//     tile.imag = transpose_inplace(tile.imag);
+template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
+__device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
+    tile.real = transpose_inplace(tile.real);
+    tile.imag = transpose_inplace(tile.imag);
 
-//     return tile;
-// }
+    return tile;
+}
 
 /* ----------  TYPE SWAPS  ---------- */
 
