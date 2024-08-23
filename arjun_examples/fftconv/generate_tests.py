@@ -6,8 +6,8 @@ import sys
 torch.set_grad_enabled(False)
 
 N = 1024
-B = 1
-H = 1
+B = 16
+H = 32
 N1 = int(np.sqrt(N))
 
 TESTNAME = sys.argv[1]
@@ -27,8 +27,7 @@ else:
 
 def ref_fftconv(u, k, N):
     L = u.shape[-1]
-    # First element in the batch for u
-    u_f = torch.fft.fft(u[0].float(), n = N)
+    u_f = torch.fft.fft(u.float(), n = N)
     k_f = torch.fft.fft(k.float(), n = N)
     y_f = u_f * k_f
     y = torch.fft.ifft(y_f, n = N).real[..., :L].to(u.dtype).contiguous()
@@ -82,15 +81,15 @@ def pytorch_test(u, k, TESTNAME='all'):
 
     # Compute the regular FFT if the seq len isn't 512 or 2048
     k_f = torch.fft.fft(k.float(), n = N)
-    k_fT = k_f.reshape(H, N1, N1).transpose(-1, -2)[0, :]
+    k_fT = k_f.reshape(H, N1, N1).transpose(-1, -2)
     kfT_real = k_fT.real.to(torch.bfloat16).contiguous()
     kfT_imag = k_fT.imag.to(torch.bfloat16).contiguous()
 
     o_real = ref_fftconv(u, k, N)
-    o_real = o_real.unsqueeze(0).reshape(B, H, N1, N1).to(torch.bfloat16)[0, 0, ...].contiguous()
+    o_real = o_real.reshape(B, H, N1, N1).to(torch.bfloat16).contiguous()
 
-    u_real = u_real.reshape(B, H, N1, N1).to(torch.bfloat16)[0, 0, ...].contiguous()
-    u_imag = u_imag.reshape(B, H, N1, N1).to(torch.bfloat16)[0, 0, ...].contiguous()
+    u_real = u_real.reshape(B, H, N1, N1).to(torch.bfloat16).contiguous()
+    u_imag = u_imag.reshape(B, H, N1, N1).to(torch.bfloat16).contiguous()
 
     return u_real, u_imag, kfT_real, kfT_imag, f_real, f_imag, finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, o_real
 
