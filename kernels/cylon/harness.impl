@@ -7,12 +7,12 @@
 #include <cuda_bf16.h>
 
 constexpr int LOAD_B            = 1;
-constexpr int B                 = 528;
+constexpr int B                 = 64;
 constexpr int H                 = 1;
-constexpr int N                 = 4096;
+constexpr int N                 = 8192;
 constexpr int D_QK              = 64;
 constexpr int D_VO              = 128;
-constexpr int COLLABORATIVE_SMS = 1;
+constexpr int COLLABORATIVE_SMS = 8;
 
 // Error checking macro
 #define CudaCheckError() { \
@@ -27,6 +27,11 @@ uint64_t flops(int b, int n, int d_qk, int d_vo, int collab_size) {
     uint64_t flops_per_sm = (64*64*64*2 * 8 * 2); // 8 MMA's, two consumer warpgroups
     flops_per_sm *= n / 64;
     return flops_per_sm * b * collab_size;
+}
+uint64_t flops_bwd(int b, int n, int d_qk, int d_vo, int collab_size) {
+    uint64_t flops_per_sm = (64*64*64*2 * 8 * 2); // 8 MMA's, two consumer warpgroups
+    flops_per_sm *= n / 64;
+    return flops_per_sm * b * collab_size * 2; // we need to launch two blocks per forward pass block
 }
 
 std::vector<float> loadDataFromFile(const std::string& filename, int expectedSize) {
@@ -58,7 +63,7 @@ void convertToBF16(const std::vector<float>& input, std::vector<bf16>& output) {
 }
 
 template<typename T>
-void compareOutputs(const std::vector<T>& computed, const std::vector<float>& reference, int size, float tolerance) {
+void compareOutputs(const std::vector<T>& computed, const std::vector<float>& reference, int size, float print_tolerance) {
     int mismatches[4] = {0, 0, 0, 0};
     float total_error = 0.0f;
     float total_magnitude = 0.0f;
@@ -81,7 +86,7 @@ void compareOutputs(const std::vector<T>& computed, const std::vector<float>& re
         if (diff > 0.01) mismatches[2]++;
         if (diff > 0.1) mismatches[3]++;
 
-        if (diff > tolerance && mismatches[0] <= 10) {
+        if (diff > print_tolerance && mismatches[0] <= 10) {
             std::cout << "Mismatch at index " << i << ": Computed = " << comp << ", Reference = " << ref << std::endl;
         }
     }
@@ -99,43 +104,88 @@ void compareOutputs(const std::vector<T>& computed, const std::vector<float>& re
     std::cout << "Average percent difference: " << avg_percent_diff << "%" << std::endl;
 }
 
+template<typename T> void dumpToFile(const std::string& filename, const std::vector<T>& data, size_t size, size_t lineWidth) {
+    try {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Unable to open " + filename);
+        }
+        for (size_t i = 0; i < size; i++) {
+            if constexpr (std::is_same_v<T, bf16>) {
+                file << __bfloat162float(data[i]) << " ";
+            } else if constexpr (std::is_same_v<T, float>) {
+                file << data[i] << " ";
+            }
+            if ((i + 1) % lineWidth == 0) {
+                file << "\n";
+            }
+        }
+        file.close();
+        std::cout << "Data dumped to " << filename << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error in dumpToFile: " << e.what() << std::endl;
+        throw; // Re-throw the exception for higher-level handling
+    }
+}
+
+
 int main() {
     // Load data from files
-    auto q_data = loadDataFromFile("q.txt", LOAD_B * H * N * D_QK);
-    auto k_data = loadDataFromFile("k.txt", LOAD_B * H * N * D_QK);
-    auto v_data = loadDataFromFile("v.txt", LOAD_B * H * N * D_VO);
-    auto q_map_data = loadDataFromFile("q_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
-    auto k_map_data = loadDataFromFile("k_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
-    auto ref_output_data = loadDataFromFile("reference_output.txt", LOAD_B * H * N * D_VO);
-    auto ref_kv_state_data = loadDataFromFile("reference_kv_state.txt", LOAD_B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
+    auto q_data = loadDataFromFile("inputs/q.txt", LOAD_B * H * N * D_QK);
+    auto k_data = loadDataFromFile("inputs/k.txt", LOAD_B * H * N * D_QK);
+    auto v_data = loadDataFromFile("inputs/v.txt", LOAD_B * H * N * D_VO);
+    auto q_map_data = loadDataFromFile("inputs/q_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    auto k_map_data = loadDataFromFile("inputs/k_map.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    auto o_grad_data = loadDataFromFile("inputs/o_grad.txt", LOAD_B * H * N * D_VO);
+    auto ref_output_data = loadDataFromFile("reference/output.txt", LOAD_B * H * N * D_VO);
+    auto ref_kv_state_data = loadDataFromFile("reference/kv_state.txt", LOAD_B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
+    auto ref_q_grad_data = loadDataFromFile("reference/q_grad.txt", LOAD_B * H * N * D_QK);
+    auto ref_k_grad_data = loadDataFromFile("reference/k_grad.txt", LOAD_B * H * N * D_QK);
+    auto ref_v_grad_data = loadDataFromFile("reference/v_grad.txt", LOAD_B * H * N * D_VO);
+    auto ref_q_map_grad_data = loadDataFromFile("reference/q_map_grad.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    auto ref_k_map_grad_data = loadDataFromFile("reference/k_map_grad.txt", H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
     std::cout << "Loaded data from files" << std::endl;
 
     // Create arrays and convert data to bf16
     std::vector<bf16> q(B * H * N * D_QK);
     std::vector<bf16> k(B * H * N * D_QK);
     std::vector<bf16> v(B * H * N * D_VO);
-    std::vector<bf16> o(B * H * N * D_VO);
     std::vector<float> kv_state(B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO);
     std::vector<bf16> q_map(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
     std::vector<bf16> k_map(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    std::vector<bf16> o_grad(B * H * N * D_VO);
+
+    std::vector<bf16> o(B * H * N * D_VO);
+    std::vector<float> q_grad(B * H * N * D_QK);
+    std::vector<float> k_grad(B * H * N * D_QK);
+    std::vector<float> v_grad(B * H * N * D_VO);
+    std::vector<float> q_map_grad(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
+    std::vector<float> k_map_grad(H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM);
 
     convertToBF16(q_data, q);
     convertToBF16(k_data, k);
     convertToBF16(v_data, v);
     convertToBF16(q_map_data, q_map);
     convertToBF16(k_map_data, k_map);
+    convertToBF16(o_grad_data, o_grad);
     std::cout << "Converted data to bf16" << std::endl;
 
     // Create CUDA tensors
-    bf16 *d_q, *d_k, *d_v, *d_o, *d_q_map, *d_k_map;
-    float *d_kv_state;
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_q_map, *d_k_map, *d_o_grad;
+    float *d_kv_state, *d_q_grad, *d_k_grad, *d_v_grad, *d_q_map_grad, *d_k_map_grad;
     cudaMalloc(&d_q, B * H * N * D_QK * sizeof(bf16));
     cudaMalloc(&d_k, B * H * N * D_QK * sizeof(bf16));
     cudaMalloc(&d_v, B * H * N * D_VO * sizeof(bf16));
-    cudaMalloc(&d_o, B * H * N * D_VO * sizeof(bf16));
     cudaMalloc(&d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float));
     cudaMalloc(&d_q_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16));
     cudaMalloc(&d_k_map, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16));
+    cudaMalloc(&d_o_grad, B * H * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_o, B * H * N * D_VO * sizeof(bf16));
+    cudaMalloc(&d_q_grad, B * H * N * D_QK * sizeof(float));
+    cudaMalloc(&d_k_grad, B * H * N * D_QK * sizeof(float));
+    cudaMalloc(&d_v_grad, B * H * N * D_VO * sizeof(float));
+    cudaMalloc(&d_q_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float));
+    cudaMalloc(&d_k_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float));
     std::cout << "Allocated CUDA tensors" << std::endl;
 
     // Copy data to GPU
@@ -144,6 +194,7 @@ int main() {
     cudaMemcpy(d_v, v.data(), B * H * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_q_map, q_map.data(), H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k_map, k_map.data(), H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o_grad, o_grad.data(), B * H * N * D_VO * sizeof(bf16), cudaMemcpyHostToDevice);
     std::cout << "Copied data to GPU" << std::endl;
 
     // Create tma descriptors
@@ -151,15 +202,22 @@ int main() {
     CUtensorMap* k_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * H * N / 64);
     CUtensorMap* v_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, B * H * N / 64, 2);
     CUtensorMap* o_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, B * H * N / 64, 2);
+    CUtensorMap* o_grad_tma   = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o_grad, B * H * N / 64, 2);
     CUtensorMap* kv_state_tma = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, B * H * COLLABORATIVE_SMS * STATE_PER_SM, 2);
     CUtensorMap* q_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
     CUtensorMap* k_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
+
+    CUtensorMap* q_grad_tma      = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_grad, B * H * N / 64);
+    CUtensorMap* k_grad_tma      = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_grad, B * H * N / 64);
+    CUtensorMap* v_grad_tma      = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_v_grad, B * H * N / 64, 2);
+    CUtensorMap* q_map_grad_tma  = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_map_grad, H * COLLABORATIVE_SMS * STATE_PER_SM);
+    CUtensorMap* k_map_grad_tma  = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_map_grad, H * COLLABORATIVE_SMS * STATE_PER_SM);
     std::cout << "Created TMA descriptors" << std::endl;
 
     // Launch kernel
     cudaFuncSetAttribute(cylon_forwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 225000);
 
-    dim3 grid(B, H, COLLABORATIVE_SMS);
+    dim3 grid(COLLABORATIVE_SMS, H, B);
     std::cout << "Launching kernel with grid of " << B << "x" << H << "x" << COLLABORATIVE_SMS << " and blocks of " << NUM_THREADS << " threads" << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -169,7 +227,9 @@ int main() {
     // Wait for kernel to finish
     cudaDeviceSynchronize();
     CudaCheckError();
-    std::cout << "Kernel finished" << std::endl;
+    std::cout << "Forward kernel finished" << std::endl;
+
+    // PRINT UTILIZATION FOR FORWARD KERNEL //
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -178,6 +238,8 @@ int main() {
     std::cout << "FLOPs executed: " << flops_executed/1e12 << "T\n";
     std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
 
+    // CHECK CORRECTNESS FOR FORWARD KERNEL //
+
     // Copy data from GPU
     cudaMemcpy(o.data(), d_o, B * H * N * D_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
     cudaMemcpy(kv_state.data(), d_kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
@@ -185,39 +247,73 @@ int main() {
     // Compare outputs
     std::cout << "Comparing outputs..." << std::endl;
     compareOutputs(o, ref_output_data, B * H * N * D_VO, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/o.txt", o, N * D_VO, D_VO);
     std::cout << "Comparing kv_state..." << std::endl;
-    compareOutputs(kv_state, ref_kv_state_data, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, 1e-3f); // Adjust tolerance as needed
+    compareOutputs(kv_state, ref_kv_state_data, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, 1e-3f);
+    dumpToFile("outputs/kv_state.txt", kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, D_VO);
 
-    // Dump o to a text file
-    std::ofstream outfile("output.txt");
-    if (outfile.is_open()) {
-        for (int i = 0; i < N * D_VO; i++) { // only dump one head
-            outfile << __bfloat162float(o[i]) << " ";
-            if ((i + 1) % 128 == 0) { // write out each line of o independently
-                outfile << "\n";
-            }
-        }
-        outfile.close();
-        std::cout << "Output dumped to output.txt" << std::endl;
-    } else {
-        std::cerr << "Unable to open output file" << std::endl;
-        return 1;
-    }
-    // Dump kv_state to a text file
-    std::ofstream kv_state_file("kv_state.txt");
-    if (kv_state_file.is_open()) {
-        for (int i = 0; i < B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO; i++) { // only dump one head
-            kv_state_file << kv_state[i] << " ";
-            if ((i + 1) % 128 == 0) { // write out each line of o independently
-                kv_state_file << "\n";
-            }
-        }
-        kv_state_file.close();
-        std::cout << "KV state dumped to kv_state.txt" << std::endl;
-    } else {
-        std::cerr << "Unable to open kv_state file" << std::endl;
-        return 1;
-    }
+    // RUN BACKWARDS KERNEL //
+
+    // Launch kernel
+    cudaFuncSetAttribute(cylon_backwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 225000);
+
+    dim3 bwd_grid(COLLABORATIVE_SMS*2, H, B);
+    std::cout << "Launching kernel with grid of " << B << "x" << H << "x" << COLLABORATIVE_SMS*2 << " and blocks of " << NUM_THREADS << " threads" << std::endl;
+    start = std::chrono::high_resolution_clock::now();
+
+    cylon_backwards<<<bwd_grid, NUM_THREADS, 225000>>>(
+        N,
+        q_tma, k_tma, v_tma,
+        q_map_tma, k_map_tma,
+        o_grad_tma, kv_state_tma,
+        q_grad_tma, k_grad_tma, v_grad_tma,
+        q_map_grad_tma, k_map_grad_tma
+    );
+    CudaCheckError();
+
+    // Wait for kernel to finish
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Backwards kernel finished" << std::endl;
+
+    /* PRINT UTILIZATION FOR BACKWARDS KERNEL */
+
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << "Kernel execution time: " << duration.count() << " microseconds" << std::endl;
+    flops_executed = flops_bwd(B, N, D_QK, D_VO, COLLABORATIVE_SMS);
+    std::cout << "FLOPs executed: " << flops_executed/1e12 << "T\n";
+    std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
+
+    /* CHECK CORRECTNESS FOR BACKWARDS KERNEL */
+
+    cudaMemcpy(q_grad.data(), d_q_grad, B * H * N * D_QK * sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "Copied q grad to host" << std::endl;
+    cudaMemcpy(k_grad.data(), d_k_grad, B * H * N * D_QK * sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "Copied k grad to host" << std::endl;
+    cudaMemcpy(v_grad.data(), d_v_grad, B * H * N * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "Copied v grad to host" << std::endl;
+    cudaMemcpy(q_map_grad.data(), d_q_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "Copied q map grad to host" << std::endl;
+    cudaMemcpy(k_map_grad.data(), d_k_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "Copied k map grad to host" << std::endl;
+
+    // Compare outputs
+    std::cout << "Comparing q grad..." << std::endl;
+    compareOutputs(q_grad, ref_q_grad_data, B * H * N * D_QK, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/q_grad.txt", q_grad, N * D_QK, D_QK);
+    std::cout << "Comparing k grad..." << std::endl;
+    compareOutputs(k_grad, ref_k_grad_data, B * H * N * D_QK, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/k_grad.txt", k_grad, N * D_QK, D_QK);
+    std::cout << "Comparing v grad..." << std::endl;
+    compareOutputs(v_grad, ref_v_grad_data, B * H * N * D_VO, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/v_grad.txt", v_grad, N * D_VO, D_VO);
+    std::cout << "Comparing q map grad..." << std::endl;
+    compareOutputs(q_map_grad, ref_q_map_grad_data, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/q_map_grad.txt", q_map_grad, D_QK * D_QK * STATE_PER_SM, D_QK * D_QK);
+    std::cout << "Comparing k map grad..." << std::endl;
+    compareOutputs(k_map_grad, ref_k_map_grad_data, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM, 1e-3f); // Adjust tolerance as needed
+    dumpToFile("outputs/k_map_grad.txt", k_map_grad, D_QK * D_QK * STATE_PER_SM, D_QK * D_QK);
 
     // Free memory
     cudaFree(d_q);
@@ -226,12 +322,26 @@ int main() {
     cudaFree(d_o);
     cudaFree(d_q_map);
     cudaFree(d_k_map);
+    cudaFree(d_kv_state);
+    cudaFree(d_q_grad);
+    cudaFree(d_k_grad);
+    cudaFree(d_v_grad);
+    cudaFree(d_q_map_grad);
+    cudaFree(d_k_map_grad);
+    cudaFree(d_o_grad);
     cudaFree(q_tma);
     cudaFree(k_tma);
     cudaFree(v_tma);
     cudaFree(o_tma);
     cudaFree(q_map_tma);
     cudaFree(k_map_tma);
+    cudaFree(o_grad_tma);
+    cudaFree(kv_state_tma);
+    cudaFree(q_grad_tma);
+    cudaFree(k_grad_tma);
+    cudaFree(v_grad_tma);
+    cudaFree(q_map_grad_tma);
+    cudaFree(k_map_grad_tma);
 
     std::cout << "Execution completed successfully!" << std::endl;
     return 0;

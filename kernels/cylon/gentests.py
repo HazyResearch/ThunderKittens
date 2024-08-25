@@ -6,10 +6,10 @@ torch.manual_seed(42)
 # Constants
 B = 1     # Batch size
 H = 1     # Heads, which we're currently ignoring in this Python code.
-N = 4096    # Sequence length
+N = 8192    # Sequence length
 D_QK = 64   # Query/Key dimension
 D_VO = 128  # Value/Output dimension
-COLLABORATIVE_SMS = 1  # Number of collaborative SMs
+COLLABORATIVE_SMS = 8  # Number of collaborative SMs
 EXPANSION_FACTOR = COLLABORATIVE_SMS*2
 
 def create_terraced_lower_triangular(size, block_size=64):
@@ -66,35 +66,30 @@ def terraced_linear_attention_backward(kv_state, grad_output, q, k, v, q_map, k_
             kv_grad = torch.zeros_like(kv).to(torch.float32)
             for _id in range(N // 64):
                 chunk_id = (N//64)-_id-1
-                qm, km = -q_map[s].to(torch.float32), -k_map[s].to(torch.float32)
+                qm, km = q_map[s].to(torch.float32), k_map[s].to(torch.float32)
                 q_chunk = q[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
                 k_chunk = k[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
                 v_chunk = v[b, chunk_id*64:(chunk_id+1)*64].to(torch.float32)
                 o_grad_chunk = grad_output[b, chunk_id*64:(chunk_id+1)*64]
-                # First we need to subtract (add, since negated) the KV contribution from that local state.
-                k_head_prerelu = torch.einsum('dk,nd->nk', km, k_chunk)
-                kv += torch.einsum('nk,nv->kv', torch.relu(-k_head_prerelu), v_chunk) # we now have the kv state as it was before the last iter forwards
 
-                # next, we need to compute q_head pre-relu and its corresponding gradients
-                q_head_prerelu = torch.einsum('dk,nd->nk', qm, q_chunk)
-                q_head_chunk_grad = torch.einsum('nv,kv->nk', o_grad_chunk, kv) * (q_head_prerelu<0) # incorporate grad of relu
+                # first we update K, V grads based on the current kv state and gradients
+                k_head_prerelu = torch.einsum('nd,dk->nk', k_chunk, km) # CHECK
+                k_head_chunk_grad = torch.einsum('nv,kv->nk', v_chunk, kv_grad) * (k_head_prerelu>0)
+                k_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,dk->nd', k_head_chunk_grad, km)
+                k_map_grad[s] += torch.einsum('nd,nk->dk', k_chunk, k_head_chunk_grad)
+                v_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,kv->nv', torch.relu(k_head_prerelu), kv_grad)
+
+                # second we need to subtract (add, since negated) the KV contribution from that local state.
+                kv += torch.einsum('nk,nv->kv', torch.relu(k_head_prerelu), v_chunk) # we now have the kv state as it was before the last iter forwards
+
+                # third, we need to compute q_head pre-relu and its corresponding gradients
+                q_head_prerelu = torch.einsum('nd,dk->nk', q_chunk, qm)
+                q_head_chunk_grad = -torch.einsum('nv,kv->nk', o_grad_chunk, kv) * (q_head_prerelu>0) # incorporate grad of relu
                 q_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,dk->nd', q_head_chunk_grad, qm)
                 q_map_grad[s] += torch.einsum('dn,nk->dk', q_chunk.T, q_head_chunk_grad)
 
-                # next we accumulate the gradient on the current kv state
-                kv_grad += torch.einsum('nk,nv->kv', (q_head_prerelu<0)*q_head_prerelu, o_grad_chunk)
-
-                v_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('kv,nk->nv', kv_grad, (k_head_prerelu<0)*k_head_prerelu)
-                
-                k_head_chunk_grad = torch.einsum('nv,kv->nk', v_chunk, kv_grad) * (k_head_prerelu<0)
-                k_grad[b, chunk_id*64:(chunk_id+1)*64] += torch.einsum('nk,dk->nd', k_head_chunk_grad, km)
-                k_map_grad[s] += torch.einsum('dn,nk->dk', k_chunk.T, k_head_chunk_grad)
-
-                print(f'iter {_id} kv.abs().mean().item(): {kv.abs().mean().item()}')
-
-    for s in range(EXPANSION_FACTOR):
-        q_map_grad[s] = -q_map_grad[s]
-        k_map_grad[s] = -k_map_grad[s]
+                # finally we accumulate the gradient on the current kv state
+                kv_grad += torch.einsum('nk,nv->kv', torch.relu(q_head_prerelu), o_grad_chunk)
 
     # Todo
     return q_grad, k_grad, v_grad, q_map_grad, k_map_grad
@@ -153,18 +148,25 @@ def main():
     print(grad_k[0,0,:10])
     print(k.grad[0,0,:10])
 
-    # Save tensors to files
-    save_tensors_to_file(q, 'q.txt', D_QK)
-    save_tensors_to_file(k, 'k.txt', D_QK)
-    save_tensors_to_file(v, 'v.txt', D_VO)
-    save_tensors_to_file(q_map, 'q_map.txt', D_QK)
-    save_tensors_to_file(k_map, 'k_map.txt', D_QK)
-    save_tensors_to_file(output, 'reference_output.txt', D_VO)
-    save_tensors_to_file(kv_state, 'reference_kv_state.txt', D_QK*D_VO)
+    if True:
+        # Save tensors to files
+        save_tensors_to_file(q, 'inputs/q.txt', D_QK)
+        save_tensors_to_file(k, 'inputs/k.txt', D_QK)
+        save_tensors_to_file(v, 'inputs/v.txt', D_VO)
+        save_tensors_to_file(q_map, 'inputs/q_map.txt', D_QK)
+        save_tensors_to_file(k_map, 'inputs/k_map.txt', D_QK)
+        save_tensors_to_file(o_grad, 'inputs/o_grad.txt', D_VO)
+        save_tensors_to_file(output, 'reference/output.txt', D_VO)
+        save_tensors_to_file(kv_state, 'reference/kv_state.txt', D_QK*D_VO)
+        save_tensors_to_file(q.grad, 'reference/q_grad.txt', D_QK)
+        save_tensors_to_file(v.grad, 'reference/v_grad.txt', D_VO)
+        save_tensors_to_file(k.grad, 'reference/k_grad.txt', D_QK)
+        save_tensors_to_file(q_map.grad, 'reference/q_map_grad.txt', D_QK)
+        save_tensors_to_file(k_map.grad, 'reference/k_map_grad.txt', D_QK)
 
-    print("Tensors have been initialized and saved to files.")
-    print("Output shape:", output.shape)
-    print("KV state shape:", kv_state.shape)
+        print("Tensors have been initialized and saved to files.")
+        print("Output shape:", output.shape)
+        print("KV state shape:", kv_state.shape)
 
 if __name__ == "__main__":
     main()
