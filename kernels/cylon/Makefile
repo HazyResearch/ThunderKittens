@@ -7,6 +7,12 @@ NVCCFLAGS=-Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcom
 TARGET=cylon
 SRC=cylon.cu
 
+# # Python and Torch include paths
+# PYTHON_INCLUDE := $(shell python -c "import sysconfig; print(sysconfig.get_path('include'))")
+# TORCH_INCLUDE := $(shell python -c "import torch; from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))")
+# # Add Python and Torch include paths to NVCCFLAGS
+# NVCCFLAGS += -I$(PYTHON_INCLUDE) $(TORCH_INCLUDE)
+
 # Default target
 all: $(TARGET)
 

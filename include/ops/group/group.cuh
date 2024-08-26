@@ -47,11 +47,13 @@ template<int n_reg> __device__ static inline void decrease_registers() {
     asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(n_reg));
 }
 
-
 #endif
 
 __device__ static inline void sync() { // warning: this can create trouble if multiple groups of different sizes are using it at the same time.
     asm volatile("bar.sync %0, %1;\n" :: "r"(groupid() + 4), "n"(GROUP_THREADS)); // +4 here is meant to avoid conflicts with bar.sync used by __syncthreads(), a common special case of the above concern.
+}
+__device__ static inline void sync(int id) { // backup: specify the barrier ID manually
+    asm volatile("bar.sync %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
 }
 
 };

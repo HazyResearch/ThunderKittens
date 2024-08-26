@@ -33,13 +33,18 @@ sources = {
                 'kernels/based/sliding/sliding.cu' # this is not working and I'm not... sure we need it?
             ]
         }
+    },
+    'cylon': {
+        'source_files': {
+            'h100': 'kernels/cylon/cylon.cu'
+        }
     }
 }
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
-# kernels = ['attn_inference', 'attn_causal_inference', 'attn_training', 'attn_causal_training', 'hedgehog']
-kernels = ['based']
+# kernels = ['attn_inference', 'attn_causal_inference', 'attn_training', 'attn_causal_training', 'hedgehog'm, 'cylon']
+kernels = ['cylon']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'

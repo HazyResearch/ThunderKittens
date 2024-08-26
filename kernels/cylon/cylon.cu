@@ -1,7 +1,5 @@
 #include "kittens.cuh"
 #include "common/debug.cuh"
-#include "cooperative_groups.h"
-namespace cg = cooperative_groups;
 using namespace kittens;
 
 constexpr int NUM_CONSUMER_WARPGROUPS = 2; // hardcoded, don't touch
@@ -10,10 +8,10 @@ constexpr int NUM_WARPS = NUM_CONSUMER_WARPS + WARPGROUP_WARPS; // hardcoded, do
 constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS; // hardcoded, don't touch
 constexpr int STATE_PER_SM = 2; // how many maps get run on each SM. hardcoded, don't touch
 
-template<ducks::rt::all RT> __device__ inline void featurize(RT &reg) {
+template<ducks::rt::all RT> __device__ static inline void featurize(RT &reg) {
     relu(reg, reg);
 }
-template<ducks::rt::all RT> __device__ inline void featurize_backwards(RT &a_prefeature, RT &a_grad) {
+template<ducks::rt::all RT> __device__ static inline void featurize_backwards(RT &a_prefeature, RT &a_grad) {
     #pragma unroll
     for(int h = 0; h < RT::height; h++) {
         for(int w = 0; w < RT::width; w++) {
@@ -28,7 +26,7 @@ template<ducks::rt::all RT> __device__ inline void featurize_backwards(RT &a_pre
 
 // This is a producer+consumer copy kernel that demonstrates the use of TMA to implement a two-stage pipeline.
 // TODO: We do actually have enough shared memory to make it a three-stage pipeline. 
-__global__ __launch_bounds__(NUM_THREADS, 1)
+static __global__ __launch_bounds__(NUM_THREADS, 1)
 void cylon_forwards(int N,
                     const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v,
                     CUtensorMap* tma_o, CUtensorMap* tma_kv_state,
@@ -224,7 +222,7 @@ void cylon_forwards(int N,
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-__device__ inline void wg_async_store_add(CUtensorMap* tma_dest, st_fl_4x4 &shared, const rt_fl_1x4<> &reg, const int index, const int col=0) {
+__device__ static inline void wg_async_store_add(CUtensorMap* tma_dest, st_fl_4x4 &shared, const rt_fl_1x4<> &reg, const int index, const int col=0) {
     tma::store_async_read_wait();
     warpgroup::sync(warpgroup::groupid()+1);
     warpgroup::store(shared, reg);
@@ -236,7 +234,7 @@ __device__ inline void wg_async_store_add(CUtensorMap* tma_dest, st_fl_4x4 &shar
 }
 
 // This is a producer+consumer copy kernel that demonstrates the use of TMA to implement a two-stage pipeline.
-__global__ __launch_bounds__(NUM_THREADS, 1)
+static __global__ __launch_bounds__(NUM_THREADS, 1)
 void cylon_backwards(int N,
                     const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, // in fp32
                     const CUtensorMap* tma_q_map, const CUtensorMap* tma_k_map, // in bf16
@@ -433,7 +431,6 @@ void cylon_backwards(int N,
                 if(laneid == 0) arrive(inputs_finished[tic]); // we can now start loading the next q, k, v
             }
             // write out q map grad
-            div(q_map_grad, q_map_grad, float(gridDim.z)); // need to take a mean on the batch dimension
             consumers::sync(0); // wait for all warpgroups to finish
             int base_map_idx = (head_id * gridDim.x) + state_id; // gridDim.x is how many SMs are collaborating on each head
             wg_async_store_add(tma_q_map_grad, q_grad_smem, q_map_grad, base_map_idx);
@@ -526,7 +523,6 @@ void cylon_backwards(int N,
                 if(laneid == 0) arrive(inputs_finished[tic]); // we can now start loading the next q, k, v
             }
             // write out k map grad
-            div(k_map_grad, k_map_grad, float(gridDim.z)); // need to take a mean on the batch dimension
             consumers::sync(0); // wait for all warpgroups to finish
             int base_map_idx = (head_id * gridDim.x) + state_id; // gridDim.x is how many SMs are collaborating on each head
             wg_async_store_add(tma_k_map_grad, k_grad_smem, k_map_grad, base_map_idx);
@@ -536,220 +532,216 @@ void cylon_backwards(int N,
     }
 }
 
-// #ifdef TORCH_COMPILE
+#ifdef TORCH_COMPILE
 
 #include "common/pyutils/torch_helpers.cuh"
-// #include <iostream>
+#include <iostream>
 
-// void cylon(
-//     torch::Tensor q, torch::Tensor k, torch::Tensor v,
-//     torch::Tensor o, torch::Tensor kv_state,
-//     torch::Tensor q_map, torch::Tensor k_map
-// ) {
-//     // get general parameters to check
-//     TORCH_CHECK(q.dim() == 4, "q must have 4 dimensions (B,H,N,D)");
-//     auto batch = q.size(0);
-//     auto heads = q.size(1);
-//     auto N = q.size(2);
-//     TORCH_CHECK(N>0 && N%64 == 0, "N must be a multiple of 64");
-//     auto D_QK = q.size(3);
-//     auto D_VO = v.size(3);
-//     TORCH_CHECK(D_QK == 64, "D_QK must be 64");
-//     TORCH_CHECK(D_VO == 128, "D_V must be 128");
+void cylon(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v,
+    torch::Tensor o, torch::Tensor kv_state,
+    torch::Tensor q_map, torch::Tensor k_map
+) {
+    // get general parameters to check
+    TORCH_CHECK(q.dim() == 4, "q must have 4 dimensions (B,H,N,D)");
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N = q.size(2);
+    TORCH_CHECK(N>0 && N%64 == 0, "N must be a multiple of 64");
+    auto D_QK = q.size(3);
+    auto D_VO = v.size(3);
+    TORCH_CHECK(D_QK == 64, "D_QK must be 64");
+    TORCH_CHECK(D_VO == 128, "D_V must be 128");
 
-//     auto expansion = q_map.size(1);
-//     TORCH_CHECK(expansion % 2 == 0, "State expansion must be divisible by 2");
+    auto expansion = q_map.size(1);
+    TORCH_CHECK(expansion % 2 == 0, "State expansion must be divisible by 2");
 
-//     std::cout << "batch: " << batch << " heads: " << heads << " N: " << N << " D: " << D << std::endl;
+    // check K, V, O dimensions, too.
+    TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && k.size(2) == N && k.size(3) == D_QK, "k must be (B,H,N,64)");
+    TORCH_CHECK(v.dim() == 4 && v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D_VO, "v must be (B,H,N,128)");
+    TORCH_CHECK(o.dim() == 4 && o.size(0) == batch && o.size(1) == heads && o.size(2) == N && o.size(3) == D_VO, "o must be (B,H,N,128)");
 
-//     // check K, V, O dimensions, too.
-//     TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && k.size(2) == N && k.size(3) == D_QK, "k must be (B,H,N,64)");
-//     TORCH_CHECK(v.dim() == 4 && v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D_VO, "v must be (B,H,N,128)");
-//     TORCH_CHECK(o.dim() == 4 && o.size(0) == batch && o.size(1) == heads && o.size(2) == N && o.size(3) == D_VO, "o must be (B,H,N,128)");
+    // Check the rest of Q,K,V,O attributes
+    CHECK_INPUT(q); 
+    CHECK_INPUT(k); 
+    CHECK_INPUT(v); 
+    CHECK_INPUT(o);
+    TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
+    TORCH_CHECK(o.scalar_type() == torch::kBFloat16, "o must be bf16");
 
-//     // Check the rest of Q,K,V,O attributes
-//     CHECK_INPUT(q); 
-//     CHECK_INPUT(k); 
-//     CHECK_INPUT(v); 
-//     CHECK_INPUT(o);
-//     TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
-//     TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
-//     TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
-//     TORCH_CHECK(o.scalar_type() == torch::kBFloat16, "o must be bf16");
+    // check kv_state attributes
+    CHECK_INPUT(kv_state);
+    TORCH_CHECK(kv_state.dim() == 5 && kv_state.size(0) == batch && kv_state.size(1) == heads && kv_state.size(2) == expansion && kv_state.size(3) == 64 && kv_state.size(4) == 128, "kv_state must be (B,H,E,64,128)");
+    TORCH_CHECK(kv_state.scalar_type() == torch::kFloat32, "kv_state must be fp32");
 
-//     // check kv_state attributes
-//     CHECK_INPUT(kv_state);
-//     TORCH_CHECK(kv_state.dim() == 5 && kv_state.size(0) == batch && kv_state.size(1) == heads && kv_state.size(2) == expansion && kv_state.size(3) == 64 && kv_state.size(4) == 128, "kv_state must be (B,H,E,64,128)");
-//     TORCH_CHECK(kv_state.scalar_type() == torch::kFloat32, "kv_state must be fp32");
+    // check q_map, k_map attributes
+    CHECK_INPUT(q_map);
+    CHECK_INPUT(k_map);
+    TORCH_CHECK(q_map.dim() == 4 && q_map.size(0) == heads && q_map.size(1) == expansion && q_map.size(2) == 64 && q_map.size(3) == 64, "q_map must have HxEx64x64 shape");
+    TORCH_CHECK(k_map.dim() == 4 && k_map.size(0) == heads && q_map.size(1) == expansion && k_map.size(2) == 64 && k_map.size(3) == 64, "k_map must have HxEx64x64 shape");
+    TORCH_CHECK(q_map.scalar_type() == torch::kBFloat16, "q_map must be bf16");
+    TORCH_CHECK(k_map.scalar_type() == torch::kBFloat16, "k_map must be bf16");
 
-//     // check q_map, k_map attributes
-//     CHECK_INPUT(q_map);
-//     CHECK_INPUT(k_map);
-//     TORCH_CHECK(q_map.dim() == 4 && q_map.size(0) == heads && q_map.size(1) == expansion && q_map.size(2) == 64 && q_map.size(3) == 64, "q_map must have HxEx64x64 shape");
-//     TORCH_CHECK(k_map.dim() == 4 && k_map.size(0) == heads && q_map.size(1) == expansion && k_map.size(2) == 64 && k_map.size(3) == 64, "k_map must have HxEx64x64 shape");
-//     TORCH_CHECK(q_map.scalar_type() == torch::kBFloat16, "q_map must be bf16");
-//     TORCH_CHECK(k_map.scalar_type() == torch::kBFloat16, "k_map must be bf16");
+    c10::BFloat16 *q_ptr        = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr        = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr        = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *o_ptr        = o.data_ptr<c10::BFloat16>();
+    float         *kv_state_ptr = kv_state.data_ptr<float>();
+    c10::BFloat16 *q_map_ptr    = q_map.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_map_ptr    = k_map.data_ptr<c10::BFloat16>();
 
-//     c10::BFloat16 *q_ptr        = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_ptr        = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *v_ptr        = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *o_ptr        = o.data_ptr<c10::BFloat16>();
-//     float         *kv_state_ptr = kv_state.data_ptr<float>();
-//     c10::BFloat16 *q_map_ptr    = q_map.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_map_ptr    = k_map.data_ptr<c10::BFloat16>();
+    const bf16* d_q = reinterpret_cast<const bf16*>(q_ptr); 
+    const bf16* d_k = reinterpret_cast<const bf16*>(k_ptr);  
+    const bf16* d_v = reinterpret_cast<const bf16*>(v_ptr);  
+          bf16* d_o = reinterpret_cast<bf16*>(o_ptr);
+    float* d_kv_state = reinterpret_cast<float*>(kv_state_ptr);  
+    const bf16* d_q_map = reinterpret_cast<const bf16*>(q_map_ptr);
+    const bf16* d_k_map = reinterpret_cast<const bf16*>(k_map_ptr);
 
-//     const bf16* d_q = reinterpret_cast<const bf16*>(q_ptr); 
-//     const bf16* d_k = reinterpret_cast<const bf16*>(k_ptr);  
-//     const bf16* d_v = reinterpret_cast<const bf16*>(v_ptr);  
-//           bf16* d_o = reinterpret_cast<bf16*>(o_ptr);
-//     float* d_kv_state = reinterpret_cast<float*>(kv_state_ptr);  
-//     const bf16* d_q_map = reinterpret_cast<const bf16*>(q_map_ptr);
-//     const bf16* d_k_map = reinterpret_cast<const bf16*>(k_map_ptr);
+    CUtensorMap* tma_q_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, batch*heads*N/64); 
+    CUtensorMap* tma_k_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, batch*heads*N/64);
+    CUtensorMap* tma_v_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, batch*heads*N/64, 2);
+    CUtensorMap* tma_o_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, batch*heads*N/64, 2);
+    CUtensorMap* tma_kv_state_d  = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, batch*heads*expansion, 2);
+    CUtensorMap* tma_q_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, heads*expansion);
+    CUtensorMap* tma_k_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, heads*expansion);
 
-//     CUtensorMap* tma_q_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, batch*heads*N/64); 
-//     CUtensorMap* tma_k_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, batch*heads*N/64);
-//     CUtensorMap* tma_v_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, batch*heads*N/64);
-//     CUtensorMap* tma_o_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, batch*heads*N/64);
-//     CUtensorMap* tma_kv_state_d  = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, batch*heads*expansion, 2);
-//     CUtensorMap* tma_q_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, heads*expansion);
-//     CUtensorMap* tma_k_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, heads*expansion);
+    constexpr unsigned long mem_size = 225000;
+    cudaFuncSetAttribute(
+        cylon_forwards,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
 
-//     constexpr unsigned long mem_size = 225000;
-//     cudaFuncSetAttribute(
-//         cylon_forwards,
-//         cudaFuncAttributeMaxDynamicSharedMemorySize,
-//         mem_size
-//     );
+    cylon_forwards<<<dim3(expansion/2, heads, batch), NUM_THREADS, mem_size>>>(
+        N,
+        tma_q_d, tma_k_d, tma_v_d,
+        tma_o_d, tma_kv_state_d,
+        tma_q_map_d, tma_k_map_d
+    ); 
 
-//     cylon_forwards<<<dim3(expansion/2, heads, batch), NUM_THREADS, mem_size>>>(
-//         N,
-//         tma_q_d, tma_k_d, tma_v_d,
-//         tma_o_d, tma_kv_state_d,
-//         tma_q_map_d, tma_k_map_d
-//     ); 
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
 
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-// }
+void cylon_bwd(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v,
+    torch::Tensor q_map, torch::Tensor k_map,
+    torch::Tensor o_grad, torch::Tensor kv_state,
+    torch::Tensor q_grad, torch::Tensor k_grad, torch::Tensor v_grad,
+    torch::Tensor q_map_grad, torch::Tensor k_map_grad
+) {
+    // get general parameters to check
+    TORCH_CHECK(q.dim() == 4, "q must have 4 dimensions (B,H,N,D)");
+    auto batch = q.size(0);
+    auto heads = q.size(1);
+    auto N = q.size(2);
+    TORCH_CHECK(N>0 && N%64 == 0, "N must be a multiple of 64");
+    auto D_QK = q.size(3);
+    auto D_VO = v.size(3);
+    TORCH_CHECK(D_QK == 64, "D_QK must be 64");
+    TORCH_CHECK(D_VO == 128, "D_V must be 128");
 
-// void cylon_bwd(
-//     torch::Tensor q, torch::Tensor k, torch::Tensor v,
-//     torch::Tensor q_map, torch::Tensor k_map,
-//     torch::Tensor o_grad, torch::Tensor kv_state,
-//     torch::Tensor q_grad, torch::Tensor k_grad, torch::Tensor v_grad,
-//     torch::Tensor q_map_grad, torch::Tensor k_map_grad
-// ) {
-//     // get general parameters to check
-//     TORCH_CHECK(q.dim() == 4, "q must have 4 dimensions (B,H,N,D)");
-//     auto batch = q.size(0);
-//     auto heads = q.size(1);
-//     auto N = q.size(2);
-//     TORCH_CHECK(N>0 && N%64 == 0, "N must be a multiple of 64");
-//     auto D_QK = q.size(3);
-//     auto D_VO = v.size(3);
-//     TORCH_CHECK(D_QK == 64, "D_QK must be 64");
-//     TORCH_CHECK(D_VO == 128, "D_V must be 128");
+    auto expansion = q_map.size(1);
+    TORCH_CHECK(expansion % 2 == 0, "State expansion must be divisible by 2");
 
-//     auto expansion = q_map.size(1);
-//     TORCH_CHECK(expansion % 2 == 0, "State expansion must be divisible by 2");
+    // check K, V, O dimensions, too.
+    TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && k.size(2) == N && k.size(3) == D_QK, "k must be (B,H,N,64)");
+    TORCH_CHECK(v.dim() == 4 && v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D_VO, "v must be (B,H,N,128)");
+    TORCH_CHECK(q_grad.dim() == 4 && q_grad.size(0) == batch && q_grad.size(1) == heads && q_grad.size(2) == N && q_grad.size(3) == D_QK, "q_grad must be (B,H,N,64)");
+    TORCH_CHECK(k_grad.dim() == 4 && k_grad.size(0) == batch && k_grad.size(1) == heads && k_grad.size(2) == N && k_grad.size(3) == D_QK, "k_grad must be (B,H,N,64)");
+    TORCH_CHECK(v_grad.dim() == 4 && v_grad.size(0) == batch && v_grad.size(1) == heads && v_grad.size(2) == N && v_grad.size(3) == D_VO, "v_grad must be (B,H,N,128)");
+    TORCH_CHECK(o_grad.dim() == 4 && o_grad.size(0) == batch && o_grad.size(1) == heads && o_grad.size(2) == N && o_grad.size(3) == D_VO, "o_grad must be (B,H,N,128)");
 
-//     std::cout << "batch: " << batch << " heads: " << heads << " N: " << N << " D: " << D << std::endl;
+    // Check the rest of Q,K,V,O attributes
+    CHECK_INPUT(q); 
+    CHECK_INPUT(k); 
+    CHECK_INPUT(v); 
+    CHECK_INPUT(o_grad);
+    TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
+    TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
+    TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
+    TORCH_CHECK(q_grad.scalar_type() == torch::kFloat32, "q_grad must be fp32");
+    TORCH_CHECK(k_grad.scalar_type() == torch::kFloat32, "k_grad must be fp32");
+    TORCH_CHECK(v_grad.scalar_type() == torch::kFloat32, "v_grad must be fp32");
+    TORCH_CHECK(o_grad.scalar_type() == torch::kBFloat16, "o_grad must be bf16");
 
-//     // check K, V, O dimensions, too.
-//     TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && k.size(2) == N && k.size(3) == D_QK, "k must be (B,H,N,64)");
-//     TORCH_CHECK(v.dim() == 4 && v.size(0) == batch && v.size(1) == heads && v.size(2) == N && v.size(3) == D_VO, "v must be (B,H,N,128)");
-//     TORCH_CHECK(q_grad.dim() == 4 && q_grad.size(0) == batch && q_grad.size(1) == heads && q_grad.size(2) == N && q_grad.size(3) == D_QK, "q_grad must be (B,H,N,64)");
-//     TORCH_CHECK(k_grad.dim() == 4 && k_grad.size(0) == batch && k_grad.size(1) == heads && k_grad.size(2) == N && k_grad.size(3) == D_QK, "k_grad must be (B,H,N,64)");
-//     TORCH_CHECK(v_grad.dim() == 4 && v_grad.size(0) == batch && v_grad.size(1) == heads && v_grad.size(2) == N && v_grad.size(3) == D_VO, "v_grad must be (B,H,N,128)");
-//     TORCH_CHECK(o_grad.dim() == 4 && o_grad.size(0) == batch && o_grad.size(1) == heads && o_grad.size(2) == N && o_grad.size(3) == D_VO, "o_grad must be (B,H,N,128)");
+    // check kv_state attributes
+    CHECK_INPUT(kv_state);
+    TORCH_CHECK(kv_state.dim() == 5 && kv_state.size(0) == batch && kv_state.size(1) == heads && kv_state.size(2) == expansion && kv_state.size(3) == 64 && kv_state.size(4) == 128, "kv_state must be (B,H,E,64,128)");
+    TORCH_CHECK(kv_state.scalar_type() == torch::kFloat32, "kv_state must be fp32");
 
-//     // Check the rest of Q,K,V,O attributes
-//     CHECK_INPUT(q); 
-//     CHECK_INPUT(k); 
-//     CHECK_INPUT(v); 
-//     CHECK_INPUT(o_grad);
-//     TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
-//     TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
-//     TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
-//     TORCH_CHECK(q_grad.scalar_type() == torch::kFloat32, "q_grad must be fp32");
-//     TORCH_CHECK(k_grad.scalar_type() == torch::kFloat32, "k_grad must be fp32");
-//     TORCH_CHECK(v_grad.scalar_type() == torch::kFloat32, "v_grad must be fp32");
-//     TORCH_CHECK(o_grad.scalar_type() == torch::kBFloat16, "o_grad must be bf16");
+    // check q_map, k_map attributes
+    CHECK_INPUT(q_map);
+    CHECK_INPUT(k_map);
+    TORCH_CHECK(q_map.dim() == 4 && q_map.size(0) == heads && q_map.size(1) == expansion && q_map.size(2) == 64 && q_map.size(3) == 64, "q_map must have HxEx64x64 shape");
+    TORCH_CHECK(k_map.dim() == 4 && k_map.size(0) == heads && q_map.size(1) == expansion && k_map.size(2) == 64 && k_map.size(3) == 64, "k_map must have HxEx64x64 shape");
+    TORCH_CHECK(q_map_grad.dim() == 4 && q_map_grad.size(0) == heads && q_map_grad.size(1) == expansion && q_map_grad.size(2) == 64 && q_map_grad.size(3) == 64, "q_map_grad must have HxEx64x64 shape");
+    TORCH_CHECK(k_map_grad.dim() == 4 && k_map_grad.size(0) == heads && k_map_grad.size(1) == expansion && k_map_grad.size(2) == 64 && k_map_grad.size(3) == 64, "k_map_grad must have HxEx64x64 shape");
+    TORCH_CHECK(q_map.scalar_type() == torch::kBFloat16, "q_map must be bf16");
+    TORCH_CHECK(k_map.scalar_type() == torch::kBFloat16, "k_map must be bf16");
+    TORCH_CHECK(q_map_grad.scalar_type() == torch::kFloat32, "q_map_grad must be fp32");
+    TORCH_CHECK(k_map_grad.scalar_type() == torch::kFloat32, "k_map_grad must be fp32");
 
-//     // check kv_state attributes
-//     CHECK_INPUT(kv_state);
-//     TORCH_CHECK(kv_state.dim() == 5 && kv_state.size(0) == batch && kv_state.size(1) == heads && kv_state.size(2) == expansion && kv_state.size(3) == 64 && kv_state.size(4) == 128, "kv_state must be (B,H,E,64,128)");
-//     TORCH_CHECK(kv_state.scalar_type() == torch::kFloat32, "kv_state must be fp32");
+    c10::BFloat16 *q_ptr          = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_ptr          = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_ptr          = v.data_ptr<c10::BFloat16>();
+    float         *q_grad_ptr     = q_grad.data_ptr<float>();
+    float         *k_grad_ptr     = k_grad.data_ptr<float>();
+    float         *v_grad_ptr     = v_grad.data_ptr<float>();
+    c10::BFloat16 *o_grad_ptr     = o_grad.data_ptr<c10::BFloat16>();
+    float         *kv_state_ptr   = kv_state.data_ptr<float>();
+    c10::BFloat16 *q_map_ptr      = q_map.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_map_ptr      = k_map.data_ptr<c10::BFloat16>();
+    float         *q_map_grad_ptr = q_map_grad.data_ptr<float>();
+    float         *k_map_grad_ptr = k_map_grad.data_ptr<float>();
 
-//     // check q_map, k_map attributes
-//     CHECK_INPUT(q_map);
-//     CHECK_INPUT(k_map);
-//     TORCH_CHECK(q_map.dim() == 4 && q_map.size(0) == heads && q_map.size(1) == expansion && q_map.size(2) == 64 && q_map.size(3) == 64, "q_map must have HxEx64x64 shape");
-//     TORCH_CHECK(k_map.dim() == 4 && k_map.size(0) == heads && q_map.size(1) == expansion && k_map.size(2) == 64 && k_map.size(3) == 64, "k_map must have HxEx64x64 shape");
-//     TORCH_CHECK(q_map_grad.dim() == 4 && q_map_grad.size(0) == heads && q_map_grad.size(1) == expansion && q_map_grad.size(2) == 64 && q_map_grad.size(3) == 64, "q_map_grad must have HxEx64x64 shape");
-//     TORCH_CHECK(k_map_grad.dim() == 4 && k_map_grad.size(0) == heads && k_map_grad.size(1) == expansion && k_map_grad.size(2) == 64 && k_map_grad.size(3) == 64, "k_map_grad must have HxEx64x64 shape");
-//     TORCH_CHECK(q_map.scalar_type() == torch::kBFloat16, "q_map must be bf16");
-//     TORCH_CHECK(k_map.scalar_type() == torch::kBFloat16, "k_map must be bf16");
-//     TORCH_CHECK(q_map_grad.scalar_type() == torch::kFloat32, "q_map_grad must be fp32");
-//     TORCH_CHECK(k_map_grad.scalar_type() == torch::kFloat32, "k_map_grad must be fp32");
+    const bf16* d_q        = reinterpret_cast<const bf16*>(q_ptr);
+    const bf16* d_k        = reinterpret_cast<const bf16*>(k_ptr);
+    const bf16* d_v        = reinterpret_cast<const bf16*>(v_ptr);
+         float* d_q_grad   = reinterpret_cast<     float*>(q_grad_ptr);
+         float* d_k_grad   = reinterpret_cast<     float*>(k_grad_ptr);
+         float* d_v_grad   = reinterpret_cast<     float*>(v_grad_ptr);
+          bf16* d_o_grad   = reinterpret_cast<      bf16*>(o_grad_ptr);
+         float* d_kv_state = reinterpret_cast<     float*>(kv_state_ptr);  
+    const bf16* d_q_map    = reinterpret_cast<const bf16*>(q_map_ptr);
+    const bf16* d_k_map    = reinterpret_cast<const bf16*>(k_map_ptr);
+         float* d_q_map_grad    = reinterpret_cast<float*>(q_map_grad_ptr);
+         float* d_k_map_grad    = reinterpret_cast<float*>(k_map_grad_ptr);
 
-//     c10::BFloat16 *q_ptr          = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_ptr          = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *v_ptr          = v.data_ptr<c10::BFloat16>();
-//     float         *q_grad_ptr     = q_grad.data_ptr<float>();
-//     float         *k_grad_ptr     = k_grad.data_ptr<float>();
-//     float         *v_grad_ptr     = v_grad.data_ptr<float>();
-//     c10::BFloat16 *o_grad_ptr     = o_grad.data_ptr<c10::BFloat16>();
-//     float         *kv_state_ptr   = kv_state.data_ptr<float>();
-//     c10::BFloat16 *q_map_ptr      = q_map.data_ptr<c10::BFloat16>();
-//     c10::BFloat16 *k_map_ptr      = k_map.data_ptr<c10::BFloat16>();
-//     float         *q_map_grad_ptr = q_map_grad.data_ptr<float>();
-//     float         *k_map_grad_ptr = k_map_grad.data_ptr<float>();
+    CUtensorMap* tma_q_d          = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, batch*heads*N/64); 
+    CUtensorMap* tma_k_d          = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, batch*heads*N/64);
+    CUtensorMap* tma_v_d          = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, batch*heads*N/64, 2);
+    CUtensorMap* tma_q_grad_d     = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_grad, batch*heads*N/64);
+    CUtensorMap* tma_k_grad_d     = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_grad, batch*heads*N/64);
+    CUtensorMap* tma_v_grad_d     = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_v_grad, batch*heads*N/64, 2);
+    CUtensorMap* tma_o_grad_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o_grad, batch*heads*N/64, 2);
+    CUtensorMap* tma_kv_state_d   = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, batch*heads*expansion, 2);
+    CUtensorMap* tma_q_map_d      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, heads*expansion);
+    CUtensorMap* tma_k_map_d      = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, heads*expansion);
+    CUtensorMap* tma_q_map_grad_d = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_map_grad, heads*expansion);
+    CUtensorMap* tma_k_map_grad_d = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_map_grad, heads*expansion);
 
-//     const bf16* d_q        = reinterpret_cast<const bf16*>(q_ptr);
-//     const bf16* d_k        = reinterpret_cast<const bf16*>(k_ptr);
-//     const bf16* d_v        = reinterpret_cast<const bf16*>(v_ptr);
-//          float* d_q_grad   = reinterpret_cast<     float*>(q_grad_ptr);
-//          float* d_k_grad   = reinterpret_cast<     float*>(k_grad_ptr);
-//          float* d_v_grad   = reinterpret_cast<     float*>(v_grad_ptr);
-//           bf16* d_o_grad   = reinterpret_cast<      bf16*>(o_grad_ptr);
-//          float* d_kv_state = reinterpret_cast<     float*>(kv_state_ptr);  
-//     const bf16* d_q_map    = reinterpret_cast<const bf16*>(q_map_ptr);
-//     const bf16* d_k_map    = reinterpret_cast<const bf16*>(k_map_ptr);
-//          float* d_q_map_grad    = reinterpret_cast<float*>(q_map_grad_ptr);
-//          float* d_k_map_grad    = reinterpret_cast<float*>(k_map_grad_ptr);
+    constexpr unsigned long mem_size = 225000;
+    cudaFuncSetAttribute(
+        cylon_backwards,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
 
-//     CUtensorMap* tma_q_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, batch*heads*N/64); 
-//     CUtensorMap* tma_k_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, batch*heads*N/64);
-//     CUtensorMap* tma_v_d         = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, batch*heads*N/64);
-//     CUtensorMap* tma_q_grad_d    = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_grad, batch*heads*N/64);
-//     CUtensorMap* tma_k_grad_d    = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_grad, batch*heads*N/64);
-//     CUtensorMap* tma_v_grad_d    = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_v_grad, batch*heads*N/64);
-//     CUtensorMap* tma_o_grad_d    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o_grad, batch*heads*N/64);
-//     CUtensorMap* tma_kv_state_d  = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, batch*heads*expansion, 2);
-//     CUtensorMap* tma_q_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, heads*expansion);
-//     CUtensorMap* tma_k_map_d     = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, heads*expansion);
-//     CUtensorMap* tma_q_map_grad_d = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_q_map_grad, heads*expansion);
-//     CUtensorMap* tma_k_map_grad_d = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_k_map_grad, heads*expansion);
+    cylon_backwards<<<dim3(expansion, heads, batch), NUM_THREADS, mem_size>>>(
+        N,
+        tma_q_d, tma_k_d, tma_v_d,
+        tma_q_map_d, tma_k_map_d,
+        tma_o_grad_d, tma_kv_state_d,
+        tma_q_grad_d, tma_k_grad_d, tma_v_grad_d,
+        tma_q_map_grad_d, tma_k_map_grad_d
+    ); 
 
-//     constexpr unsigned long mem_size = 225000;
-//     cudaFuncSetAttribute(
-//         cylon_backwards,
-//         cudaFuncAttributeMaxDynamicSharedMemorySize,
-//         mem_size
-//     );
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
 
-//     cylon_backwards<<<dim3(expansion, heads, batch), NUM_THREADS, mem_size>>>(
-//         N,
-//         tma_q_d, tma_k_d, tma_v_d,
-//         tma_q_map_d, tma_k_map_d,
-//         tma_o_grad_d, tma_kv_state_d,
-//         tma_q_grad_d, tma_k_grad_d, tma_v_grad_d,
-//         tma_q_map_grad_d, tma_k_map_grad_d
-//     ); 
-
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-// }
-
-// #else
-// #include "harness.impl"
-// #endif
+#else
+#include "harness.impl"
+#endif

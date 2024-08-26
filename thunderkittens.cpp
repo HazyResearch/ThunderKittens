@@ -60,6 +60,21 @@ extern void based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 extern void based_sliding_window(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
 #endif
 
+#ifdef TK_COMPILE_CYLON
+extern void cylon(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v,
+    torch::Tensor o, torch::Tensor kv_state,
+    torch::Tensor q_map, torch::Tensor k_map
+);
+extern void cylon_bwd(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v,
+    torch::Tensor q_map, torch::Tensor k_map,
+    torch::Tensor o_grad, torch::Tensor kv_state,
+    torch::Tensor q_grad, torch::Tensor k_grad, torch::Tensor v_grad,
+    torch::Tensor q_map_grad, torch::Tensor k_map_grad
+);
+#endif
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -90,5 +105,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("based_step", based_step, "Based step. Takes tensors (q, k, v, kv_state, k_state, out). q, k, v, out are bf16 (B,H,N,128), kv_state is bf16 (B,H,273,64), and k_state is bf16 (B,H,64).");
     m.def("based_sliding_window", based_sliding_window, "Based sliding window. Takes tensors (q, k, v, o). q, k, v, o are bf16 (B,H,N,64).");
 #endif
+
+#ifdef TK_COMPILE_CYLON
+    m.def("cylon", cylon, """Cylon forward. Takes tensors (q, k, v, o, kv_state, q_map, k_map). q, k, v, o are bf16 (B,H,N,64), kv_state is fp32 (B,H,E,64,64), q_map and k_map are bf16 (H,E,64,64).""");
+    m.def("cylon_bwd", cylon_bwd, "Cylon backward. Takes tensors (q, k, v, q_map, k_map, o_grad, kv_state, q_grad, k_grad, v_grad, q_map_grad, k_map_grad). q, k, v, o_grad are bf16 (B,H,N,64), q_map and k_map are bf16 (H,E,64,64), kv_state is fp32 (B,H,E,64,64). Outputs q_grad, k_grad, v_grad are fp32 (B,H,N,64) and q_map_grad, k_map_grad are fp32 (H,E,64,64).");
+#endif
 }
- 

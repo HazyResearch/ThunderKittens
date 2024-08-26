@@ -297,6 +297,10 @@ int main() {
     std::cout << "Copied q map grad to host" << std::endl;
     cudaMemcpy(k_map_grad.data(), d_k_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float), cudaMemcpyDeviceToHost);
     std::cout << "Copied k map grad to host" << std::endl;
+    for(int i = 0; i < q_map_grad.size(); i++) { // these have to be normalized because the batch dim is kind of fake here
+        q_map_grad[i] *= float(LOAD_B) / float(B);
+        k_map_grad[i] *= float(LOAD_B) / float(B);
+    }
 
     // Compare outputs
     std::cout << "Comparing q grad..." << std::endl;
