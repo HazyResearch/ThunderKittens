@@ -12,6 +12,7 @@
 *.egg
 **/printouts
 #**/old
+**/arjun_dev
 *.ncu-rep
 *.sass
 *.txt

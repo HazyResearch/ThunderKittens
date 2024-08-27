@@ -1,6 +1,6 @@
 //#define TORCH_COMPILE
 
-#include "src/kittens.cuh"
+#include "include/kittens.cuh"
 
 using namespace kittens;
 

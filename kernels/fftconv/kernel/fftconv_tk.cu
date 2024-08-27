@@ -1,6 +1,6 @@
 #define TORCH_COMPILE
 
-#include "src/kittens.cuh"
+#include "include/kittens.cuh"
 #include <cooperative_groups.h>
 #include <cuda/pipeline>
 #include <cuda/barrier>
@@ -171,7 +171,7 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
 
 // For launching from PyTorch
 #ifdef TORCH_COMPILE
-#include "src/common/pyutils/torch_helpers.cuh"
+#include "include/common/pyutils/torch_helpers.cuh"
 torch::Tensor fftconv_tk(
     const torch::Tensor u_real,
     const torch::Tensor u_imag,
