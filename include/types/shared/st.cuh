@@ -6,7 +6,6 @@
 #pragma once
 
 #include "../../common/common.cuh"
-#include "st_layout.cuh"
 #include "sv.cuh"
 
 /* ----------  MAIN TILE STRUCT  ---------- */
@@ -25,7 +24,7 @@ namespace st {
  * 
  * For a type to quack like an st, it should define its identifier as ducks::st::identifier.
  * If a type quacks like ducks::st::identifier, it will be treated as an st by compiler checks.
- * This is particularly useful for subtiles on challenging layouts.
+ * This is particularly useful for subtiles.
  */
 struct identifier {};
 } // namespace st
@@ -36,7 +35,6 @@ template<
     typename _T,
     int _underlying_height,
     int _underlying_width,
-    ducks::st_layout::all _layout,
     int _subtile_height,
     int _subtile_width
 >
@@ -48,13 +46,13 @@ struct st_subtile;
  * @tparam T The data type of the elements in the tile. Not packed!
  * @tparam _height The height of the tile in units of 16-element subtiles.
  * @tparam _width The width of the tile in units of 16-element subtiles.
- * @tparam _layout The memory layout of the tile.
  */
-template<typename _T, int _height, int _width, ducks::st_layout::all _layout>
+template<typename _T, int _height, int _width>
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
-    using layout = _layout; ///< Memory layout of the tile.
-    using dtype = _T; ///< Data type of the elements in the tile.
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_height        = _height;
@@ -72,27 +70,37 @@ struct KITTENS_DEFAULT_ALIGN st {
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (
-        std::is_same_v<layout, ducks::st_layout::swizzle> || std::is_same_v<layout, ducks::st_layout::wgmma_swizzle> ? (
+        sizeof(dtype) == 2 ? (
             underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ? 64  :
-            32
-        ) : 0
+            underlying_width%2 == 0 ?  64 : 32
+        ) :
+        sizeof(dtype) == 4 ? (
+            underlying_width%2 == 0 ? 128 : 64
+        ) : -1
     );
 
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
 
+    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major index default
+        static constexpr int swizzle_repeat = swizzle_bytes * 8;
+        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+        const int outer_idx = c/subtile_cols;
+        const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+        return (T*)(addr ^ swizzle);
+    }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
      *
      * This is the preferred way to access memory within a shared tile, which abstracts
-     * indexing calculations for swizzled or strangely ordered layouts.
+     * indexing calculations for swizzled layouts.
      */
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return *detail::shared_indexer<height, width, layout>::idx(data, rowcol.x, rowcol.y);
+        return *idx(data, rowcol.x, rowcol.y);
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return *(const bf16*)detail::shared_indexer<height, width, layout>::idx((bf16*)data, rowcol.x, rowcol.y);
+        return *(const dtype*)idx((dtype*)data, rowcol.x, rowcol.y);
     }
     __device__ inline       dtype& operator[](int idx)       {
         return data[idx];
@@ -105,8 +113,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     using col_vec = sv<dtype, height>; ///< Column vector type for this tile
     using row_vec = sv<dtype, width>; ///< Row vector type for this tile
     template<int subtile_height, int subtile_width> using subtile = st_subtile<
-        dtype, height, width, layout,
-        subtile_height, subtile_width
+        dtype, height, width, subtile_height, subtile_width
     >; ///< A templated subtile type wrapper for this tile.
 };
 
@@ -125,14 +132,14 @@ template<
     typename _T,
     int _underlying_height,
     int _underlying_width,
-    ducks::st_layout::all _layout,
     int _subtile_height,
     int _subtile_width
 >
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
-    using layout = _layout;
-    using dtype = _T;
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
 
     static constexpr int underlying_height        = _underlying_height;
     static constexpr int underlying_width         = _underlying_width;
@@ -146,6 +153,16 @@ struct st_subtile {
     static constexpr int cols                = width  * kittens::TILE_DIM;
     static constexpr int num_elements        = rows * cols;
 
+    static constexpr int swizzle_bytes = (
+        sizeof(dtype) == 2 ? (
+            underlying_width%4 == 0 ? 128 :
+            underlying_width%2 == 0 ?  64 : 32
+        ) :
+        sizeof(dtype) == 4 ? (
+            underlying_width%2 == 0 ? 128 : 64
+        ) : -1
+    );
+
     dtype *data;
     int row_offset, col_offset;
 
@@ -155,18 +172,29 @@ struct st_subtile {
         col_offset = _col_offset;
     }
 
+    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major index default
+        static constexpr int swizzle_repeat = swizzle_bytes * 8;
+        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+        const int outer_idx = c/subtile_cols;
+        const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+        return (T*)(addr ^ swizzle);
+    }
+    /**
+     * @brief Access a shared tile element using a row and column, as if the tile were row-major.
+     *
+     * This is the preferred way to access memory within a shared tile, which abstracts
+     * indexing calculations for swizzled layouts.
+     */
     __device__ inline       dtype& operator[](const int2 &rowcol)       {
-        return *detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
-        );
+        return *idx(data, rowcol.x+row_offset, rowcol.y+col_offset);
     }
     __device__ inline const dtype& operator[](const int2 &rowcol) const {
-        return *(const bf16*)detail::shared_indexer<underlying_height, underlying_width, layout>::idx(
-            (bf16*)data, rowcol.x+row_offset, rowcol.y+col_offset
-        );
+        return *(const dtype*)idx((dtype*)data, rowcol.x+row_offset, rowcol.y+col_offset);
     }
 
-    // single-index operator[] is left undefined as it would likely be an improper use of st_subtile type
+    // single-index operator[] is left undefined as it would likely be an improper use of st_subtile type.
+    // can of course be end-run by just accessing .data directly.
 
     // vector types
     using col_vec = sv<dtype, height>;
@@ -195,18 +223,45 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf = st<bf16, _height, _width, layout>; // prelim tests indicate this is fastest default
+template<int _height, int _width> using st_bf = st<bf16, _height, _width>;
+template<int _height, int _width> using st_hf = st<half, _height, _width>;
+template<int _height, int _width> using st_fl = st<float, _height, _width>;
 
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x1 = st_bf<1, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x2 = st_bf<1, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x4 = st_bf<1, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_1x8 = st_bf<1, 8, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x1 = st_bf<2, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x2 = st_bf<2, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_2x4 = st_bf<2, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x1 = st_bf<4, 1, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x2 = st_bf<4, 2, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_4x4 = st_bf<4, 4, layout>;
-template<ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_bf_8x1 = st_bf<8, 1, layout>;
+
+using st_bf_1x1 = st_bf<1, 1>;
+using st_bf_1x2 = st_bf<1, 2>;
+using st_bf_1x4 = st_bf<1, 4>;
+using st_bf_1x8 = st_bf<1, 8>;
+using st_bf_2x1 = st_bf<2, 1>;
+using st_bf_2x2 = st_bf<2, 2>;
+using st_bf_2x4 = st_bf<2, 4>;
+using st_bf_4x1 = st_bf<4, 1>;
+using st_bf_4x2 = st_bf<4, 2>;
+using st_bf_4x4 = st_bf<4, 4>;
+using st_bf_8x1 = st_bf<8, 1>;
+
+using st_hf_1x1 = st_hf<1, 1>;
+using st_hf_1x2 = st_hf<1, 2>;
+using st_hf_1x4 = st_hf<1, 4>;
+using st_hf_1x8 = st_hf<1, 8>;
+using st_hf_2x1 = st_hf<2, 1>;
+using st_hf_2x2 = st_hf<2, 2>;
+using st_hf_2x4 = st_hf<2, 4>;
+using st_hf_4x1 = st_hf<4, 1>;
+using st_hf_4x2 = st_hf<4, 2>;
+using st_hf_4x4 = st_hf<4, 4>;
+using st_hf_8x1 = st_hf<8, 1>;
+
+using st_fl_1x1 = st_fl<1, 1>;
+using st_fl_1x2 = st_fl<1, 2>;
+using st_fl_1x4 = st_fl<1, 4>;
+using st_fl_1x8 = st_fl<1, 8>;
+using st_fl_2x1 = st_fl<2, 1>;
+using st_fl_2x2 = st_fl<2, 2>;
+using st_fl_2x4 = st_fl<2, 4>;
+using st_fl_4x1 = st_fl<4, 1>;
+using st_fl_4x2 = st_fl<4, 2>;
+using st_fl_4x4 = st_fl<4, 4>;
+using st_fl_8x1 = st_fl<8, 1>;
 
 }

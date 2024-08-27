@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 
 This kernel is for the [Hedgehog linear attention architecture](https://arxiv.org/abs/2402.04347) prefill stage. The structure of this kernel is similar to the Based architecture kernel -- you can read the README of that example for more background!
@@ -17,3 +18,11 @@ python setup.py install # ensure that you have run ```source env.src''' prior to
 python hedgehog_profile.py
 ```
 
+=======
+This kernel is a hedgehog modified for speed. It implements:
+ - Fused MLPs to produce the Q, K featurizations
+ - Fused block sliding window attention
+ - Block linear attention
+ - Normalization across both sliding window attention and linear attention components
+ - K, KV state writeouts
+>>>>>>> upstream/main

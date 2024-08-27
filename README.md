@@ -121,7 +121,7 @@ __global__ void attend_ker64(int n, const bf16* __restrict__ __q__, const bf16* 
 
 Altogether, this is 58 lines of code (not counting whitespace), and achieves about 122 TFLOPs on an RTX 4090. (74% of theoretical max.) We’ll go through some of these primitives more carefully in the next section, the ThunderKittens manual.
 
-## Installation
+## Library Installation
 
 To use Thunderkittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
 
@@ -147,6 +147,13 @@ export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 ```
 
 Finally, thanks to Jordan Juravsky for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+
+
+## Kernel Installation 
+
+To experiment with our existing TK kernels, specify your kernels of interest in the ``config.py`` file and then run ``python setup.py install``.  
+
+Feel free to contribute new kernels! 
 
 ## Tests
 

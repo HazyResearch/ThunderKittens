@@ -109,7 +109,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -142,7 +142,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &src, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -178,7 +178,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -212,7 +212,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &row_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::col_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::col_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::height); // compatible size
 
     using dtype = T::dtype;
@@ -246,7 +246,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -277,7 +277,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &src, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -313,7 +313,7 @@ template<typename op, ducks::rt::row_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -345,7 +345,7 @@ template<typename op, ducks::rt::col_layout T, ducks::rv::all V>
 __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &col_values) {
 
     static_assert(std::is_same_v<typename V::dtype, typename T::dtype>); // compatible type
-    static_assert(V::inner_dim == rt_base<typename T::dtype, typename T::layout>::row_vec_pack); // compatible layout
+    static_assert(V::inner_dim == rt_base<typename T::T, typename T::layout>::row_vec_pack); // compatible layout
     static_assert(V::outer_dim == T::width); // compatible size
 
     using dtype = T::dtype;
@@ -379,11 +379,6 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
 template<ducks::rt::all T>
 __device__ static inline void zero(T &dst) {
     unary_map<base_ops::zero, T>(dst, dst);
-}
-template<ducks::rt::complex T>
-__device__ static inline void zero(T &dst) {
-    zero(dst.real);
-    zero(dst.imag);
 }
 /**
  * @brief Sets all elements of a tile to one.
@@ -428,53 +423,15 @@ __device__ static inline void exp(T &dst, const T &src) {
     unary_map<base_ops::exp, T>(dst, src);
 }
 /**
- * @brief Applies the exponential function to each element of a complex tile.
+ * @brief Applies the exponential function to each element of a tile, in base 2.
  *
  * @tparam T Tile type.
  * @param dst[out] Destination tile where the result is stored.
  * @param src[in] Source tile to apply the exponential function on.
  */
-template<ducks::rt::complex T>
-__device__ static inline void exp(T &dst, const T &src) {
-    using dtype = T::dtype;
-    dtype tmp;
-    // out of place storage
-    dtype rdst;
-    dtype idst;
-
-    // exp(a)
-    exp(rdst, src.real);
-    copy(idst, rdst);
-    // exp(a)cos(b) + exp(a)sin(b)i
-    cos(tmp, src.imag);
-    mul(rdst, rdst, tmp);
-    sin(tmp, src.imag);
-    mul(idst, idst, tmp);
-
-    copy(dst.real, rdst);
-    copy(dst.imag, idst);
-}
-/**
- * @brief Applies the sine function to each element of a tile.
- *
- * @tparam T Tile type.
- * @param dst[out] Destination tile where the result is stored.
- * @param src[in] Source tile to apply the sine function on.
- */
- template<ducks::rt::all T>
-__device__ static inline void sin(T &dst, const T &src) {
-    unary_map<base_ops::sin, T>(dst, src);
-}
-/**
- * @brief Applies the cosine function to each element of a tile.
- *
- * @tparam T Tile type.
- * @param dst[out] Destination tile where the result is stored.
- * @param src[in] Source tile to apply the cosine function on.
- */
- template<ducks::rt::all T>
-__device__ static inline void cos(T &dst, const T &src) {
-    unary_map<base_ops::cos, T>(dst, src);
+template<ducks::rt::all T>
+__device__ static inline void exp2(T &dst, const T &src) {
+    unary_map<base_ops::exp2, T>(dst, src);
 }
 /**
  * @brief Applies the natural logarithm function to each element of a tile.
@@ -521,6 +478,7 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void copy(T &dst, const U &src) {
     bin_map<base_ops::copy2, T>(dst, src);
 }
+
 /**
  * @brief Applies the max operation element-wise between two tiles or a tile and a scalar.
  *
@@ -561,20 +519,6 @@ __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sum, T>(dst, lhs, rhs);
 }
 /**
- * @brief Adds two complex tiles element-wise.
- *
- * @tparam T Tile type.
- * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst[out] Destination tile where the result is stored.
- * @param lhs[in] Left-hand side source tile for the addition.
- * @param rhs[in] Right-hand side source tile for the addition.
- */
-template<ducks::rt::complex T>
-__device__ static inline void add(T &dst, const T &lhs, const T &rhs) {
-    add(dst.real, lhs.real, rhs.real);
-    add(dst.imag, lhs.imag, rhs.imag);
-}
-/**
  * @brief Subtracts two tiles element-wise or subtracts a scalar from each element of a tile.
  *
  * @tparam T Tile type.
@@ -586,20 +530,6 @@ __device__ static inline void add(T &dst, const T &lhs, const T &rhs) {
 template<ducks::rt::all T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sub, T>(dst, lhs, rhs);
-}
-/**
- * @brief Subtracts two complex tiles element-wise.
- *
- * @tparam T Tile type.
- * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst[out] Destination tile where the result is stored.
- * @param lhs[in] Left-hand side source tile for the subtraction.
- * @param rhs[in] Right-hand side source tile for the subtraction.
- */
-template<ducks::rt::complex T>
-__device__ static inline void sub(T &dst, const T &lhs, const T &rhs) {
-    sub(dst.real, lhs.real, rhs.real);
-    sub(dst.imag, lhs.imag, rhs.imag);
 }
 /**
  * @brief Multiplies two tiles element-wise or multiplies each element of a tile by a scalar.
@@ -615,55 +545,6 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::mul, T>(dst, lhs, rhs);
 }
 /**
- * @brief Multiplies two complex tiles element-wise.
- *
- * @tparam T Tile type.
- * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst[out] Destination tile where the result is stored.
- * @param lhs[in] Left-hand side source tile for the multiplication.
- * @param rhs[in] Right-hand side source tile for the multiplication.
- */
-template<ducks::rt::complex T>
-__device__ static inline void mul(T &dst, const T &lhs, const T &rhs) {
-    using T2 = T::dtype::dtype;
-    //#pragma unroll
-    for(int i = 0; i < dst.real.height; i++) {
-        //#pragma unroll
-        for(int j = 0; j < dst.real.width; j++) {
-            //#pragma unroll
-            for(int k = 0; k < dst.real.packed_per_tile; k++) {
-                T2 rout = base_ops::sub::op<T2>(base_ops::mul::op<T2>(lhs.real.tiles[i][j].data[k], rhs.real.tiles[i][j].data[k]), 
-                    base_ops::mul::op<T2>(lhs.imag.tiles[i][j].data[k], rhs.imag.tiles[i][j].data[k]));
-                T2 iout = base_ops::fma_AxBtC::op<T2>(lhs.real.tiles[i][j].data[k], rhs.imag.tiles[i][j].data[k], base_ops::mul::op<T2>(lhs.imag.tiles[i][j].data[k], rhs.real.tiles[i][j].data[k]));
-                dst.real.tiles[i][j].data[k] = rout;
-                dst.imag.tiles[i][j].data[k] = iout;
-            }
-        }
-    }
-
-    // using dtype = T::dtype;
-    // dtype tmp;
-    // // out of place storage regs
-    // dtype rdst;
-    // dtype idst;
-
-    // // Real component
-    // mul(rdst, lhs.real, rhs.real);
-    // mul(tmp, lhs.imag, rhs.imag);
-    
-    // sub(rdst, rdst, tmp);
-    // //sub(dst.real, dst.real, tmp);
-    // // Imag component
-    // mul(idst, lhs.imag, rhs.real);
-    // //mul(dst.imag, lhs.imag, rhs.real);
-    // mul(tmp, lhs.real, rhs.imag);
-    // add(idst, idst, tmp);
-    // //add(dst.imag, dst.imag, tmp);
-
-    // copy(dst.real, rdst);
-    // copy(dst.imag, idst);
-}
-/**
  * @brief Divides two tiles element-wise or divides each element of a tile by a scalar.
  *
  * @tparam T Tile type.
@@ -676,43 +557,7 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::div, T>(dst, lhs, rhs);
 }
-/**
- * @brief Divides two complex tiles element-wise.
- *
- * @tparam T Tile type.
- * @tparam U Second operand type, which can be a tile or a scalar.
- * @param dst[out] Destination tile where the result is stored.
- * @param lhs[in] Left-hand side source tile for the division.
- * @param rhs[in] Right-hand side source tile for the division.
- */
-// template<ducks::rt::complex T>
-// __device__ static inline void div(T &dst, const T &lhs, const T &rhs) {
-//     using dtype = T::dtype;
-//     dtype tmp;
-//     dtype denom;
-//     // out of place storage regs
-//     dtype rdst;
-//     dtype idst;
 
-//     // Calculate denom - square of b terms
-//     mul(tmp, rhs.real, rhs.real);
-//     mul(denom, rhs.imag, rhs.imag);
-//     add(denom, tmp, denom);
-//     // Real component
-//     mul(rdst, lhs.real, rhs.real);
-//     mul(tmp, lhs.imag, rhs.imag);
-//     add(rdst, rdst, tmp);
-//     // Imag component
-//     mul(dst.imag, lhs.imag, rhs.real);
-//     mul(tmp, lhs.real, rhs.imag);
-//     sub(idst, idst, tmp);
-//     // Divide components by denom
-//     div(rdst, rdst, denom);
-//     div(idst, idst, denom);
-
-//     copy(dst.real, rdst);
-//     copy(dst.imag, idst);
-// }
 /**
  * @brief Adds row values to each row of a tile.
  *
