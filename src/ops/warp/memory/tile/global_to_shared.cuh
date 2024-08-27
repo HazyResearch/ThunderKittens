@@ -146,14 +146,32 @@ __device__ static inline void load_async(ST &dst, const bf16 *src, const int row
     }
 }
 /**
+ * @brief Asynchronously loads bf16 data from global memory into a complex shared memory tile with a row layout using CUDA barriers.
+ *
+ * @tparam ST The type of the shared tile.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] resrc The source global memory array for the real component.
+ * @param[in] imsrc The source global memory array for the imaginary component.
+ * @param re_row_stride[in] The stride between rows in the real component source array.
+ * @param im_row_stride[in] The stride between rows in the imaginary component source array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ *
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
+template<ducks::st::complex CST>
+__device__ static inline void load_async(CST &dst, const bf16 *resrc, const bf16 *imsrc, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    load_async(dst.real, resrc, re_row_stride, barrier);
+    load_async(dst.imag, imsrc, im_row_stride, barrier);
+}
+/**
  * @brief Asynchronously stores bf16 data from a shared memory tile with a row layout into global memory using CUDA barriers.
  *
  * @tparam ST The type of the shared tile
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
- * @param barrier[in,out] The CUDA barrier used for synchronization.
- *
+ * @param re_barrier[in,out] The CUDA barrier used for synchronization of the real component.
+ * @param im_barrier[in,out] The CUDA barrier used for synchronization of the imaginary component.
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::all ST>
@@ -184,6 +202,24 @@ __device__ static inline void store_async(bf16 *dst, const ST &src, const int ro
             barrier
         );
     }
+}
+/**
+ * @brief Asynchronously stores bf16 data from a complex shared memory tile with a row layout into global memory using CUDA barriers.
+ *
+ * @tparam ST The type of the shared tile
+ * @param[out] redst The destination real component global memory array.
+ * @param[out] imdst The destination imaginary component global memory array.
+ * @param[in] src The source shared memory tile.
+ * @param re_row_stride[in] The stride between rows in the real component destination array.
+ * @param im_row_stride[in] The stride between rows in the imaginary component destination array.
+ * @param barrier[in,out] The CUDA barrier used for synchronization.
+ *
+ * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
+ */
+template<ducks::st::complex CST>
+__device__ static inline void store_async(bf16 *redst, bf16 *imdst, const CST &src, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    store_async(redst, src.real, re_row_stride, barrier);
+    store_async(imdst, src.imag, im_row_stride, barrier);
 }
 
 }

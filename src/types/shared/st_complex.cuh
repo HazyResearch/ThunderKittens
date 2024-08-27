@@ -27,12 +27,12 @@ struct cmplx_identifier {};
  * @tparam T2 The packed data type used for the matrix elements.
  * @tparam _height The height of the tile in terms of the number of subtiles.
  * @tparam _width The width of the tile in terms of the number of subtiles.
- * @tparam _layout The layout of the internal register tiles, either row-major or column-major.
+ * @tparam _layout The layout of the internal register tiles
  *
  * This structure is designed to abstract complex number operations internally to the real and imaginary
- * register tiles, respectively
+ * shared tiles, respectively
  * 
- * In general, you probably want a row-major tile, unless you specifically want to call mma
+ *
  */
 template<typename _T, int _height, int _width, ducks::st_layout::all _layout>
 struct st_cmplx {
@@ -65,7 +65,7 @@ template <typename T> concept complex = requires {
 }
 }
 
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::st_layout::swizzle> using st_cmplx_bf = st_cmplx<bf16, _height, _width, layout>;
+template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_cmplx_bf = st_cmplx<bf16, _height, _width, layout>;
 
 
 
