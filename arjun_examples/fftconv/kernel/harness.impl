@@ -6,8 +6,8 @@
 
 #define N 1024
 #define N1 32
-#define B 16
-#define H 32
+#define B 64
+#define H 64
 #define TOTAL_INPUT_ELEMENTS B*H*N
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -194,7 +194,6 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    unsigned long mem_size = 108000;
     cudaStream_t stream;
     cudaStreamCreate(&stream);
     std::cout << "Starting kernel\n";
@@ -204,7 +203,7 @@ int main(int argc, char **argv) {
         d_u_real, d_u_imag, d_kf_real, d_kf_imag, 
         d_f_real, d_f_imag, d_finv_real, d_finv_imag,
         d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
-        B, H, N, N1, mem_size
+        B, H, N, N1
     );
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

@@ -11,7 +11,9 @@
 **/*.egg-info
 *.egg
 **/printouts
-**/old
+#**/old
+*.ncu-rep
+*.sass
 *.txt
 *.pyc
 venv

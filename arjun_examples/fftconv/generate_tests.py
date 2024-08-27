@@ -6,8 +6,8 @@ import sys
 torch.set_grad_enabled(False)
 
 N = 1024
-B = 16
-H = 32
+B = 64
+H = 64
 N1 = int(np.sqrt(N))
 
 TESTNAME = sys.argv[1]

@@ -1,7 +1,7 @@
 import torch
 from flashfftconv import FlashFFTConv
 import time
-from prettytable import PrettyTable
+from prettytable import PrettyTable, PLAIN_COLUMNS, MSWORD_FRIENDLY
 
 import sys
 sys.path.append("./module")
@@ -28,9 +28,10 @@ dtype = torch.bfloat16
 device = 'cuda'
 
 results = PrettyTable()
+results.set_style(PLAIN_COLUMNS)
 results.field_names = ["B", "H", "L", "Torch (ms)", "FlashFFT (ms)", "TK (ms)", "FlashFFT Speedup", "TK Speedup"]
 
-for b in [B // 4, B // 2, B]:
+for b in [B // 2, B]:
     for h in [H // 4, H // 2, H]:
         # Only implemented seqlen 1024 in TK for now
         for seqlen in [1024]:
@@ -72,10 +73,10 @@ for b in [B // 4, B // 2, B]:
             flashfft_speedup = torch_time / flashfft_time
             tk_speedup = torch_time / tk_time
 
-            #results.add_row([b, h, seqlen, torch_time, flashfft_time, tk_time, flashfft_speedup, tk_speedup])
-            print(f"{b}\t{h}\t{seqlen}\t{torch_time:.2f}\t{flashfft_time:.2f}\t{tk_time:.2f}\t{flashfft_speedup:,.2f}x\t{tk_speedup:,.2f}x")
+            results.add_row([b, h, seqlen, torch_time, flashfft_time, tk_time, flashfft_speedup, tk_speedup])
+            #print(f"{b}\t{h}\t{seqlen}\t{torch_time:.2f}\t{flashfft_time:.2f}\t{tk_time:.2f}\t{flashfft_speedup:,.2f}x\t{tk_speedup:,.2f}x")
             #print(f"B: {b}, H: {h}, L: {seqlen}\n\tTorch: {torch_time:.2f} us, FlashFFT: {flashfft_time:.2f} us, TK: {tk_time:.2f} us\n\tFlashFFT Speedup: {flashfft_speedup:,.2f}x, TK Speedup: {tk_speedup:,.2f}x")
 
-# results.float_format = "0.2"
-# print(results)
+results.float_format = "0.2"
+print(results)
 
