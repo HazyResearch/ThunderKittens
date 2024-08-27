@@ -241,22 +241,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
         }
     }
 }
-/**
- * @brief Copies a complex register tile, converting the underlying type if necessary.
- *
- * @tparam T2 The data type of the destination register elements.
- * @tparam U2 The data type of the source register elements.
- * @tparam _height The height (in units of 16) of the register tiles.
- * @tparam _width The width (in units of 16) of the register tiles.
- * @tparam layout The current layout of the register tile.
- * @param[out] dst A reference to the destination register tile.
- * @param[in] src A reference to the source register tile.
- */
-template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void copy(rt_cmplx<T2, _height, _width, layout> &dst, const rt_cmplx<U2, _height, _width, layout> &src) {
-    copy(dst.real, src.real);
-    copy(dst.imag, src.imag);
-}
+
 /* ----------  CAUSAL  ---------- */
 
 /**
