@@ -93,6 +93,7 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         }
     }
 }
+
 /**
  * @brief Store data from a register tile to a destination array in global memory with a row-major layout.
  *

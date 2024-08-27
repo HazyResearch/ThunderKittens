@@ -280,7 +280,6 @@ __device__ static inline void mma_AB(rt_hf<N, M, ducks::rt_layout::row> &d,
         }
     }
 }
-
 /**
  * @brief Matrix multiply-accumulate operation.
  *

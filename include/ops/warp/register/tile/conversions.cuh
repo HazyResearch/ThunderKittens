@@ -73,24 +73,6 @@ __device__ static inline void swap_layout(rt<T2, _height, _width, typename ducks
         }
     }
 }
-/**
- * @brief Swaps the layout of a register tile.
- *
- * This function swaps the layout of a register tile by iterating over its height and width
- * and performing layout swaps on each of its base elements.
- *
- * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height of the register tile.
- * @tparam _width The width of the register tile.
- * @tparam layout The current layout of the register tile.
- * @param dst[out] Reference to the destination register tile where the result will be stored.
- * @param src[in] Reference to the source register tile to be swapped.
- */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void swap_layout(rt_cmplx<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_cmplx<T2, _height, _width, layout> &src) {
-    swap_layout(dst.real, src.real);
-    swap_layout(dst.real, src.real);
-}
 
 /**
  * @brief Swaps the layout of a register base tile in place.
@@ -177,6 +159,7 @@ __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst
         }
     }
 }
+
 /**
  * @brief Transposes a register base tile in-place.
  *
