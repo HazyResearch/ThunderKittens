@@ -8,11 +8,11 @@
 using namespace kittens;
 
 // Number of batches per SM
-#define B_TILE 32
+#define B_TILE 8 //16
 // Number of heads per SM
-#define H_TILE 16
+#define H_TILE 8 //32
 
-#define NUM_WORKERS 4
+#define NUM_WORKERS 2
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 
 
@@ -39,7 +39,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
     // Bc we're using HMMA instructions, we need an fl accum reg for MMA
     kittens::rt_cmplx_fl<2, 2> mma_reg;
     // Separate reg to hold accumulated X values (in bf)
-    kittens::rt_cmplx_bf<2, 2> accum, a_tr; // TODO eliminate use of a_tr and perform in-place transpose?
+    kittens::rt_cmplx_bf<2, 2> accum/*, a_tr*/; // TODO eliminate use of a_tr and perform in-place transpose?
 
     // Row layout for element-wise mul
     kittens::rt_cmplx_bf<2, 2, ducks::rt_layout::row> k_reg, tw_reg, twinv_reg;
@@ -59,18 +59,15 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&kf_smem)[2] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2>();
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
 
+    //if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&x_smem) - (uint64_t)(&__shm[0]));
 
     // pipelining
     int k_tic = 0, k_toc = 1;
-    int x_tic = 0, x_toc = 1;
     auto block = cooperative_groups::this_thread_block();
     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> k_barrier;
-    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> x_barrier;
     if (threadIdx.x == 0) {
         init(&k_barrier, block.size());
-        init(&x_barrier, block.size());
     }
-    //if (threadIdx.x == 0) {init(&x_barrier, block.size());}
     block.sync(); // Need to make sure none calls before setup.
 
     // Global loads
@@ -88,8 +85,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
     kittens::load(tw_reg, tw_smem);
     kittens::load(twinv_reg, twinv_smem);
 
-    #pragma unroll
-    for (int i = 0; i < H_TILE; i ++, k_tic ^=1, k_toc ^=1) {
+    for (int i = 0; i < H_TILE; i++, k_tic ^=1, k_toc ^=1) {
         k_barrier.arrive_and_wait();
         kittens::load(k_reg, kf_smem[k_tic]);
 
@@ -103,58 +99,37 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
             }  
         }
 
-        x_tic = 0;
-        x_toc = 1;
-        int u_initial = (b_start*b_stride) + k_start;
-        load_async(x_smem[warpid][x_tic], u_real + u_initial, u_imag + u_initial, n1, n1, x_barrier);
-        
-        #pragma unroll
-        for (int j = 0; j < batches; j ++, x_tic ^=1, x_toc ^=1) {
-            x_barrier.arrive_and_wait();
-            // Next batch but w/ same head
-            int next_batch = ((b_start + j+1) * b_stride) + k_start;
-            if (j < batches - 1) {
-                // Kick off load for next x, while we do computation on current set
-                kittens::load_async(x_smem[warpid][x_toc], u_real + next_batch, u_imag + next_batch, n1, n1, x_barrier);
-            }
+        for (int j = 0; j < batches; j++) {
+            int u_start = ((b_start + j) * b_stride) + k_start;
             // X = F^T X
-            
             swap_layout(ft_reg, f_reg);
             ft_reg = transpose_inplace(ft_reg);
-
-            kittens::load(b_reg, x_smem[warpid][x_tic]);
+            kittens::load(b_reg, u_real + u_start, u_imag + u_start, n1, n1);
             kittens::zero(mma_reg);
             kittens::mma_AB(mma_reg, ft_reg, b_reg, mma_reg);
             kittens::copy(accum, mma_reg);
             // X = X * tw
-            // kittens::load(a_reg, tw_smem[0]);
             kittens::mul(accum, accum, tw_reg);
             // X = XF
-            //kittens::load(b_reg, f_smem[0]);
             kittens::zero(mma_reg);
             kittens::mma_AB(mma_reg, accum, f_reg, mma_reg);
             kittens::copy(accum, mma_reg);
             // X = X * K_f^T
             kittens::mul(accum, accum, k_reg);
-            //kittens::load(a_reg, kf_real + k_start, kf_imag + k_start, n1, n1);
-            //kittens::mul(accum, accum, a_reg);
             // X = XFinv
-            //kittens::load(b_reg, finv_smem[0]);
             kittens::zero(mma_reg);
             kittens::mma_AB(mma_reg, accum, finv_reg, mma_reg);
             kittens::copy(accum, mma_reg);
             // X = X^T * twinv
-            kittens::transpose_sep(a_tr, accum);
-            //kittens::load(a_reg, twinv_smem[0]);
-            kittens::mul(a_tr, a_tr, twinv_reg);
+            accum = kittens::transpose_inplace(accum);
+            kittens::mul(accum, accum, twinv_reg);
             // Y = XFinv
-            //kittens::load(b_reg, finv_smem[0]);
             kittens::zero(mma_reg);
-            kittens::mma_AB(mma_reg, a_tr, finv_reg, mma_reg);
+            kittens::mma_AB(mma_reg, accum, finv_reg, mma_reg);
             kittens::copy(accum, mma_reg);
             // Write Y^T to HBM
-            kittens::transpose_sep(a_tr, accum);
-            kittens::store(o + ((b_start + j) * b_stride) + k_start, a_tr.real, n1);
+            accum = kittens::transpose_inplace(accum);
+            kittens::store(o + ((b_start + j) * b_stride) + k_start, accum.real, n1);
         }
     }
 }
@@ -163,7 +138,7 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
                         const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
                         const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
                         bf16 *o, 
-                        int b, int h, int n, int n1, long mem_size) {
+                        int b, int h, int n, int n1) {
     // Multiple warps
     const dim3 block_dim{
         (unsigned int)(NUM_THREADS)
@@ -172,6 +147,14 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
         (unsigned int)(b + B_TILE - 1) / B_TILE,
         (unsigned int)(h + H_TILE - 1) / H_TILE
     };
+
+    
+    // Complex shared tile size (bytes)
+    int st_size = (2 * (2 * 2 * 256 * 4));
+    // fft and twiddles (4), 2 kf smem, 2*NUM_WORKERS x_smem
+    unsigned long mem_size = (4 * st_size) + (2 * st_size);
+
+    //printf("%lu\n", mem_size);
 
     cudaFuncSetAttribute(
         fftconv_tk,
@@ -265,8 +248,6 @@ torch::Tensor fftconv_tk(
     const bf16* twinv_imag_bf               = reinterpret_cast<const bf16*>(twinv_imag_ptr);
           bf16* o_bf                        = reinterpret_cast<bf16*>(o_ptr);
 
-    unsigned long mem_size = 108000;
-
     cudaStream_t stream;
     cudaStreamCreate(&stream);
     launch_fftconv_tk(
@@ -274,7 +255,7 @@ torch::Tensor fftconv_tk(
         f_real_bf, f_imag_bf, finv_real_bf, finv_imag_bf,
         tw_real_bf, tw_imag_bf, twinv_real_bf, twinv_imag_bf,
         o_bf,
-        B, H, N, N1, mem_size
+        B, H, N, N1
     );
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     cudaStreamDestroy(stream);
