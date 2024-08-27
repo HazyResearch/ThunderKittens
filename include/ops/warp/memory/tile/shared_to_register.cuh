@@ -66,6 +66,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
     }
 }
 
+
 /**
  * @brief Store data into a shared tile from a register tile.
  *
