@@ -4,17 +4,3 @@
 *.ptx
 *.cubin
 *.fatbin
-*.d
-.idea
-.ninja
-**/build
-**/*.egg-info
-*.egg
-**/printouts
-#**/old
-**/arjun_dev
-*.ncu-rep
-*.sass
-*.txt
-*.pyc
-venv
