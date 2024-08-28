@@ -1,3 +1,5 @@
+#pragma once
+
 #include <torch/extension.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
@@ -7,12 +9,12 @@
 // *******
 // ** BROADCAST API
 // Constant broadcasts.
-__device__ __nv_bfloat16* device_cast(c10::BFloat16* x) { return reinterpret_cast<__nv_bfloat16*>(x);}
-__device__ half* device_cast(at::Half *x) { return reinterpret_cast<half*>(x); }
-__device__ float* device_cast(float* x) { return x;}
-__device__ const __nv_bfloat16* device_cast(const c10::BFloat16* x) { return reinterpret_cast<const __nv_bfloat16*>(x);}
-__device__ const half* device_cast(const at::Half *x) { return reinterpret_cast<const half*>(x); }
-__device__ const float* device_cast(const float* x) { return x;}
+__device__ static __nv_bfloat16* device_cast(c10::BFloat16* x) { return reinterpret_cast<__nv_bfloat16*>(x);}
+__device__ static half* device_cast(at::Half *x) { return reinterpret_cast<half*>(x); }
+__device__ static float* device_cast(float* x) { return x;}
+__device__ static const __nv_bfloat16* device_cast(const c10::BFloat16* x) { return reinterpret_cast<const __nv_bfloat16*>(x);}
+__device__ static const half* device_cast(const at::Half *x) { return reinterpret_cast<const half*>(x); }
+__device__ static const float* device_cast(const float* x) { return x;}
 
 // This is a dispatch helper macro for us, to match the device and the pytorch style.
 // It's modeled after the AT_DISPATCH macros.
@@ -63,7 +65,7 @@ void check(T err, char const* const func, char const* const file,
     }
 }
 
-bool is_tile(torch::Tensor t) {return t.size(0) == kittens::TILE_DIM && t.size(1) == kittens::TILE_DIM;}
+static bool is_tile(torch::Tensor t) {return t.size(0) == kittens::TILE_DIM && t.size(1) == kittens::TILE_DIM;}
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")

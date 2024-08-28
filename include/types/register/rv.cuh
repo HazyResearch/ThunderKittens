@@ -48,7 +48,10 @@ struct identifier {};
 template<typename _T, size_t _outer_dim, size_t _inner_dim=1>
 struct rv {
     using identifier = ducks::rv::identifier; ///< Type identifier for the rv structure.
-    using dtype = _T; ///< Data type of the vector elements.
+    static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
+    using T = kittens::base_types::packing<_T>::unpacked_type;
+    using T2 = kittens::base_types::packing<_T>::packed_type;
+    using dtype = T2; ///< Data type of the matrix elements
 
     static constexpr int outer_dim = _outer_dim; ///< Length in subtiles.
     static constexpr int inner_dim = _inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
@@ -79,5 +82,11 @@ concept all = requires {
 
 } // namespace rv
 } // namespace ducks
+
+
+
+// No rv_fl, rv_bf, rv_hf, etc, because we rv's are tricky enough that it's better to encourage initialization as row_vec<rt_bf<4,4>> / similar.
+
+
 
 } // namespace kittens

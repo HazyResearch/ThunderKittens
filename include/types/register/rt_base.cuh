@@ -42,9 +42,12 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
+template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using identifier = ducks::rt_base::identifier; ///< Type identifier for the rt_base structure.
     using layout = _layout; ///< Layout of the matrix tile.
+    static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
+    using T = kittens::base_types::packing<_T>::unpacked_type;
+    using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
 
     static_assert(
@@ -58,13 +61,13 @@ template<typename T2, ducks::rt_layout::all _layout> struct rt_base {
     static constexpr int num_elements         = rows*cols; // 256
     static constexpr int elements_per_thread  = num_elements / 32; // 8
 
-    static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<T2>::num(); // 4
-    static constexpr int registers_per_thread = packed_per_thread * sizeof(T2) / 4; // 4 or 8, registers are 32-bit words
+    static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<dtype>::num(); // 4
+    static constexpr int registers_per_thread = packed_per_thread * sizeof(dtype) / 4; // 4 or 8, registers are 32-bit words
 
     static constexpr int col_vec_pack = layout::is_row ? 1 : 2; // for holding row reductions
     static constexpr int row_vec_pack = layout::is_row ? 2 : 1; // for holding column reductions
 
-    T2 data[packed_per_thread]; ///< The actual storage for the base tile
+    dtype data[packed_per_thread]; ///< The actual storage for the base tile
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -86,7 +89,8 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float2, L>; // Note float2! Otherwise you will get bugs.
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16_2, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half, L>;
 
 }

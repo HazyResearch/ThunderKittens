@@ -84,39 +84,27 @@ template<> __device__ inline float  exp::op<float> (const float &x ) { return __
 template<> __device__ inline float2 exp::op<float2>(const float2 &x) { return float2{__expf(x.x), __expf(x.y)}; }
 template<> __device__ inline bf16   exp::op<bf16>  (const bf16 &x  ) { return hexp(x);                          }
 template<> __device__ inline bf16_2 exp::op<bf16_2>(const bf16_2 &x) { return h2exp(x);                         }
-/**
- * @brief Sine function operation.
- *
- * This operation calculates the sine of the input value.
- *
- * @tparam T The data type of the input and output values.
- * @param x[in] The input value.
- * @return The sine of the input value.
- */
-struct sin {
-    template<typename T> static __device__ inline T op(const T &x) { return sin(x); }
-};
-template<> __device__ inline float  sin::op<float> (const float &x ) { return __sinf(x);                        }
-template<> __device__ inline float2 sin::op<float2>(const float2 &x) { return float2{__sinf(x.x), __sinf(x.y)}; }
-template<> __device__ inline bf16   sin::op<bf16>  (const bf16 &x  ) { return hsin(x);                          }
-template<> __device__ inline bf16_2 sin::op<bf16_2>(const bf16_2 &x) { return h2sin(x);                         }
+template<> __device__ inline half   exp::op<half>  (const half &x  ) { return hexp(x);                          }
+template<> __device__ inline half_2 exp::op<half_2>(const half_2 &x) { return h2exp(x);                         }
 
 /**
- * @brief Cosine function operation.
+ * @brief Exponential function operation, in base 2
  *
- * This operation calculates the cosine of the input value.
+ * This operation calculates the exponential of the input value, in base 2.
  *
  * @tparam T The data type of the input and output values.
  * @param x[in] The input value.
- * @return The cosine of the input value.
+ * @return The exponential of the input value.
  */
-struct cos {
-    template<typename T> static __device__ inline T op(const T &x) { return cos(x); }
+struct exp2 {
+    template<typename T> static __device__ inline T op(const T &x) { return exp2f(x); }
 };
-template<> __device__ inline float  cos::op<float> (const float &x ) { return __cosf(x);                        }
-template<> __device__ inline float2 cos::op<float2>(const float2 &x) { return float2{__cosf(x.x), __cosf(x.y)}; }
-template<> __device__ inline bf16   cos::op<bf16>  (const bf16 &x  ) { return hcos(x);                          }
-template<> __device__ inline bf16_2 cos::op<bf16_2>(const bf16_2 &x) { return h2cos(x);                         }
+template<> __device__ inline float  exp2::op<float> (const float &x ) { return exp2f(x);                        }
+template<> __device__ inline float2 exp2::op<float2>(const float2 &x) { return float2{exp2f(x.x), exp2f(x.y)}; }
+template<> __device__ inline bf16   exp2::op<bf16>  (const bf16 &x  ) { return hexp2(x);                          }
+template<> __device__ inline bf16_2 exp2::op<bf16_2>(const bf16_2 &x) { return h2exp2(x);                         }
+template<> __device__ inline half   exp2::op<half>  (const half &x  ) { return hexp2(x);                          }
+template<> __device__ inline half_2 exp2::op<half_2>(const half_2 &x) { return h2exp2(x);                         }
 /**
  * @brief Natural log function operation.
  *
@@ -133,6 +121,8 @@ template<> __device__ inline float  log::op<float> (const float &x ) { return __
 template<> __device__ inline float2 log::op<float2>(const float2 &x) { return float2{__logf(x.x), __logf(x.y)}; }
 template<> __device__ inline bf16   log::op<bf16>  (const bf16 &x  ) { return hlog(x);                          }
 template<> __device__ inline bf16_2 log::op<bf16_2>(const bf16_2 &x) { return h2log(x);                         }
+template<> __device__ inline half   log::op<half>  (const half &x  ) { return hlog(x);                          }
+template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2log(x);                         }
 /**
  * @brief Absolute value operation.
  *
@@ -149,6 +139,8 @@ template<> __device__ inline float  abs::op<float> (const float &x ) { return fa
 template<> __device__ inline float2 abs::op<float2>(const float2 &x) { return float2{fabsf(x.x), fabsf(x.y)}; }
 template<> __device__ inline bf16   abs::op<bf16>  (const bf16 &x  ) { return __habs(x);                      }
 template<> __device__ inline bf16_2 abs::op<bf16_2>(const bf16_2 &x) { return __habs2(x);                     }
+template<> __device__ inline half   abs::op<half>  (const half &x  ) { return __habs(x);                        }
+template<> __device__ inline half_2 abs::op<half_2>(const half_2 &x) { return __habs2(x);                       }
 /**
  * @brief Rectified Linear Unit (ReLU) operation.
  *
@@ -166,6 +158,8 @@ template<> __device__ inline float  relu::op<float> (const float &x ) { return m
 template<> __device__ inline float2 relu::op<float2>(const float2 &x) { return float2{max(x.x, 0.f), max(x.y, 0.f)};         }
 template<> __device__ inline bf16   relu::op<bf16>  (const bf16 &x  ) { return __hmax(x, base_types::constants<bf16>::zero());    }
 template<> __device__ inline bf16_2 relu::op<bf16_2>(const bf16_2 &x) { return __hmax2(x, base_types::constants<bf16_2>::zero()); }
+template<> __device__ inline half   relu::op<half>  (const half &x  ) { return __hmax(x, base_types::constants<half>::zero());    }
+template<> __device__ inline half_2 relu::op<half_2>(const half_2 &x) { return __hmax2(x, base_types::constants<half_2>::zero()); }
 /**
  * @brief Copy operation.
  *
@@ -211,6 +205,8 @@ struct sum {
 template<> __device__ inline float2 sum::op<float2>(const float2 &a, const float2 &b) { return float2{a.x+b.x, a.y+b.y}; }
 template<> __device__ inline bf16   sum::op<bf16>  (const bf16   &a, const bf16   &b) { return __hadd(a, b);             }
 template<> __device__ inline bf16_2 sum::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hadd2(a, b);            }
+template<> __device__ inline half   sum::op<half>  (const half   &a, const half   &b) { return __hadd(a, b);             }
+template<> __device__ inline half_2 sum::op<half_2>(const half_2 &a, const half_2 &b) { return __hadd2(a, b);            }
 /**
  * @brief Subtraction operation.
  *
@@ -227,6 +223,8 @@ struct sub {
 template<> __device__ inline float2 sub::op<float2>(const float2 &a, const float2 &b) { return float2{a.x-b.x, a.y-b.y}; }
 template<> __device__ inline bf16   sub::op<bf16>  (const bf16   &a, const bf16   &b) { return __hsub(a, b);             }
 template<> __device__ inline bf16_2 sub::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hsub2(a, b);            }
+template<> __device__ inline half   sub::op<half>  (const half   &a, const half   &b) { return __hsub(a, b);             }
+template<> __device__ inline half_2 sub::op<half_2>(const half_2 &a, const half_2 &b) { return __hsub2(a, b);            }
 /**
  * @brief Multiplication operation.
  *
@@ -243,6 +241,8 @@ struct mul {
 template<> __device__ inline float2 mul::op<float2>(const float2 &a, const float2 &b) { return float2{a.x*b.x, a.y*b.y}; }
 template<> __device__ inline bf16   mul::op<bf16>  (const bf16   &a, const bf16   &b) { return __hmul(a, b);             }
 template<> __device__ inline bf16_2 mul::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hmul2(a, b);            }
+template<> __device__ inline half   mul::op<half>  (const half   &a, const half   &b) { return __hmul(a, b);             }
+template<> __device__ inline half_2 mul::op<half_2>(const half_2 &a, const half_2 &b) { return __hmul2(a, b);            }
 /**
  * @brief Division operation.
  *
@@ -259,6 +259,8 @@ struct div {
 template<> __device__ inline float2 div::op<float2>(const float2 &a, const float2 &b) { return float2{a.x/b.x, a.y/b.y}; }
 template<> __device__ inline bf16   div::op<bf16>  (const bf16   &a, const bf16   &b) { return __hdiv(a, b);             }
 template<> __device__ inline bf16_2 div::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __h2div(a, b);            } // this op is a special snowflake
+template<> __device__ inline half   div::op<half>  (const half   &a, const half   &b) { return __hdiv(a, b);             }
+template<> __device__ inline half_2 div::op<half_2>(const half_2 &a, const half_2 &b) { return __h2div(a, b);            }
 /**
  * @brief Maximum operation.
  *
@@ -275,6 +277,8 @@ template<> __device__ inline bf16_2 div::op<bf16_2>(const bf16_2 &a, const bf16_
 template<>  __device__ inline float2 max::op<float2>(const float2 &a, const float2 &b) { return float2{::max(a.x, b.x), ::max(a.y, b.y)}; }
 template<>  __device__ inline bf16   max::op<bf16>  (const bf16   &a, const bf16   &b) { return __hmax(a, b);                             }
 template<>  __device__ inline bf16_2 max::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hmax2(a, b);                            }
+template<>  __device__ inline half   max::op<half>  (const half   &a, const half   &b) { return __hmax(a, b);                             }
+template<>  __device__ inline half_2 max::op<half_2>(const half_2 &a, const half_2 &b) { return __hmax2(a, b);                            }
 /**
  * @brief Minimum operation.
  *
@@ -291,6 +295,8 @@ struct min {
 template<>  __device__ inline float2 min::op<float2>(const float2 &a, const float2 &b) { return float2{::min(a.x, b.x), ::min(a.y, b.y)}; }
 template<>  __device__ inline bf16   min::op<bf16>  (const bf16   &a, const bf16   &b) { return __hmin(a, b);                         }
 template<>  __device__ inline bf16_2 min::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hmin2(a, b);                        }
+template<>  __device__ inline half   min::op<half>  (const half   &a, const half   &b) { return __hmin(a, b);                         }
+template<>  __device__ inline half_2 min::op<half_2>(const half_2 &a, const half_2 &b) { return __hmin2(a, b);                        }
 
 
 /* ----------  TERNARY OPS  ---------- */

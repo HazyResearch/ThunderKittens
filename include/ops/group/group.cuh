@@ -35,7 +35,24 @@ __device__ static inline int groupid() { return threadIdx.x / GROUP_THREADS; }
 
 #ifdef KITTENS_HOPPER
 #include "wgmma/wgmma.cuh"
+
+template<int n_reg> __device__ static inline void increase_registers() {
+    static_assert(N_WARPS % 4 == 0, "N_WARPS must be a multiple of 4");
+    static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");
+    asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(n_reg));
+}
+template<int n_reg> __device__ static inline void decrease_registers() {
+    static_assert(N_WARPS % 4 == 0, "N_WARPS must be a multiple of 4");
+    static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");
+    asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(n_reg));
+}
+
+
 #endif
+
+__device__ static inline void sync() { // warning: this can create trouble if multiple groups of different sizes are using it at the same time.
+    asm volatile("bar.sync %0, %1;\n" :: "r"(groupid() + 4), "n"(GROUP_THREADS)); // +4 here is meant to avoid conflicts with bar.sync used by __syncthreads(), a common special case of the above concern.
+}
 
 };
 

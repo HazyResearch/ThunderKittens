@@ -44,7 +44,9 @@ namespace ducks {
 namespace base_types {
 
 template<typename T>
-concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2>; // could add half_2 later if implemented.
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>; // could add half_2 later if implemented.
+template<typename T>
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half>; // could add half_2 later if implemented.
 
 } // namespace base_types
 } // namespace ducks
@@ -136,32 +138,38 @@ template<typename T> struct packing {
 };
 template<> struct packing<bf16> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = bf16;
     using packed_type = bf16_2;
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; }
 };
 template<> struct packing<half> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = half;
     using packed_type = half_2;
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; }
 };
 template<> struct packing<float> {
     static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = float;
     using packed_type = float2;
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; }
 };
 template<> struct packing<bf16_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = bf16;
+    using packed_type = bf16_2;
     static __device__ inline constexpr bf16_2 pack(const bf16 &i) { return bf16_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<half_2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = half;
+    using packed_type = half_2;
     static __device__ inline constexpr half_2 pack(const half &i) { return half_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<float2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = float;
+    using packed_type = float2;
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<int2> {
@@ -211,6 +219,47 @@ template<> struct convertor<bf16_2, float2> {
         return 	__float22bfloat162_rn(u);
     }
 };
+template<> struct convertor<float, half> {
+    static __device__ inline float convert(const half & u) {
+        return __half2float(u);
+    }
+};
+template<> struct convertor<half, float> {
+    static __device__ inline half convert(const float & u) {
+        return __float2half(u);
+    }
+};
+template<> struct convertor<float2, half_2> {
+    static __device__ inline float2 convert(const half_2 & u) {
+        return __half22float2(u);
+    }
+};
+template<> struct convertor<half_2, float2> {
+    static __device__ inline half_2 convert(const float2 & u) {
+        return __float22half2_rn(u);
+    }
+};
+template<> struct convertor<bf16, half> {
+    static __device__ inline bf16 convert(const half & u) {
+        return __float2bfloat16_rn(__half2float(u));
+    }
+};
+template<> struct convertor<half, bf16> {
+    static __device__ inline half convert(const bf16 & u) {
+        return __float2half(__bfloat162float(u));
+    }
+};
+template<> struct convertor<bf16_2, half_2> {
+    static __device__ inline bf16_2 convert(const half_2 & u) {
+        return __float22bfloat162_rn(__half22float2(u));
+    }
+};
+template<> struct convertor<half_2, bf16_2> {
+    static __device__ inline half_2 convert(const bf16_2 & u) {
+        return __float22half2_rn(__bfloat1622float2(u));
+    }
+};
+
 
 }
 }

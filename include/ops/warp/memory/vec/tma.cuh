@@ -25,18 +25,23 @@ namespace tma {
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::sv::all SV>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *src, int num_vectors) {
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int num_vectors) {
     
     constexpr uint32_t  tma_dim      = 1; 
     void                *global_addr = (void*)(src);
 
-    constexpr CUtensorMapDataType     tma_format      = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16; 
+    constexpr CUtensorMapDataType     tma_format      = (
+        std::is_same_v<typename SV::dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
+        std::is_same_v<typename SV::dtype, half>  ? CU_TENSOR_MAP_DATA_TYPE_FLOAT16 :
+        std::is_same_v<typename SV::dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
+        CUtensorMapDataType(-1)
+    );
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
-    uint64_t gmem_shape [1] = {SV::length * num_vectors};
+    uint64_t gmem_shape [1] = {(uint64_t)(SV::length * num_vectors)};
     uint64_t gmem_stride[1] = {1};
     uint32_t smem_shape [1] = {SV::length};
     uint32_t smem_stride[1] = {1};
@@ -44,7 +49,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
 
-    assert(smem_shape[0] <= 256); // smem_shape[0] elements must be <= 256
+    assert(smem_shape[0] <= 256); // smem_shape[0] elements must be <= 256. TODO: we could fix this by making it a 2D load. But probably use a naive tile, at that point.
 
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
     const uint64_t *gmem_stride_ptr = &gmem_stride[0]; 
@@ -86,7 +91,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const bf16 *
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::sv::all SV>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const bf16 *src, int num_vectors) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename SV::dtype *src, int num_vectors) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
@@ -192,6 +197,7 @@ __device__ static inline void store_add_async(void *dst_tma_map, const SV &src, 
 */
 template<ducks::sv::all SV>
 __device__ static inline void store_min_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -220,6 +226,7 @@ __device__ static inline void store_min_async(void *dst_tma_map, const SV &src, 
 */
 template<ducks::sv::all SV>
 __device__ static inline void store_max_async(void *dst_tma_map, const SV &src, int vec_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -266,5 +273,40 @@ __device__ static inline void load_async(SV &dst, void const* const src_tma_map,
     }
 }
 
+namespace cluster {
+
+/**
+ * @brief Asynchronously loads data from global memory into a shared memory vector, broadcast across a cluster
+ *
+ * This function performs an asynchronous copy operation using CUDA's cp.async.bulk.tensor instruction.
+ *
+ * @tparam SV A shared vector type with a TMA-compatible layout
+ * @param[out] dst The destination shared memory vector.
+ * @param[in] src_tma_map The source tensormap address in global memory
+ * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in] vec_idx The index of the requested vector.
+ * @param[in] cluster_mask The mask of the clusters to broadcast to.
+ */
+template<ducks::sv::all SV>
+__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx, uint16_t cluster_mask) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
+
+        int32_t crd0 = vec_idx * (dst.length);
+
+        asm volatile (
+            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            " [%0], [%1, {%3}], [%2], %4;"
+            :
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0), "h"(cluster_mask)
+            : "memory"
+        );
+    }
+}
+
+
+} // namespace cluster
 } // namespace tma
 } // namespace kittens

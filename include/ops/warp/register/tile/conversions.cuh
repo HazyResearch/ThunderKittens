@@ -40,12 +40,12 @@ __device__ inline void swap_layout_8(bf16_2 &dst, const bf16_2 &src) {
  * @param dst[out] Reference to the destination register base tile where the result will be stored.
  * @param src[in] Reference to the source register base tile to be swapped.
  */
-template<typename T2, ducks::rt_layout::all layout>
-__device__ inline void swap_layout(rt_base<T2, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T2, layout> &src) {
+template<typename T, ducks::rt_layout::all layout>
+__device__ inline void swap_layout(rt_base<T, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_base<T, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
     // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
-    T2 data1_cache = src.data[1]; // important for swap!
+    typename rt_base<T, layout>::T2 data1_cache = src.data[1]; // important for swap!
     swap_layout_8(dst.data[1], src.data[2]);
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
@@ -72,24 +72,6 @@ __device__ static inline void swap_layout(rt<T2, _height, _width, typename ducks
             swap_layout(dst.tiles[i][j], src.tiles[i][j]);
         }
     }
-}
-/**
- * @brief Swaps the layout of a register tile.
- *
- * This function swaps the layout of a register tile by iterating over its height and width
- * and performing layout swaps on each of its base elements.
- *
- * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height of the register tile.
- * @tparam _width The width of the register tile.
- * @tparam layout The current layout of the register tile.
- * @param dst[out] Reference to the destination register tile where the result will be stored.
- * @param src[in] Reference to the source register tile to be swapped.
- */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void swap_layout(rt_cmplx<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_cmplx<T2, _height, _width, layout> &src) {
-    swap_layout(dst.real, src.real);
-    swap_layout(dst.real, src.real);
 }
 
 /**
@@ -133,22 +115,6 @@ __device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::tran
     }
     return *(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>*)(&tile);
 }
-/**
- * @brief Swaps the layout of a complex register tile in place.
- *
- * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height of the register tile.
- * @tparam _width The width of the register tile.
- * @tparam layout The current layout of the register tile.
- * @param tile[in,out] Reference to the register tile to be swapped in place.
- * @return A reference to the swapped register tile.
- */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt_cmplx<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
-    tile.real = swap_layout_inplace(tile.real);
-    tile.imag = swap_layout_inplace(tile.imag);
-    return tile;
-}
 
 /* ----------  TRANSPOSE  ---------- */
 
@@ -160,12 +126,12 @@ __device__ static inline rt_cmplx<T2, _height, _width, typename ducks::rt_layout
  * @param dst[out] Reference to the register tile in which to store the transposed src.
  * @param src[in] Reference to the register base tile to be transposed.
  */
-template<typename T2, ducks::rt_layout::all layout>
-__device__ inline void transpose(rt_base<T2, layout> &dst, const rt_base<T2, layout> &src) {
+template<typename T, ducks::rt_layout::all layout>
+__device__ inline void transpose(rt_base<T, layout> &dst, const rt_base<T, layout> &src) {
     swap_layout_8(dst.data[0], src.data[0]);
     // technically this swap can be eliminated if we simply reinterpret the layout of the registers
     // everywhere else in the code, but that feels... very likely to cause bugs and not worth it. 
-    T2 data1_cache = src.data[1]; // important for swap!
+    typename rt_base<T, layout>::T2 data1_cache = src.data[1]; // important for swap!
     swap_layout_8(dst.data[1], src.data[2]);
     swap_layout_8(dst.data[2], data1_cache);
     swap_layout_8(dst.data[3], src.data[3]);
@@ -193,24 +159,7 @@ __device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst
         }
     }
 }
-/**
- * @brief Transposes a complex register tile.
- * 
- * This function is marked "sep", which means that the registers underlying dst MUST be separate
- * from the registers underlying src.
- *
- * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height of the src register tile, and the width of the dst tile.
- * @tparam _width The width of the src register tile, and the height of the dst tile.
- * @tparam layout The layout of the register tile.
- * @param dst[out] Reference to the register tile in which to store the transposed src.
- * @param src[in] Reference to the register tile to be transposed.
- */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void transpose_sep(rt_cmplx<T2, _width, _height, layout> &dst, const rt_cmplx<T2, _height, _width, layout> &src) {
-    transpose_sep(dst.real, src.real);
-    transpose_sep(dst.imag, src.imag);
-}
+
 /**
  * @brief Transposes a register base tile in-place.
  *
@@ -250,23 +199,6 @@ __device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T
     }
     return tile;
 }
-/**
- * @brief Transposes a square complex register tile in-place.
- *
- * @tparam T2 The data type of the register tile elements.
- * @tparam _height The height (in units of 16) of the src register tile, and the width of the dst tile. (Must be the same as _width.)
- * @tparam _width The width (in units of 16) of the src register tile, and the height of the dst tile. (Must be the same as _height.)
- * @tparam layout The current layout of the register tile.
- * @param src[in] Reference to the register tile to be transposed.
- * @return A reference to the transposed register tile.
- */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
-    tile.real = transpose_inplace(tile.real);
-    tile.imag = transpose_inplace(tile.imag);
-
-    return tile;
-}
 
 /* ----------  TYPE SWAPS  ---------- */
 
@@ -279,8 +211,10 @@ __device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplac
  * @param[out] dst A reference to the destination register base tile.
  * @param[in] src A reference to the source register base tile.
  */
-template<typename T2, typename U2, ducks::rt_layout::all layout>
-__device__ static inline void copy(rt_base<T2, layout> &dst, const rt_base<U2, layout> &src) {
+template<typename T, typename U, ducks::rt_layout::all layout>
+__device__ static inline void copy(rt_base<T, layout> &dst, const rt_base<U, layout> &src) {
+    using T2 = typename base_types::packing<T>::packed_type;
+    using U2 = typename base_types::packing<U>::packed_type;
     #pragma unroll
     for(int k = 0; k < dst.packed_per_thread; k++) {
         dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
@@ -307,22 +241,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
         }
     }
 }
-/**
- * @brief Copies a complex register tile, converting the underlying type if necessary.
- *
- * @tparam T2 The data type of the destination register elements.
- * @tparam U2 The data type of the source register elements.
- * @tparam _height The height (in units of 16) of the register tiles.
- * @tparam _width The width (in units of 16) of the register tiles.
- * @tparam layout The current layout of the register tile.
- * @param[out] dst A reference to the destination register tile.
- * @param[in] src A reference to the source register tile.
- */
-template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void copy(rt_cmplx<T2, _height, _width, layout> &dst, const rt_cmplx<U2, _height, _width, layout> &src) {
-    copy(dst.real, src.real);
-    copy(dst.imag, src.imag);
-}
+
 /* ----------  CAUSAL  ---------- */
 
 /**
@@ -396,9 +315,9 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
 * @note The subtile height must evenly divide the tile height.
 */
 template<int subtile_height, ducks::rt::all RT>
-__device__ inline rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
+__device__ inline rt<typename RT::T, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
     static_assert(RT::height % subtile_height == 0, "subtile height should evenly divide tile height.");
-    return reinterpret_cast<rt<typename RT::dtype, subtile_height, RT::width, typename RT::layout>&>(
+    return reinterpret_cast<rt<typename RT::T, subtile_height, RT::width, typename RT::layout>&>(
         src.tiles[idx*subtile_height]
     );
 }

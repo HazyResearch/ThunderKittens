@@ -109,10 +109,10 @@ __device__ static inline void hmma16816(      half_2 &d0,       half_2 &d1,
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AB_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                    const rt_base<bf16_2, ducks::rt_layout::row> &a,
-                                    const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
-                                    const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                    const rt_base<bf16,  ducks::rt_layout::row> &a,
+                                    const rt_base<bf16,  ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -137,10 +137,10 @@ __device__ static inline void mma_AB_base(rt_base<float2, ducks::rt_layout::row>
  * @param[in] b The second input rt_base<half_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<half_2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AB_base(rt_base<half_2, ducks::rt_layout::row> &d,
-                                    const rt_base<half_2, ducks::rt_layout::row> &a,
-                                    const rt_base<half_2, ducks::rt_layout::col> &b, // in col-major mode
-                                    const rt_base<half_2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB_base(rt_base<half, ducks::rt_layout::row> &d,
+                                    const rt_base<half, ducks::rt_layout::row> &a,
+                                    const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<half, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -165,10 +165,10 @@ __device__ static inline void mma_AB_base(rt_base<half_2, ducks::rt_layout::row>
  * @param[in] b The second input rt_base<bf16_2, row_layout> matrix in row-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_ABt_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                     const rt_base<bf16_2, ducks::rt_layout::row> &a,
-                                     const rt_base<bf16_2, ducks::rt_layout::row> &b, // in row-major mode
-                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16,  ducks::rt_layout::row> &a,
+                                     const rt_base<bf16,  ducks::rt_layout::row> &b, // in row-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -193,10 +193,10 @@ __device__ static inline void mma_ABt_base(rt_base<float2, ducks::rt_layout::row
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AtB_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                     const rt_base<bf16_2, ducks::rt_layout::col> &a,
-                                     const rt_base<bf16_2, ducks::rt_layout::col> &b, // in col-major mode
-                                     const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<bf16,  ducks::rt_layout::col> &a,
+                                     const rt_base<bf16,  ducks::rt_layout::col> &b, // in col-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -221,10 +221,10 @@ __device__ static inline void mma_AtB_base(rt_base<float2, ducks::rt_layout::row
  * @param[in] b The second input rt_base<bf16_2, col_layout> matrix in column-major mode.
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
-__device__ static inline void mma_AtBt_base(rt_base<float2, ducks::rt_layout::row> &d,
-                                      const rt_base<bf16_2, ducks::rt_layout::col> &a,
-                                      const rt_base<bf16_2, ducks::rt_layout::row> &b, // in col-major mode
-                                      const rt_base<float2, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                      const rt_base<bf16,  ducks::rt_layout::col> &a,
+                                      const rt_base<bf16,  ducks::rt_layout::row> &b, // in col-major mode
+                                      const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
         a.data[0], a.data[1], a.data[2], a.data[3],
@@ -280,7 +280,6 @@ __device__ static inline void mma_AB(rt_hf<N, M, ducks::rt_layout::row> &d,
         }
     }
 }
-
 /**
  * @brief Matrix multiply-accumulate operation.
  *
@@ -321,75 +320,6 @@ __device__ static inline void mma_AB(rt_fl<N, M, ducks::rt_layout::row> &d,
             }
         }
     }
-}
-/**
- * @brief Matrix multiply-accumulate operation for complex tiles
- *
- * This function calls mma_AB with hf arguments
- *
- * @tparam N The number of row tiles.
- * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
- * @tparam M The number of column tiles for the B matrix.
- * @param[out] d The output rt_cmplx_hf<N, M, row_layout> accumulator.
- * @param[in] a The first input rt_cmplx_hf<N, K, row_layout> matrix.
- * @param[in] b The second input rt_cmplx_hf<K, M, col_layout> matrix in column-major mode.
- * @param[in] c The input rt_cmplx_hf<N, M, row_layout> accumulator matrix.
- */
-template<int N, int K, int M>
-__device__ static inline void mma_AB(rt_cmplx_hf<N, M, ducks::rt_layout::row> &d,
-                               const rt_cmplx_hf<N, K, ducks::rt_layout::row> &a,
-                               const rt_cmplx_hf<K, M, ducks::rt_layout::col> &b,
-                               const rt_cmplx_hf<N, M, ducks::rt_layout::row> &c) {
-    
-    // Copy data from input accumulate register into output
-    copy(d.real, c.real);
-    copy(d.imag, c.imag);
-
-    // Negative on B matrix so we can use single accum register
-    rt_hf<N, K, ducks::rt_layout::row> tmp;
-    // Hex value for -1 in float16
-    constexpr half factor = std::bit_cast<__nv_bfloat16>(uint16_t(0xFB80));
-    mul(tmp, a.imag, factor);
-    mma_AB(d.real, a.real, b.real, d.real);
-    mma_AB(d.real, tmp, b.imag, d.real);
-
-    mma_AB(d.imag, a.real, b.imag, d.imag);
-    mma_AB(d.imag, a.imag, b.real, d.imag);
-}
-/**
- * @brief Matrix multiply-accumulate operation for complex tiles
- *
- * This function calls mma_AB with bf16 arguments
- *
- * @tparam N The number of row tiles.
- * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
- * @tparam M The number of column tiles for the B matrix.
- * @param[out] d The output rt_cmplx_fl<N, M, row_layout> accumulator.
- * @param[in] a The first input rt_cmplx_bf<N, K, row_layout> matrix.
- * @param[in] b The second input rt_cmplx_bf<K, M, col_layout> matrix in column-major mode.
- * @param[in] c The input rt_cmplx_fl<N, M, row_layout> accumulator matrix.
- */
-
-template<int N, int K, int M>
-__device__ static inline void mma_AB(rt_cmplx_fl<N, M, ducks::rt_layout::row> &d,
-                               const rt_cmplx_bf<N, K, ducks::rt_layout::row> &a,
-                               const rt_cmplx_bf<K, M, ducks::rt_layout::col> &b,
-                               const rt_cmplx_fl<N, M, ducks::rt_layout::row> &c) {
-    
-    // Copy data from input accumulate register into output
-    copy(d.real, c.real);
-    copy(d.imag, c.imag);
-
-    // Negative on B matrix so we can use single accum register
-    kittens::rt_bf<N, K, ducks::rt_layout::row> tmp;
-    // Hex value for -1 in bf16
-    constexpr bf16 factor = std::bit_cast<__nv_bfloat16>(uint16_t(0xBF80));
-    mul(tmp, a.imag, factor);
-    mma_AB(d.real, a.real, b.real, d.real);
-    mma_AB(d.real, tmp, b.imag, d.real);
-
-    mma_AB(d.imag, a.real, b.imag, d.imag);
-    mma_AB(d.imag, a.imag, b.real, d.imag);
 }
 /**
  * @brief Dot product operation for row layout.

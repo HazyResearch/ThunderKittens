@@ -1,0 +1,288 @@
+#include <iostream>
+#include <string>
+#include <fstream>
+
+#define ATTN_B 1
+
+#define ATTN_N  2048
+#define ATTN_NS 2  // passed in kernel
+#define ATTN_H  1024  // launches
+
+#define ATTN_D 1024 // hardcoded into this kernel
+
+#define dropout_p 0.00
+#define has_residual 1
+#define test_with_intermediates 0
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+int main(int argc, char **argv) {
+    // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
+    // which may increase the probability of L2 cache hits on KV
+
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_X = ATTN_B*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_O = ATTN_B*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_X = ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_O = ATTN_N*ATTN_D;
+
+    constexpr int TOTAL_ELEMENTS_NORM_WEIGHT = ATTN_D;
+    constexpr int TOTAL_ELEMENTS_NORM_BIAS   = ATTN_D;
+
+    float *x            = new float[TOTAL_UNIQUE_ELEMENTS_X];
+    float *residual     = new float[TOTAL_UNIQUE_ELEMENTS_X];
+    float *o_ref        = new float[TOTAL_UNIQUE_ELEMENTS_O];
+    float *o_resid_ref  = new float[TOTAL_UNIQUE_ELEMENTS_O];
+    bf16 *x_bf          = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *residual_bf   = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *o_bf          = new bf16[TOTAL_ELEMENTS_O];
+    bf16 *o_resid_bf    = new bf16[TOTAL_ELEMENTS_O];
+
+    float *o            = new float[TOTAL_ELEMENTS_O];
+    float *o_resid      = new float[TOTAL_ELEMENTS_O];
+
+    float *norm_weight   = new float[TOTAL_ELEMENTS_NORM_WEIGHT];
+    float *norm_bias     = new float[TOTAL_ELEMENTS_NORM_BIAS];
+    bf16 *norm_weight_bf = new bf16[TOTAL_ELEMENTS_NORM_WEIGHT];
+    bf16 *norm_bias_bf   = new bf16[TOTAL_ELEMENTS_NORM_BIAS];
+
+    // debug 
+    constexpr int TOTAL_ELEMENTS_MEAN = ATTN_B*ATTN_N;
+    float *mean_ref = new float[TOTAL_ELEMENTS_MEAN];
+    bf16 *mean_bf   = new bf16[TOTAL_ELEMENTS_MEAN];
+    float *mean     = new float[TOTAL_ELEMENTS_MEAN];
+    float *var_ref  = new float[TOTAL_ELEMENTS_MEAN];
+    bf16 *var_bf    = new bf16[TOTAL_ELEMENTS_MEAN];
+    float *var      = new float[TOTAL_ELEMENTS_MEAN];
+
+    if(argc > 1) {
+        std::ifstream infile(argv[1]);
+
+        printf("Loading from %s\n", argv[1]);
+        std::cout << "Starting to enter!" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> x[i];   }
+        std::cout << "Finished loading X" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> residual[i];   }
+        std::cout << "Finished loading RESIDUAL" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {  infile >> o_ref[i];  }
+        std::cout << "Finished loading O_REF" << std::endl;
+        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> o_resid_ref[i];   }
+        std::cout << "Finished loading OUT_RESIDUAL" << std::endl;
+
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  infile >> norm_weight[i];   }
+        std::cout << "Finished loading NORM_WEIGHT" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {  infile >> norm_bias[i];   }
+        std::cout << "Finished loading NORM_BIAS" << std::endl;
+
+        // debug
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> mean_ref[i];   
+            // if (i < 5) { std::cout << mean_ref[i] << std::endl; }
+        }
+        std::cout << "Finished loading MEAN_REF" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> var_ref[i];    
+            // if (i < 5) { std::cout << var_ref[i] << std::endl; }
+        }
+        std::cout << "Finished loading VAR_REF" << std::endl;
+
+        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+    }
+
+    // set the inputs
+    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {
+        x_bf[i] = __float2bfloat16(x[i % TOTAL_UNIQUE_ELEMENTS_X]);
+        residual_bf[i] = __float2bfloat16(residual[i % TOTAL_UNIQUE_ELEMENTS_X]);
+    }
+    for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {
+        norm_weight_bf[i] = __float2bfloat16(norm_weight[i]);
+        // if (i < 10 ) { std::cout << norm_weight[i] << std::endl; }
+    }
+    for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {
+        norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]);
+    }
+
+    bf16 *d_x, *d_residual, *d_o, *d_o_resid;
+    cudaMalloc(&d_x, TOTAL_ELEMENTS_X * sizeof(bf16));
+    cudaMalloc(&d_residual, TOTAL_ELEMENTS_X * sizeof(bf16));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS_O * sizeof(bf16));
+    cudaMalloc(&d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16));
+    
+    cudaMemcpy(d_x, x_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_residual, residual_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o, o_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o_resid, o_resid_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    bf16 *d_norm_weight, *d_norm_bias;
+    cudaMalloc(&d_norm_weight, TOTAL_ELEMENTS_NORM_WEIGHT * sizeof(bf16));
+    cudaMalloc(&d_norm_bias, TOTAL_ELEMENTS_NORM_BIAS * sizeof(bf16));
+    cudaMemcpy(d_norm_weight, norm_weight_bf, TOTAL_ELEMENTS_NORM_WEIGHT * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_norm_bias, norm_bias_bf, TOTAL_ELEMENTS_NORM_BIAS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    // debug
+    bf16 *d_mean, *d_var;
+    cudaMalloc(&d_mean, TOTAL_ELEMENTS_MEAN * sizeof(bf16));
+    cudaMemcpy(d_mean, mean_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_var, TOTAL_ELEMENTS_MEAN * sizeof(bf16));
+    cudaMemcpy(d_var, var_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    
+    unsigned long mem_size = 25480; // have the flag tell us
+    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
+    using T = kittens::bf16;
+    using H = kittens::bf16;
+    cudaFuncSetAttribute(
+        fused_layer_norm,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    const int ITER = 2;
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Starting kernel\n";
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {  
+        fused_layer_norm<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
+            ATTN_NS, has_residual, dropout_p, 
+            d_x, 
+            d_residual,
+            d_norm_weight, d_norm_bias, 
+            d_o, d_o_resid
+        );  
+    }
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+    
+    // check correctness
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o[i] = __bfloat162float(o_bf[i]); }
+    bool good = true;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
+        if(i < TOTAL_UNIQUE_ELEMENTS_O*2) {
+            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.1 || isnan(diff)) {
+            good = false;
+        }
+    }
+    if(good) std::cout << "Correct out :)\n";
+    else std::cout << "Incorrect out :(\n";
+
+    // o_resid
+    cudaMemcpy(o_resid_bf, d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o_resid[i] = __bfloat162float(o_resid_bf[i]); }
+    bool good_resid = true;
+    std::ofstream o_resid_ref_file("printouts/resid_ref.txt");
+    std::ofstream o_resid_file("printouts/resid.txt");
+    std::ofstream resid_diff_file("printouts/resid_diff.txt");
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
+        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+            o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_resid_file << o_resid[i] << ' ';
+            resid_diff_file << resid_diff << ' ';
+        }
+        if(abs(resid_diff) > 0.05 || isnan(resid_diff)) {
+            good_resid = false;
+        }
+    }
+    if(good_resid) std::cout << "Correct out resid :)\n";
+    else std::cout << "Incorrect out resid :(\n";
+
+    if (test_with_intermediates > 0) {
+        printf("Checking intermediates!\n");
+        // mean
+        cudaMemcpy(mean_bf, d_mean, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { mean[i] = __bfloat162float(mean_bf[i]); }
+        bool good_mean = true;
+        std::ofstream mean_ref_file("printouts/mean_ref.txt");
+        std::ofstream mean_file("printouts/mean.txt");
+        std::ofstream mean_diff_file("printouts/mean_diff.txt");
+        std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
+            float mean_diff = mean[i] - mean_ref[i % TOTAL_ELEMENTS_MEAN];
+            if(i < TOTAL_ELEMENTS_MEAN) {
+                mean_ref_file << mean_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
+                mean_file << mean[i] << ' ';
+                mean_diff_file << mean_diff << ' ';
+            }
+            if(abs(mean_diff) > 0.05 || isnan(mean_diff)) { good_mean = false; }
+        }
+        if(good_mean) std::cout << "Correct mean :)\n";
+        else std::cout << "Incorrect mean :(\n";
+
+
+        // var
+        cudaMemcpy(var_bf, d_var, TOTAL_ELEMENTS_MEAN * sizeof(bf16), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) { var[i] = __bfloat162float(var_bf[i]); }
+        bool good_var = true;
+        std::ofstream var_ref_file("printouts/var_ref.txt");
+        std::ofstream var_file("printouts/var.txt");
+        std::ofstream var_diff_file("printouts/var_diff.txt");
+        std::cout << "Total elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        std::cout << "Total unique elements: " << TOTAL_ELEMENTS_MEAN << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {
+            float var_diff = var[i] - var_ref[i % TOTAL_ELEMENTS_MEAN];
+            if(i < TOTAL_ELEMENTS_MEAN) {
+                var_ref_file << var_ref[i % TOTAL_ELEMENTS_MEAN] << ' ';
+                var_file << var[i] << ' ';
+                var_diff_file << var_diff << ' ';
+            }
+            if(abs(var_diff) > 0.05 || isnan(var_diff)) { good_var = false; }
+        }
+        if(good_var) std::cout << "Correct var :)\n";
+        else std::cout << "Incorrect var :(\n";
+    }
+
+    std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+
+    cudaFree(d_x);
+    cudaFree(d_residual);
+    cudaFree(d_o);
+    cudaFree(d_norm_weight);
+    cudaFree(d_norm_bias);
+    cudaFree(d_mean);
+    cudaFree(d_var);
+
+    delete[] x, residual, o, o_ref, norm_weight, norm_bias;
+    delete[] x_bf, residual_bf, o_bf, norm_weight_bf, norm_bias_bf;
+    delete[] mean, mean_ref, mean_bf, var, var_ref, var_bf;
+    return 0;
+}
