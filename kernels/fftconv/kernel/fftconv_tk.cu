@@ -1,9 +1,6 @@
 //#define TORCH_COMPILE
 
 #include "include/kittens.cuh"
-// #include <cooperative_groups.h>
-// #include <cuda/pipeline>
-// #include <cuda/barrier>
 
 using namespace kittens;
 
@@ -14,6 +11,9 @@ using namespace kittens;
 
 #define NUM_WORKERS 2
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
+
+// We need to create a real and imag tile since we're passing thru TMA
+#define tile_smem_bf_2x2 kittens::st_bf<2, 2>
 
 
 // launch_bounds(Max threads per block, min blocks per SM)
@@ -52,14 +52,14 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     shared_allocator al((int*)&__shm[0]);
 
     // Non-TMA, loaded once at beginning
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&f_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&twinv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
+    kittens::st_cmplx_bf<2, 2> (&f_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&twinv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
 
     // TMA - don't have it implemented for complex tiles yet so split into real and imag for now
-    kittens::st_bf<2, 2, ducks::st_layout::swizzle> (&kf_real_s)[2] = al.allocate<st_bf<2, 2, ducks::st_layout::swizzle>, 2>();
-    kittens::st_bf<2, 2, ducks::st_layout::swizzle> (&kf_imag_s)[2] = al.allocate<st_bf<2, 2, ducks::st_layout::swizzle>, 2>();
+    tile_smem_bf_2x2 (&kf_real_s)[2] = al.allocate<tile_smem_bf_2x2, 2>();
+    tile_smem_bf_2x2 (&kf_imag_s)[2] = al.allocate<tile_smem_bf_2x2, 2>();
     
     // TODO TMA x too?
     //kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
@@ -72,7 +72,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     int k_phasebit = 0;
     // 2 dims for each ST
     if (threadIdx.x == 0) {
-        tma::init_barrier<kittens::st_bf<2, 2, ducks::st_layout::swizzle>, 2>(bar, 1);
+        kittens::init_barrier(bar, 0, 1);
     }
     //__syncthreads();
 
@@ -86,7 +86,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
 
     if (warpid == 0) {
         // TODO eventually add x smem
-        tma::set_bytes(bar,
+        tma::expect_bytes(bar,
             size_bytes<typeof(kf_real_s[k_tic])> +
             size_bytes<typeof(kf_imag_s[k_tic])>
         );
@@ -102,7 +102,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     kittens::load(twinv_reg, twinv_smem);
 
     for (int i = 0; i < H_TILE; i++, k_tic ^=1, k_toc ^=1) {
-        tma::arrive_and_wait(bar, k_phasebit);
+        kittens::wait(bar, k_phasebit);
         k_phasebit ^= 1;
         kittens::load(k_reg.real, kf_real_s[k_tic]);
         kittens::load(k_reg.imag, kf_imag_s[k_tic]);
@@ -110,7 +110,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
         int k_start = (h_start + i) * h_stride;
 
         if (warpid == 0 && i < H_TILE - 1) {
-            tma::set_bytes(bar,
+            tma::expect_bytes(bar,
                 size_bytes<typeof(kf_real_s[k_toc])>+
                 size_bytes<typeof(kf_imag_s[k_toc])>
             );

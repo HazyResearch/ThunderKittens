@@ -34,11 +34,11 @@ struct cmplx_identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename T2, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
+template<typename _T, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt_cmplx {
     using identifier = ducks::rt::cmplx_identifier;
     using layout = _layout; ///< Layout of the matrix tile, ensures compatibility with the rt concepts
-    using dtype = rt<T2, _height, _width, layout>; /// Data type of each internal tile.
+    using dtype = rt<_T, _height, _width, layout>; /// Data type of each internal tile.
 
     // Real/imag tiles have same internal layout and size
     dtype real;
@@ -65,9 +65,9 @@ template <typename T> concept complex = requires {
 }
 }
 
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_fl = rt_cmplx<float2, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_bf = rt_cmplx<bf16_2, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_hf = rt_cmplx<half_2, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_fl = rt_cmplx<float, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_bf = rt_cmplx<bf16, _height, _width, layout>;
+template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_cmplx_hf = rt_cmplx<half, _height, _width, layout>;
 
 
 

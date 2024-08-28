@@ -34,11 +34,10 @@ struct cmplx_identifier {};
  * 
  *
  */
-template<typename _T, int _height, int _width, ducks::st_layout::all _layout>
+template<typename _T, int _height, int _width>
 struct st_cmplx {
     using identifier = ducks::st::cmplx_identifier;
-    using layout = _layout; ///< Layout of the matrix tile, ensures compatibility with the st concepts
-    using dtype = st<_T, _height, _width, _layout>; /// Data type of each internal tile.
+    using dtype = st<_T, _height, _width>; /// Data type of each internal tile.
 
     // Real/imag tiles have same internal layout and size
     dtype real;
@@ -65,7 +64,7 @@ template <typename T> concept complex = requires {
 }
 }
 
-template<int _height, int _width, ducks::st_layout::all layout=ducks::st_layout::swizzle> using st_cmplx_bf = st_cmplx<bf16, _height, _width, layout>;
+template<int _height, int _width> using st_cmplx_bf = st_cmplx<bf16, _height, _width>;
 
 
 

@@ -57,7 +57,7 @@ __device__ static inline void load(ST &dst, const typename ST::dtype *src, const
  * @param im_row_stride[in] The stride between rows in the source imaginary component array.
  */
 template<ducks::st::complex CST>
-__device__ static inline void load(CST &dst, const CST::dtype::dtype *resrc, const CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride) {
+__device__ static inline void load(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride) {
     load(dst.real, resrc, re_row_stride);
     load(dst.imag, imsrc, im_row_stride);
 }
@@ -102,7 +102,7 @@ __device__ static inline void store(typename ST::dtype *dst, const ST &src, cons
  * @param im_row_stride[in] The stride between rows in the destination imaginary component array.
  */
 template<ducks::st::complex CST>
-__device__ static inline void store(const typename ST::dtype::dtype *redst, const typename ST::dtype::dtype *imdst, CST &src, const int re_row_stride, const int im_row_stride) {
+__device__ static inline void store(const typename CST::dtype::dtype *redst, const typename CST::dtype::dtype *imdst, CST &src, const int re_row_stride, const int im_row_stride) {
     store(redst, src.real, re_row_stride);
     store(imdst, src.imag, im_row_stride);
 }
@@ -160,7 +160,7 @@ __device__ static inline void load_async(ST &dst, const typename ST::dtype *src,
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::complex CST>
-__device__ static inline void load_async(CST &dst, const typename ST::dtype::dtype *resrc, const typename ST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
+__device__ static inline void load_async(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
     load_async(dst.real, resrc, re_row_stride, barrier);
     load_async(dst.imag, imsrc, im_row_stride, barrier);
 }

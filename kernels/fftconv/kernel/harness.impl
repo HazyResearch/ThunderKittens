@@ -11,9 +11,6 @@ using namespace kittens;
 #define H 64
 #define TOTAL_INPUT_ELEMENTS B*H*N
 
-// We need to create a real and imag tile since we're passing thru TMA
-#define tile_smem_bf_2x2 kittens::st_bf<2, 2, ducks::st_layout::swizzle>
-
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();

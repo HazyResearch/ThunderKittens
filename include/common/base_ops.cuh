@@ -121,8 +121,8 @@ template<> __device__ inline float  sin::op<float> (const float &x ) { return __
 template<> __device__ inline float2 sin::op<float2>(const float2 &x) { return float2{__sinf(x.x), __sinf(x.y)}; }
 template<> __device__ inline bf16   sin::op<bf16>  (const bf16 &x  ) { return hsin(x);                          }
 template<> __device__ inline bf16_2 sin::op<bf16_2>(const bf16_2 &x) { return h2sin(x);                         }
-template<> __device__ inline half   log::op<half>  (const half &x  ) { return hsin(x);                          }
-template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2sin(x);                         }
+template<> __device__ inline half   sin::op<half>  (const half &x  ) { return hsin(x);                          }
+template<> __device__ inline half_2 sin::op<half_2>(const half_2 &x) { return h2sin(x);                         }
 
 /**
  * @brief Cosine function operation.
@@ -140,8 +140,8 @@ template<> __device__ inline float  cos::op<float> (const float &x ) { return __
 template<> __device__ inline float2 cos::op<float2>(const float2 &x) { return float2{__cosf(x.x), __cosf(x.y)}; }
 template<> __device__ inline bf16   cos::op<bf16>  (const bf16 &x  ) { return hcos(x);                          }
 template<> __device__ inline bf16_2 cos::op<bf16_2>(const bf16_2 &x) { return h2cos(x);                         }
-template<> __device__ inline half   log::op<half>  (const half &x  ) { return hcos(x);                          }
-template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2cos(x);                         }
+template<> __device__ inline half   cos::op<half>  (const half &x  ) { return hcos(x);                          }
+template<> __device__ inline half_2 cos::op<half_2>(const half_2 &x) { return h2cos(x);                         }
 /**
  * @brief Natural log function operation.
  *
