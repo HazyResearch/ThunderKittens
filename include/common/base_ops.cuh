@@ -106,6 +106,43 @@ template<> __device__ inline bf16_2 exp2::op<bf16_2>(const bf16_2 &x) { return h
 template<> __device__ inline half   exp2::op<half>  (const half &x  ) { return hexp2(x);                          }
 template<> __device__ inline half_2 exp2::op<half_2>(const half_2 &x) { return h2exp2(x);                         }
 /**
+ * @brief Sine function operation.
+ *
+ * This operation calculates the sine of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The sine of the input value.
+ */
+struct sin {
+    template<typename T> static __device__ inline T op(const T &x) { return sin(x); }
+};
+template<> __device__ inline float  sin::op<float> (const float &x ) { return __sinf(x);                        }
+template<> __device__ inline float2 sin::op<float2>(const float2 &x) { return float2{__sinf(x.x), __sinf(x.y)}; }
+template<> __device__ inline bf16   sin::op<bf16>  (const bf16 &x  ) { return hsin(x);                          }
+template<> __device__ inline bf16_2 sin::op<bf16_2>(const bf16_2 &x) { return h2sin(x);                         }
+template<> __device__ inline half   log::op<half>  (const half &x  ) { return hsin(x);                          }
+template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2sin(x);                         }
+
+/**
+ * @brief Cosine function operation.
+ *
+ * This operation calculates the cosine of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The cosine of the input value.
+ */
+struct cos {
+    template<typename T> static __device__ inline T op(const T &x) { return cos(x); }
+};
+template<> __device__ inline float  cos::op<float> (const float &x ) { return __cosf(x);                        }
+template<> __device__ inline float2 cos::op<float2>(const float2 &x) { return float2{__cosf(x.x), __cosf(x.y)}; }
+template<> __device__ inline bf16   cos::op<bf16>  (const bf16 &x  ) { return hcos(x);                          }
+template<> __device__ inline bf16_2 cos::op<bf16_2>(const bf16_2 &x) { return h2cos(x);                         }
+template<> __device__ inline half   log::op<half>  (const half &x  ) { return hcos(x);                          }
+template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2cos(x);                         }
+/**
  * @brief Natural log function operation.
  *
  * This operation calculates the natural logarithm of the input value.
