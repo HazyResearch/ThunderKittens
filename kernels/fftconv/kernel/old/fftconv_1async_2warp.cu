@@ -1,9 +1,9 @@
-//#define TORCH_COMPILE
+#define TORCH_COMPILE
 
 #include "include/kittens.cuh"
-// #include <cooperative_groups.h>
-// #include <cuda/pipeline>
-// #include <cuda/barrier>
+#include <cooperative_groups.h>
+#include <cuda/pipeline>
+#include <cuda/barrier>
 
 using namespace kittens;
 
@@ -18,7 +18,7 @@ using namespace kittens;
 
 // launch_bounds(Max threads per block, min blocks per SM)
 __global__ __launch_bounds__(NUM_THREADS, 1) 
-void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_kf_real, const CUtensorMap* tma_kf_imag,
+void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
             const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
             const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
             bf16 *o, 
@@ -51,30 +51,24 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
 
-    // Non-TMA, loaded once at beginning
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&f_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
     kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&twinv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
 
-    // TMA - don't have it implemented for complex tiles yet so split into real and imag for now
-    kittens::st_bf<2, 2, ducks::st_layout::swizzle> (&kf_real_s)[2] = al.allocate<st_bf<2, 2, ducks::st_layout::swizzle>, 2>();
-    kittens::st_bf<2, 2, ducks::st_layout::swizzle> (&kf_imag_s)[2] = al.allocate<st_bf<2, 2, ducks::st_layout::swizzle>, 2>();
-    
-    // TODO TMA x too?
-    //kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
+    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&kf_smem)[2] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2>();
+    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
 
     //if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&x_smem) - (uint64_t)(&__shm[0]));
 
     // pipelining
     int k_tic = 0, k_toc = 1;
-    __shared__ kittens::barrier bar;
-    int k_phasebit = 0;
-    // 2 dims for each ST
+    auto block = cooperative_groups::this_thread_block();
+    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> k_barrier;
     if (threadIdx.x == 0) {
-        tma::init_barrier<kittens::st_bf<2, 2, ducks::st_layout::swizzle>, 2>(bar, 1);
+        init(&k_barrier, block.size());
     }
-    //__syncthreads();
+    block.sync(); // Need to make sure none calls before setup.
 
     // Global loads
     if (warpid == 0) {
@@ -82,17 +76,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
         kittens::load(finv_smem, finv_real, finv_imag, n1, n1);
         kittens::load(tw_smem, tw_real, tw_imag, n1, n1);
         kittens::load(twinv_smem, twinv_real, twinv_imag, n1, n1);
-    }
-
-    if (warpid == 0) {
-        // TODO eventually add x smem
-        tma::set_bytes(bar,
-            size_bytes<typeof(kf_real_s[k_tic])> +
-            size_bytes<typeof(kf_imag_s[k_tic])>
-        );
-        // The tile index is the head index
-        tma::load_async(kf_real_s[k_tic], tma_kf_real, bar, h_start);
-        tma::load_async(kf_imag_s[k_tic], tma_kf_imag, bar, h_start);
+        load_async(kf_smem[k_tic], kf_real + (h_start*h_stride), kf_imag + (h_start*h_stride), n1, n1, k_barrier);
     }
     __syncthreads();
 
@@ -102,22 +86,17 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     kittens::load(twinv_reg, twinv_smem);
 
     for (int i = 0; i < H_TILE; i++, k_tic ^=1, k_toc ^=1) {
-        tma::arrive_and_wait(bar, k_phasebit);
-        k_phasebit ^= 1;
-        kittens::load(k_reg.real, kf_real_s[k_tic]);
-        kittens::load(k_reg.imag, kf_imag_s[k_tic]);
+        k_barrier.arrive_and_wait();
+        kittens::load(k_reg, kf_smem[k_tic]);
 
         int k_start = (h_start + i) * h_stride;
+        int next_head = (h_start + i+1) * h_stride;
 
-        if (warpid == 0 && i < H_TILE - 1) {
-            tma::set_bytes(bar,
-                size_bytes<typeof(kf_real_s[k_toc])>+
-                size_bytes<typeof(kf_imag_s[k_toc])>
-            );
-            int next_tile = h_start + i+1;
-            // Kick off load for next k, while we do computation on current set
-            tma::load_async(kf_real_s[k_toc], tma_kf_real, bar, next_tile);
-            tma::load_async(kf_imag_s[k_toc], tma_kf_imag, bar, next_tile);
+        if (i < H_TILE - 1) {
+            if (warpid == 0) {
+                // Kick off load for next k, while we do computation on current set
+                kittens::load_async(kf_smem[k_toc], kf_real + next_head, kf_imag + next_head, n1, n1, k_barrier);
+            }  
         }
 
         for (int j = 0; j < batches; j++) {
@@ -155,7 +134,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_k
     }
 }
 
-void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap* tma_kf_real, const CUtensorMap* tma_kf_imag, 
+void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
                         const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
                         const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
                         bf16 *o, 
@@ -183,7 +162,7 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const CUtensorMap
         mem_size
     );
 
-    fftconv_tk<<<grid_dim, block_dim, mem_size>>>(u_real, u_imag, tma_kf_real, tma_kf_imag, 
+    fftconv_tk<<<grid_dim, block_dim, mem_size>>>(u_real, u_imag, kf_real, kf_imag, 
                                                 f_real, f_imag, finv_real, finv_imag, 
                                                 tw_real, tw_imag, twinv_real, twinv_imag, 
                                                 o, 

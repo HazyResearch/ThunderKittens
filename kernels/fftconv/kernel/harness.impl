@@ -3,12 +3,16 @@
 #include <stdlib.h>
 
 #include <fstream>
+using namespace kittens;
 
 #define N 1024
 #define N1 32
 #define B 64
 #define H 64
 #define TOTAL_INPUT_ELEMENTS B*H*N
+
+// We need to create a real and imag tile since we're passing thru TMA
+#define tile_smem_bf_2x2 kittens::st_bf<2, 2, ducks::st_layout::swizzle>
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -194,13 +198,17 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    // H tiles worth of mem, its 1 2x2 ST wide
+    const CUtensorMap* tma_kf_real = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_kf_real, H);
+    const CUtensorMap* tma_kf_imag = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_kf_imag, H);
+
     cudaStream_t stream;
     cudaStreamCreate(&stream);
     std::cout << "Starting kernel\n";
     cudaDeviceSynchronize();
     const auto start = std::chrono::high_resolution_clock::now();
     launch_fftconv_tk(
-        d_u_real, d_u_imag, d_kf_real, d_kf_imag, 
+        d_u_real, d_u_imag, tma_kf_real, tma_kf_imag, 
         d_f_real, d_f_imag, d_finv_real, d_finv_imag,
         d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
         B, H, N, N1
