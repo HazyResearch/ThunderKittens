@@ -1,12 +1,5 @@
-/**
- * @file
- * @brief Templated tile layouts for global memory.
- */
- 
 #pragma once
 
-#include <type_traits>
-#include <cstddef>
 #include <cuda.h>
 #include <iostream>
 #include <assert.h>
@@ -14,10 +7,10 @@
 #include "../shared/shared.cuh"
 
 namespace kittens {
+namespace tma {
+namespace detail {
 
-#ifdef KITTENS_HOPPER
-
-/* ----------   Create tensor map descriptor (HOST)  ---------- */
+/* ----------   Create tile tensor map descriptor (HOST)  ---------- */
 
 /**
 * @brief Creates a tensor map for the given source tensor.
@@ -160,77 +153,110 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typenam
     return tma_map_d;
 }
 
-#endif
+/* ----------   Create vector tensor map descriptor (HOST)  ---------- */
 
-/* ----------  Global tile descriptor  ---------- */
+// First, we need a template system to determine how to divide up a long shared vector into multiple subvectors.
+// We have to do this because the first dimension for TMA is limited to 256 elements.
+// Our goal is to find the largest multiple of 16 that is <= 256 and divides the vector length evenly.
 
-namespace ducks {
-namespace gt {
-struct identifier {};
-template<int d> concept cdim = (d > 0);
-template<int d> concept rdim = (d == -1); // 0 is the only disallowed value
-template<int _v> struct compiled_dim {
-    static_assert(cdim<_v>, "Invalid compile-time dimension value");
-    static constexpr size_t v = _v;
-    __host__ __device__ inline compiled_dim(const std::nullptr_t &_) {}
+template<typename SV, int D=16> struct find_vector_divider {
+    static constexpr int value = (SV::length % (16*D) == 0) ? 16*D : find_vector_divider<SV, D-1>::value;
 };
-struct runtime_dim {
-    size_t v;
-    __host__ __device__ inline runtime_dim(const size_t &_v) : v(_v) {}
-};
-template<int d> using make_dim_t = std::conditional_t<rdim<d>, runtime_dim, compiled_dim<d>>;
-template<int d> using make_arg_t = std::conditional_t<rdim<d>, size_t, std::nullptr_t>;
-}
-}
+template<typename SV> constexpr int sv_tma_dim1 = find_vector_divider<SV>::value;
+template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>);
 
-
-template<ducks::st::all base, bool _use_tma=false>
-struct gt {
-    template<int _b=-1, int _d=-1, int _r=-1, int _c=-1>
-    struct make {
-        using T = base::T;
-        static constexpr bool use_tma = _use_tma;
-        std::conditional_t<use_tma, CUtensorMap*, T*> data;
-        ducks::gt::make_dim_t<_b> batch;
-        ducks::gt::make_dim_t<_d> depth;
-        ducks::gt::make_dim_t<_r> rows;
-        ducks::gt::make_dim_t<_c> cols;
-        __host__ __device__ inline make(T *_data,
-                                        ducks::gt::make_arg_t<_b> _batch,
-                                        ducks::gt::make_arg_t<_d> _depth,
-                                        ducks::gt::make_arg_t<_r> _rows,
-                                        ducks::gt::make_arg_t<_c> _cols) : batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
-            if constexpr (use_tma) {
-                data = allocate_and_create_tensor_map<base>(_data, batch.v, depth.v, rows.v, cols.v);
-            } else {
-                data = _data;
-            }
-        }
-        __host__ __device__ inline ~make() {
-#ifdef __CUDA_ARCH__
-            if constexpr (use_tma) {
-                cudaFree(data);
-            }
-#endif
-        }
-    };
-};
-
-namespace ducks {
-namespace gt {
 /**
-* @brief Concept for all global tiles.
-* @tparam T The type to check against the concept requirements.
+* @brief Creates a tensor map for the given source vector.
 *
-* Requires:
-* - T has a nested type identifier that is the same as gt::identifier.
+* This function creates a tensor map (CUtensorMap) for the specified source shared vector type. The tensor map
+* is used to describe the shape and layout of the tensor in memory. The function sets up the tensor
+* map based on the provided source tensor pointer and the layout specified by the SV template parameter.
+*
+* @tparam SV The source tensor type, which must be TMA-compatible.
+* @tparam num_vectors The number of vectors present in global memory.
+* @param tma_map Pointer to the CUtensorMap object to be initialized.
+* @param src Pointer to the source tensor data in global memory.
 */
-template<typename T> concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rt::identifier
+template<ducks::sv::all SV>
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+    using dtype = typename SV::dtype;
+    
+    constexpr uint32_t  tma_dim      = 5;
+    void                *global_addr = (void*)(src);
+
+    constexpr CUtensorMapDataType     tma_format      = (
+        std::is_same_v<dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
+        std::is_same_v<dtype, half>  ? CU_TENSOR_MAP_DATA_TYPE_FLOAT16 :
+        std::is_same_v<dtype, float> ? CU_TENSOR_MAP_DATA_TYPE_FLOAT32 :
+        CUtensorMapDataType(-1)
+    );
+    constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
+    constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+    constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
+
+    constexpr uint64_t dim1 = sv_tma_dim1<SV>;
+    constexpr uint64_t dim2 = sv_tma_dim2<SV>;
+
+    uint64_t gmem_shape [5] = {dim1, dim2*block_cols, block_rows, block_depth, block_batch};
+    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), dim1*dim2*sizeof(dtype), dim1*dim2*block_rows*sizeof(dtype), dim1*dim2*block_rows*block_depth*sizeof(dtype)};
+    uint32_t smem_shape [5] = {dim1, dim2, 1, 1, 1};
+    uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
+
+    // ensure that the global address is always 16-byte aligned 
+    assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
+
+    assert(smem_shape[0] <= 256); // smem_shape[0] elements must be <= 256.
+
+    const uint64_t *gmem_shape_ptr = &gmem_shape[0];
+    const uint64_t *gmem_stride_ptr = &gmem_stride[0]; 
+    const uint32_t *smem_shape_ptr = &smem_shape[0];
+    const uint32_t *smem_stride_ptr = &smem_stride[0];
+
+    CUresult result = cuTensorMapEncodeTiled(
+        tma_map,
+        tma_format,
+        tma_dim,
+        global_addr,
+        gmem_shape_ptr,
+        gmem_stride_ptr, 
+        smem_shape_ptr,
+        smem_stride_ptr,
+        tma_interleave,
+        swizzle,
+        tma_l2Promotion,
+        tma_oobFill
+    );
+
+    const char *error_string;
+    CUresult res = cuGetErrorString(result, &error_string);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Error: " << error_string << std::endl;
+    }
+};
+
+/**
+* @brief Allocates on the GPU and initializes a tensor map for the given source tensor.
+*
+* This function creates a tensor map (CUtensorMap) for the specified source shared vector type. The tensor map
+* is used to describe the shape and layout of the tensor in memory. The function sets up the tensor
+* map based on the provided source tensor pointer and the layout specified by the SV template parameter.
+*
+* @tparam SV The source tensor type, which must be TMA-compatible.
+* @tparam num_vectors The number of vectors present in global memory.
+* @param src Pointer to the source tensor data in global memory.
+* @returns Pointer to the CUtensorMap object to be initialized.
+*/
+template<ducks::sv::all SV>
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename SV::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+    CUtensorMap *tma_map_d;
+    cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
+    CUtensorMap tma_map_host; // put it on the stack, why not.
+    create_tensor_map<SV>(&tma_map_host, src, block_batch, block_depth, block_rows, block_cols);
+    cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
+    return tma_map_d;
+}
+
 }
 }
-
-
-
 }

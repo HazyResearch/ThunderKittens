@@ -5,5 +5,9 @@
 
 #pragma once
 
-#include "gv.cuh"
-#include "gt.cuh"
+#ifdef KITTENS_HOPPER
+#include "tma.cuh"
+#endif
+#include "util.cuh"
+#include "gvl.cuh"
+#include "gtl.cuh"
