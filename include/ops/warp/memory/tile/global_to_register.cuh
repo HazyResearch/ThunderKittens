@@ -19,9 +19,13 @@ namespace kittens {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::row_layout RT, typename U>
-__device__ inline static void load(RT &dst, const U *src, const int row_stride) {
+template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void load(RT &dst, const GTL &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
     using T2 = RT::dtype;
+    using U = typename GTL::dtype;
+    U *src_ptr = reinterpret_cast<U*>(src.raw_ptr + (((batch_idx * src.depth + depth_idx) * src.rows + row_idx)*src.base_rows * src.cols + col_idx)*src.base_cols);
+    const int row_stride = src.cols * src.base_cols;
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -33,8 +37,8 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + warphalf*8 + 2*(laneid % 4);
             T2 transfers[2];
-            transfers[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row_0to3+0)*row_stride + col]));
-            transfers[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row_0to3+4)*row_stride + col]));
+            transfers[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row_0to3+0)*row_stride + col]));
+            transfers[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row_0to3+4)*row_stride + col]));
             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
             dst.tiles[i][j].data[0] = transfers[0];
             dst.tiles[i][j].data[2] = transfers[1];
@@ -43,8 +47,8 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + warphalf*8 + 2*(laneid % 4);
             T2 transfers[2];
-            transfers[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row_0to3+ 8)*row_stride + col]));
-            transfers[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row_0to3+12)*row_stride + col]));
+            transfers[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row_0to3+ 8)*row_stride + col]));
+            transfers[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row_0to3+12)*row_stride + col]));
             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
             dst.tiles[i][j].data[1] = transfers[0];
             dst.tiles[i][j].data[3] = transfers[1];
@@ -60,9 +64,13 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::col_layout RT, typename U>
-__device__ inline static void load(RT &dst, const U *src, const int row_stride) {
+template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void load(RT &dst, const GTL &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
+    using U = typename GTL::dtype;
+    U *src_ptr = reinterpret_cast<U*>(src.raw_ptr + (((batch_idx * src.depth + depth_idx) * src.rows + row_idx)*src.base_rows * src.cols + col_idx)*src.base_cols);
+    const int row_stride = src.cols * src.base_cols;
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
@@ -70,26 +78,26 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (laneid / 4);
-            dst.tiles[i][j].data[0].x = base_types::convertor<T, U>::convert(src[(row+0)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[1].x = base_types::convertor<T, U>::convert(src[(row+0)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[0].x = base_types::convertor<T, U>::convert(src_ptr[(row+0)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[1].x = base_types::convertor<T, U>::convert(src_ptr[(row+0)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (laneid / 4);
-            dst.tiles[i][j].data[0].y = base_types::convertor<T, U>::convert(src[(row+1)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[1].y = base_types::convertor<T, U>::convert(src[(row+1)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[0].y = base_types::convertor<T, U>::convert(src_ptr[(row+1)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[1].y = base_types::convertor<T, U>::convert(src_ptr[(row+1)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (laneid / 4);
-            dst.tiles[i][j].data[2].x = base_types::convertor<T, U>::convert(src[(row+8)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[3].x = base_types::convertor<T, U>::convert(src[(row+8)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[2].x = base_types::convertor<T, U>::convert(src_ptr[(row+8)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[3].x = base_types::convertor<T, U>::convert(src_ptr[(row+8)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (laneid / 4);
-            dst.tiles[i][j].data[2].y = base_types::convertor<T, U>::convert(src[(row+9)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[3].y = base_types::convertor<T, U>::convert(src[(row+9)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[2].y = base_types::convertor<T, U>::convert(src_ptr[(row+9)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[3].y = base_types::convertor<T, U>::convert(src_ptr[(row+9)*row_stride + (col+8)]);
         }
     }
 }
@@ -103,9 +111,13 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::row_layout RT, typename U>
-__device__ inline static void store(U *dst, const RT &src, const int row_stride) {
+template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void store(GTL &dst, const RT &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
     using T2 = RT::dtype;
+    using U = typename GTL::dtype;
+    U *dst_ptr = reinterpret_cast<U*>(dst.raw_ptr + (((batch_idx * dst.depth + depth_idx) * dst.rows + row_idx)*dst.base_rows * dst.cols + col_idx)*dst.base_cols);
+    const int row_stride = dst.cols * dst.base_cols;
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -121,8 +133,8 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
             transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
             transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
-            *(U2*)(&dst[(row_0to3+0)*row_stride + col]) = transfers[0];
-            *(U2*)(&dst[(row_0to3+4)*row_stride + col]) = transfers[1];
+            *(U2*)(&dst_ptr[(row_0to3+0)*row_stride + col]) = transfers[0];
+            *(U2*)(&dst_ptr[(row_0to3+4)*row_stride + col]) = transfers[1];
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
@@ -131,8 +143,8 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
             transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
             transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
-            *(U2*)(&dst[(row_0to3+ 8)*row_stride + col]) = transfers[0];
-            *(U2*)(&dst[(row_0to3+12)*row_stride + col]) = transfers[1];
+            *(U2*)(&dst_ptr[(row_0to3+ 8)*row_stride + col]) = transfers[0];
+            *(U2*)(&dst_ptr[(row_0to3+12)*row_stride + col]) = transfers[1];
         }
     }
 }
@@ -145,9 +157,13 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::col_layout RT, typename U>
-__device__ inline static void store(U *dst, const RT &src, const int row_stride) {
+template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void store(GTL &dst, const RT &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
+    using U = typename GTL::dtype;
+    U *dst_ptr = reinterpret_cast<U*>(dst.raw_ptr + (((batch_idx * dst.depth + depth_idx) * dst.rows + row_idx)*dst.base_rows * dst.cols + col_idx)*dst.base_cols);
+    const int row_stride = dst.cols * dst.base_cols;
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
@@ -155,26 +171,26 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (laneid / 4);
-            dst[(row+0)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].x);
-            dst[(row+0)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].x);
+            dst_ptr[(row+0)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].x);
+            dst_ptr[(row+0)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].x);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (laneid / 4);
-            dst[(row+1)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].y);
-            dst[(row+1)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].y);
+            dst_ptr[(row+1)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].y);
+            dst_ptr[(row+1)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].y);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (laneid / 4);
-            dst[(row+8)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].x);
-            dst[(row+8)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].x);
+            dst_ptr[(row+8)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].x);
+            dst_ptr[(row+8)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].x);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (laneid / 4);
-            dst[(row+9)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].y);
-            dst[(row+9)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].y);
+            dst_ptr[(row+9)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].y);
+            dst_ptr[(row+9)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].y);
         }
     }
 }

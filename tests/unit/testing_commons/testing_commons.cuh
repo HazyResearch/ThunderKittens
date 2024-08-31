@@ -162,9 +162,9 @@ template<template<typename> typename test, int MAX_S=8, typename... args> using 
 
 // ----- 2D Wrappers -----
 
-template<typename Ker, typename T, int H, int W, int NW, typename... args>
-static __global__ void global_wrapper_2d(const T *input, T *output) {
-    Ker::template device_func<H, W, NW, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gt::l::all GTL, typename... args>
+static __global__ void global_wrapper_2d(const GTL input, GTL output) {
+    Ker::template device_func<H, W, NW, GTL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct wrapper_2d {
@@ -179,13 +179,17 @@ struct wrapper_2d {
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
+            // make descriptors
+            using GTL = typename kittens::gt<dtype, H, W>::l<1, 1, 1, 1>;
+            GTL input(d_i, nullptr, nullptr, nullptr, nullptr);
+            GTL output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...>,
+                global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, args...>(i_ref, o_ref);
             // check and cleanup

@@ -23,9 +23,5 @@ struct runtime_dim {
 template<int d> using make_dim_t = std::conditional_t<rdim<d>, runtime_dim, compiled_dim<d>>;
 template<int d> using make_arg_t = std::conditional_t<rdim<d>, size_t, std::nullptr_t>; // we pass runtime dims as size_t, comptime dims as nullptr_t
 }
-namespace gt { namespace l { struct identifier {}; } }
-namespace gv { namespace l { struct identifier {}; } }
-template<l T, bool tma> struct check_tma          { static_assert(!T::use_tma, "SKILL ISSUE: passed a TMA global descriptor to a function that does not use TMA"); };
-template<l T>           struct check_tma<T, true> { static_assert( T::use_tma, "SKILL ISSUE: passed a non-TMA global descriptor to a function that requires TMA"); };
 }
 }

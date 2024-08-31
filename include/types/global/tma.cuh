@@ -26,7 +26,7 @@ namespace detail {
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::st::all ST>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int block_batch, int block_depth, int block_height, int block_width) {
     using dtype = typename ST::dtype;
     
     constexpr uint32_t  tma_dim = 5; // Always use all 5D
@@ -53,8 +53,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     uint32_t smem_shape [5] = {0, 0, 0, 0, 0};
     uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
 
-              uint64_t global_tile_height = block_rows * ST::rows;
-              uint64_t global_tile_width  = block_cols * ST::cols; 
+              uint64_t global_tile_height = (uint64_t)block_height * ST::rows;
+              uint64_t global_tile_width  = (uint64_t)block_width * ST::cols; 
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
@@ -63,8 +63,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     gmem_shape[0] = swizzle_elements;
     gmem_shape[1] = global_tile_height;
     gmem_shape[2] = global_tile_width / swizzle_elements;
-    gmem_shape[3] = block_depth;
-    gmem_shape[4] = block_batch;
+    gmem_shape[3] = (uint64_t)block_depth;
+    gmem_shape[4] = (uint64_t)block_batch;
 
     gmem_stride[0] = global_tile_width * sizeof(dtype);
     gmem_stride[1] = ST::swizzle_bytes;
@@ -144,11 +144,11 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::st::all ST>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename ST::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename ST::dtype *src, int block_batch, int block_depth, int block_height, int block_width) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
-    create_tensor_map<ST>(&tma_map_host, src, block_batch, block_depth, block_rows, block_cols);
+    create_tensor_map<ST>(&tma_map_host, src, block_batch, block_depth, block_height, block_width);
     cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     return tma_map_d;
 }
@@ -178,7 +178,7 @@ template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>)
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::sv::all SV>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int block_batch, int block_depth, int block_height, int block_width) {
     using dtype = typename SV::dtype;
     
     constexpr uint32_t  tma_dim      = 5;
@@ -198,8 +198,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr uint64_t dim1 = sv_tma_dim1<SV>;
     constexpr uint64_t dim2 = sv_tma_dim2<SV>;
 
-    uint64_t gmem_shape [5] = {dim1, dim2*block_cols, block_rows, block_depth, block_batch};
-    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), dim1*dim2*sizeof(dtype), dim1*dim2*block_rows*sizeof(dtype), dim1*dim2*block_rows*block_depth*sizeof(dtype)};
+    uint64_t gmem_shape [5] = {dim1, dim2*(uint64_t)block_width, (uint64_t)block_height, (uint64_t)block_depth, (uint64_t)block_batch};
+    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), dim1*dim2*sizeof(dtype), dim1*dim2*block_height*sizeof(dtype), dim1*dim2*block_height*block_depth*sizeof(dtype)};
     uint32_t smem_shape [5] = {dim1, dim2, 1, 1, 1};
     uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
 
@@ -248,11 +248,11 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
 template<ducks::sv::all SV>
-__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename SV::dtype *src, int block_batch, int block_depth, int block_rows, int block_cols) {
+__host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typename SV::dtype *src, int block_batch, int block_depth, int block_height, int block_width) {
     CUtensorMap *tma_map_d;
     cudaMalloc(&tma_map_d, sizeof(CUtensorMap));
     CUtensorMap tma_map_host; // put it on the stack, why not.
-    create_tensor_map<SV>(&tma_map_host, src, block_batch, block_depth, block_rows, block_cols);
+    create_tensor_map<SV>(&tma_map_host, src, block_batch, block_depth, block_height, block_width);
     cudaMemcpy(tma_map_d, &tma_map_host, sizeof(CUtensorMap), cudaMemcpyHostToDevice);
     return tma_map_d;
 }
