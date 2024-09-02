@@ -107,9 +107,9 @@ template<typename T> using gmem_dtype = typename gmem_wrapper<T>::dtype;
 
 // ----- 1D Wrappers -----
 
-template<typename Ker, typename T, int S, int NW, typename... args>
-static __global__ void global_wrapper_1d(const T *input, T *output) {
-    Ker::template device_func<S, NW, args...>(input, output);
+template<typename Ker, typename T, int S, int NW, kittens::ducks::gv::l::all GVL, typename... args>
+static __global__ void global_wrapper_1d(GVL input, GVL output) {
+    Ker::template device_func<S, NW, GVL, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
 struct wrapper_1d {
@@ -124,15 +124,19 @@ struct wrapper_1d {
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
+            // make descriptors
+            using GVL = typename kittens::gv<dtype, S>::l<1, 1, 1, 1>;
+            GVL input(d_i, nullptr, nullptr, nullptr, nullptr);
+            GVL output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...>,
+                global_wrapper_1d<test, dtype, S, NUM_WORKERS, GVL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            global_wrapper_1d<test, dtype, S, NUM_WORKERS, GVL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<S, NUM_WORKERS, args...>(i_ref, o_ref);
+            test::template host_func<S, NUM_WORKERS, GVL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
         }

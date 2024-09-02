@@ -40,28 +40,40 @@ struct gv {
         typename std::conditional_t<tma, CUtensorMap*, std::nullptr_t> tma_ptr = nullptr;
         ducks::g::make_dim_t<_b> batch;
         ducks::g::make_dim_t<_d> depth;
-        ducks::g::make_dim_t<_r> height;
-        ducks::g::make_dim_t<_c> width;
+        ducks::g::make_dim_t<_r> rows;
+        ducks::g::make_dim_t<_c> cols;
         __host__ inline l(T *_data,
                            ducks::g::make_arg_t<_b> _batch,
                            ducks::g::make_arg_t<_d> _depth,
-                           ducks::g::make_arg_t<_r> _height,
-                           ducks::g::make_arg_t<_c> _width) : batch(_batch), depth(_depth), height(_height), width(_width) {
+                           ducks::g::make_arg_t<_r> _rows,
+                           ducks::g::make_arg_t<_c> _cols) : batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
             if constexpr (raw) {
                 raw_ptr = _data;
             }
             if constexpr (tma) {
-                tma_ptr = tma::detail::allocate_and_create_tensor_map<SV>(_data, batch, depth, height, width);
+                tma_ptr = tma::detail::allocate_and_create_tensor_map<SV>(_data, batch, depth, rows, cols);
             }
         }
-        __host__ inline ~l() {
+        __host__ __device__ inline l(const l &other) :
+            batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), raw_ptr(other.raw_ptr), tma_ptr(other.tma_ptr) {}
+        __host__ inline void cleanup() {
+            // the reason we have to do this manually because CUDA seems to copy somehow while passing to kernels
+            // the other option (which seems similarly awful) would be to use templating to "remember" the original pointer
+            // and only call cudaFree if it's still the same as the original pointer. I don't think it's any better.
             if constexpr (tma) {
                 cudaFree(tma_ptr);
             }
         }
+        __device__ inline T& operator[](const index &idx) {
+            return raw_ptr[(((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c)*base_length];
+        }
+        __device__ inline const T& operator[](const index &idx) const {
+            return raw_ptr[(((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c)*base_length];
+        }
     };
 };
-template<ducks::sv::all SV> using gv_sv = gv<typename SV::dtype, SV::tiles>;
+template<ducks::sv::all SV> using gv_sv = gv<typename SV::T, SV::tiles>;
+template<ducks::rv::all RV> using gv_rv = gv<typename RV::T, RV::tiles>;
 
 namespace ducks {
 namespace gv {

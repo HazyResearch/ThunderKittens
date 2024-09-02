@@ -20,16 +20,21 @@ namespace tma {
  * @param[in] src_tma_map The source tensormap address in global memory
  * @param[in] vec_idx The index of the requested vector.
  */
-template<ducks::sv::all SV>
-__device__ static inline void prefetch(SV &dst, void const* const src_tma_map, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void prefetch(SV &dst, const GVL &src, const index &idx) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
 
-        int32_t crd0 = vec_idx * (dst.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
-            "cp.async.bulk.prefetch.tensor.1d.L2.global.tile"
-            " [%0, {%1}];"
+            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
+            " [%0, {%1, %2, %3, %4, %5}];"
             :
             : "l"(tma_ptr), "r"(crd0)
             : "memory"
@@ -49,22 +54,28 @@ __device__ static inline void prefetch(SV &dst, void const* const src_tma_map, i
  * @param[in] src The source shared memory vector.
  * @param[in] vec_idx The index of the vector destination.
  */
-template<ducks::sv::all SV>
-__device__ static inline void store_async(void *dst_tma_map, const SV &src, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void store_async(const GVL &dst, const SV &src, const index &idx) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = vec_idx * (src.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
         
         asm volatile (
-            "cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2}], [%1];"
+            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
-            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -77,22 +88,28 @@ __device__ static inline void store_async(void *dst_tma_map, const SV &src, int 
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV>
-__device__ static inline void store_add_async(void *dst_tma_map, const SV &src, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void store_add_async(const GVL &dst, const SV &src, const index &idx) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = vec_idx * (src.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
         
         asm volatile (
-            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group"
-            " [%0, {%2}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
-            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -105,23 +122,29 @@ __device__ static inline void store_add_async(void *dst_tma_map, const SV &src, 
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV>
-__device__ static inline void store_min_async(void *dst_tma_map, const SV &src, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void store_min_async(const GVL &dst, const SV &src, const index &idx) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = vec_idx * (src.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
         
         asm volatile (
-            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.min.tile.bulk_group"
-            " [%0, {%2}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
-            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -134,23 +157,29 @@ __device__ static inline void store_min_async(void *dst_tma_map, const SV &src, 
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV>
-__device__ static inline void store_max_async(void *dst_tma_map, const SV &src, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void store_max_async(const GVL &dst, const SV &src, const index &idx) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
-        int32_t crd0 = vec_idx * (src.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
         
         asm volatile (
-            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.max.tile.bulk_group"
-            " [%0, {%2}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
-            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0)
+            : "l"(tma_ptr), "r"(src_ptr), "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -164,20 +193,25 @@ __device__ static inline void store_max_async(void *dst_tma_map, const SV &src, 
  * @param[in] vec_idx The index of the requested vector.
  * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
  */
-template<ducks::sv::all SV>
-__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx, barrier& bar) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
-        int32_t crd0 = vec_idx * (dst.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
-            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3}], [%2];"
+            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
             :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0)
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
@@ -197,20 +231,26 @@ namespace cluster {
  * @param[in] vec_idx The index of the requested vector.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::sv::all SV>
-__device__ static inline void load_async(SV &dst, void const* const src_tma_map, barrier& bar, int vec_idx, uint16_t cluster_mask) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
+    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
-        int32_t crd0 = vec_idx * (dst.length);
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
+        int32_t crd2 = idx.r;
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
-            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
-            " [%0], [%1, {%3}], [%2], %4;"
+            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
             :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr), "r"(crd0), "h"(cluster_mask)
+            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4), "h"(cluster_mask)
             : "memory"
         );
     }

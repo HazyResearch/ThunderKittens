@@ -66,16 +66,17 @@ struct gt {
                 cudaFree(tma_ptr);
             }
         }
-        __device__ inline T& operator[](int4 idx) {
-            return raw_ptr[(((idx.x*depth + idx.y)*rows + idx.z)*cols*base_rows + idx.w)*base_cols];
+        __device__ inline T& operator[](const index &idx) {
+            return raw_ptr[(((idx.b*depth + idx.d)*rows + idx.r)*cols*base_rows + idx.c)*base_cols];
         }
-        __device__ inline const T& operator[](int4 idx) const {
-            return raw_ptr[(((idx.x*depth + idx.y)*rows + idx.z)*cols*base_rows + idx.w)*base_cols];
+        __device__ inline const T& operator[](const index &idx) const {
+            return raw_ptr[(((idx.b*depth + idx.d)*rows + idx.r)*cols*base_rows + idx.c)*base_cols];
         }
         __device__ inline size_t row_stride() const { return cols*base_cols; }
     };
 };
-template<ducks::st::all ST> using gt_st = gt<typename ST::dtype, ST::height, ST::width>;
+template<ducks::st::all ST> using gt_st = gt<typename ST::T, ST::height, ST::width>;
+template<ducks::rt::all RT> using gt_rt = gt<typename RT::T, RT::height, RT::width>;
 
 namespace ducks {
 namespace gt {

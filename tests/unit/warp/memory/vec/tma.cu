@@ -5,58 +5,57 @@
 template<typename T>
 struct test_load { // load with TMA, write out normally
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<NW == 1>; // WARNING: can have misalignment if multiple shared vectors are initialized in an array
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_load_vec_gmem=half" :
                                                                                          "tma_load_vec_gmem=float";
-    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>, 4>();
+        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
         
         __shared__ kittens::barrier smem_barrier; 
         kittens::init_barrier(smem_barrier, 0, 1);
-        kittens::tma::expect<typeof(shared_vec[0]), 4>(smem_barrier);
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::load_async(shared_vec[i], tma_desc_input, smem_barrier, i);
+        __syncwarp();
+        int tic = 0;
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols; d++) {
+                kittens::tma::expect(smem_barrier, shared_vec);
+                kittens::tma::load_async(shared_vec, input, {a, b, c, d}, smem_barrier);
+                kittens::wait(smem_barrier, tic);
+                kittens::store(output, shared_vec, {a, b, c, d});
+                tic^=1;
+            }
         }
-        kittens::wait(smem_barrier, 0);
-        kittens::store(output, shared_vec[0]);
-        kittens::store(output + shared_vec[0].length, shared_vec[1]);
-        kittens::store(output + 2*shared_vec[0].length, shared_vec[2]);
-        kittens::store(output + 3*shared_vec[0].length, shared_vec[3]);
     }
 };
 template<typename T>
 struct test_store { // load normally, store with TMA
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<NW == 1>; // WARNING: can have misalignment if multiple shared vectors are initialized in an array
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_vec_gmem=half" :
                                                                                          "tma_store_vec_gmem=float";
-    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>, 4>();
-        
-        kittens::load(shared_vec[0], input);
-        kittens::load(shared_vec[1], input + shared_vec[0].length);
-        kittens::load(shared_vec[2], input + 2*shared_vec[0].length);
-        kittens::load(shared_vec[3], input + 3*shared_vec[0].length);
-        __syncwarp();
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::store_async(tma_desc_output, shared_vec[i], i);
+        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols; d++) {
+                kittens::load(shared_vec, input, {a, b, c, d});
+                __syncwarp();
+                kittens::tma::store_async(output, shared_vec, {a, b, c, d});
+                kittens::tma::store_async_read_wait();
+            }
         }
-        kittens::tma::store_commit_group();
-        kittens::tma::store_async_wait<0>();
     }
 };
 
@@ -64,36 +63,30 @@ struct test_store { // load normally, store with TMA
 template<typename T>
 struct test_store_add_reduce {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<NW == 1>; // S%4 ensures alignment
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_add_reduce_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_add_reduce_vec_gmem=half" :
                                                                                          "tma_store_add_reduce_vec_gmem=float";
-    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
             o_ref[i] = i_ref[i] + i_ref[i]; 
         }
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>, 4>();
-        
-        kittens::load(shared_vec[0], input);
-        kittens::load(shared_vec[1], input + shared_vec[0].length);
-        kittens::load(shared_vec[2], input + 2*shared_vec[0].length);
-        kittens::load(shared_vec[3], input + 3*shared_vec[0].length);
-        __syncwarp();
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
+        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols; d++) {
+                kittens::load(shared_vec, input, {a, b, c, d});
+                __syncwarp();
+                kittens::tma::store_add_async(output, shared_vec, {a, b, c, d});
+                kittens::tma::store_add_async(output, shared_vec, {a, b, c, d});
+                kittens::tma::store_async_read_wait();
+            }
         }
-        kittens::tma::store_commit_group();
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
-        }
-        kittens::tma::store_commit_group();
-        kittens::tma::store_async_wait<0>();
     }
 };
 
@@ -101,70 +94,64 @@ struct test_store_add_reduce {
 template<typename T>
 struct test_store_min_reduce {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1>; // S%4 ensures alignment
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_vec_gmem=half" :
                                                                                          "tma_store_min_reduce_vec_gmem=float";
-    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
-            o_ref[i] = std::min(i_ref[i], i_ref[i]);
+            o_ref[i] = std::min(i_ref[i], 0.f);
         }
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>, 4>();
-        
-        kittens::load(shared_vec[0], input);
-        kittens::load(shared_vec[1], input + shared_vec[0].length);
-        kittens::load(shared_vec[2], input + 2*shared_vec[0].length);
-        kittens::load(shared_vec[3], input + 3*shared_vec[0].length);
-        __syncwarp();
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
+        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols; d++) {
+                kittens::load(shared_vec, input, {a, b, c, d});
+                __syncwarp();
+                kittens::tma::store_min_async(output, shared_vec, {a, b, c, d});
+                kittens::tma::store_async_read_wait();
+            }
         }
-        kittens::tma::store_commit_group();
-        kittens::tma::store_async_wait<0>();
     }
 };
 
 template<typename T>
 struct test_store_max_reduce {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && S<=64 && S%4==0>; // S%4 ensures alignment
+    template<int S, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_vec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_vec_gmem=half" :
                                                                                          "tma_store_max_reduce_vec_gmem=float";
-    template<int S, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
-            o_ref[i] = std::max(i_ref[i], i_ref[i]);
+            o_ref[i] = std::max(i_ref[i], 0.f);
         }
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec)[4] = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>, 4>();
-        
-        kittens::load(shared_vec[0], input);
-        kittens::load(shared_vec[1], input + shared_vec[0].length);
-        kittens::load(shared_vec[2], input + 2*shared_vec[0].length);
-        kittens::load(shared_vec[3], input + 3*shared_vec[0].length);
-        __syncwarp();
-        for(int i = 0; i < 4; i++) {
-            kittens::tma::store_add_async(tma_desc_output, shared_vec[i], i);
+        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols; d++) {
+                kittens::load(shared_vec, input, {a, b, c, d});
+                __syncwarp();
+                kittens::tma::store_max_async(output, shared_vec, {a, b, c, d});
+                kittens::tma::store_async_read_wait();
+            }
         }
-        kittens::tma::store_commit_group();
-        kittens::tma::store_async_wait<0>();
     }
 };
 
-template<typename Ker, typename T, int S, int NW, typename... args>
-static __global__ void tma_global_wrapper_1d(const T *input, T *output, CUtensorMap* tma_desc_input, CUtensorMap* tma_desc_output) {
-    Ker::template device_func<S, NW, args...>(input, output, tma_desc_input, tma_desc_output);
+template<typename Ker, typename T, int S, int NW, kittens::ducks::gv::l::all GVL, typename... args>
+static __global__ void tma_global_wrapper_1d(GVL input, GVL output) {
+    Ker::template device_func<S, NW, GVL, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
 struct tma_wrapper_1d {
@@ -173,28 +160,30 @@ struct tma_wrapper_1d {
         test_info this_result;
         this_result.label = generate_test_name<S,NUM_WORKERS, args...>(test::test_identifier);
         if constexpr (test::template valid<S, NUM_WORKERS, args...>::value) {
-            constexpr int SIZE = S*16 * 4; // 4 for additional TMA dimension
+            constexpr int B = 3, D = 5, R = 2, C = 2;
+            constexpr int SIZE = S*16 * B*D*R*C; // B*D*R*C for additional TMA dimensions
             // initialize
             dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
-            // initialize TMA descriptors
-            CUtensorMap *i_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st<dtype, S, S>>>(d_i, 4);
-            CUtensorMap *o_desc = kittens::tma::allocate_and_create_tensor_map<kittens::row_vec<kittens::st<dtype, S, S>>>(d_o, 4);
+            // make descriptors
+            using GVL = typename kittens::gv<dtype, S, true, true>::l<-1, -1, R, C>;
+            GVL input(d_i, B, D, nullptr, nullptr);
+            GVL output(d_o, B, D, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                tma_global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...>,
+                tma_global_wrapper_1d<test, dtype, S, NUM_WORKERS, GVL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            tma_global_wrapper_1d<test, dtype, S, NUM_WORKERS, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o, i_desc, o_desc);
+            tma_global_wrapper_1d<test, dtype, S, NUM_WORKERS, GVL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<S, NUM_WORKERS, args...>(i_ref, o_ref);
+            test::template host_func<S, NUM_WORKERS, GVL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
-            cudaFree(i_desc);
-            cudaFree(o_desc);
+            input.cleanup();
+            output.cleanup();
         }
         else {
             this_result.result = test_result::INVALID;

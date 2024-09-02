@@ -27,10 +27,10 @@ __device__ static inline void prefetch(ST &dst, const GTL &src, const index &idx
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
@@ -63,10 +63,10 @@ __device__ static inline void store_async(const GTL &dst, const ST &src, const i
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
@@ -100,10 +100,10 @@ __device__ static inline void store_add_async(const GTL &dst, const ST &src, con
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
@@ -136,10 +136,10 @@ __device__ static inline void store_min_async(const GTL &dst, const ST &src, con
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
@@ -172,10 +172,10 @@ __device__ static inline void store_max_async(const GTL &dst, const ST &src, con
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
@@ -209,10 +209,10 @@ __device__ static inline void load_async(ST &dst, const GTL &src, const index &i
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
@@ -248,10 +248,10 @@ __device__ static inline void load_async(ST &dst, const GTL &src, const index &i
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         int32_t crd0 = 0;
-        int32_t crd1 = idx.z * (ST::rows);
-        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.y;
-        int32_t crd4 = idx.x;
+        int32_t crd1 = idx.r * (ST::rows);
+        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.d;
+        int32_t crd4 = idx.b;
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"

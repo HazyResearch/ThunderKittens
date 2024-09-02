@@ -12,10 +12,8 @@
 
 namespace kittens {
 
-// ----------- ROW LAYOUTS ----------
-
 /**
- * @brief Loads data from global memory into a shared memory tile with a row layout.
+ * @brief Loads data from global memory into a shared memory tile.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
@@ -52,7 +50,7 @@ __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
     }
 }
 /**
- * @brief Stores data from a shared memory tile with a row layout into global memory.
+ * @brief Stores data from a shared memory tile into global memory.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination global memory array.
@@ -87,7 +85,7 @@ __device__ static inline void store(const GTL &dst, const ST &src, const index &
 }
 
 /**
- * @brief Asynchronously loads data from global memory into a shared memory tile with a row layout using CUDA barriers.
+ * @brief Asynchronously loads data from global memory into a shared memory tile.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
@@ -129,11 +127,6 @@ __device__ static inline void load_async(ST &dst, GTL &src, const index &idx) {
         );
     }
     asm volatile("cp.async.commit_group;\n" ::: "memory");
-}
-
-template<int N=0> __device__ static inline void load_async_wait() {
-    asm volatile("cp.async.wait_group %0;\n" : : "n"(N) : "memory");
-    __syncwarp();
 }
 
 }

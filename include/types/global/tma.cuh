@@ -162,6 +162,7 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typenam
 template<typename SV, int D=16> struct find_vector_divider {
     static constexpr int value = (SV::length % (16*D) == 0) ? 16*D : find_vector_divider<SV, D-1>::value;
 };
+template<typename SV> struct find_vector_divider<SV, 1> { static constexpr int value = 16; }; // base case
 template<typename SV> constexpr int sv_tma_dim1 = find_vector_divider<SV>::value;
 template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>);
 
@@ -199,7 +200,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr uint64_t dim2 = sv_tma_dim2<SV>;
 
     uint64_t gmem_shape [5] = {dim1, dim2*(uint64_t)block_width, (uint64_t)block_height, (uint64_t)block_depth, (uint64_t)block_batch};
-    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), dim1*dim2*sizeof(dtype), dim1*dim2*block_height*sizeof(dtype), dim1*dim2*block_height*block_depth*sizeof(dtype)};
+    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), dim1*dim2*block_width*sizeof(dtype), dim1*dim2*block_width*block_height*sizeof(dtype), dim1*dim2*block_width*block_height*block_depth*sizeof(dtype)};
     uint32_t smem_shape [5] = {dim1, dim2, 1, 1, 1};
     uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
 

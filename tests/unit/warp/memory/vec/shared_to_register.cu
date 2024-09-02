@@ -9,21 +9,21 @@ struct vec_load_store {
     static inline const std::string test_identifier = std::is_same_v<dtype, kittens::bf16> ? "shared_reg_vec_loadstore_gmem=bf16" :
                                                       std::is_same_v<dtype, kittens::half> ? "shared_reg_vec_loadstore_gmem=half" :
                                                                                              "shared_reg_vec_loadstore_gmem=float";
-    template<int S, int NW, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = i_ref[i] + 1.f; // just a dummy op to prevent optimization away
     }
-    template<int S, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int S, int NW, kittens::ducks::gv::l::all GVL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GVL &input, GVL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, S, S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, S, S>>>();
         kittens::col_vec<kittens::rt_fl<S, S, L>> reg_vec;
-        kittens::load(shared_vec, input);
+        kittens::load(shared_vec, input, {});
         __syncthreads();
         kittens::load(reg_vec, shared_vec);
         kittens::add(reg_vec, reg_vec, float(1.)); // TODO: CHANGE HOST TOO
         kittens::store(shared_vec, reg_vec);
         __syncthreads();
-        kittens::store(output, shared_vec);
+        kittens::store(output, shared_vec, {});
     }
 };
 

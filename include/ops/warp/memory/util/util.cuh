@@ -207,6 +207,11 @@ __device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit) {
     wait(bar, kPhaseBit);
 }
 
+template<int N=0> __device__ static inline void load_async_wait() { // for completing (non-TMA) async loads
+    asm volatile("cp.async.wait_group %0;\n" : : "n"(N) : "memory");
+    __syncwarp();
+}
+
 // meant to be used only with shared tiles and shared vectors
 namespace detail {
 template<typename T> struct size_info;
