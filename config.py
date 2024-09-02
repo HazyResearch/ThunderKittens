@@ -2,22 +2,12 @@
 sources = {
     'attn_inference': {
         'source_files': {
-            'h100': 'kernels/attn/h100/h100_fwd.cu' # define these source files for each GPU target desired. (they can be the same.)
+            'h100': 'kernels/attn/h100/h100.cu' # define these source files for each GPU target desired. (they can be the same.)
         }
     },
     'attn_training': {
         'source_files': {
-            'h100': 'kernels/attn/h100/h100_train.cu'
-        }
-    },
-    'attn_causal_inference': {
-        'source_files': {
-            'h100': 'kernels/attn_causal/h100/h100_fwd.cu'
-        }
-    },
-    'attn_causal_training': {
-        'source_files': {
-            'h100': 'kernels/attn_causal/h100/h100_train.cu'
+            'h100': 'kernels/attn/h100/h100.cu'
         }
     },
     'hedgehog': {
@@ -50,7 +40,7 @@ sources = {
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
-# kernels = ['attn_inference', 'attn_causal_inference', 'attn_training', 'attn_causal_training', 'hedgehog', 'fused_rotary']
+# kernels = ['attn_inference', 'attn_training', 'hedgehog', 'fused_rotary']
 kernels = ['based']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
