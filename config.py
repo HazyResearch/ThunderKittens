@@ -41,7 +41,7 @@ sources = {
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
 # kernels = ['attn_inference', 'attn_training', 'hedgehog', 'fused_rotary']
-kernels = ['based']
+kernels = ['attn_inference']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'

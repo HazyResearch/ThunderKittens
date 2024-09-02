@@ -1,10 +1,10 @@
 import torch
 import numpy as np
-import h100 as tk_train
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import os
 import time
+import thunderkittens as tk
 
 def flops(batch, seqlen, nheads, headdim, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
@@ -46,7 +46,7 @@ def benchmark_attention(configurations):
         
         # Warmup for forward pass
         for _ in range(10):
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.mha(q, k, v, o, l_vec, causal)
 
         # Time the forward pass
         for i in range(100):
@@ -55,7 +55,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_fwd[i].record()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.mha(q, k, v, o, l_vec, causal)
             
             torch.cuda.synchronize()
             end_events_fwd[i].record()
@@ -70,6 +70,7 @@ def benchmark_attention(configurations):
         print(f"Average time for forward pass in us: {time_us_fwd:.2f}")
         print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
         print("-" * 60)
+        exit()
         
         # wait for GPU to reset
         torch.cuda.synchronize()
@@ -97,7 +98,7 @@ def benchmark_attention(configurations):
             vg.zero_()
             d_vec.zero_()
             
-            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            tk_train.mha(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
 
         # Time the backward pass
         for i in range(100):
