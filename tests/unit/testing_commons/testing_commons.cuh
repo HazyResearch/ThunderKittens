@@ -191,7 +191,7 @@ struct wrapper_2d {
             );
             global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GTL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16);
         }

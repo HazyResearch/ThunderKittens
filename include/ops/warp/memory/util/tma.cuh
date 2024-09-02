@@ -36,16 +36,11 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
 /**
 * @brief Sets the number of bytes expected at the barrier.
 *
-* This function sets the number of bytes expected at the barrier for the first thread in the warp.
-* It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
-* instruction to set the expected number of bytes.
-*
-* @tparam T The type of the data to be stored at the barrier.
-* @param barrier Reference to the barrier variable.
+* This function sets the number of bytes expected at the mbarrier before the transaction arrives.
 */
-template<typename T, uint32_t... dims>
-__device__ static inline void expect(barrier& bar) {
-    expect_bytes(bar, size_bytes<T, dims...>);
+template<typename T, typename... args>
+__device__ static inline void expect(barrier& bar, const T& _1, const args&... _2) {
+    expect_bytes(bar, size_bytes<T, args...>);
 }
 
 /* ----------   Synchronization functions for async store  ---------- */
@@ -84,8 +79,8 @@ __device__ static inline void store_async_wait() {
 template <int N=0>
 __device__ static inline void store_async_read_wait() {
     if (::kittens::laneid() == 0) {
-    asm volatile (
-        "cp.async.bulk.wait_group.read %0;"
+        asm volatile (
+            "cp.async.bulk.wait_group.read %0;"
             :
             : "n"(N)
             : "memory"
@@ -97,6 +92,18 @@ __device__ static inline void store_async_read_wait() {
 /* ----------   Cluster-scope operations  ---------- */
 
 namespace cluster {
+
+// Synchronization functions
+__device__ static inline void arrive_aligned() { // All threads in the cluster must call this
+    asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+}
+__device__ static inline void wait_aligned() {
+    asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
+}
+__device__ static inline void sync() {
+    arrive_aligned();
+    wait_aligned();
+}
 
 /**
 * @brief Waits for the requested barrier phase, at cluster scope
@@ -160,9 +167,14 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes, int dst
 * @tparam T The type of the data to be stored at the barrier.
 * @param barrier Reference to the barrier variable.
 */
-template<typename T, uint32_t... dims>
-__device__ static inline void expect(barrier& bar, int dst_cta) {
-    expect_bytes(bar, size_bytes<T, dims...>, dst_cta);
+/**
+* @brief Sets the number of bytes expected at the barrier.
+*
+* This function sets the number of bytes expected at the mbarrier before the transaction arrives.
+*/
+template<typename T, typename... args>
+__device__ static inline void expect(barrier& bar, int dst_cta, const T& _1, const args&... _2) {
+    expect_bytes(bar, size_bytes<T, args...>, dst_cta);
 }
 
 /**

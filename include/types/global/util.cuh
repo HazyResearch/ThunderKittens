@@ -13,7 +13,7 @@ template<int _v> struct compiled_dim {
     static_assert(cdim<_v>, "Invalid compile-time dimension value");
     static constexpr size_t v = _v;
     __host__ __device__ inline compiled_dim(const std::nullptr_t &_) {}
-    __host__ __device__ inline operator size_t() const { return v; }
+    __host__ __device__ inline constexpr operator size_t() const { return v; }
 };
 struct runtime_dim {
     size_t v;
@@ -24,4 +24,6 @@ template<int d> using make_dim_t = std::conditional_t<rdim<d>, runtime_dim, comp
 template<int d> using make_arg_t = std::conditional_t<rdim<d>, size_t, std::nullptr_t>; // we pass runtime dims as size_t, comptime dims as nullptr_t
 }
 }
+
+using index = int4;
 }

@@ -54,12 +54,10 @@ struct gv {
                 tma_ptr = tma::detail::allocate_and_create_tensor_map<SV>(_data, batch, depth, height, width);
             }
         }
-        __host__ __device__ inline ~l() {
-#ifdef __CUDA_ARCH__
+        __host__ inline ~l() {
             if constexpr (tma) {
                 cudaFree(tma_ptr);
             }
-#endif
         }
     };
 };

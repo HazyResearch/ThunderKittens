@@ -20,12 +20,12 @@ namespace kittens {
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void load(RT &dst, const GTL &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
+__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T2 = RT::dtype;
     using U = typename GTL::dtype;
-    U *src_ptr = reinterpret_cast<U*>(src.raw_ptr + (((batch_idx * src.depth + depth_idx) * src.rows + row_idx)*src.base_rows * src.cols + col_idx)*src.base_cols);
-    const int row_stride = src.cols * src.base_cols;
+    U *src_ptr = (U*)&src[idx];
+    const int row_stride = src.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -65,12 +65,12 @@ __device__ inline static void load(RT &dst, const GTL &src, const int batch_idx,
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void load(RT &dst, const GTL &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
+__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GTL::dtype;
-    U *src_ptr = reinterpret_cast<U*>(src.raw_ptr + (((batch_idx * src.depth + depth_idx) * src.rows + row_idx)*src.base_rows * src.cols + col_idx)*src.base_cols);
-    const int row_stride = src.cols * src.base_cols;
+    U *src_ptr = (U*)&src[idx];
+    const int row_stride = src.row_stride();
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
@@ -112,12 +112,12 @@ __device__ inline static void load(RT &dst, const GTL &src, const int batch_idx,
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void store(GTL &dst, const RT &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
+__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T2 = RT::dtype;
     using U = typename GTL::dtype;
-    U *dst_ptr = reinterpret_cast<U*>(dst.raw_ptr + (((batch_idx * dst.depth + depth_idx) * dst.rows + row_idx)*dst.base_rows * dst.cols + col_idx)*dst.base_cols);
-    const int row_stride = dst.cols * dst.base_cols;
+    U *dst_ptr = (U*)&dst[idx];
+    const int row_stride = dst.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -158,12 +158,12 @@ __device__ inline static void store(GTL &dst, const RT &src, const int batch_idx
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void store(GTL &dst, const RT &src, const int batch_idx, const int depth_idx, const int row_idx, const int col_idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL should not be a TMA global descriptor, but we want to throw a verbose error if it is
+__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GTL::dtype;
-    U *dst_ptr = reinterpret_cast<U*>(dst.raw_ptr + (((batch_idx * dst.depth + depth_idx) * dst.rows + row_idx)*dst.base_rows * dst.cols + col_idx)*dst.base_cols);
-    const int row_stride = dst.cols * dst.base_cols;
+    U *dst_ptr = (U*)&dst[idx];
+    const int row_stride = dst.row_stride();
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {

@@ -21,20 +21,23 @@ namespace tma {
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void prefetch(ST &dst, void const* const src_tma_map, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void prefetch(ST &dst, const GTL &src, const index &idx) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     if (::kittens::laneid()) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (dst.rows);
-        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.async.bulk.prefetch.tensor.3d.L2.global.tile"
-            " [%0, {%1, %2, %3}];"
+            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
+            " [%0, {%1, %2, %3, %4, %5}];"
             :
             : "l"(tma_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
@@ -53,23 +56,28 @@ __device__ static inline void prefetch(ST &dst, void const* const src_tma_map, i
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void store_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void store_async(const GTL &dst, const ST &src, const index &idx) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
-        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (src.rows);
-        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        int32_t crd0 = 0;
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2, %3, %4}], [%1];"
+            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /* ----------   Async reduction + store data from gmem/smem  ---------- */
@@ -85,24 +93,28 @@ __device__ static inline void store_async(void *dst_tma_map, const ST &src, int 
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void store_add_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void store_add_async(const GTL &dst, const ST &src, const index &idx) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (src.rows);
-        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.add.tile.bulk_group"
-            " [%0, {%2, %3, %4}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -116,25 +128,29 @@ __device__ static inline void store_add_async(void *dst_tma_map, const ST &src, 
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void store_min_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void store_min_async(const GTL &dst, const ST &src, const index &idx) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (src.rows);
-        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.min.tile.bulk_group"
-            " [%0, {%2, %3, %4}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -148,25 +164,29 @@ __device__ static inline void store_min_async(void *dst_tma_map, const ST &src, 
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void store_max_async(void *dst_tma_map, const ST &src, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void store_max_async(const GTL &dst, const ST &src, const index &idx) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst_tma_map);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (src.rows);
-        int32_t crd2 = tile_col_idx * (src.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.reduce.async.bulk.tensor.3d.global.shared::cta.max.tile.bulk_group"
-            " [%0, {%2, %3, %4}], [%1];"
+            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
+            " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
+    store_commit_group();
 }
 
 /**
@@ -181,23 +201,25 @@ __device__ static inline void store_max_async(void *dst_tma_map, const ST &src, 
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST>
-__device__ static inline void load_async(ST &dst, void const* const src_tma_map, barrier& bar, int tile_row_idx, int tile_col_idx=0) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void load_async(ST &dst, const GTL &src, const index &idx, barrier& bar) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.tma_ptr);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (dst.rows);
-        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3, %4, %5}], [%2];"
+            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
             : "memory"
         );
     }
@@ -218,23 +240,25 @@ namespace cluster {
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::st::all ST>
-__device__ static inline void load_async(ST &dst, void const* const src_tma_map, barrier& bar, int tile_row_idx, int tile_col_idx, uint16_t cluster_mask) {
+template<ducks::st::all ST, ducks::gt::l::all GTL>
+__device__ static inline void load_async(ST &dst, const GTL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
+    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.tma_ptr);
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-
         int32_t crd0 = 0;
-        int32_t crd1 = tile_row_idx * (dst.rows);
-        int32_t crd2 = tile_col_idx * (dst.cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd1 = idx.z * (ST::rows);
+        int32_t crd2 = idx.w * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
+        int32_t crd3 = idx.y;
+        int32_t crd4 = idx.x;
 
         asm volatile (
-            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
-            " [%0], [%1, {%3, %4, %5}], [%2], %6;"
+            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "h"(cluster_mask)
+            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4), "h"(cluster_mask)
             : "memory"
         );
     }

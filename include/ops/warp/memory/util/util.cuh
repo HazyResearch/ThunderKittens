@@ -11,56 +11,108 @@ namespace kittens {
 
 template<typename T> struct move {
     template<typename U> __device__ static inline void lds(T& dst, U* src);
+    template<typename U> __device__ static inline void ldg(T& dst, U* src);
     template<typename U> __device__ static inline void sts(U* dst, T& src);
+    template<typename U> __device__ static inline void stg(U* dst, T& src);
 };
 // unpacked types
 template<> struct move<bf16> {
     template<typename U> __device__ static inline void lds(bf16& dst, U* src) {
-        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(bf16& dst, U* src) {
+        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, bf16& src) {
-        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, bf16& src) {
+        asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
     }
 };
 template<> struct move<half> {
     template<typename U> __device__ static inline void lds(half& dst, U* src) {
-        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+        asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, half& src) {
-        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+        asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(half& dst, U* src) {
+        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, half& src) {
+        asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
     }
 };
 template<> struct move<float> {
     template<typename U> __device__ static inline void lds(float& dst, U* src) {
-        asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(dst) : "l"(src));
+        asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(dst) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, float& src) {
-        asm volatile("st.shared.f32 [%1], %0;\n" : : "f"(src), "l"(dst));
+        asm volatile("st.shared.f32 [%1], %0;\n" : : "f"(src), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(float& dst, U* src) {
+        asm volatile("ld.global.f32 %0, [%1];\n" : "=f"(dst) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, float& src) {
+        asm volatile("st.global.f32 [%1], %0;\n" : : "f"(src), "l"(dst) : "memory");
     }
 };
 // packed types
 template<> struct move<bf16_2> {
     template<typename U> __device__ static inline void lds(bf16_2& dst, U* src) {
-        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, bf16_2& src) {
-        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(bf16_2& dst, U* src) {
+        asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, bf16_2& src) {
+        asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
     }
 };
 template<> struct move<half_2> {
     template<typename U> __device__ static inline void lds(half_2& dst, U* src) {
-        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+        asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, half_2& src) {
-        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+        asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(half_2& dst, U* src) {
+        asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, half_2& src) {
+        asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
     }
 };
 template<> struct move<float2> {
     template<typename U> __device__ static inline void lds(float2& dst, U* src) {
-        asm volatile("ld.shared.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src));
+        asm volatile("ld.shared.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
     }
     template<typename U> __device__ static inline void sts(U* dst, float2& src) {
-        asm volatile("st.shared.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst));
+        asm volatile("st.shared.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(float2& dst, U* src) {
+        asm volatile("ld.global.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, float2& src) {
+        asm volatile("st.global.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst) : "memory");
+    }
+};
+template<> struct move<float4> {
+    template<typename U> __device__ static inline void lds(float4& dst, U* src) {
+        asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void sts(U* dst, float4& src) {
+        asm volatile("st.shared.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst) : "memory");
+    }
+    template<typename U> __device__ static inline void ldg(float4& dst, U* src) {
+        asm volatile("ld.global.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src) : "memory");
+    }
+    template<typename U> __device__ static inline void stg(U* dst, float4& src) {
+        asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst) : "memory");
     }
 };
 
@@ -155,10 +207,9 @@ __device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit) {
     wait(bar, kPhaseBit);
 }
 
-// sizeof() can be unreliable when working with references to objects
-// plus, template magic allows arrays of these objects to be copied, too.
+// meant to be used only with shared tiles and shared vectors
 namespace detail {
-template<typename T, uint32_t... dims> struct size_info;
+template<typename T> struct size_info;
 template<ducks::st::all ST> struct size_info<ST> {
     static constexpr uint32_t elements = ST::num_elements;
     static constexpr uint32_t bytes    = ST::num_elements * sizeof(typename ST::dtype);
@@ -167,13 +218,9 @@ template<ducks::sv::all SV> struct size_info<SV> {
     static constexpr uint32_t elements = SV::length;
     static constexpr uint32_t bytes    = SV::length * sizeof(typename SV::dtype);
 };
-template<typename T, uint32_t dim, uint32_t... rest_dims> struct size_info<T, dim, rest_dims...> {
-    static constexpr uint32_t elements = dim*size_info<T, rest_dims...>::elements;
-    static constexpr uint32_t bytes    = dim*size_info<T, rest_dims...>::bytes;
-};
 }
-template<typename T, uint32_t... dims> constexpr uint32_t size_elements = detail::size_info<T, dims...>::elements;
-template<typename T, uint32_t... dims> constexpr uint32_t size_bytes    = detail::size_info<T, dims...>::bytes;
+template<typename... Args>             inline constexpr uint32_t size_bytes             = 0; // base case
+template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
 
 } // namespace kittens
 

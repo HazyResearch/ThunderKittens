@@ -1,5 +1,5 @@
 #include "dsmem.cuh"
-#include <cooperative_groups.h>
+// #include <cooperative_groups.h>
 
 #ifdef TEST_WARP_MEMORY_TILE_DSMEM
 
@@ -10,40 +10,39 @@ struct test_dsmem { // load with dsmem, write out normally
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "dsmem_transfer_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "dsmem_transfer_gmem=half" :
                                                                                          "dsmem_transfer_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < 4; i++) {
             for(int j = 0; j < H*W*256; j++) {
                 o_ref[i*H*W*256 + j] = i_ref[((i+1)%4)*H*W*256 + j];
             }
         }
     }
-    template<int H, int W, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
+    __device__ static void device_func(const GTL input, GTL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> (&src_tile) = al.allocate<kittens::st<dtype, H, W>>();
         kittens::st<dtype, H, W> (&dst_tile) = al.allocate<kittens::st<dtype, H, W>>();
         
         __shared__ kittens::barrier dsmem_barrier;
-        kittens::load(src_tile, input + blockIdx.x*src_tile.num_elements, W*16);
+        kittens::load(src_tile, input, kittens::index{0, (int)blockIdx.x, 0, 0});
 
         kittens::init_barrier(dsmem_barrier, 0, 1);
-        kittens::tma::expect<typeof(dst_tile)>(dsmem_barrier);
+        kittens::tma::expect(dsmem_barrier, dst_tile);
 
-        auto cluster = cooperative_groups::this_cluster();
-        cluster.sync(); // ensure everyone has initialized their barrier
+        kittens::tma::cluster::sync();
 
-        kittens::tma::cluster::store_async(dst_tile, src_tile, 4, (blockIdx.x+3)%4, dsmem_barrier);
+        kittens::tma::cluster::store_async(dst_tile, src_tile, (blockIdx.x+3)%4, dsmem_barrier);
 
         kittens::wait(dsmem_barrier, 0);
 
-        kittens::store(output + blockIdx.x*dst_tile.num_elements, dst_tile, W*16);
+        kittens::store(output, dst_tile, kittens::index{0, (int)blockIdx.x, 0, 0});
     }
 };
 
-template<typename Ker, typename T, int H, int W, int NW, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const T *input, T *output) {
-    Ker::template device_func<H, W, NW, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gt::l::all GTL, typename... args>
+static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const GTL input, GTL output) {
+    Ker::template device_func<H, W, NW, GTL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct dsmem_wrapper_2d {
@@ -52,21 +51,26 @@ struct dsmem_wrapper_2d {
         test_info this_result;
         this_result.label = generate_test_name<H,W,NUM_WORKERS, args...>(test::test_identifier);
         if constexpr (test::template valid<H, W, NUM_WORKERS, args...>::value) {
-            constexpr int SIZE = H*W*256 * 4; // 4 for additional dsmem cluster dimension
+            constexpr int D = 4;
+            constexpr int SIZE = H*W*256 * D; // D for additional dsmem cluster dimension
             // initialize
             dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize<dtype, initializers::ARANGE>(&d_i, &d_o, i_ref, o_ref);
+            // make descriptors
+            using GTL = typename kittens::gt<dtype, H, W>::l<1, D, 1, 1>;
+            GTL input(d_i, nullptr, nullptr, nullptr, nullptr);
+            GTL output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...>,
+                dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            dsmem_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GTL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16);
         }

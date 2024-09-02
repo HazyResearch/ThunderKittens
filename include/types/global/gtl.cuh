@@ -39,7 +39,7 @@ struct gt {
         static constexpr bool tma = _use_tma;
 
         typename std::conditional_t<raw, T*, std::nullptr_t> raw_ptr = nullptr;
-        typename std::conditional_t<tma, CUtensorMap*, std::nullptr_t> tma_ptr = nullptr;
+        typename std::conditional_t<tma, CUtensorMap*, std::nullptr_t> tma_ptr = nullptr; // I'd like to use std::shared_ptr here, but CUDA :/
         ducks::g::make_dim_t<_b> batch;
         ducks::g::make_dim_t<_d> depth;
         ducks::g::make_dim_t<_r> rows;
@@ -56,13 +56,23 @@ struct gt {
                 tma_ptr = tma::detail::allocate_and_create_tensor_map<ST>(_data, batch, depth, rows, cols);
             }
         }
-        __host__ __device__ inline ~l() {
-#ifndef __CUDA_ARCH__
+        __host__ __device__ inline l(const l &other) :
+            batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), raw_ptr(other.raw_ptr), tma_ptr(other.tma_ptr) {}
+        __host__ inline void cleanup() {
+            // the reason we have to do this manually because CUDA seems to copy somehow while passing to kernels
+            // the other option (which seems similarly awful) would be to use templating to "remember" the original pointer
+            // and only call cudaFree if it's still the same as the original pointer. I don't think it's any better.
             if constexpr (tma) {
                 cudaFree(tma_ptr);
             }
-#endif
         }
+        __device__ inline T& operator[](int4 idx) {
+            return raw_ptr[(((idx.x*depth + idx.y)*rows + idx.z)*cols*base_rows + idx.w)*base_cols];
+        }
+        __device__ inline const T& operator[](int4 idx) const {
+            return raw_ptr[(((idx.x*depth + idx.y)*rows + idx.z)*cols*base_rows + idx.w)*base_cols];
+        }
+        __device__ inline size_t row_stride() const { return cols*base_cols; }
     };
 };
 template<ducks::st::all ST> using gt_st = gt<typename ST::dtype, ST::height, ST::width>;
