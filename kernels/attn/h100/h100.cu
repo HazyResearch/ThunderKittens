@@ -1,4 +1,5 @@
 // #include "include/kittens.cuh"
+#include "common/pyutils/torch_helpers.cuh"
 #include "kittens.cuh"
 #include <cooperative_groups.h>
 #include <iostream>
@@ -559,7 +560,6 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
 // #include "harness.impl"
 
-#include "include/common/pyutils/torch_helpers.cuh"
 #include <iostream>
 void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal)
 {

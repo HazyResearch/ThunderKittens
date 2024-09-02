@@ -73,7 +73,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
 #ifdef TK_COMPILE_ATTN_INFERENCE
-    m.def("mha", attention_inference_forward, "Bidirectional forward MHA meant for inference. Takes device parameters Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Overwrites O.");
+    m.def("mha", attention_forward, "Bidirectional forward MHA meant for inference. Takes device parameters Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Overwrites O.");
 #endif
 
 #ifdef TK_COMPILE_ATTN_TRAINING
