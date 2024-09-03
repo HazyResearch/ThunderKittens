@@ -9,14 +9,14 @@ struct vec_load_store {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_reg_vec_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "group_reg_vec_loadstore_gmem=half" :
                                                                                          "group_reg_vec_loadstore_gmem=float";
-    template<int S, int NW, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, gvl_t GVL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int S, int NW, gvl_t GVL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GVL &input, GVL &output) {
         using G = kittens::group<NW>;
         kittens::col_vec<kittens::rt<dtype, S, S, L>> reg_vec;
-        G::load(reg_vec, input);
-        G::store(output, reg_vec);
+        G::load(reg_vec, input, {});
+        G::store(output, reg_vec, {});
     }
 };
 

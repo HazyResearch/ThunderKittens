@@ -14,32 +14,18 @@
  * @param dst Reference to the shared vector where the data will be loaded.
  * @param src Pointer to the global memory location from where the data will be loaded.
  */
-template<ducks::sv::all SV>
-__device__ static inline void load(SV &dst, const typename SV::dtype *src) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void load(SV &dst, const GVL &src, const index &idx) {
+    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    __syncwarp();
-    #pragma unroll
-    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
-        if(i * elem_per_transfer < dst.length)
-            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer];
-    }
-}
-
-template<ducks::sv::all SV>
-__device__ static inline void load_async(SV &dst, const typename SV::dtype *src, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    __syncwarp();
+    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
     #pragma unroll
     for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < dst.length) {
-            cuda::memcpy_async(
-                (void*)&dst[i*elem_per_transfer], 
-                (void*)&src[i*elem_per_transfer], 
-                cuda::aligned_size_t<16>(sizeof(float4)), 
-                barrier
-            );
+            float4 tmp;
+            move<float4>::ldg(tmp, &src_ptr[i*elem_per_transfer]);
+            move<float4>::sts(&dst[i*elem_per_transfer], tmp);
         }
     }
 }
@@ -55,14 +41,38 @@ __device__ static inline void load_async(SV &dst, const typename SV::dtype *src,
  * @param dst Pointer to the global memory location where the data will be stored.
  * @param src Reference to the shared vector from where the data will be stored.
  */
-template<ducks::sv::all SV>
-__device__ static inline void store(typename SV::dtype *dst, const SV &src) {
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void store(GVL &dst, const SV &src, const index &idx) {
+    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
-    __syncwarp();
+    typename GVL::dtype *dst_ptr = (typename GVL::dtype*)&dst[idx];
     #pragma unroll
     for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
-        if(i * elem_per_transfer < src.length)
-            *(float4*)&dst[i*elem_per_transfer] = *(float4*)&src[i*elem_per_transfer]; // lmao it's identical
+        if(i * elem_per_transfer < src.length) {
+            float4 tmp;
+            move<float4>::lds(tmp, &src[i*elem_per_transfer]);
+            move<float4>::stg(&dst_ptr[i*elem_per_transfer], tmp);
+        }
     }
+}
+
+template<ducks::sv::all SV, ducks::gv::l::all GVL>
+__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx) {
+    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
+    #pragma unroll
+    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
+        if(i * elem_per_transfer < dst.length) {
+            asm volatile(
+                "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
+                :
+                : "l"((uint64_t)&dst[i*elem_per_transfer]), "l"((uint64_t)&src_ptr[i*elem_per_transfer])
+                : "memory"
+            );
+        }
+    }
+    asm volatile("cp.async.commit_group;\n" ::: "memory");
 }

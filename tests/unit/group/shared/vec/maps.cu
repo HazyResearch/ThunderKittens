@@ -6,19 +6,19 @@ struct vec_add1 {
     template<int S, int NW>
     using valid = std::bool_constant<S%NW==0 && S<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_vec_add1";
-    template<int S, int NW>
+    template<int S, int NW, gvl_t GVL>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < o_ref.size(); i++) o_ref[i] = i_ref[i]+1.; // overwrite the whole thing
     }
-    template<int S, int NW>
-    __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int S, int NW, gvl_t GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         using G = kittens::group<NW>;
         __shared__ kittens::col_vec<kittens::st_bf<S, S>> vec;
-        G::load(vec, input);
-        __syncthreads();
+        G::load(vec, input, {});
+        G::sync();
         G::add(vec, vec, __float2bfloat16(1.));
-        __syncthreads();
-        G::store(output, vec);
+        G::sync();
+        G::store(output, vec, {});
     }
 };
 

@@ -16,7 +16,7 @@ void group::wgmma::tests(test_data &results) {
 #ifdef TEST_GROUP_WGMMA_MMA_FP16_FP16
     group::wgmma::mma_fp16_fp16::tests(results);
 #endif
-// #ifdef TEST_GROUP_WGMMA_MMA_FP32_FP32
+// #ifdef TEST_GROUP_WGMMA_MMA_FP32_FP32 -- TODO
 //     group::wgmma::mma_fp32_fp32::tests(results);
 // #endif
 }

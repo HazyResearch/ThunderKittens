@@ -5,19 +5,19 @@
 struct test_exp {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "shared_exp";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = __bfloat162float(__float2bfloat16(::expf(i_ref[i]))); // overwrite the whole thing
     }
-    template<int H, int W, int NW> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
-        G::load(shared_tile, input, W*16);
-        __syncthreads();
+        G::load(shared_tile, input, {});
+        G::sync();
         G::exp(shared_tile, shared_tile);
-        __syncthreads();
-        G::store(output, shared_tile, W*16);
+        G::sync();
+        G::store(output, shared_tile, {});
     }
 };
 

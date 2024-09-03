@@ -11,16 +11,10 @@
  * @param[out] dst The destination register vector to load data into.
  * @param[in] src The source array in global memory to load data from.
  */
-template<ducks::rv::all RV, typename U>
-__device__ inline static void load(RV &dst, const U *_src) {
-    using T2 = RV::dtype;
-    using U2 = base_types::packing<U>::packed_type;
-    using T = base_types::packing<T2>::unpacked_type;
-    
-    const U *src = &_src[warpid() * dst.outer_dim * kittens::TILE_DIM]; // pretend smaller, do single warp load.
-    
-    // Call warp level store
-    ::kittens::load(dst, src);
+template<ducks::rv::all RV, ducks::gv::l::all GVL>
+__device__ inline static void load(RV &dst, const GVL &src, const index &idx) {
+    // Call warp level load
+    ::kittens::load(dst, src, {idx.b, idx.d, idx.r, idx.c+warpid()});
 }
 /**
  * @brief Collaboratively stores data from register vectors to a destination array in global memory.
@@ -30,14 +24,8 @@ __device__ inline static void load(RV &dst, const U *_src) {
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register vector to store data from.
  */
-template<ducks::rv::all RV, typename U>
-__device__ inline static void store(U *_dst, const RV &src) {
-    using T2 = RV::dtype;
-    using U2 = base_types::packing<U>::packed_type;
-    using T = base_types::packing<T2>::unpacked_type;
-    
-    U *dst = &_dst[warpid() * src.outer_dim * kittens::TILE_DIM]; // pretend smaller, do single warp store.
-
+template<ducks::rv::all RV, ducks::gv::l::all GVL>
+__device__ inline static void store(GVL &dst, const RV &src, const index &idx) {
     // Call warp level store
-    ::kittens::store(dst, src);
+    ::kittens::store(dst, src, {idx.b, idx.d, idx.r, idx.c+warpid()});
 }
