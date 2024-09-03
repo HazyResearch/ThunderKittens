@@ -25,6 +25,7 @@ __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
     ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
     const int row_stride = src.row_stride();
+    
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram
@@ -100,6 +101,7 @@ __device__ static inline void load_async(ST &dst, GTL &src, const index &idx) {
     ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
     const int row_stride = src.row_stride();
+
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
     // each lane of the warp should store sequential into dram

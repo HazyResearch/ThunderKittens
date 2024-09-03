@@ -219,3 +219,6 @@ struct sweep_gmem_type_2d {
     }
 };
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_gmem_type_2d_warp = sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;
+
+template<typename T> concept gtl_t = kittens::ducks::gt::l::all<T>;
+template<typename T> concept gvl_t = kittens::ducks::gv::l::all<T>;

@@ -4,7 +4,65 @@
  */
 
 
- /*
+/**
+ * @brief Synchronize the warp group and ensure that all writes to shared memory are visible to all threads in the warp group.
+ *
+ * This function acts as a fence for shared memory operations, ensuring that all previous writes are visible before proceeding.
+ * This function should be called before running wgmma::mma or wgmma::dot instructions.
+ *
+ * @tparam height The height of the matrix `dst`.
+ * @tparam width The width of the matrix `dst`.
+ * @param dst[in,out] The destination register-tile matrix to be synchronized.
+ */
+template<ducks::rt::row_layout D>
+__device__ static inline void mma_fence(D &dst) {
+    KITTENS_CHECK_WARPGROUP
+    #pragma unroll
+    for(int i = 0; i < D::height; i++) {
+        #pragma unroll
+        for(int j = 0; j < D::width; j++) {
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_tile; k++) {
+                if constexpr(std::is_same_v<typename D::T, float>) {
+                    asm volatile("" : "+f"(dst.tiles[i][j].data[k].x) :: "memory");
+                    asm volatile("" : "+f"(dst.tiles[i][j].data[k].y) :: "memory");
+                } else {
+                    asm volatile("" : "+r"(*(uint32_t*)&dst.tiles[i][j].data[k]) :: "memory");
+                }
+            }
+        }
+    }
+    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory");
+}
+template<typename T=kittens::ducks::default_type> // prevents static assert being instantiated unless called.
+__device__ static inline void mma_fence() {
+    KITTENS_CHECK_WARPGROUP
+    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory");
+}
+
+/**
+ * @brief Commit the current set of warp group matrix multiply accumulate calls.
+ */
+template<typename T=kittens::ducks::default_type> // prevents static assert being instantiated unless called.
+__device__ static inline void mma_commit_group() {
+    KITTENS_CHECK_WARPGROUP
+    asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
+}
+
+/**
+ * @brief Wait for the warp group to reach a synchronization point.
+ *
+ * This function stalls the current warpgroup until enough WGMMA committed groups have been completed.
+ *
+ * @tparam N The number of remaining active WGMMA committed groups allowed. This will stall until the number of active groups is less than or equal to N. Defaults to 0.
+ */
+template<int N=0>
+__device__ static inline void mma_async_wait() {
+    KITTENS_CHECK_WARPGROUP
+    asm volatile ("wgmma.wait_group.sync.aligned %0;" : : "n"(N) : "memory");
+}
+
+/*
  ### OPTIONS:
 
  REG+SMEM -> REG
@@ -41,7 +99,7 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -59,6 +117,8 @@ __device__ static inline void mma_AB(D &d,
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 1>;
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
+
+    if constexpr (fence) { mma_fence(d); }
 
     // Do it
     #pragma unroll
@@ -80,15 +140,16 @@ __device__ static inline void mma_AB(D &d,
             );
         }
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
-    mma_AB<D, A, B, 0>(d, a, b);
+    mma_AB<D, A, B, 1, 0>(d, a, b);
 }
 
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -109,6 +170,8 @@ __device__ static inline void mma_AB(D &d,
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
 
+    if constexpr (fence) { mma_fence(d); }
+
     // Do it
     base::st_st(
         d,
@@ -125,12 +188,13 @@ __device__ static inline void mma_AB(D &d,
             1
         );
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
-    mma_AB<D, A, B, 0>(d, a, b);
+    mma_AB<D, A, B, 1, 0>(d, a, b);
 }
 
 // [(register, shared) -> register] edition
@@ -148,7 +212,7 @@ __device__ static inline void mm_AB(D &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -166,6 +230,8 @@ __device__ static inline void mma_ABt(D &d,
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, N, 0, 0>;
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+
+    if constexpr (fence) { mma_fence(d); }
 
     // Do it
     #pragma unroll
@@ -187,12 +253,13 @@ __device__ static inline void mma_ABt(D &d,
             );
         }
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
-    mma_ABt<D, A, B, 0>(d, a, b);
+    mma_ABt<D, A, B, 1, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -210,7 +277,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -231,6 +298,8 @@ __device__ static inline void mma_ABt(D &d,
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
 
+    if constexpr (fence) { mma_fence(d); }
+
     // Do it
     base::st_st(
         d,
@@ -247,12 +316,13 @@ __device__ static inline void mma_ABt(D &d,
             1
         );
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
-    mma_ABt<D, A, B, 0>(d, a, b);
+    mma_ABt<D, A, B, 1, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -270,7 +340,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b) {
@@ -291,6 +361,8 @@ __device__ static inline void mma_AtB(D &d,
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
 
+    if constexpr (fence) { mma_fence(d); }
+
     // Do it
     base::st_st(
         d,
@@ -307,12 +379,13 @@ __device__ static inline void mma_AtB(D &d,
             1
         );
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
-    mma_AtB<D, A, B, 0>(d, a, b);
+    mma_AtB<D, A, B, 1, 0>(d, a, b);
 }
 
 // [(shared, shared) -> register] edition
@@ -326,7 +399,7 @@ __device__ static inline void mm_AtB(D &d,
  * @tparam B The source shared tile type.
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b) {
@@ -347,6 +420,8 @@ __device__ static inline void mma_AtBt(D &d,
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
     kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
 
+    if constexpr (fence) { mma_fence(d); }
+
     // Do it
     base::st_st(
         d,
@@ -363,67 +438,11 @@ __device__ static inline void mma_AtBt(D &d,
             1
         );
     }
+    mma_commit_group(); // commit the group of these WGMMA calls.
 }
 template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
 __device__ static inline void mm_AtBt(D &d,
                                 const A &a,
                                 const B &b) {
-    mma_AtBt<D, A, B, 0>(d, a, b);
-}
-
-/**
- * @brief Synchronize the warp group and ensure that all writes to shared memory are visible to all threads in the warp group.
- *
- * This function acts as a fence for shared memory operations, ensuring that all previous writes are visible before proceeding.
- * This function should be called before running wgmma::mma or wgmma::dot instructions.
- *
- * @tparam height The height of the matrix `dst`.
- * @tparam width The width of the matrix `dst`.
- * @param dst[in,out] The destination register-tile matrix to be synchronized.
- */
-template<ducks::rt::row_layout D>
-__device__ static inline void mma_fence(D &dst) {
-    KITTENS_CHECK_WARPGROUP
-    #pragma unroll
-    for(int i = 0; i < D::height; i++) {
-        #pragma unroll
-        for(int j = 0; j < D::width; j++) {
-            #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
-                if constexpr(std::is_same_v<typename D::T, float>) {
-                    asm volatile("" : "+f"(dst.tiles[i][j].data[k].x) :: "memory");
-                    asm volatile("" : "+f"(dst.tiles[i][j].data[k].y) :: "memory");
-                } else {
-                    asm volatile("" : "+r"(*(uint32_t*)&dst.tiles[i][j].data[k]) :: "memory");
-                }
-            }
-        }
-    }
-    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory");
-}
-__device__ static inline void mma_fence() {
-    KITTENS_CHECK_WARPGROUP
-    asm volatile ("wgmma.fence.sync.aligned;\n" ::: "memory");
-}
-
-/**
- * @brief Commit the current set of warp group matrix multiply accumulate calls.
- */
- template<typename T=kittens::ducks::default_type> // prevents static assert being instantiated unless called.
-__device__ static inline void mma_commit_group() {
-    KITTENS_CHECK_WARPGROUP
-    asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
-}
-
-/**
- * @brief Wait for the warp group to reach a synchronization point.
- *
- * This function stalls the current warpgroup until enough WGMMA committed groups have been completed.
- *
- * @tparam N The number of remaining active WGMMA committed groups allowed. This will stall until the number of active groups is less than or equal to N. Defaults to 0.
- */
-template<int N=0>
-__device__ static inline void mma_async_wait() {
-    KITTENS_CHECK_WARPGROUP
-    asm volatile ("wgmma.wait_group.sync.aligned %0;" : : "n"(N) : "memory");
+    mma_AtBt<D, A, B, 1, 0>(d, a, b);
 }

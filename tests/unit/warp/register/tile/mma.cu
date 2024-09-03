@@ -5,7 +5,7 @@
 struct test_mma_AB {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_mma_AB";
-    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
             for(int j = 0; j < W*16; j++) {
@@ -17,22 +17,25 @@ struct test_mma_AB {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
         kittens::rt_bf<H, K> a;
         kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
         kittens::rt_fl<H, W> c;
-        kittens::load(a, input, K*16);
-        kittens::load(b, input+a.num_elements, W*16);
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AB(c, a, b, c);
-        kittens::store(output, c, W*16);
+        kittens::store(c_output, c, {});
     }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, K::value, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
 };
 struct test_mma_ABt {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_mma_ABt";
-    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
             for(int j = 0; j < W*16; j++) {
@@ -44,22 +47,25 @@ struct test_mma_ABt {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
         kittens::rt_bf<H, K> a;
         kittens::rt_bf<W, K> b;
         kittens::rt_fl<H, W> c;
-        kittens::load(a, input, K*16);
-        kittens::load(b, input+a.num_elements, K*16);
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_ABt(c, a, b, c);
-        kittens::store(output, c, W*16);
+        kittens::store(c_output, c, {});
     }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, W, K::value>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
 };
 struct test_mma_AtB {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
-    static inline const std::string test_identifier = "reg_mma_AB";
-    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    static inline const std::string test_identifier = "reg_mma_AtB";
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
             for(int j = 0; j < W*16; j++) {
@@ -71,22 +77,25 @@ struct test_mma_AtB {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
         kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
         kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
         kittens::rt_fl<H, W> c;
-        kittens::load(a, input, H*16);
-        kittens::load(b, input+a.num_elements, W*16);
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AtB(c, a, b, c);
-        kittens::store(output, c, W*16);
+        kittens::store(c_output, c, {});
     }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, K::value, H>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, K::value, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
 };
 struct test_mma_AtBt {
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
-    static inline const std::string test_identifier = "reg_mma_ABt";
-    template<int H, int W, int NW, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    static inline const std::string test_identifier = "reg_mma_AtBt";
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
             for(int j = 0; j < W*16; j++) {
@@ -98,20 +107,27 @@ struct test_mma_AtBt {
             }
         }
     }
-    template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
         kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
         kittens::rt_bf<W, K> b;
         kittens::rt_fl<H, W> c;
-        kittens::load(a, input, H*16);
-        kittens::load(b, input+a.num_elements, K*16);
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AtBt(c, a, b, c);
-        kittens::store(output, c, W*16);
+        kittens::store(c_output, c, {});
     }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, K::value, H>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, W, K::value>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
 };
 
 // Due to the strange sizes instantiated, we need a custom base wrapper here
+template<typename Ker, typename T, int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename... args>
+static __global__ void mma_global_wrapper_2d(const GTL_A a_input, const GTL_B b_input, GTL_C c_output) {
+    Ker::template device_func<H, W, NW, GTL_A, GTL_B, GTL_C, args...>(a_input, b_input, c_output);
+}
 template<typename test, int H, int W, int NUM_WORKERS, typename _K, typename... args>
 struct mma_wrapper_2d {
     static void run(test_data& results) {
@@ -125,15 +141,22 @@ struct mma_wrapper_2d {
             std::vector<float> i_ref((H+W)*K*256);
             std::vector<float> o_ref(H*W*256);
             initialize(&d_i, &d_o, i_ref, o_ref);
+            // make descriptors
+            using GTL_A = test::template make_a_layout<H, W, _K>;
+            using GTL_B = test::template make_b_layout<H, W, _K>;
+            using GTL_C = test::template make_c_layout<H, W, _K>;
+            GTL_A a_input (d_i,           nullptr, nullptr, nullptr, nullptr);
+            GTL_B b_input (d_i + H*K*256, nullptr, nullptr, nullptr, nullptr);
+            GTL_C c_output(d_o,           nullptr, nullptr, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, _K, args...>,
+                mma_global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(d_i, d_o);
+            mma_global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(a_input, b_input, c_output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, _K, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16, 0.02); // mma's sometimes produce small errors. this appears to be hardware.
         }

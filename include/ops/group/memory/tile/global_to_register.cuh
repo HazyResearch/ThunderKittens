@@ -12,9 +12,13 @@
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::row_layout RT, typename U>
-__device__ inline static void load(RT &dst, const U *src, const int row_stride) {
+template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T2 = RT::dtype;
+    using U = typename GTL::dtype;
+    U *src_ptr = (U*)&src[idx];
+    const int row_stride = src.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = dst.rows*warpid();
@@ -24,14 +28,14 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + 2*(warp_laneid % 4);
-            dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row+0)*row_stride + (col+0)]));
-            dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row+0)*row_stride + (col+8)]));
+            dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row+0)*row_stride + (col+0)]));
+            dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row+0)*row_stride + (col+8)]));
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + 2*(warp_laneid % 4);
-            dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row+8)*row_stride + (col+0)]));
-            dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[(row+8)*row_stride + (col+8)]));
+            dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row+8)*row_stride + (col+0)]));
+            dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(*(U2*)(&src_ptr[(row+8)*row_stride + (col+8)]));
         }
     }
 }
@@ -44,9 +48,13 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::col_layout RT, typename U>
-__device__ inline static void load(RT &dst, const U *src, const int row_stride) {
+template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
+    using U = typename GTL::dtype;
+    U *src_ptr = (U*)&src[idx];
+    const int row_stride = src.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = dst.rows*warpid();
     #pragma unroll
@@ -55,26 +63,26 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (warp_laneid / 4);
-            dst.tiles[i][j].data[0].x = base_types::convertor<T, U>::convert(src[(row+0)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[1].x = base_types::convertor<T, U>::convert(src[(row+0)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[0].x = base_types::convertor<T, U>::convert(src_ptr[(row+0)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[1].x = base_types::convertor<T, U>::convert(src_ptr[(row+0)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (warp_laneid / 4);
-            dst.tiles[i][j].data[0].y = base_types::convertor<T, U>::convert(src[(row+1)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[1].y = base_types::convertor<T, U>::convert(src[(row+1)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[0].y = base_types::convertor<T, U>::convert(src_ptr[(row+1)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[1].y = base_types::convertor<T, U>::convert(src_ptr[(row+1)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (warp_laneid / 4);
-            dst.tiles[i][j].data[2].x = base_types::convertor<T, U>::convert(src[(row+8)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[3].x = base_types::convertor<T, U>::convert(src[(row+8)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[2].x = base_types::convertor<T, U>::convert(src_ptr[(row+8)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[3].x = base_types::convertor<T, U>::convert(src_ptr[(row+8)*row_stride + (col+8)]);
         }
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
             int col = j*dst.tile_size + (warp_laneid / 4);
-            dst.tiles[i][j].data[2].y = base_types::convertor<T, U>::convert(src[(row+9)*row_stride + (col+0)]);
-            dst.tiles[i][j].data[3].y = base_types::convertor<T, U>::convert(src[(row+9)*row_stride + (col+8)]);
+            dst.tiles[i][j].data[2].y = base_types::convertor<T, U>::convert(src_ptr[(row+9)*row_stride + (col+0)]);
+            dst.tiles[i][j].data[3].y = base_types::convertor<T, U>::convert(src_ptr[(row+9)*row_stride + (col+8)]);
         }
     }
 }
@@ -89,9 +97,13 @@ __device__ inline static void load(RT &dst, const U *src, const int row_stride) 
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::row_layout RT, typename U>
-__device__ inline static void store(U *dst, const RT &src, const int row_stride) {
+template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T2 = RT::dtype;
+    using U = typename GTL::dtype;
+    U *dst_ptr = (U*)&dst[idx];
+    const int row_stride = dst.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = src.rows*warpid();
@@ -101,14 +113,14 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + 2*(warp_laneid % 4);
-            *(U2*)(&dst[(row+0)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
-            *(U2*)(&dst[(row+0)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+            *(U2*)(&dst_ptr[(row+0)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            *(U2*)(&dst_ptr[(row+0)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + 2*(warp_laneid % 4);
-            *(U2*)(&dst[(row+8)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
-            *(U2*)(&dst[(row+8)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+            *(U2*)(&dst_ptr[(row+8)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            *(U2*)(&dst_ptr[(row+8)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
         }
     }
 }
@@ -121,9 +133,13 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::col_layout RT, typename U>
-__device__ inline static void store(U *dst, const RT &src, const int row_stride) {
+template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
+__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
+    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
+    using U = typename GTL::dtype;
+    U *dst_ptr = (U*)&dst[idx];
+    const int row_stride = dst.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = src.rows*warpid();
     #pragma unroll
@@ -132,26 +148,26 @@ __device__ inline static void store(U *dst, const RT &src, const int row_stride)
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (warp_laneid / 4);
-            dst[(row+0)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].x);
-            dst[(row+0)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].x);
+            dst_ptr[(row+0)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].x);
+            dst_ptr[(row+0)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].x);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (warp_laneid / 4);
-            dst[(row+1)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].y);
-            dst[(row+1)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].y);
+            dst_ptr[(row+1)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].y);
+            dst_ptr[(row+1)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].y);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (warp_laneid / 4);
-            dst[(row+8)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].x);
-            dst[(row+8)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].x);
+            dst_ptr[(row+8)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].x);
+            dst_ptr[(row+8)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].x);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size + (warp_laneid / 4);
-            dst[(row+9)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].y);
-            dst[(row+9)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].y);
+            dst_ptr[(row+9)*row_stride + (col+0)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[2].y);
+            dst_ptr[(row+9)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].y);
         }
     }
 }

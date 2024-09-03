@@ -24,16 +24,13 @@ struct test_dsmem { // load with dsmem, write out normally
         kittens::st<dtype, H, W> (&src_tile) = al.allocate<kittens::st<dtype, H, W>>();
         kittens::st<dtype, H, W> (&dst_tile) = al.allocate<kittens::st<dtype, H, W>>();
         
-        __shared__ kittens::barrier dsmem_barrier;
         kittens::load(src_tile, input, kittens::index{0, (int)blockIdx.x, 0, 0});
 
+        __shared__ kittens::barrier dsmem_barrier;
         kittens::init_barrier(dsmem_barrier, 0, 1);
         kittens::tma::expect(dsmem_barrier, dst_tile);
-
         kittens::tma::cluster::sync();
-
         kittens::tma::cluster::store_async(dst_tile, src_tile, (blockIdx.x+3)%4, dsmem_barrier);
-
         kittens::wait(dsmem_barrier, 0);
 
         kittens::store(output, dst_tile, kittens::index{0, (int)blockIdx.x, 0, 0});

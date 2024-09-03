@@ -4,7 +4,6 @@
 
 void warp::reg::vec::tests(test_data &results) {
     std::cout << "\n --------------- Starting ops/warp/register/vec tests! ---------------\n" << std::endl;
-    std::cout << "TODO: Write these tests." << std::endl;
 #ifdef TEST_WARP_REGISTER_VEC_CONVERSIONS
     warp::reg::vec::conversions::tests(results);
 #endif

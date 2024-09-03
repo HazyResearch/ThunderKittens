@@ -11,17 +11,17 @@ struct test_swap_layout {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_swaplayout_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_swaplayout_gmem=half" :
                                                                                          "shared_swaplayout_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &t1 = al.allocate<kittens::st<dtype, H, W>>();
         kittens::st<dtype, H, W> &t2 = al.allocate<kittens::st<dtype, H, W>>();
-        kittens::load(t2, input, W*16);
+        kittens::load(t2, input, {});
         kittens::copy(t1, t2);
-        kittens::store(output, t1, W*16);
+        kittens::store(output, t1, {});
     }
 };
 
@@ -33,18 +33,18 @@ struct test_subtile {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_subtile_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_subtile_gmem=half" :
                                                                                          "shared_subtile_gmem=float";
-    template<int H, int W, int NW, typename _ST_H, typename _ST_W> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL, typename _ST_H, typename _ST_W> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int ST_H = _ST_H::value, ST_W = _ST_W::value;
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
                 o_ref[i*W*16 + j] = i_ref[i*W*16 + j] * float(i/(ST_H*16)) + float(j/(ST_W*16));
     }
-    template<int H, int W, int NW, typename _ST_H, typename _ST_W> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL, typename _ST_H, typename _ST_W> __device__ static void device_func(const GTL &input, GTL &output) {
         constexpr int ST_H = _ST_H::value, ST_W = _ST_W::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &t = al.allocate<kittens::st<dtype, H, W>>();
-        kittens::load(t, input, W*16);
+        kittens::load(t, input, {});
         for(int i = 0; i < H/ST_H; i++) {
             for(int j = 0; j < W/ST_W; j++) {
                 auto ref = kittens::subtile_inplace<ST_H, ST_W>(t, i, j);
@@ -55,7 +55,7 @@ struct test_subtile {
                 kittens::store(ref, reg);
             }
         }
-        kittens::store(output, t, W*16);
+        kittens::store(output, t, {});
     }
 };
 

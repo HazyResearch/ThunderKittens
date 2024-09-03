@@ -5,14 +5,14 @@
 struct test_exp {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_exp";
-    template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-        for(int i = 0; i < i_ref.size(); i++) o_ref[i] = ::expf(i_ref[i]); // overwrite the whole thing
+    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        for(int i = 0; i < i_ref.size(); i++) o_ref[i] = ::expf(i_ref[i]);
     }
-    template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
+    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL input, GTL output) {
         kittens::rt_bf<H, W, L> reg_tile;
-        kittens::load(reg_tile, input, W*16);
+        kittens::load(reg_tile, input, {});
         kittens::exp(reg_tile, reg_tile);
-        kittens::store(output, reg_tile, W*16);
+        kittens::store(output, reg_tile, {});
     }
 };
 

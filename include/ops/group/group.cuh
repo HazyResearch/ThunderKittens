@@ -30,6 +30,14 @@ __device__ static inline int laneid() { return threadIdx.x % GROUP_THREADS; }
 __device__ static inline int warpid() { return laneid() / kittens::WARP_THREADS; }
 __device__ static inline int groupid() { return threadIdx.x / GROUP_THREADS; }
 
+// TODO: redo these with good default barrier index choices
+__device__ static inline void sync() { // warning: this can create trouble if multiple groups of different sizes are using it at the same time.
+    asm volatile("bar.sync %0, %1;\n" :: "r"(groupid() + 4), "n"(GROUP_THREADS)); // +4 here is meant to avoid conflicts with bar.sync used by __syncthreads(), a common special case of the above concern.
+}
+__device__ static inline void sync(int id) { // backup: specify the barrier ID manually
+    asm volatile("bar.sync %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
+}
+
 #include "memory/memory.cuh"
 #include "shared/shared.cuh"
 
@@ -48,13 +56,6 @@ template<int n_reg> __device__ static inline void decrease_registers() {
 }
 
 #endif
-
-__device__ static inline void sync() { // warning: this can create trouble if multiple groups of different sizes are using it at the same time.
-    asm volatile("bar.sync %0, %1;\n" :: "r"(groupid() + 4), "n"(GROUP_THREADS)); // +4 here is meant to avoid conflicts with bar.sync used by __syncthreads(), a common special case of the above concern.
-}
-__device__ static inline void sync(int id) { // backup: specify the barrier ID manually
-    asm volatile("bar.sync %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
-}
 
 };
 

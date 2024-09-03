@@ -9,7 +9,7 @@ struct normalize_row {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_norm_row_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_norm_row_gmem=half" :
                                                                                          "shared_norm_row_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         if constexpr(std::is_same_v<dtype, kittens::bf16>) {
             std::vector<kittens::bf16> i_ref(i_ref_f.size());
             std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -56,17 +56,17 @@ struct normalize_row {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
-        kittens::load(shared_tile, input, W*16);
+        kittens::load(shared_tile, input, {});
         kittens::row_sum(accum, shared_tile);
         kittens::abs(accum, accum);
         kittens::add(accum, accum, kittens::base_types::constants<dtype>::one());
         kittens::div_row(shared_tile, shared_tile, accum);
-        kittens::store(output, shared_tile, W*16);
+        kittens::store(output, shared_tile, {});
     }
 };
 template<typename T>
@@ -76,7 +76,7 @@ struct normalize_col {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_norm_col_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_norm_col_gmem=half" :
                                                                                          "shared_norm_col_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         if constexpr(std::is_same_v<dtype, kittens::bf16>) {
             std::vector<kittens::bf16> i_ref(i_ref_f.size());
             std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -123,17 +123,17 @@ struct normalize_col {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
-        kittens::load(shared_tile, input, W*16);
+        kittens::load(shared_tile, input, {});
         kittens::col_sum(accum, shared_tile);
         kittens::abs(accum, accum);
         kittens::add(accum, accum, kittens::base_types::constants<dtype>::one());
         kittens::div_col(shared_tile, shared_tile, accum);
-        kittens::store(output, shared_tile, W*16);
+        kittens::store(output, shared_tile, {});
     }
 };
 template<typename T>
@@ -143,7 +143,7 @@ struct broadcast_row {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_broadcast_row_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_broadcast_row_gmem=half" :
                                                                                          "shared_broadcast_row_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         if constexpr(std::is_same_v<dtype, kittens::bf16>) {
             std::vector<kittens::bf16> i_ref(i_ref_f.size());
             std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -187,16 +187,16 @@ struct broadcast_row {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
-        kittens::load(shared_tile, input, W*16);
+        kittens::load(shared_tile, input, {});
         kittens::mul(shared_tile, shared_tile, kittens::base_types::convertor<dtype, float>::convert(0.125f));
         kittens::row_sum(accum, shared_tile);
         kittens::broadcast_row(shared_tile, accum);
-        kittens::store(output, shared_tile, W*16);
+        kittens::store(output, shared_tile, {});
     }
 };
 
@@ -207,7 +207,7 @@ struct broadcast_col {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_broadcast_col_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_broadcast_col_gmem=half" :
                                                                                          "shared_broadcast_col_gmem=float";
-    template<int H, int W, int NW> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         if constexpr(std::is_same_v<dtype, kittens::bf16>) {
             std::vector<kittens::bf16> i_ref(i_ref_f.size());
             std::vector<kittens::bf16> o_ref(o_ref_f.size());
@@ -251,16 +251,16 @@ struct broadcast_col {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
-        kittens::load(shared_tile, input, W*16);
+        kittens::load(shared_tile, input, {});
         kittens::mul(shared_tile, shared_tile, kittens::base_types::convertor<dtype, float>::convert(0.125f));
         kittens::col_sum(accum, shared_tile);
         kittens::broadcast_col(shared_tile, accum);
-        kittens::store(output, shared_tile, W*16);
+        kittens::store(output, shared_tile, {});
     }
 };
 

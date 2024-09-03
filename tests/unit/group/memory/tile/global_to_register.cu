@@ -9,14 +9,14 @@ struct group_load_store {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "group_reg_loadstore_gmem=half" :
                                                                                          "group_reg_loadstore_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL &input, GTL &output) {
         using G = kittens::group<NW>;
         kittens::rt<dtype, H/NW, W, L> reg_tile;
-        G::load(reg_tile, input, W*16);
-        G::store(output, reg_tile, W*16);
+        G::load(reg_tile, input, {});
+        G::store(output, reg_tile, {});
     }
 };
 

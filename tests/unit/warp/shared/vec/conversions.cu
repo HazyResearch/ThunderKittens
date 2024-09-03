@@ -9,17 +9,17 @@ struct shared_vec_convert {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_vec_convert_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_vec_convert_gmem=half" :
                                                                                          "shared_vec_convert_gmem=float";
-    template<int S, int NW>
+    template<int S, int NW, gvl_t GVL>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW>
-    __device__ static void device_func(const dtype *input, dtype *output) {
+    template<int S, int NW, gvl_t GVL>
+    __device__ static void device_func(const GVL &input, GVL &output) {
         __shared__ kittens::col_vec<kittens::st<dtype, S, S>> vec1;
         __shared__ kittens::col_vec<kittens::st<dtype, S, S>> vec2;
-        kittens::load(vec1, input);
+        kittens::load(vec1, input, {});
         kittens::copy(vec2, vec1);
-        kittens::store(output, vec2);
+        kittens::store(output, vec2, {});
     }
 };
 
