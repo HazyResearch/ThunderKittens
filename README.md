@@ -27,7 +27,7 @@ ThunderKittens makes a few tricky things easy that enable high utilization on mo
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
 4. Distributed Shared Memory. L2 is _so_ last year.
 
-*Example: A Simple Atention Kernel*
+*Example: A Simple Attention Kernel*
 
 Here’s an example of what a simple FlashAttention-2 kernel for an RTX 4090 looks like written in ThunderKittens.
 
@@ -123,7 +123,7 @@ Altogether, this is 58 lines of code (not counting whitespace), and achieves abo
 
 ## Library Installation
 
-To use Thunderkittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
+To use ThunderKittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
 
 But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
  - CUDA 12.3+. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines due to a bug in those earlier versions of CUDA.
