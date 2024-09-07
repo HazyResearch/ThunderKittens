@@ -14,8 +14,7 @@ torch.random.manual_seed(42)
 dtype = torch.bfloat16
 device = 'cuda'
 
-#sudo /usr/local/cuda-12/bin/ncu -f -o /home/bfs/arjun/ThunderKittens/arjun_examples/fftconv/profile.ncu-rep --set full ~/miniconda3/envs/sim/bin/python profile.py
-
+#sudo /usr/local/cuda-12/bin/ncu -f -o /home/bfs/arjun/ThunderKittens/kernels/fftconv/profile.ncu-rep --set full ~/miniconda3/envs/sim/bin/python profile.py
 N = 1024
 u = torch.randn((B, H, N), dtype=dtype).to(device)
 # Needs to be fp32 so we can take its FFT
