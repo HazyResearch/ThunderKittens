@@ -1,14 +1,9 @@
-//#define TORCH_COMPILE
+#define TORCH_COMPILE
 
 #include "include/kittens.cuh"
-#include <cooperative_groups.h>
+//#include <cooperative_groups.h>
 
 using namespace kittens;
-
-// Number of batches per SM
-#define B_TILE 8 //8
-// Number of heads per SM
-#define H_TILE 8 //8
 
 #define NUM_WORKERS 2
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
@@ -23,7 +18,7 @@ void fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_imag, co
             const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
             const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
             CUtensorMap* tma_o, 
-            int h, int n, int n1){
+            int h, int n, int n1, int B_TILE, int H_TILE){
     
     auto warpid = kittens::warpid();
 
@@ -52,7 +47,6 @@ void fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_imag, co
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
 
-    // TODO can we just load directly into register
     kittens::st_cmplx_bf<2, 2> (&f_smem) = al.allocate<st_cmplx_bf<2, 2>>();
     kittens::st_cmplx_bf<2, 2> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
     kittens::st_cmplx_bf<2, 2> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2>>();
@@ -70,12 +64,20 @@ void fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_imag, co
     //if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&u_imag_s[1][1]) - (uint64_t)(&__shm[0]));
 
 
-    // Global loads
+    // Global loads - reuse kf and u smem
     if (warpid == 0) {
         kittens::load(f_smem, f_real, f_imag, n1, n1);
         kittens::load(finv_smem, finv_real, finv_imag, n1, n1);
         kittens::load(tw_smem, tw_real, tw_imag, n1, n1);
         kittens::load(twinv_smem, twinv_real, twinv_imag, n1, n1);
+        // kittens::load(u_real_s[0][0], f_real, n1);
+        // kittens::load(u_real_s[0][1], f_imag, n1);
+        // kittens::load(u_real_s[1][0], finv_real, n1);
+        // kittens::load(u_real_s[1][1], finv_imag, n1);
+        // kittens::load(u_imag_s[0][0], tw_real, n1);
+        // kittens::load(u_imag_s[0][1], tw_imag, n1);
+        // kittens::load(u_imag_s[1][0], twinv_real, n1);
+        // kittens::load(u_imag_s[1][1], twinv_imag, n1);
     }
     __syncthreads();
 
@@ -101,6 +103,20 @@ void fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_imag, co
     kittens::load(finv_reg, finv_smem);
     kittens::load(tw_reg, tw_smem);
     kittens::load(twinv_reg, twinv_smem);
+    // kittens::load(f_reg, f_real, f_imag, n1, n1);
+    // kittens::load(finv_reg, finv_real, finv_imag, n1, n1);
+    // kittens::load(tw_reg, tw_real, tw_imag, n1, n1);
+    // kittens::load(twinv_reg, twinv_real, twinv_imag, n1, n1);
+    // kittens::load(f_reg.real, u_real_s[0][0]);
+    // kittens::load(f_reg.imag, u_real_s[0][1]);
+    // kittens::load(finv_reg.real, u_real_s[1][0]);
+    // kittens::load(finv_reg.imag, u_real_s[1][1]);
+    // kittens::load(tw_reg.real, u_imag_s[0][0]);
+    // kittens::load(tw_reg.imag, u_imag_s[0][1]);
+    // kittens::load(twinv_reg.real, u_imag_s[1][0]);
+    // kittens::load(twinv_reg.imag, u_imag_s[1][1]);
+    __syncthreads();
+    
 
     for (int i = 0; i < H_TILE; i++, k_tic ^=1, k_toc ^=1) {
         kittens::wait(k_arrived, k_tic);
@@ -195,22 +211,35 @@ void launch_fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_i
                         const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
                         const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
                         CUtensorMap* tma_o, 
-                        int b, int h, int n, int n1) {
+                        int B, int H, int N, int N1) {
     // Multiple warps
-    const dim3 block_dim{
+    const dim3 blockDim{
         (unsigned int)(NUM_THREADS)
     };
-    const dim3 grid_dim{
-        (unsigned int)(b + B_TILE - 1) / B_TILE,
-        (unsigned int)(h + H_TILE - 1) / H_TILE
-    };
+    dim3 gridDim;
+    int B_TILE;
+    int H_TILE;
+
+    if (B >= 8 && (B % 8) == 0 && H >= 8 && (H % 8) == 0) {
+        gridDim.x = B / 8;
+        gridDim.y = H / 8;
+        B_TILE = 8, H_TILE = 8;
+    } else if (B >= 4 && (B % 4) == 0 && H >= 8 && (H % 8) == 0) {
+        gridDim.x = B / 4;
+        gridDim.y = H / 8;
+        B_TILE = 4, H_TILE = 8;
+    } else if ((H % 8) == 0) {
+        gridDim.x = B;
+        gridDim.y = H / 8;
+        B_TILE = 1, H_TILE = 8;
+    }
     
     // Complex shared tile size (bytes)
     unsigned long st_size = 2 * (2 * 2 * 256 * 2);
     //unsigned long st_size = (2 * (2 * 2 * 256 * 4));
     // fft and twiddles (4), 2 kf smem, 2*NUM_WORKERS x_smem, 2*NUM_WORKERS o_smem
     // We need to calculate SMEM better
-    unsigned long mem_size = (4 * st_size) + (2 * st_size) + (2*NUM_WORKERS * st_size) + (2*NUM_WORKERS * st_size) + 6000;
+    unsigned long mem_size = /*(4 * st_size) + */(2 * st_size) + (2*NUM_WORKERS * st_size) + (2*NUM_WORKERS * st_size) + 6000;
     //unsigned long mem_size = 108000;
 
     //printf("%lu\n", mem_size);
@@ -221,11 +250,11 @@ void launch_fftconv_tk(const CUtensorMap* tma_u_real, const CUtensorMap* tma_u_i
         mem_size
     );
 
-    fftconv_tk<<<grid_dim, block_dim, mem_size>>>(tma_u_real, tma_u_imag, tma_kf_real, tma_kf_imag, 
+    fftconv_tk<<<gridDim, blockDim, mem_size>>>(tma_u_real, tma_u_imag, tma_kf_real, tma_kf_imag, 
                                                 f_real, f_imag, finv_real, finv_imag, 
                                                 tw_real, tw_imag, twinv_real, twinv_imag, 
                                                 tma_o,
-                                                h, n, n1);
+                                                H, N, N1, B_TILE, H_TILE);
 }
 
 // For launching from PyTorch

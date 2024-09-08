@@ -195,24 +195,15 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    // BxH tiles worth of mem
-    const CUtensorMap* tma_u_real = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_u_real, B, H);
-    const CUtensorMap* tma_u_imag = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_u_imag, B, H);
-    // H tiles worth of mem, its 1 2x2 ST wide
-    const CUtensorMap* tma_kf_real = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_kf_real, H);
-    const CUtensorMap* tma_kf_imag = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_kf_imag, H);
-
-    CUtensorMap* tma_o = tma::allocate_and_create_tensor_map<tile_smem_bf_2x2>(d_o, B, H);
-
     cudaStream_t stream;
     cudaStreamCreate(&stream);
     std::cout << "Starting kernel\n";
     cudaDeviceSynchronize();
     const auto start = std::chrono::high_resolution_clock::now();
     launch_fftconv_tk(
-        tma_u_real, tma_u_imag, tma_kf_real, tma_kf_imag, 
+        d_u_real, d_u_imag, d_kf_real, d_kf_imag, 
         d_f_real, d_f_imag, d_finv_real, d_finv_imag,
-        d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, tma_o,
+        d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
         B, H, N, N1
     );
     cudaDeviceSynchronize();

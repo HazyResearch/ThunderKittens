@@ -1,4 +1,4 @@
-#define TORCH_COMPILE
+//#define TORCH_COMPILE
 
 #include "include/kittens.cuh"
 #include <cooperative_groups.h>
@@ -51,13 +51,13 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
 
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&f_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&twinv_smem) = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>>();
+    kittens::st_cmplx_bf<2, 2> (&f_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2>>();
+    kittens::st_cmplx_bf<2, 2> (&twinv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
 
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&kf_smem)[2] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2>();
-    kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
+    kittens::st_cmplx_bf<2, 2> (&kf_smem)[2] = al.allocate<st_cmplx_bf<2, 2>, 2>();
+    //kittens::st_cmplx_bf<2, 2, ducks::st_layout::swizzle> (&x_smem)[2][NUM_WORKERS] = al.allocate<st_cmplx_bf<2, 2, ducks::st_layout::swizzle>, 2, NUM_WORKERS>();
 
     //if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&x_smem) - (uint64_t)(&__shm[0]));
 
@@ -150,9 +150,9 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
 
     
     // Complex shared tile size (bytes)
-    int st_size = (2 * (2 * 2 * 256 * 4));
+    int st_size = (2 * (2 * 2 * 256 * 2));
     // fft and twiddles (4), 2 kf smem, 2*NUM_WORKERS x_smem
-    unsigned long mem_size = (4 * st_size) + (2 * st_size);
+    unsigned long mem_size = (4 * st_size) + (2 * st_size) /*+ (2*NUM_WORKERS * st_size)*/ + 6000;
 
     //printf("%lu\n", mem_size);
 
