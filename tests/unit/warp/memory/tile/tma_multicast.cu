@@ -9,7 +9,7 @@ struct test_load_multicast { // load with TMA, write out normally
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_multicast_load_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_multicast_load_gmem=half" :
                                                                                          "tma_multicast_load_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         int SIZE_DIV_4 = i_ref.size()/4;
         for(int i = 0; i < SIZE_DIV_4; i++) {
             for(int j = 0; j < 4; j++) {
@@ -17,8 +17,8 @@ struct test_load_multicast { // load with TMA, write out normally
             }
         }
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(const GTL &input, const GTL &output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> (&shared_tile) = al.allocate<kittens::st<dtype, H, W>>();
@@ -45,9 +45,9 @@ struct test_load_multicast { // load with TMA, write out normally
     }
 };
 
-template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gt::l::all GTL, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_2d(GTL input, GTL output) {
-    Ker::template device_func<H, W, NW, GTL, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
+static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_2d(GL input, GL output) {
+    Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct tmamulti_wrapper_2d {
@@ -63,18 +63,18 @@ struct tmamulti_wrapper_2d {
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
-            using GTL = typename kittens::gt<dtype, H, W, true, true>::l<1, 1, 4, 1>;
-            GTL input(d_i, nullptr, nullptr, nullptr, nullptr);
-            GTL output(d_o, nullptr, nullptr, nullptr, nullptr);
+            using GL = typename kittens::gl<dtype, 1, 1, 64*H, 16*W, kittens::st<dtype, H, W>>;
+            GL input(d_i, nullptr, nullptr, nullptr, nullptr);
+            GL output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...>,
+                tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
+            tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, GTL, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*kittens::TILE_DIM);
             input.cleanup();

@@ -14,12 +14,11 @@
  * @param dst Reference to the shared vector where the data will be loaded.
  * @param src Pointer to the global memory location from where the data will be loaded.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load(SV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load(SV &dst, const GL &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
     #pragma unroll
     for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < dst.length) {
@@ -41,12 +40,11 @@ __device__ static inline void load(SV &dst, const GVL &src, const index &idx) {
  * @param dst Pointer to the global memory location where the data will be stored.
  * @param src Reference to the shared vector from where the data will be stored.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store(GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store(GL &dst, const SV &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
-    typename GVL::dtype *dst_ptr = (typename GVL::dtype*)&dst[idx];
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
     #pragma unroll
     for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < src.length) {
@@ -57,12 +55,11 @@ __device__ static inline void store(GVL &dst, const SV &src, const index &idx) {
     }
 }
 
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load_async(SV &dst, const GL &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
     #pragma unroll
     for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < dst.length) {

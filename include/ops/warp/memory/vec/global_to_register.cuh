@@ -18,15 +18,14 @@ namespace kittens {
  * @param[out] dst The destination register vector to load data into.
  * @param[in] src The source array in global memory to load data from.
  */
-template<ducks::rv::all RV, ducks::gv::l::all GVL>
-__device__ inline static void load(RV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_raw<GVL, RV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rv::all RV, ducks::gl::all GL>
+__device__ inline static void load(RV &dst, const GL &src, const index &idx) {
     using T2 = RV::dtype;
-    using U = typename GVL::dtype;
+    using U = typename GL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    U *src_ptr = (U*)&src[idx];
+    U *src_ptr = (U*)&src.template get<RV>(idx);
     int laneid = ::kittens::laneid();
     
     __syncwarp();
@@ -82,15 +81,14 @@ __device__ inline static void load(RV &dst, const GVL &src, const index &idx) {
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register vector to store data from.
  */
-template<ducks::rv::all RV, ducks::gv::l::all GVL>
-__device__ inline static void store(GVL &dst, const RV &src, const index &idx) {
-    ducks::g::check_raw<GVL, RV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rv::all RV, ducks::gl::all GL>
+__device__ inline static void store(GL &dst, const RV &src, const index &idx) {
     using T2 = RV::dtype;
-    using U = typename GVL::dtype;
+    using U = typename GL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_ptr = (U*)&dst[idx];
+    U *dst_ptr = (U*)&dst.template get<RV>(idx);
     int laneid = ::kittens::laneid();
     
     __syncwarp();

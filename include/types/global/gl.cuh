@@ -16,10 +16,11 @@ namespace kittens {
 namespace detail {
 template<typename... Args>
 struct descriptor_dict {
-    __host__ descriptor_dict(typename T::dtype *data, const int4 &shape){}
+    __host__ descriptor_dict() {}
+    template<typename T> __host__ descriptor_dict(T _, int b, int d, int r, int c) {}
     __host__ __device__ descriptor_dict(const descriptor_dict &other) {}
 #ifdef KITTENS_HOPPER
-    __device__ template<typename U> CUtensorMap* get() {
+    template<typename T> __device__ CUtensorMap* get() const {
         static_assert(
             std::is_same_v<T, std::true_type> && std::is_same_v<T, std::false_type>,
             "SKILL ISSUE: Requested a TMA descriptor for a type not initialized in the global layout."
@@ -34,13 +35,14 @@ template<typename T, typename... Args>
 struct descriptor_dict<T, Args...> {
     static_assert(ducks::sv::all<T> || ducks::st::all<T>, "Must be a shared TK type to generate a TMA descriptor.");
     CUtensorMap* tma_desc;
-    dict<Args...> other_descs;
-    __host__ descriptor_dict(typename T::dtype *data, int b, int d, int r, int c): other_descs<Args...>(data, b, d, r, c) {
-        tma_desc = allocate_and_create_tensor_map<T>(data, b, d, r, c);
+    descriptor_dict<Args...> other_descs;
+    __host__ descriptor_dict() {}
+    __host__ descriptor_dict(typename T::dtype *data, int b, int d, int r, int c): other_descs(data, b, d, r, c) {
+        tma_desc = tma::detail::allocate_and_create_tensor_map<T>(data, b, d, r, c);
     }
     __host__ __device__ inline descriptor_dict(const descriptor_dict &other) :
         tma_desc(other.tma_desc), other_descs(other.other_descs) {}
-    __device__ template<typename U> inline CUtensorMap* get() {
+    template<typename U> __device__ inline CUtensorMap* get() const {
         if constexpr (std::is_same_v<T, U>) { return tma_desc; }
         else                                { return other_descs.template get<U>(); }
     }
@@ -48,7 +50,7 @@ struct descriptor_dict<T, Args...> {
         if(tma_desc != nullptr) {
             cudaFree(tma_desc);
             tma_desc = nullptr;
-            d.cleanup();
+            other_descs.cleanup();
         }
     }
 };
@@ -63,6 +65,11 @@ struct identifier {};
 }
 }
 
+namespace detail {
+template<typename T> concept tile = ducks::st::all<T> || ducks::rt::all<T>;
+template<typename T> concept vec  = ducks::sv::all<T> || ducks::rv::all<T>;
+}
+
 template<typename _T, int b, int d, int r, int c, typename... TMA_Types>
 struct gl {
     using identifier = ducks::gl::identifier;
@@ -72,24 +79,28 @@ struct gl {
     using dtype = T;
 
     T* raw_ptr;
-    detail::descriptor_dict<TMA_Types...> tma_descs;
 
     ducks::g::make_dim_t<b> batch;
     ducks::g::make_dim_t<d> depth;
     ducks::g::make_dim_t<r> rows;
     ducks::g::make_dim_t<c> cols;
+
+    detail::descriptor_dict<TMA_Types...> tma_descs;
+
     __host__ inline gl(T *_data,
                         ducks::g::make_arg_t<b> _batch,
                         ducks::g::make_arg_t<d> _depth,
                         ducks::g::make_arg_t<r> _rows,
                         ducks::g::make_arg_t<c> _cols) :
-        batch(_batch), depth(_depth), rows(_rows), cols(_cols), tma_descs(_data, _batch, _depth, _rows, _cols) {}
-    __host__ __device__ inline gl(const l &other) :
-        batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), raw_ptr(other.raw_ptr), tma_descs(other.tma_descs) {}
+            raw_ptr(_data), batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
+        tma_descs = detail::descriptor_dict<TMA_Types...>(raw_ptr, batch, depth, rows, cols);
+    }
+    __host__ __device__ inline gl(const gl &other) :
+            raw_ptr(other.raw_ptr), batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), tma_descs(other.tma_descs) {}
     __host__ inline void cleanup() {
         tma_descs.cleanup();
     }
-    template<typename U> __device__ inline CUtensorMap* get() {
+    template<typename U> __device__ inline CUtensorMap* get_tma() const {
         return tma_descs.template get<U>();
     }
     __device__ inline T& operator[](const index &idx) {
@@ -97,6 +108,18 @@ struct gl {
     }
     __device__ inline const T& operator[](const index &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
+    }
+    template<detail::tile TILE>__device__ inline T& get(const index &idx) {
+        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
+    }
+    template<detail::tile TILE> __device__ inline const T& get(const index &idx) const {
+        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
+    }
+    template<detail::vec VEC>__device__ inline T& get(const index &idx) {
+        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
+    }
+    template<detail::vec VEC>__device__ inline const T& get(const index &idx) const {
+        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
     __device__ inline size_t row_stride() const { return cols; }
 };

@@ -55,6 +55,8 @@ struct rv {
 
     static constexpr int outer_dim = _outer_dim; ///< Length in subtiles.
     static constexpr int inner_dim = _inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
+    static constexpr int tiles  = _outer_dim; ///< Length in subtiles, aliased for consistency with sv type
+    static constexpr int length = tiles * kittens::TILE_DIM; ///< Length in elements.
 
     dtype data[outer_dim][inner_dim]; ///< The actual register vector data.
 

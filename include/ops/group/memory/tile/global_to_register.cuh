@@ -12,12 +12,11 @@
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rt::row_layout RT, ducks::gl::all GL>
+__device__ inline static void load(RT &dst, const GL &src, const index &idx) {
     using T2 = RT::dtype;
-    using U = typename GTL::dtype;
-    U *src_ptr = (U*)&src[idx];
+    using U = typename GL::dtype;
+    U *src_ptr = (U*)&src.template get<RT>(idx);
     const int row_stride = src.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -48,12 +47,11 @@ __device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rt::col_layout RT, ducks::gl::all GL>
+__device__ inline static void load(RT &dst, const GL &src, const index &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
-    using U = typename GTL::dtype;
-    U *src_ptr = (U*)&src[idx];
+    using U = typename GL::dtype;
+    U *src_ptr = (U*)&src.template get<RT>(idx);
     const int row_stride = src.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = dst.rows*warpid();
@@ -97,12 +95,11 @@ __device__ inline static void load(RT &dst, const GTL &src, const index &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::row_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rt::row_layout RT, ducks::gl::all GL>
+__device__ inline static void store(GL &dst, const RT &src, const index &idx) {
     using T2 = RT::dtype;
-    using U = typename GTL::dtype;
-    U *dst_ptr = (U*)&dst[idx];
+    using U = typename GL::dtype;
+    U *dst_ptr = (U*)&dst.template get<RT>(idx);
     const int row_stride = dst.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -133,12 +130,11 @@ __device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::col_layout RT, ducks::gt::l::all GTL>
-__device__ inline static void store(GTL &dst, const RT &src, const index &idx) {
-    ducks::g::check_raw<GTL, RT>{}; // GTL must include a raw pointer to use non-TMA loads and stores
+template<ducks::rt::col_layout RT, ducks::gl::all GL>
+__device__ inline static void store(GL &dst, const RT &src, const index &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
-    using U = typename GTL::dtype;
-    U *dst_ptr = (U*)&dst[idx];
+    using U = typename GL::dtype;
+    U *dst_ptr = (U*)&dst.template get<RT>(idx);
     const int row_stride = dst.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = src.rows*warpid();

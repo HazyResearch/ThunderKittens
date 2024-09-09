@@ -9,10 +9,10 @@ struct reg_vec_load_store {
     static inline const std::string test_identifier = std::is_same_v<dtype, kittens::bf16> ? "reg_vec_loadstore_gmem=bf16" :
                                                       std::is_same_v<dtype, kittens::half> ? "reg_vec_loadstore_gmem=half" :
                                                                                              "reg_vec_loadstore_gmem=float";
-    template<int S, int NW, kittens::ducks::gv::l::all GVL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int S, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, kittens::ducks::gv::l::all GVL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GVL &input, GVL &output) {
+    template<int S, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, GL &output) {
         kittens::col_vec<kittens::rt_bf<S, S, L>> reg_vec;
         kittens::load(reg_vec, input, {});
         kittens::store(output, reg_vec, {});

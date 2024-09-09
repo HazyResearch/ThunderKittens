@@ -9,14 +9,13 @@ struct test_load { // load with TMA, write out normally
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_load_gmem=half" :
                                                                                          "tma_load_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(GTL input, GTL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
-        static_assert(input.rows == 2 && input.cols == 2);
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>(); // assuming compile-time known dimensions
         
         __shared__ kittens::barrier smem_barrier; 
@@ -42,13 +41,13 @@ struct test_store { // load normally, store with TMA
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_gmem=half" :
                                                                                          "tma_store_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(const GTL &input, const GTL &output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
@@ -71,16 +70,16 @@ struct test_store_add_reduce {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_add_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_add_reduce_gmem=half" :
                                                                                          "tma_store_add_reduce_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
             o_ref[i] = i_ref[i] + i_ref[i]; 
         }
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(const GTL &input, const GTL &output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
@@ -104,14 +103,14 @@ struct test_store_min_reduce {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_gmem=half" :
                                                                                          "tma_store_min_reduce_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
             o_ref[i] = std::min(i_ref[i], 0.f);
         }
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(const GTL &input, const GTL &output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
@@ -137,16 +136,16 @@ struct test_store_max_reduce {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_gmem=half" :
                                                                                          "tma_store_max_reduce_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
             o_ref[i] = std::max(i_ref[i], 0.f);
         }
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL>
-    __device__ static void device_func(const GTL &input, const GTL &output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
         kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
@@ -163,9 +162,9 @@ struct test_store_max_reduce {
     }
 };
 
-template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gt::l::all GTL, typename... args>
-static __global__ void tma_global_wrapper_2d(GTL input, GTL output) {
-    Ker::template device_func<H, W, NW, GTL, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
+static __global__ void tma_global_wrapper_2d(GL input, GL output) {
+    Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct tma_wrapper_2d {
@@ -185,18 +184,18 @@ struct tma_wrapper_2d {
             initialize<dtype, initializers::RANDOM>(&d_i, &d_o, i_ref, o_ref); 
             
             // make descriptors
-            using GTL = typename kittens::gt<dtype, H, W, true, true>::l<-1, -1, R, C>;
-            GTL input(d_i, B, D, nullptr, nullptr);
-            GTL output(d_o, B, D, nullptr, nullptr);
+            using GL = typename kittens::gl<dtype, -1, -1, R*H*16, C*W*16, kittens::st<dtype, H, W>>;
+            GL input(d_i, B, D, nullptr, nullptr);
+            GL output(d_o, B, D, nullptr, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...>,
+                tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
+            tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, GTL, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, 2*W*16);
             input.cleanup();

@@ -20,12 +20,11 @@ namespace kittens {
  * @param[in] src The source global memory array.
  * @param[in] idx The index of the global memory array.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load(SV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load(SV &dst, const GL &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (dst.length + WARP_THREADS*elem_per_transfer - 1) / (WARP_THREADS*elem_per_transfer); // round up
-    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
     #pragma unroll
     for(int iter = 0, i = ::kittens::laneid(); iter < total_calls; iter++, i+=WARP_THREADS) {
         if(i * elem_per_transfer < dst.length) {
@@ -43,12 +42,11 @@ __device__ static inline void load(SV &dst, const GVL &src, const index &idx) {
  * @param[in] src The source shared memory vector.
  * @param[in] idx The index of the global memory array.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store(GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store(GL &dst, const SV &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (src.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
-    typename GVL::dtype *dst_ptr = (typename GVL::dtype*)&dst[idx];
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
     #pragma unroll
     for(int iter = 0, i = ::kittens::laneid(); iter < total_calls; iter++, i+=WARP_THREADS) {
         if(i * elem_per_transfer < src.length) {
@@ -67,12 +65,11 @@ __device__ static inline void store(GVL &dst, const SV &src, const index &idx) {
  * @param[in] src The source global memory array.
  * @param[in] idx The index of the global memory array.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_raw<GVL, SV>{}; // GVL must include a raw pointer to use non-TMA loads and stores
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load_async(SV &dst, const GL &src, const index &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (dst.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
-    typename GVL::dtype *src_ptr = (typename GVL::dtype*)&src[idx];
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
     __syncwarp();
     #pragma unroll
     for(int iter = 0, i = ::kittens::laneid(); iter < total_calls; iter++, i+=WARP_THREADS) {

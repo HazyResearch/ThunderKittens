@@ -10,12 +10,12 @@ struct vec_add1 {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_vec_add1_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_vec_add1_gmem=half" :
                                                                                          "shared_vec_add1_gmem=float";
-    template<int S, int NW, gvl_t GVL>
+    template<int S, int NW, gl_t GL>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < o_ref.size(); i++) o_ref[i] = i_ref[i]+1.; // overwrite the whole thing
     }
-    template<int S, int NW, gvl_t GVL>
-    __device__ static void device_func(const GVL &input, GVL &output) {
+    template<int S, int NW, gl_t GL>
+    __device__ static void device_func(const GL &input, GL &output) {
         __shared__ kittens::col_vec<kittens::st<dtype, S, S>> vec;
         kittens::load(vec, input, {});
         kittens::add(vec, vec, kittens::base_types::constants<dtype>::one());

@@ -5,7 +5,7 @@
 struct group_normalize_row {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "group_shared_norm_row";
-    template<int H, int W, int N, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int N, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -19,7 +19,7 @@ struct group_normalize_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int N, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
+    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -37,7 +37,7 @@ struct group_normalize_row {
 struct group_normalize_col {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "group_shared_norm_col";
-    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -51,7 +51,7 @@ struct group_normalize_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -69,7 +69,7 @@ struct group_normalize_col {
 struct group_broadcast_row {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "group_shared_broadcast_row";
-    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -83,7 +83,7 @@ struct group_broadcast_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int N, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
+    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -101,7 +101,7 @@ struct group_broadcast_row {
 struct group_broadcast_col {
     template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 && W*H<=64>; // this is group-level
     static inline const std::string test_identifier = "group_shared_broadcast_col";
-    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
+    template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref_f, std::vector<float> &o_ref_f) {
         std::vector<kittens::bf16> i_ref(i_ref_f.size());
         std::vector<kittens::bf16> o_ref(o_ref_f.size());
         for(int i = 0; i < i_ref.size(); i++) i_ref[i] = __float2bfloat16(i_ref_f[i]);
@@ -115,7 +115,7 @@ struct group_broadcast_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 

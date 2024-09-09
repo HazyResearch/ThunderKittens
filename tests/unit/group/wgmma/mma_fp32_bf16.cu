@@ -6,7 +6,7 @@ struct test_mma_AB_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256>;
     static inline const std::string test_identifier = "wgmma_mma_AB_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -19,7 +19,7 @@ struct test_mma_AB_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -34,15 +34,15 @@ struct test_mma_AB_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, K::value, W>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*W>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 struct test_mma_ABt_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_ABt_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -55,7 +55,7 @@ struct test_mma_ABt_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -70,15 +70,15 @@ struct test_mma_ABt_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, W, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 struct test_mma_AtB_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_AtB_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -91,7 +91,7 @@ struct test_mma_AtB_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -106,15 +106,15 @@ struct test_mma_AtB_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, K::value, H>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, K::value, W>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*W>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 struct test_mma_AtBt_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H==4 && (2*W*H+W*K::value+H*K::value)<=256>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_mma_AtBt_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -127,7 +127,7 @@ struct test_mma_AtBt_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -142,9 +142,9 @@ struct test_mma_AtBt_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, K::value, H>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, W, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 
 
@@ -153,7 +153,7 @@ struct reg_test_mma_AB_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H%4==0 && (2*W*H+W*K::value+H*K::value)<=256>;
     static inline const std::string test_identifier = "wgmma_reg_mma_AB_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
      __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -166,7 +166,7 @@ struct reg_test_mma_AB_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -185,15 +185,15 @@ struct reg_test_mma_AB_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, K::value, W>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*W>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 struct reg_test_mma_ABt_fp32_bf16 {
     template<int H, int W, int NW, typename K>
     using valid = std::bool_constant<NW == 4 && H%4==0 && (2*W*H+W*K::value+H*K::value)<=256>; // this is warp-level
     static inline const std::string test_identifier = "wgmma_reg_mma_ABt_fp32_bf16";
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int K = _K::value;
         for(int i = 0; i < H*16; i++) {
@@ -206,7 +206,7 @@ struct reg_test_mma_ABt_fp32_bf16 {
             }
         }
     }
-    template<int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename _K>
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K>
     __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, GTL_C &c_output) {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
@@ -225,13 +225,13 @@ struct reg_test_mma_ABt_fp32_bf16 {
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
     }
-    template<int H, int W, typename K> using make_a_layout = typename kittens::gt<kittens::bf16, H, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_b_layout = typename kittens::gt<kittens::bf16, W, K::value>::l<1, 1, 1, 1>;
-    template<int H, int W, typename K> using make_c_layout = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
 
 // Due to the strange sizes instantiated, we need a custom base wrapper here
-template<typename Ker, typename T, int H, int W, int NW, gtl_t GTL_A, gtl_t GTL_B, gtl_t GTL_C, typename... args>
+template<typename Ker, typename T, int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename... args>
 static __global__ void mma_global_wrapper_2d(const GTL_A a_input, const GTL_B b_input, GTL_C c_output) {
     Ker::template device_func<H, W, NW, GTL_A, GTL_B, GTL_C, args...>(a_input, b_input, c_output);
 }

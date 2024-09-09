@@ -10,7 +10,7 @@ struct vec_norm {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_vec_norm_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_vec_norm_gmem=half" :
                                                                                          "shared_vec_norm_gmem=float";
-    template<int S, int NW, gvl_t GVL>
+    template<int S, int NW, gl_t GL>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // turns out to get the numerics right in bf16 you have to actually simulate the reduction tree :/
         kittens::bf16 sum[32] = __float2bfloat16(0.f);
@@ -33,8 +33,8 @@ struct vec_norm {
             o_ref[i] = __bfloat162float(o);
         }
     }
-    template<int S, int NW, gvl_t GVL>
-    __device__ static void device_func(const GVL &input, GVL &output) {
+    template<int S, int NW, gl_t GL>
+    __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, S, S>> &vec    = al.allocate<kittens::col_vec<kittens::st<dtype, S, S>>>();

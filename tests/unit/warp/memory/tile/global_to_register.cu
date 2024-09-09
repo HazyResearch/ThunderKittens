@@ -2,9 +2,9 @@
 
 #ifdef TEST_WARP_MEMORY_TILE_GLOBAL_TO_REGISTER
 
-template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gt::l::all GTL, typename... args>
-static __global__ void g2r_global_wrapper_2d(const GTL &input, const GTL &output) {
-    Ker::template device_func<H, W, NW, GTL, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
+static __global__ void g2r_global_wrapper_2d(const GL &input, const GL &output) {
+    Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct g2r_wrapper_2d {
@@ -21,18 +21,18 @@ struct g2r_wrapper_2d {
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
-            using GTL = typename kittens::gt<dtype, H, W>::l<-1, D, -1, C>;
-            GTL input(d_i, B, nullptr, R, nullptr);
-            GTL output(d_o, B, nullptr, R, nullptr);
+            using GL = typename kittens::gl<dtype, -1, D, -1, 16*C*W>;
+            GL input (d_i, B, nullptr, 16*R*H, nullptr);
+            GL output(d_o, B, nullptr, 16*R*H, nullptr);
             // run kernel
             cudaFuncSetAttribute(
-                global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...>,
+                global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
-            global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
+            global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, GTL, args...>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16);
         }
@@ -52,12 +52,12 @@ struct load_store {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "reg_loadstore_gmem=half" :
                                                                                          "reg_loadstore_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
         kittens::rt_bf<H, W, L> reg_tile;
-        for(int i = 0; i < input.batch; i++) for(int j = 0; j < input.depth; j++) for(int k = 0; k < input.rows; k++) for(int l = 0; l < input.cols; l++) {
+        for(int i = 0; i < input.batch; i++) for(int j = 0; j < input.depth; j++) for(int k = 0; k < input.rows/reg_tile.rows; k++) for(int l = 0; l < input.cols/reg_tile.cols; l++) {
             kittens::load(reg_tile, input, {i, j, k, l});
             kittens::store(output, reg_tile, {i, j, k, l});
         }

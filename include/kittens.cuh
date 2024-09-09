@@ -9,8 +9,6 @@
 #include "types/types.cuh"
 #include "ops/ops.cuh"
 
-
-
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // Lifting a fwe really commonly used parts of the hierarchy

@@ -9,10 +9,10 @@ struct test_exp {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_exp_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_exp_gmem=half" :
                                                                                          "shared_exp_gmem=float";
-    template<int H, int W, int NW, gtl_t GTL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = __bfloat162float(__float2bfloat16(::expf(i_ref[i]))); // overwrite the whole thing
     }
-    template<int H, int W, int NW, gtl_t GTL> __device__ static void device_func(const GTL &input, GTL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();

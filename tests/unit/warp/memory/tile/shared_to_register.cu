@@ -10,10 +10,10 @@ struct sharedreg_load_store {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_reg_loadstore_gmem=half" :
                                                                                          "shared_reg_loadstore_gmem=float";
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all RL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all RL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gt::l::all GTL, kittens::ducks::rt_layout::all RL> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all RL> __device__ static void device_func(const GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         kittens::st<T, H, W> &shared_tile = al.allocate<kittens::st<T, H, W>>();

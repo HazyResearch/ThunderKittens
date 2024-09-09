@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_REGISTER_TILE_CONVERSIONS
 
 // Transpose happens to need its own wrapper, as it has a different shape input and output.
-template<typename Ker, typename T, int H, int W, int NW, gtl_t GTL_I, gtl_t GTL_O, typename... args>
+template<typename Ker, typename T, int H, int W, int NW, gl_t GTL_I, gl_t GTL_O, typename... args>
 static __global__ void transpose_global_wrapper_2d(const GTL_I input, GTL_O output) {
     Ker::template device_func<H, W, NW, GTL_I, GTL_O, args...>(input, output);
 }
@@ -20,8 +20,8 @@ struct transpose_wrapper_2d {
             std::vector<float> o_ref(H*W*256);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
-            using GTL_I = typename kittens::gt<kittens::bf16, H, W>::l<1, 1, 1, 1>;
-            using GTL_O = typename kittens::gt<kittens::bf16, W, H>::l<1, 1, 1, 1>;
+            using GTL_I = typename kittens::gl<kittens::bf16, 1, 1, H*16, W*16>;
+            using GTL_O = typename kittens::gl<kittens::bf16, 1, 1, W*16, H*16>;
             GTL_I input (d_i, nullptr, nullptr, nullptr, nullptr);
             GTL_O output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel
@@ -49,10 +49,10 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using transp
 struct test_swap_layout {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_swaplayout";
-    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
         kittens::rt_bf<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         auto reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
@@ -62,12 +62,12 @@ struct test_swap_layout {
 struct test_transpose {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_transpose";
-    template<int H, int W, int NW, gtl_t GTL_I, gtl_t GTL_O, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GTL_I, gl_t GTL_O, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
                 o_ref[i+j*H*16] = i_ref[i*W*16+j];
     }
-    template<int H, int W, int NW, gtl_t GTL_I, gtl_t GTL_O, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL_I input, GTL_O output) {
+    template<int H, int W, int NW, gl_t GTL_I, gl_t GTL_O, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL_I input, GTL_O output) {
         kittens::rt_bf<H, W, L> reg_tile;
         kittens::rt_bf<W, H, L> reg_tile_transpose;
         kittens::load(reg_tile, input, {});
@@ -78,10 +78,10 @@ struct test_transpose {
 struct test_type_convert {
     template<int H, int W, int NW, typename T2, typename U2> using valid = std::bool_constant<NW == 1 && W*H<=32>; // this is warp-level
         static inline const std::string test_identifier = "reg_typeconvert";
-        template<int H, int W, int NW, gtl_t GTL, typename T2, typename U2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gtl_t GTL, typename T2, typename U2> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __device__ static void device_func(const GL input, GL output) {
         kittens::rt<U2, H, W> reg_tile_U2;
         kittens::rt<T2, H, W> reg_tile_T2;
         kittens::load(reg_tile_U2, input, {});
@@ -92,12 +92,12 @@ struct test_type_convert {
 struct test_subtile {
     template<int H, int W, int NW, typename ST_H> using valid = std::bool_constant<NW == 1 && (H%(ST_H::value))==0 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_subtile";
-    template<int H, int W, int NW, gtl_t GTL, typename ST_H> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GL, typename ST_H> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
                 o_ref[i*W*16 + j] = i_ref[i*W*16 + j] + float(i/(ST_H::value*16));
     }
-    template<int H, int W, int NW, gtl_t GTL, typename _ST_H> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, gl_t GL, typename _ST_H> __device__ static void device_func(const GL input, GL output) {
         constexpr int ST_H = _ST_H::value;
         kittens::rt_fl<H, W> reg_tile;
         kittens::load(reg_tile, input, {});
@@ -112,12 +112,12 @@ struct test_subtile {
 struct test_make_causal {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_make_causal";
-    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
                 o_ref[i*W*16 + j] = j<=i ? i_ref[i*W*16 + j] : 0;
     }
-    template<int H, int W, int NW, gtl_t GTL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL input, GTL output) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
         kittens::rt_fl<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         kittens::make_causal(reg_tile, reg_tile);

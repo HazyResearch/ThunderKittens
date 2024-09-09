@@ -20,10 +20,9 @@ namespace kittens {
  * @param[in] src The source global memory array.
  * @param row_stride[in] The stride between rows in the source array.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load(ST &dst, const GL &src, const index &idx) {
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
     
     // each thread needs to do 1 call per width*height
@@ -58,10 +57,9 @@ __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store(const GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *dst_ptr = (typename GTL::dtype*)&dst[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store(const GL &dst, const ST &src, const index &idx) {
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
     const int row_stride = dst.row_stride();
 
     int laneid = threadIdx.x % 32;
@@ -96,10 +94,9 @@ __device__ static inline void store(const GTL &dst, const ST &src, const index &
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load_async(ST &dst, GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load_async(ST &dst, GL &src, const index &idx) {
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
 
     // each thread needs to do 1 call per width*height

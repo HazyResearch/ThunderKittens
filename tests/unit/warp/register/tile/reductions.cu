@@ -5,7 +5,7 @@
 struct normalize_row {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_norm_row";
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < H*16; i++) {
             float row_sum = 0;
             for(int j = 0; j < W*16; j++) {
@@ -15,7 +15,7 @@ struct normalize_row {
             for(int j = 0; j < W*16; j++) o_ref[i*W*16+j] /= row_sum;
         }
     }
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
         kittens::rt_fl<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<H, W, L>::col_vec accum;
@@ -27,7 +27,7 @@ struct normalize_row {
 struct normalize_col {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_norm_col";
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < W*16; i++) {
             float col_sum = 0;
             for(int j = 0; j < H*16; j++) {
@@ -37,7 +37,7 @@ struct normalize_col {
             for(int j = 0; j < H*16; j++) o_ref[i+j*W*16] /= col_sum;
         }
     }
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
         kittens::rt_fl<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<H, W, L>::row_vec accum;
@@ -49,7 +49,7 @@ struct normalize_col {
 struct broadcast_row {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_broadcast_row";
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < H*16; i++) {
             float row_sum = 0;
             for(int j = 0; j < W*16; j++) {
@@ -59,7 +59,7 @@ struct broadcast_row {
             for(int j = 0; j < W*16; j++) o_ref[i*W*16+j] = row_sum;
         }
     }
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
         kittens::rt_fl<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<H, W, L>::col_vec accum;
@@ -71,7 +71,7 @@ struct broadcast_row {
 struct broadcast_col {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_broadcast_col";
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < W*16; i++) {
             float col_sum = 0;
             for(int j = 0; j < H*16; j++) {
@@ -81,7 +81,7 @@ struct broadcast_col {
             for(int j = 0; j < H*16; j++) o_ref[i+j*W*16] = col_sum;
         }
     }
-    template<int H, int W, int NW, gtl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
         kittens::rt_fl<H, W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<H, W, L>::row_vec accum;

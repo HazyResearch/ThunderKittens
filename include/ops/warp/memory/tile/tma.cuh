@@ -21,11 +21,10 @@ namespace tma {
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void prefetch(ST &dst, const GTL &src, const index &idx) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void prefetch(ST &dst, const GL &src, const index &idx) {
     if (::kittens::laneid()) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         int32_t crd0 = 0;
         int32_t crd1 = idx.r * (ST::rows);
         int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
@@ -56,11 +55,10 @@ __device__ static inline void prefetch(ST &dst, const GTL &src, const index &idx
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store_async(const GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store_async(const GL &dst, const ST &src, const index &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
         int32_t crd1 = idx.r * (ST::rows);
@@ -93,11 +91,10 @@ __device__ static inline void store_async(const GTL &dst, const ST &src, const i
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store_add_async(const GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store_add_async(const GL &dst, const ST &src, const index &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
         int32_t crd1 = idx.r * (ST::rows);
@@ -128,12 +125,11 @@ __device__ static inline void store_add_async(const GTL &dst, const ST &src, con
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store_min_async(const GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store_min_async(const GL &dst, const ST &src, const index &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
         int32_t crd1 = idx.r * (ST::rows);
@@ -164,12 +160,11 @@ __device__ static inline void store_min_async(const GTL &dst, const ST &src, con
  * @param[in] tile_row_idx The row index of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store_max_async(const GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store_max_async(const GL &dst, const ST &src, const index &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         int32_t crd0 = 0;
         int32_t crd1 = idx.r * (ST::rows);
@@ -201,11 +196,10 @@ __device__ static inline void store_max_async(const GTL &dst, const ST &src, con
  * @param[in] tile_row_idx The row index of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load_async(ST &dst, const GTL &src, const index &idx, barrier& bar) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load_async(ST &dst, const GL &src, const index &idx, barrier& bar) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         int32_t crd0 = 0;
@@ -240,11 +234,10 @@ namespace cluster {
  * @param[in] tile_col_idx The column index of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load_async(ST &dst, const GTL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
-    ducks::g::check_tma<GTL, ST>{}; // GTL must include a TMA pointer
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load_async(ST &dst, const GL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         int32_t crd0 = 0;

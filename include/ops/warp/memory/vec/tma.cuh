@@ -20,11 +20,10 @@ namespace tma {
  * @param[in] src_tma_map The source tensormap address in global memory
  * @param[in] vec_idx The index of the requested vector.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void prefetch(SV &dst, const GVL &src, const index &idx) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void prefetch(SV &dst, const GL &src, const index &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
 
         int32_t crd0 = 0;
         int32_t crd1 = idx.c * detail::sv_tma_dim2<SV>;
@@ -54,11 +53,10 @@ __device__ static inline void prefetch(SV &dst, const GVL &src, const index &idx
  * @param[in] src The source shared memory vector.
  * @param[in] vec_idx The index of the vector destination.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store_async(const GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store_async(const GL &dst, const SV &src, const index &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
         int32_t crd0 = 0;
@@ -88,11 +86,10 @@ __device__ static inline void store_async(const GVL &dst, const SV &src, const i
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store_add_async(const GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store_add_async(const GL &dst, const SV &src, const index &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
         int32_t crd0 = 0;
@@ -122,12 +119,11 @@ __device__ static inline void store_add_async(const GVL &dst, const SV &src, con
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store_min_async(const GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store_min_async(const GL &dst, const SV &src, const index &idx) {
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
         int32_t crd0 = 0;
@@ -157,12 +153,11 @@ __device__ static inline void store_min_async(const GVL &dst, const SV &src, con
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The index of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void store_max_async(const GVL &dst, const SV &src, const index &idx) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void store_max_async(const GL &dst, const SV &src, const index &idx) {
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
 
         int32_t crd0 = 0;
@@ -193,11 +188,10 @@ __device__ static inline void store_max_async(const GVL &dst, const SV &src, con
  * @param[in] vec_idx The index of the requested vector.
  * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx, barrier& bar) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load_async(SV &dst, const GL &src, const index &idx, barrier& bar) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 
@@ -231,11 +225,10 @@ namespace cluster {
  * @param[in] vec_idx The index of the requested vector.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::sv::all SV, ducks::gv::l::all GVL>
-__device__ static inline void load_async(SV &dst, const GVL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
-    ducks::g::check_tma<GVL, SV>{}; // GVL must include a TMA pointer
+template<ducks::sv::all SV, ducks::gl::all GL>
+__device__ static inline void load_async(SV &dst, const GL &src, const index &idx, barrier& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.tma_ptr);
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
 

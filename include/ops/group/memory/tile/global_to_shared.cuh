@@ -3,10 +3,9 @@
  * @brief Group (collaborative warp) ops for loading shared tiles from and storing to global memory. 
  */
 
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load(ST &dst, const GL &src, const index &idx) {
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
     
     // each thread needs to do 1 call per width*height / N_WARPS
@@ -35,10 +34,9 @@ __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
         }
     }
 }
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void store(GTL &dst, const ST &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *dst_ptr = (typename GTL::dtype*)&dst[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store(GL &dst, const ST &src, const index &idx) {
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
     const int row_stride = dst.row_stride();
 
     int laneid = threadIdx.x % GROUP_THREADS;
@@ -64,10 +62,9 @@ __device__ static inline void store(GTL &dst, const ST &src, const index &idx) {
     }
 }
 
-template<ducks::st::all ST, ducks::gt::l::all GTL>
-__device__ static inline void load_async(ST &dst, const GTL &src, const index &idx) {
-    ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
-    typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load_async(ST &dst, const GL &src, const index &idx) {
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
 
     // each thread needs to do 1 call per width*height / N_WARPS
