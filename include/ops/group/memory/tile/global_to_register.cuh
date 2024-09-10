@@ -16,7 +16,8 @@ template<ducks::rt::row_layout RT, ducks::gl::all GL>
 __device__ inline static void load(RT &dst, const GL &src, const index &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT>(idx);
+    using MEGA_RT = rt<typename RT::T, N_WARPS*RT::height, RT::width, typename RT::layout>; // the megatile for the original index.
+    U *src_ptr = (U*)&src.template get<MEGA_RT>(idx);
     const int row_stride = src.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -49,9 +50,10 @@ __device__ inline static void load(RT &dst, const GL &src, const index &idx) {
  */
 template<ducks::rt::col_layout RT, ducks::gl::all GL>
 __device__ inline static void load(RT &dst, const GL &src, const index &idx) {
-    using T = base_types::packing<typename RT::dtype>::unpacked_type;
+    using T = typename RT::T;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT>(idx);
+    using MEGA_RT = rt<typename RT::T, N_WARPS*RT::height, RT::width, typename RT::layout>; // the megatile for the original index.
+    U *src_ptr = (U*)&src.template get<MEGA_RT>(idx);
     const int row_stride = src.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = dst.rows*warpid();
@@ -99,7 +101,8 @@ template<ducks::rt::row_layout RT, ducks::gl::all GL>
 __device__ inline static void store(GL &dst, const RT &src, const index &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT>(idx);
+    using MEGA_RT = rt<typename RT::T, N_WARPS*RT::height, RT::width, typename RT::layout>; // the megatile for the original index.
+    U *dst_ptr = (U*)&dst.template get<MEGA_RT>(idx);
     const int row_stride = dst.row_stride();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -134,7 +137,8 @@ template<ducks::rt::col_layout RT, ducks::gl::all GL>
 __device__ inline static void store(GL &dst, const RT &src, const index &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT>(idx);
+    using MEGA_RT = rt<typename RT::T, N_WARPS*RT::height, RT::width, typename RT::layout>; // the megatile for the original index.
+    U *dst_ptr = (U*)&dst.template get<MEGA_RT>(idx);
     const int row_stride = dst.row_stride();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = src.rows*warpid();

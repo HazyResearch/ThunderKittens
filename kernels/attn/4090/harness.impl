@@ -6,9 +6,9 @@ constexpr int ATTN_B = 8;
 constexpr int ATTN_H = 8;
 constexpr int ATTN_N = 4096;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 1;
+constexpr int ITER   = 10;
 
-#define BLOCK_SIZE (32*NUM_WORKERS)
+#define BLOCK_SIZE (32*NUM_WARPS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
     global_layout Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
     global_layout Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY / 2; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
     
     cudaFuncSetAttribute(
         attend_ker64,
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    dim3 grid((ATTN_N + R*NUM_WORKERS - 1) / (R*NUM_WORKERS), ATTN_H, ATTN_B);
+    dim3 grid((ATTN_N + q_tile::rows*NUM_WORKERS - 1) / (q_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
@@ -130,6 +130,11 @@ int main(int argc, char **argv) {
         o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
         o_file << o[i] << ' ';
         diff_file << diff << ' ';
+        if(i % 64 == 63) {
+            o_ref_file << '\n';
+            o_file << '\n';
+            diff_file << '\n';
+        }
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
