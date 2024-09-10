@@ -52,10 +52,24 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
     std::ofstream o_file("./printouts/o.txt");
     std::ofstream diff_file("./printouts/diff.txt");
     bool good = true;
+
+    int num_nans = 0;
+    int num_infs = 0;
+    
     for (size_t i = 0; i < num_elements; i++) {
         float pred = o[i];
         float actual = o_ref[i];
         float diff = abs(pred - actual);
+        bool has_nan = isnan(diff);
+        bool has_inf = isinf(pred);
+        if (has_nan) {
+            num_nans += 1;
+            good = false;
+        }
+        if (has_inf) {
+            num_infs += 1;
+            good = false;
+        }
         o_ref_file << o_ref[i] << ' ';
         o_file << o[i] << ' ';
         diff_file << diff << ' ';
@@ -68,6 +82,8 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
         }
     }
     std::cout << diff_counter << " elements out of " << num_elements << " violate threshold" << std::endl;
+    std::cout << num_nans << " elements out of " << num_elements << " have nans" << std::endl;
+    std::cout << num_infs << " elements out of " << num_elements << " have infs" << std::endl;
     return good;
 }
 

@@ -1,4 +1,4 @@
-#define TORCH_COMPILE
+//#define TORCH_COMPILE
 
 #include "include/kittens.cuh"
 //#include <cooperative_groups.h>

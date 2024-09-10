@@ -59,10 +59,13 @@ namespace st {
 */
 template <typename T> concept complex = requires {
     typename T::identifier;
-} && std::is_same_v<typename T::identifier, cmplx_identifier> && all<typename T::dtype>;
+} && std::is_same_v<typename T::identifier, cmplx_identifier> && ducks::st::all<typename T::dtype>;
 
-}
-}
+} // namespace st
+} // namespace ducks
+
+
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 template<int _height, int _width> using st_cmplx_bf = st_cmplx<bf16, _height, _width>;
 

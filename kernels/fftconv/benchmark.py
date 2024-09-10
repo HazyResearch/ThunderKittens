@@ -70,6 +70,8 @@ for b in [B // 2, B]:
             torch.cuda.synchronize()
             tk_time = (time.time() - start)*1e3/repeats
 
+            print(y_tk[0,0,:4])
+
             flashfft_speedup = torch_time / flashfft_time
             tk_speedup = torch_time / tk_time
 
