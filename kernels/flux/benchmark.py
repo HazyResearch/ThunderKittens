@@ -42,7 +42,7 @@ def main(
     add_sampling_metadata: bool = True,
 
     optimized=False,
-    use_tk=False,
+    use_tk=True,
 ):
     """
     Sample the flux model. Either interactively (set `--loop`) or run for a

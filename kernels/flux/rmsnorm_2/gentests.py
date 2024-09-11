@@ -48,7 +48,7 @@ def get_output(rms_input_img_q, rms_input_img_k, rms_input_txt_q, rms_input_txt_
     q = torch.cat((txt_q, img_q), dim=2)
     k = torch.cat((txt_k, img_k), dim=2)
 
-    return q.float(), k.float(), q_img_rms_norm_scale.float(), k_img_rms_norm_scale.float(), q_txt_rms_norm_scale.float(),  k_img_rms_norm_scale.float()
+    return q.float(), k.float(), q_img_rms_norm_scale.float(), k_img_rms_norm_scale.float(), q_txt_rms_norm_scale.float(),  k_txt_rms_norm_scale.float()
 
 q_out, k_out, rms_q_scale, rms_k_scale, rms_q_scale_txt, rms_k_scale_txt = get_output(rms_input_img_q, rms_input_img_k, rms_input_txt_q, rms_input_txt_k)
 

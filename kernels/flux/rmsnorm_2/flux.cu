@@ -114,8 +114,8 @@ void flux_rmsnorm(
         add(mean, mean, __float2bfloat16(1e-06f));
         rsqrt(rrms, mean);
         // rmsnorm
+        mul(rrms, rrms, scale_reg_img_q);
         mul_row(data, data, rrms);
-        mul_row(data, data, scale_reg_img_q);
         warpgroup::store(img_q_s[workerid], data);
          __syncthreads();
 
@@ -132,8 +132,8 @@ void flux_rmsnorm(
         add(mean, mean, __float2bfloat16(1e-06f));
         rsqrt(rrms, mean);
         // rmsnorm
+        mul(rrms, rrms, scale_reg_img_k);
         mul_row(data, data, rrms);
-        mul_row(data, data, scale_reg_img_k);
         warpgroup::store(img_k_s[workerid], data);
         __syncthreads();
 
@@ -151,8 +151,8 @@ void flux_rmsnorm(
             add(mean, mean, __float2bfloat16(1e-06f));
             rsqrt(rrms, mean);
             // rmsnorm
+            mul(rrms, rrms, scale_reg_txt_q);
             mul_row(data, data, rrms);
-            mul_row(data, data, scale_reg_img_q);
             warpgroup::store(txt_q_s[workerid], data);
             __syncthreads();
 
@@ -169,8 +169,8 @@ void flux_rmsnorm(
             add(mean, mean, __float2bfloat16(1e-06f));
             rsqrt(rrms, mean);
             // rmsnorm
+            mul(rrms, rrms, scale_reg_txt_k);
             mul_row(data, data, rrms);
-            mul_row(data, data, scale_reg_img_q);
             warpgroup::store(txt_k_s[workerid], data);
 
             warpgroup::store(o_q_g + cur_idx*total_elements, txt_q_s[workerid], HEAD_D); 
