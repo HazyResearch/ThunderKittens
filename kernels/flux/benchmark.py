@@ -42,6 +42,7 @@ def main(
     add_sampling_metadata: bool = True,
 
     optimized=False,
+    use_tk=False,
 ):
     """
     Sample the flux model. Either interactively (set `--loop`) or run for a
@@ -61,7 +62,7 @@ def main(
         seed=0,
     )
 
-    model = load_flow_model(name, device=torch.device(device), use_tk=True)
+    model = load_flow_model(name, device=torch.device(device), use_tk=use_tk)
     if optimized:
         print("Torch compiling model")
         model = torch.compile(model)

@@ -5,7 +5,7 @@
 #define B 1
 #define H 24
 #define D 3072  
-#define IMG_D 4064  
+#define IMG_D 3072  
 #define TXT_D 512
 #define HEAD_D 128  
 
@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_img_k, output_k_bf, TOTAL_ELEMENTS_OUTPUT_Q * sizeof(bf16), cudaMemcpyHostToDevice);
   
     // kernel rms norm
-    unsigned long mem_size = 72000; // have the flag tell us
+    unsigned long mem_size = 76000; // have the flag tell us
     cudaDeviceSynchronize();
     CudaCheckError();
     cudaFuncSetAttribute(
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
     CudaCheckError();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
-    flux_rmsnorm<<<B*H,NUM_THREADS_NORM,mem_size>>>(
+    flux_rmsnorm<<<B*H,NUM_THREADS,mem_size>>>(
         d_rms_in_img_q, d_rms_in_img_k, 
         d_rms_in_txt_q, d_rms_in_txt_k, 
         d_rms_q_scale, d_rms_k_scale,

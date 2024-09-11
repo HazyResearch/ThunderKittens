@@ -7,8 +7,8 @@ import time
 from statistics import mean
 import thunderkittens as tk
 
-b, s, dim = 1, 4080, 3072
-img_in_dim, txt_in_dim = 4080, 512
+b, s, dim = 1, 4096, 3072
+img_in_dim, txt_in_dim = 3072, 512
 img = torch.randn(b, img_in_dim, dim, dtype=torch.float, device='cuda')
 txt = torch.randn(b, txt_in_dim, dim, dtype=torch.float, device='cuda')
 vec = torch.randn(b, dim, dtype=torch.float, device='cuda')
@@ -66,24 +66,24 @@ def simplified_pytorch(img=img, txt=txt, vec=vec, pe=pe):
     img_modulated = (1 + img_mod1[1].to(torch.bfloat16)) * img_modulated.to(torch.bfloat16) + img_mod1[0].to(torch.bfloat16)
     torch.cuda.synchronize()
     end = time.time()
-    print(f"torch (s) = {end-start}")
+    # print(f"torch (s) = {end-start}")
 
-    print(f"Starting the layrnorm step.")
-    img_modulated_tk = torch.empty_like(img_modulated)
-    print(f"Created an empty tensor of shape: {img_modulated_tk.shape}")
-    torch.cuda.synchronize()
-    start = time.time()
-    tk.fused_flux_layernorm(
-        img.to(torch.bfloat16).contiguous(), 
-        img_mod1[0][0][0].to(torch.bfloat16).contiguous(), 
-        img_mod1[1][0][0].to(torch.bfloat16).contiguous(),
-        img_modulated_tk.to(torch.bfloat16).contiguous()
-    )
-    torch.cuda.synchronize()
-    end = time.time()
-    print(f"tk (s) = {end-start}")
-    diff = torch.norm(img_modulated - img_modulated_tk).max()
-    print(f"Diff: {diff}; TODO: Convert to floats.")
+    # print(f"Starting the layrnorm step.")
+    # img_modulated_tk = torch.empty_like(img_modulated)
+    # print(f"Created an empty tensor of shape: {img_modulated_tk.shape}")
+    # torch.cuda.synchronize()
+    # start = time.time()
+    # tk.fused_flux_layernorm(
+    #     img.to(torch.bfloat16).contiguous(), 
+    #     img_mod1[0][0][0].to(torch.bfloat16).contiguous(), 
+    #     img_mod1[1][0][0].to(torch.bfloat16).contiguous(),
+    #     img_modulated_tk.to(torch.bfloat16).contiguous()
+    # )
+    # torch.cuda.synchronize()
+    # end = time.time()
+    # print(f"tk (s) = {end-start}")
+    # diff = torch.norm(img_modulated - img_modulated_tk).max()
+    # print(f"Diff: {diff}; TODO: Convert to floats.")
 
 
     # Part 2: RMS norms and concats   
@@ -118,7 +118,7 @@ def simplified_pytorch(img=img, txt=txt, vec=vec, pe=pe):
 
         torch.cuda.synchronize()
         end = time.time()
-        print(end-start)
+        # print(end-start)
         if i > 1: timings.append(end-start)
     print(f"torch (ms) = {mean(timings) *1000}")
 
@@ -147,7 +147,7 @@ def simplified_pytorch(img=img, txt=txt, vec=vec, pe=pe):
         torch.cuda.synchronize()
         end = time.time()
         timings.append(end-start)
-        print(end-start)
+        # print(end-start)
     print(f"tk (ms) = {mean(timings)*1000}")
     diff = torch.norm(q_ref - img_q_tk).max() 
     print(f"Diff: {diff=}")
@@ -176,8 +176,8 @@ def simplified_pytorch(img=img, txt=txt, vec=vec, pe=pe):
         torch.cuda.synchronize()
         end = time.time()
         timings.append(end-start)
-        print(end-start)
-    print(f"torch (ms) = {mean(timings)*1000}")
+        # print(end-start)
+    # print(f"torch (ms) = {mean(timings)*1000}")s
 
     return img_q_ref
 

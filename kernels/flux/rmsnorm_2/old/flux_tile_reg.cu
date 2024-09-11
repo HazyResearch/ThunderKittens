@@ -1,4 +1,4 @@
-#define TORCH_COMPILE 
+// #define TORCH_COMPILE 
 
 #include "kittens.cuh"
 #include <cuda/pipeline>
@@ -6,9 +6,9 @@
 #include <curand_kernel.h>
 #include <cuda/barrier>
 
-#define NUM_WORKERS 1
-#define NUM_WARPS   (NUM_WORKERS*4)
-#define NUM_THREADS (NUM_WARPS*kittens::WARP_THREADS)
+#define NUM_WORKERS 2
+// #define NUM_WARPS   (NUM_WORKERS*4)
+#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
      
 const int TXT_D = 512;
 const int IMG_D = 3072;  
@@ -16,7 +16,7 @@ const int HEAD_D = 128;
 const int N_CHUNK = 16;
 
 const int d_head_tile = HEAD_D / kittens::TILE_DIM;
-const int seq_tiles = 4 * (N_CHUNK / kittens::TILE_DIM);
+const int seq_tiles = N_CHUNK / kittens::TILE_DIM;
 
 using namespace kittens;
 
@@ -26,8 +26,7 @@ using namespace kittens;
 #define vec_smem_1xSEQ_TILE sv_bf<seq_tiles>
 
 // register
-const int reg_seq_tiles = (N_CHUNK / kittens::TILE_DIM);
-#define reg_tile_1xHEAD_D rt<bf16, reg_seq_tiles, d_head_tile>
+#define reg_tile_1xHEAD_D rt<bf16, seq_tiles, d_head_tile>
 #define col_reg_vec_1xSEQ_TILE col_vec<reg_tile_1xHEAD_D>
 
 // rms norm 
@@ -44,7 +43,7 @@ void flux_rmsnorm(
     bf16* __o_q,
     bf16* __o_k
 ) {
-    auto workerid = warpgroup::groupid(); // which worker am I?
+    auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
     auto txt_offset = TXT_D*HEAD_D; 
 
@@ -63,10 +62,10 @@ void flux_rmsnorm(
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    tile_1xHEAD_D (&img_q_s) [NUM_WORKERS] = al.allocate<tile_1xHEAD_D,NUM_WORKERS>();
-    tile_1xHEAD_D (&img_k_s) [NUM_WORKERS] = al.allocate<tile_1xHEAD_D,NUM_WORKERS>();
-    tile_1xHEAD_D (&txt_q_s) [NUM_WORKERS] = al.allocate<tile_1xHEAD_D,NUM_WORKERS>();
-    tile_1xHEAD_D (&txt_k_s) [NUM_WORKERS] = al.allocate<tile_1xHEAD_D,NUM_WORKERS>();
+    tile_1xHEAD_D (&img_q_s)   [2][NUM_WORKERS] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS>();
+    tile_1xHEAD_D (&img_k_s)   [2][NUM_WORKERS] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS>();
+    tile_1xHEAD_D (&txt_q_s)   [2][NUM_WORKERS] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS>();
+    tile_1xHEAD_D (&txt_k_s)   [2][NUM_WORKERS] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS>();
 
     // all workers bring rms norm scales to register
     col_reg_vec_1xSEQ_TILE scale_reg_img_q;
@@ -78,21 +77,26 @@ void flux_rmsnorm(
     load(scale_reg_txt_q, scale_g_txt_q); 
     col_reg_vec_1xSEQ_TILE scale_reg_txt_k;
     load(scale_reg_txt_k, scale_g_txt_k); 
-    
-    int n_blocks = IMG_D / (NUM_WARPS*kittens::TILE_DIM);
-    int n_blocks_txt = TXT_D / (NUM_WARPS*kittens::TILE_DIM);
-    const int total_elements = HEAD_D*kittens::TILE_DIM;
-    for (int block = 0; block < n_blocks; block ++) {
 
-        // each warp loads its own chunk of k, v into shared memory
-        auto cur_idx = block*NUM_WARPS + workerid; 
-        warpgroup::load(img_q_s[workerid], img_q_g + cur_idx*total_elements, HEAD_D);
-        warpgroup::load(img_k_s[workerid], img_k_g + cur_idx*total_elements, HEAD_D);
-        if( block < n_blocks_txt ) {
-            warpgroup::load(txt_q_s[workerid], txt_q_g + cur_idx*total_elements, HEAD_D);
-            warpgroup::load(txt_k_s[workerid], txt_k_g + cur_idx*total_elements, HEAD_D);
-        }
-        __syncthreads();   
+    // pipelining
+    int tic = 0, toc = 1;
+    const int total_elements = N_CHUNK * HEAD_D;
+    auto block = cooperative_groups::this_thread_block();
+     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_cheat;
+    if (threadIdx.x == 0) {init(&barrier_cheat, block.size());}
+    block.sync(); // Need to make sure none calls before setup.
+
+    // initial load
+    load_async(img_q_s[warpid][tic], img_q_g + warpid*total_elements, HEAD_D, barrier_cheat);
+    load_async(img_k_s[warpid][tic], img_k_g + warpid*total_elements, HEAD_D, barrier_cheat);
+    load_async(txt_q_s[warpid][tic], txt_q_g + warpid*total_elements, HEAD_D, barrier_cheat);
+    load_async(txt_k_s[warpid][tic], txt_k_g + warpid*total_elements, HEAD_D, barrier_cheat);
+    __syncthreads();
+    
+    int n_blocks = IMG_D / (NUM_WORKERS*kittens::TILE_DIM);
+    int n_blocks_txt = TXT_D / (NUM_WORKERS*kittens::TILE_DIM);
+    for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
+        barrier_cheat.arrive_and_wait();  
 
         // inits for the strips
         reg_tile_1xHEAD_D data;
@@ -104,8 +108,19 @@ void flux_rmsnorm(
         zero(data);
         zero(scratch);
 
+        // kick off load for the next block
+        auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
+        if( block < n_blocks - 1 ) {
+            load_async(img_q_s[warpid][toc], img_q_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+            load_async(img_k_s[warpid][toc], img_k_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+        }
+        if (block < n_blocks_txt - 1) {
+            load_async(txt_q_s[warpid][toc], txt_q_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+            load_async(txt_k_s[warpid][toc], txt_k_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+        }
+
         // img q
-        warpgroup::load(data, img_q_s[workerid]);
+        load(data, img_q_s[warpid][tic]);
         // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
         copy(scratch, data);
         mul(scratch, scratch, scratch); // img_q**2
@@ -116,14 +131,13 @@ void flux_rmsnorm(
         // rmsnorm
         mul_row(data, data, rrms);
         mul_row(data, data, scale_reg_img_q);
-        warpgroup::store(img_q_s[workerid], data);
-         __syncthreads();
+        store(img_q_s[warpid][tic], data);
 
-        // img k
+        /// img k
         zero(mean);
         zero(rrms);
         zero(data);
-        warpgroup::load(data, img_k_s[workerid]);
+        load(data, img_k_s[warpid][tic]);
         // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
         copy(scratch, data);
         mul(scratch, scratch, scratch); // img_q**2
@@ -134,15 +148,15 @@ void flux_rmsnorm(
         // rmsnorm
         mul_row(data, data, rrms);
         mul_row(data, data, scale_reg_img_k);
-        warpgroup::store(img_k_s[workerid], data);
-        __syncthreads();
+        store(img_k_s[warpid][tic], data);
+        
 
         if ( block < n_blocks_txt ) {
             // txt q
             zero(mean);
             zero(rrms);
             zero(data);
-            warpgroup::load(data, txt_q_s[workerid]);
+            load(data, txt_q_s[warpid][tic]);
             // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
             copy(scratch, data);
             mul(scratch, scratch, scratch); // img_q**2
@@ -153,14 +167,13 @@ void flux_rmsnorm(
             // rmsnorm
             mul_row(data, data, rrms);
             mul_row(data, data, scale_reg_img_q);
-            warpgroup::store(txt_q_s[workerid], data);
-            __syncthreads();
+            store(txt_q_s[warpid][tic], data);
 
             // txt k
             zero(mean);
             zero(rrms);
             zero(data);
-            warpgroup::load(data, txt_k_s[workerid]);
+            load(data, txt_k_s[warpid][tic]);
             // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
             copy(scratch, data);
             mul(scratch, scratch, scratch); // img_q**2
@@ -171,15 +184,14 @@ void flux_rmsnorm(
             // rmsnorm
             mul_row(data, data, rrms);
             mul_row(data, data, scale_reg_img_q);
-            warpgroup::store(txt_k_s[workerid], data);
+            store(txt_k_s[warpid][tic], data);
 
-            warpgroup::store(o_q_g + cur_idx*total_elements, txt_q_s[workerid], HEAD_D); 
-            warpgroup::store(o_k_g + cur_idx*total_elements, txt_k_s[workerid], HEAD_D); 
+            store(o_q_g + (block*NUM_WORKERS +warpid)*total_elements, txt_q_s[warpid][tic], HEAD_D); 
+            store(o_k_g + (block*NUM_WORKERS +warpid)*total_elements, txt_k_s[warpid][tic], HEAD_D); 
         }
 
-        warpgroup::store(o_q_g + txt_offset + cur_idx*total_elements, img_q_s[workerid], HEAD_D);
-        warpgroup::store(o_k_g + txt_offset + cur_idx*total_elements, img_k_s[workerid], HEAD_D);
-        __syncthreads();
+        store_async(o_q_g + txt_offset + (block*NUM_WORKERS +warpid)*total_elements, img_q_s[warpid][tic], HEAD_D, barrier_cheat);
+        store_async(o_k_g + txt_offset + (block*NUM_WORKERS +warpid)*total_elements, img_k_s[warpid][tic], HEAD_D, barrier_cheat);
     }
 }
 

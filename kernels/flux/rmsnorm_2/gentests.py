@@ -9,7 +9,7 @@ from einops import rearrange
 B = 1
 multiplier = 6
 num_heads = 1
-img_in_dim, txt_in_dim = 4064, 512
+img_in_dim, txt_in_dim = 3072, 512
 head_dim = 128
 print(f"{head_dim=}")
 
