@@ -8,19 +8,14 @@ from einops import rearrange
 
 B = 1
 multiplier = 6
-dim = 3072
-num_heads = 24
-img_in_dim, txt_in_dim = 4080, 512
-head_dim = dim // num_heads
+num_heads = 1
+img_in_dim, txt_in_dim = 4064, 512
+head_dim = 128
 print(f"{head_dim=}")
 
 TESTNAME = sys.argv[1]
 
 # Modules and Weights
-lin1 = nn.Linear(dim, 6 * dim, bias=True).cuda()
-norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6).cuda() 
-img_attn_qkv = nn.Linear(dim, dim * 3, bias=True).cuda()
-img_proj = nn.Linear(dim, dim).cuda()
 q_img_rms_norm_scale = nn.Parameter(torch.ones(head_dim)).cuda()
 k_img_rms_norm_scale = nn.Parameter(torch.ones(head_dim)).cuda()
 q_txt_rms_norm_scale = nn.Parameter(torch.ones(head_dim)).cuda()

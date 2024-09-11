@@ -3,11 +3,10 @@
 #include <fstream>
 
 #define B 1
-#define H 24    
+#define H 24
 #define D 3072  
-#define IMG_D 4080  
+#define IMG_D 4064  
 #define TXT_D 512
-#define MULT_D 6
 #define HEAD_D 128  
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -36,13 +35,13 @@ int main(int argc, char **argv) {
 
     // Outputs
     constexpr int TOTAL_ELEMENTS_OUTPUT_Q = B*H*(IMG_D+TXT_D)*HEAD_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q = H*(IMG_D+TXT_D)*HEAD_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q = (IMG_D+TXT_D)*HEAD_D;
 
     constexpr int TOTAL_ELEMENTS_TXT_Q = B*H*TXT_D*HEAD_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_TXT_Q = H*TXT_D*HEAD_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_TXT_Q = TXT_D*HEAD_D;
 
     constexpr int TOTAL_ELEMENTS_IMG_Q = B*H*IMG_D*HEAD_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_IMG_Q = H*IMG_D*HEAD_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_IMG_Q = IMG_D*HEAD_D;
 
     float *output_q_ref  = new float[TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q];
     float *output_k_ref  = new float[TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q];
@@ -141,7 +140,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_img_k, output_k_bf, TOTAL_ELEMENTS_OUTPUT_Q * sizeof(bf16), cudaMemcpyHostToDevice);
   
     // kernel rms norm
-    unsigned long mem_size = 30000; // have the flag tell us
+    unsigned long mem_size = 72000; // have the flag tell us
     cudaDeviceSynchronize();
     CudaCheckError();
     cudaFuncSetAttribute(
@@ -176,12 +175,22 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_OUTPUT_Q; i++) {
         float diff = output_q[i] - output_q_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q];
-        if(i < 1000) { // TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q
+        if(i < TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q ) {
             output_q_ref_file << output_q_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q] << ' ';
             output_q_file << output_q[i] << ' ';
             output_q_diff_file << diff << ' ';
         }
-        if(abs(diff) > 0.1 || isnan(diff)) { good = false; }
+        if(abs(diff) > 0.1) {
+            // std::cout << "diff q: " << abs(diff) << std::endl;
+            if ( good ) { 
+                std::cout << i << " of q: " << output_q[i] << " and " << output_q_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q] << std::endl;
+            }
+            good = false; 
+        }
+        if (isnan(diff)) {
+            std::cout << "has nan!" << std::endl;
+            good = false;
+        }
     }
     if(good) std::cout << "Correct out :)\n";
     else std::cout << "Incorrect out :(\n";
@@ -198,12 +207,22 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_OUTPUT_Q; i++) {
         float diff = output_k[i] - output_k_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q];
-        if(i < 1000) { // TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q
+        if(i < TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q ) {
             output_k_ref_file << output_k_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q] << ' ';
             output_k_file << output_k[i] << ' ';
             output_k_diff_file << diff << ' ';
         }
-        if(abs(diff) > 0.1 || isnan(diff)) { good_k = false; }
+        if(abs(diff) > 0.1) {
+            // std::cout << "diff q: " << abs(diff) << std::endl;
+            if ( good_k ) { 
+                std::cout << i << " of k: " << output_k[i] << " and " << output_k_ref[i % TOTAL_UNIQUE_ELEMENTS_OUTPUT_Q] << std::endl;
+            }
+            good_k = false; 
+        }
+        if (isnan(diff)) {
+            // std::cout << "has nan!" << std::endl;
+            good_k = false;
+        }
     }
     if(good_k) std::cout << "Correct k out :)\n";
     else std::cout << "Incorrect k out :(\n";

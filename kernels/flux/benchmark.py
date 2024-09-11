@@ -69,7 +69,7 @@ def main(
     # denoise initial noise
     high = 100
     in_channels, vec_in_dim, context_in_dim = 64, 768, 4096
-    b, img_in_dim, txt_in_dim = 1, 4080, 512
+    b, img_in_dim, txt_in_dim = 1, 3072, 512
     img = torch.randn(b, img_in_dim, in_channels, dtype=torch.bfloat16, device='cuda')
     txt = torch.randn(b, txt_in_dim, context_in_dim, dtype=torch.bfloat16, device='cuda')
     vec = torch.randn(b, vec_in_dim, dtype=torch.bfloat16, device='cuda')

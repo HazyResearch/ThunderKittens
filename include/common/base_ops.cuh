@@ -105,6 +105,49 @@ template<> __device__ inline bf16   exp2::op<bf16>  (const bf16 &x  ) { return h
 template<> __device__ inline bf16_2 exp2::op<bf16_2>(const bf16_2 &x) { return h2exp2(x);                         }
 template<> __device__ inline half   exp2::op<half>  (const half &x  ) { return hexp2(x);                          }
 template<> __device__ inline half_2 exp2::op<half_2>(const half_2 &x) { return h2exp2(x);                         }
+
+
+/**
+ * @brief Sqrt function operation.
+ *
+ * This operation calculates the square root of the input value.
+ * By default this rounds up the answer.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The square root of the input value.
+ */
+struct sqrt {
+    template<typename T> static __device__ inline T op(const T &x) { return sqrt(x); }
+};
+template<> __device__ inline float  sqrt::op<float> (const float &x ) { return __fsqrt_ru(x);                 }
+template<> __device__ inline float2 sqrt::op<float2>(const float2 &x) { return float2{__fsqrt_ru(x.x), __fsqrt_ru(x.y)}; }
+template<> __device__ inline bf16   sqrt::op<bf16>  (const bf16 &x  ) { return hsqrt(x);                       }
+template<> __device__ inline bf16_2 sqrt::op<bf16_2>(const bf16_2 &x) { return h2sqrt(x);                      }
+template<> __device__ inline half   sqrt::op<half>  (const half &x  ) { return hsqrt(x);                       }
+template<> __device__ inline half_2 sqrt::op<half_2>(const half_2 &x) { return h2sqrt(x);                      }
+
+
+/**
+ * @brief Reciprocal of square root function operation.
+ *
+ * This operation calculates the reciprocal of the square root of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The reciprocal of the square root of the input value.
+ */
+struct rsqrt {
+    template<typename T> static __device__ inline T op(const T &x) { return rsqrt(x); }
+};
+template<> __device__ inline float  rsqrt::op<float> (const float &x ) { return __frsqrt_rn(x);                 }
+template<> __device__ inline float2 rsqrt::op<float2>(const float2 &x) { return float2{__frsqrt_rn(x.x), __frsqrt_rn(x.y)}; }
+template<> __device__ inline bf16   rsqrt::op<bf16>  (const bf16 &x  ) { return hrsqrt(x);                       }
+template<> __device__ inline bf16_2 rsqrt::op<bf16_2>(const bf16_2 &x) { return h2rsqrt(x);                      }
+template<> __device__ inline half   rsqrt::op<half>  (const half &x  ) { return hrsqrt(x);                       }
+template<> __device__ inline half_2 rsqrt::op<half_2>(const half_2 &x) { return h2rsqrt(x);                      }
+
+
 /**
  * @brief Sine function operation.
  *

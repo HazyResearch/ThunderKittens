@@ -1,4 +1,4 @@
-#define TORCH_COMPILE 
+// #define TORCH_COMPILE 
 
 #include "kittens.cuh"
 #include <cuda/pipeline>
@@ -10,23 +10,13 @@
 #define NUM_THREADS_NORM (NUM_WORKERS_NORM*kittens::WARP_THREADS)
      
 const int TXT_D = 512;
-const int IMG_D = 4064;  
+const int IMG_D = 4080;  
 const int HEAD_D = 128;
-const int N_CHUNK = 16;
-
 const int d_head_tile = HEAD_D / kittens::TILE_DIM;
-const int seq_tiles = N_CHUNK / kittens::TILE_DIM;
 
 using namespace kittens;
-
-// shared memory
-#define tile_1xHEAD_D st<bf16, seq_tiles, d_head_tile>
 #define vec_smem_1xHEAD_D sv_bf<d_head_tile>
-#define vec_smem_1xSEQ_TILE sv_bf<seq_tiles>
 
-// register
-#define reg_tile_1xHEAD_D rt<bf16, seq_tiles, d_head_tile>
-#define col_reg_vec_1xSEQ_TILE col_vec<reg_tile_1xHEAD_D>
 
 // rms norm 
 __global__ __launch_bounds__(NUM_THREADS_NORM, 1)
@@ -44,166 +34,131 @@ void flux_rmsnorm(
 ) {
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
-    auto txt_offset = TXT_D*HEAD_D; 
+
+    auto txt_offset = TXT_D*HEAD_D;
 
     // shared memory setup to load from hbm
     const bf16 *img_q_g          = reinterpret_cast<const bf16*>(__img_q)+blockIdx.x*(IMG_D*HEAD_D);
-    const bf16 *img_k_g          = reinterpret_cast<const bf16*>(__img_k)+blockIdx.x*(IMG_D*HEAD_D);
-    const bf16 *scale_g_img_q = reinterpret_cast<const bf16*>(__rms_norm_scale_img_q);
-    const bf16 *scale_g_img_k = reinterpret_cast<const bf16*>(__rms_norm_scale_img_k);
-
     const bf16 *txt_q_g          = reinterpret_cast<const bf16*>(__txt_q)+blockIdx.x*(TXT_D*HEAD_D);
+    const bf16 *img_k_g          = reinterpret_cast<const bf16*>(__img_k)+blockIdx.x*(IMG_D*HEAD_D);
     const bf16 *txt_k_g          = reinterpret_cast<const bf16*>(__txt_k)+blockIdx.x*(TXT_D*HEAD_D);
-    const bf16 *scale_g_txt_q = reinterpret_cast<const bf16*>(__rms_norm_scale_txt_q);
-    const bf16 *scale_g_txt_k = reinterpret_cast<const bf16*>(__rms_norm_scale_txt_k);
+          
+    const bf16 *rms_norm_scale_g_img_q = reinterpret_cast<const bf16*>(__rms_norm_scale_img_q);
+    const bf16 *rms_norm_scale_g_img_k = reinterpret_cast<const bf16*>(__rms_norm_scale_img_k);
+    const bf16 *rms_norm_scale_g_txt_q = reinterpret_cast<const bf16*>(__rms_norm_scale_txt_q);
+    const bf16 *rms_norm_scale_g_txt_k = reinterpret_cast<const bf16*>(__rms_norm_scale_txt_k);
+
           bf16 *o_q_g            = reinterpret_cast<bf16*>(__o_q)+blockIdx.x*((IMG_D+TXT_D)*HEAD_D);
           bf16 *o_k_g            = reinterpret_cast<bf16*>(__o_k)+blockIdx.x*((IMG_D+TXT_D)*HEAD_D);
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    tile_1xHEAD_D (&img_q_s)   [2][NUM_WORKERS_NORM] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS_NORM>();
-    tile_1xHEAD_D (&img_k_s)   [2][NUM_WORKERS_NORM] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS_NORM>();
-    tile_1xHEAD_D (&txt_q_s)   [2][NUM_WORKERS_NORM] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS_NORM>();
-    tile_1xHEAD_D (&txt_k_s)   [2][NUM_WORKERS_NORM] = al.allocate<tile_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    vec_smem_1xHEAD_D (&img_q_s)   [2][NUM_WORKERS_NORM] = al.allocate<vec_smem_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    vec_smem_1xHEAD_D (&img_k_s)   [2][NUM_WORKERS_NORM] = al.allocate<vec_smem_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    vec_smem_1xHEAD_D (&txt_q_s)   [2][NUM_WORKERS_NORM] = al.allocate<vec_smem_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    vec_smem_1xHEAD_D (&txt_k_s)   [2][NUM_WORKERS_NORM] = al.allocate<vec_smem_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    
+    vec_smem_1xHEAD_D (&scratch_s) [2][NUM_WORKERS_NORM] = al.allocate<vec_smem_1xHEAD_D,2,NUM_WORKERS_NORM>();
+    
+    vec_smem_1xHEAD_D (&rms_norm_scale_s_img_q) = al.allocate<vec_smem_1xHEAD_D>(); 
+    vec_smem_1xHEAD_D (&rms_norm_scale_s_img_k) = al.allocate<vec_smem_1xHEAD_D>(); 
+    vec_smem_1xHEAD_D (&rms_norm_scale_s_txt_q) = al.allocate<vec_smem_1xHEAD_D>(); 
+    vec_smem_1xHEAD_D (&rms_norm_scale_s_txt_k) = al.allocate<vec_smem_1xHEAD_D>(); 
 
-    // all workers bring rms norm scales to register
-    col_reg_vec_1xSEQ_TILE scale_reg_img_q;
-    load(scale_reg_img_q, scale_g_img_q); 
-    col_reg_vec_1xSEQ_TILE scale_reg_img_k;
-    load(scale_reg_img_k, scale_g_img_k); 
-
-    col_reg_vec_1xSEQ_TILE scale_reg_txt_q;
-    load(scale_reg_txt_q, scale_g_txt_q); 
-    col_reg_vec_1xSEQ_TILE scale_reg_txt_k;
-    load(scale_reg_txt_k, scale_g_txt_k); 
-
-    // memory allocated so far
-    // if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&txt_k_s) - (uint64_t)(&__shm[0]));
+    // global loads
+    if (warpid == 0) { 
+        load(rms_norm_scale_s_img_q, rms_norm_scale_g_img_q); 
+        load(rms_norm_scale_s_img_k, rms_norm_scale_g_img_k); 
+        load(rms_norm_scale_s_txt_q, rms_norm_scale_g_txt_q); 
+        load(rms_norm_scale_s_txt_k, rms_norm_scale_g_txt_k); 
+    }
 
     // pipelining
     int tic = 0, toc = 1;
-    const int total_elements = N_CHUNK * HEAD_D;
     auto block = cooperative_groups::this_thread_block();
      __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_cheat;
     if (threadIdx.x == 0) {init(&barrier_cheat, block.size());}
     block.sync(); // Need to make sure none calls before setup.
+ 
+    bf16 mean_img_q = __float2bfloat16(0.0f);
+    bf16 rrms_img_q = __float2bfloat16(0.0f);
+    bf16 mean_img_k = __float2bfloat16(0.0f);
+    bf16 rrms_img_k = __float2bfloat16(0.0f);
 
-    // initial load
-    load_async(img_q_s[warpid][tic], img_q_g + warpid*total_elements, HEAD_D, barrier_cheat);
-    load_async(img_k_s[warpid][tic], img_k_g + warpid*total_elements, HEAD_D, barrier_cheat);
-    load_async(txt_q_s[warpid][tic], txt_q_g + warpid*total_elements, HEAD_D, barrier_cheat);
-    load_async(txt_k_s[warpid][tic], txt_k_g + warpid*total_elements, HEAD_D, barrier_cheat);
+    bf16 mean_txt_q = __float2bfloat16(0.0f);
+    bf16 rrms_txt_q = __float2bfloat16(0.0f);
+    bf16 mean_txt_k = __float2bfloat16(0.0f);
+    bf16 rrms_txt_k = __float2bfloat16(0.0f);
+
+    load_async(img_q_s[warpid][tic], img_q_g + warpid*HEAD_D, HEAD_D, barrier_cheat);
+    load_async(img_k_s[warpid][tic], img_k_g + warpid*HEAD_D, HEAD_D, barrier_cheat);
+    load_async(txt_q_s[warpid][tic], txt_q_g + warpid*HEAD_D, HEAD_D, barrier_cheat);
+    load_async(txt_k_s[warpid][tic], txt_k_g + warpid*HEAD_D, HEAD_D, barrier_cheat);
     __syncthreads();
     
-    int n_blocks = IMG_D / (NUM_WORKERS_NORM*kittens::TILE_DIM);
-    int n_blocks_txt = TXT_D / (NUM_WORKERS_NORM*kittens::TILE_DIM);
+    int n_blocks = IMG_D / NUM_WORKERS_NORM;
+    int n_blocks_txt = TXT_D / NUM_WORKERS_NORM;
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
         barrier_cheat.arrive_and_wait();  
 
-        // inits for the strips
-        reg_tile_1xHEAD_D data;
-        reg_tile_1xHEAD_D scratch;
-        col_reg_vec_1xSEQ_TILE mean;
-        col_reg_vec_1xSEQ_TILE rrms;
-        zero(mean);
-        zero(rrms);
-        zero(data);
-        zero(scratch);
-
         // kick off load for the next block
-        auto next_idx = (block + 1)*NUM_WORKERS_NORM + warpid; 
         if( block < n_blocks - 1 ) {
-            load_async(img_q_s[warpid][toc], img_q_g + next_idx*total_elements, HEAD_D, barrier_cheat);
-            load_async(img_k_s[warpid][toc], img_k_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+            auto next_idx = (block + 1)*NUM_WORKERS_NORM + warpid; 
+            load_async(img_q_s[warpid][toc], img_q_g + next_idx*HEAD_D, HEAD_D, barrier_cheat);
+            load_async(img_k_s[warpid][toc], img_k_g + next_idx*HEAD_D, HEAD_D, barrier_cheat);
         }
+
         if (block < n_blocks_txt - 1) {
-            load_async(txt_q_s[warpid][toc], txt_q_g + next_idx*total_elements, HEAD_D, barrier_cheat);
-            load_async(txt_k_s[warpid][toc], txt_k_g + next_idx*total_elements, HEAD_D, barrier_cheat);
+            auto next_idx = (block + 1)*NUM_WORKERS_NORM + warpid; 
+            load_async(txt_q_s[warpid][toc], txt_q_g + next_idx*HEAD_D, HEAD_D, barrier_cheat);
+            load_async(txt_k_s[warpid][toc], txt_k_g + next_idx*HEAD_D, HEAD_D, barrier_cheat);
         }
 
-        // img q
-        load(data, img_q_s[warpid][tic]);
         // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
-        copy(scratch, data);
-        mul(scratch, scratch, scratch); // img_q**2
-        row_sum(mean, scratch);
-        div(mean, mean, __float2bfloat16(HEAD_D));
-        add(mean, mean, __float2bfloat16(1e-06f));
-        rsqrt(rrms, mean);
-        // rmsnorm
-        mul_row(data, data, rrms);
-        mul_row(data, data, scale_reg_img_q);
-        store(img_q_s[warpid][tic], data);
+        copy(scratch_s[warpid][tic], img_q_s[warpid][tic]);
+        mul(scratch_s[warpid][tic], scratch_s[warpid][tic], scratch_s[warpid][tic]); // img_q**2
+        sum(mean_img_q, scratch_s[warpid][tic]);
+        mean_img_q = mean_img_q / __float2bfloat16(HEAD_D);
+        rrms_img_q = __float2bfloat16(1 / sqrt(__bfloat162float(mean_img_q + __float2bfloat16(1e-06f))));
 
-        /// img k
-        zero(mean);
-        zero(rrms);
-        zero(data);
-        load(data, img_k_s[warpid][tic]);
-        // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
-        copy(scratch, data);
-        mul(scratch, scratch, scratch); // img_q**2
-        row_sum(mean, scratch);
-        div(mean, mean, __float2bfloat16(HEAD_D));
-        add(mean, mean, __float2bfloat16(1e-06f));
-        rsqrt(rrms, mean);
-        // rmsnorm
-        mul_row(data, data, rrms);
-        mul_row(data, data, scale_reg_img_k);
-        store(img_k_s[warpid][tic], data);
-        
+        copy(scratch_s[warpid][tic], img_k_s[warpid][tic]);
+        mul(scratch_s[warpid][tic], scratch_s[warpid][tic], scratch_s[warpid][tic]); // img_q**2
+        sum(mean_img_k, scratch_s[warpid][tic]);
+        mean_img_k = mean_img_k / __float2bfloat16(HEAD_D);
+        rrms_img_k = __float2bfloat16(1 / sqrt(__bfloat162float(mean_img_k + __float2bfloat16(1e-06f))));
+
+        // img_q = (img_q * rrms) * q_img_rms_norm_scale;
+        mul(img_q_s[warpid][tic], img_q_s[warpid][tic], rrms_img_q);
+        mul(img_q_s[warpid][tic], img_q_s[warpid][tic], rms_norm_scale_s_img_q);
+        mul(img_k_s[warpid][tic], img_k_s[warpid][tic], rrms_img_k);
+        mul(img_k_s[warpid][tic], img_k_s[warpid][tic], rms_norm_scale_s_img_k);
 
         if ( block < n_blocks_txt ) {
-            // txt q
-            zero(mean);
-            zero(rrms);
-            zero(data);
-            load(data, txt_q_s[warpid][tic]);
-            // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
-            copy(scratch, data);
-            mul(scratch, scratch, scratch); // img_q**2
-            row_sum(mean, scratch);
-            div(mean, mean, __float2bfloat16(HEAD_D));
-            add(mean, mean, __float2bfloat16(1e-06f));
-            rsqrt(rrms, mean);
-            // rmsnorm
-            mul_row(data, data, rrms);
-            mul_row(data, data, scale_reg_img_q);
-            store(txt_q_s[warpid][tic], data);
+            copy(scratch_s[warpid][tic], txt_q_s[warpid][tic]);
+            mul(scratch_s[warpid][tic], scratch_s[warpid][tic], scratch_s[warpid][tic]); // img_q**2
+            sum(mean_txt_q, scratch_s[warpid][tic]);
+            mean_txt_q = mean_txt_q / __float2bfloat16(HEAD_D);
+            rrms_txt_q = __float2bfloat16(1 / sqrt(__bfloat162float(mean_txt_q + __float2bfloat16(1e-06f))));
 
-            // txt k
-            zero(mean);
-            zero(rrms);
-            zero(data);
-            load(data, txt_k_s[warpid][tic]);
-            // rrms = torch.rsqrt(torch.mean(img_q**2, dim=-1, keepdim=True) + 1e-6)
-            copy(scratch, data);
-            mul(scratch, scratch, scratch); // img_q**2
-            row_sum(mean, scratch);
-            div(mean, mean, __float2bfloat16(HEAD_D));
-            add(mean, mean, __float2bfloat16(1e-06f));
-            rsqrt(rrms, mean);
-            // rmsnorm
-            mul_row(data, data, rrms);
-            mul_row(data, data, scale_reg_img_q);
-            store(txt_k_s[warpid][tic], data);
+            copy(scratch_s[warpid][tic], txt_k_s[warpid][tic]);
+            mul(scratch_s[warpid][tic], scratch_s[warpid][tic], scratch_s[warpid][tic]); // img_q**2
+            sum(mean_txt_k, scratch_s[warpid][tic]);
+            mean_txt_k = mean_txt_k / __float2bfloat16(HEAD_D);
+            rrms_txt_k = __float2bfloat16(1 / sqrt(__bfloat162float(mean_txt_k + __float2bfloat16(1e-06f))));
 
-            store(o_q_g + (block*NUM_WORKERS_NORM +warpid)*total_elements, txt_q_s[warpid][tic], HEAD_D); 
-            store(o_k_g + (block*NUM_WORKERS_NORM +warpid)*total_elements, txt_k_s[warpid][tic], HEAD_D); 
+            // img_q = (img_q * rrms) * q_img_rms_norm_scale;
+            mul(txt_q_s[warpid][tic], txt_q_s[warpid][tic], rrms_txt_q);
+            mul(txt_q_s[warpid][tic], txt_q_s[warpid][tic], rms_norm_scale_s_txt_q);
+            mul(txt_k_s[warpid][tic], txt_k_s[warpid][tic], rrms_txt_k);
+            mul(txt_k_s[warpid][tic], txt_k_s[warpid][tic], rms_norm_scale_s_txt_k);
+
+            store(o_q_g + (block*NUM_WORKERS_NORM +warpid)*HEAD_D, txt_q_s[warpid][tic]); 
+            store(o_k_g + (block*NUM_WORKERS_NORM +warpid)*HEAD_D, txt_k_s[warpid][tic]); 
         }
 
         // save output
-        // if ((block == n_blocks - 1) & (static_cast<int>((IMG_D) / 16) % NUM_WORKERS_NORM == 1)) {
-        //     // e.g., because (4080/16 = 255 so last warp should not write stuff out.)
-        //     if (warpid == 0) {
-        //         store(o_q_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*total_elements, img_q_s[warpid][tic], HEAD_D);
-        //         store(o_k_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*total_elements, img_k_s[warpid][tic], HEAD_D);
-        //     }
-        // } else {
-        if (1) {
-            store(o_q_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*total_elements, img_q_s[warpid][tic], HEAD_D);
-            store(o_k_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*total_elements, img_k_s[warpid][tic], HEAD_D);
-        } 
+        store(o_q_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*HEAD_D, img_q_s[warpid][tic]); 
+        store(o_k_g + txt_offset + (block*NUM_WORKERS_NORM +warpid)*HEAD_D, img_k_s[warpid][tic]); 
     }
 }
 
@@ -288,7 +243,7 @@ void fused_flux_rmsnorm(
           bf16* d_o_k            = reinterpret_cast<bf16*>(o_ptr_k);
 
     // launch variables
-    unsigned long mem_size = 72000;
+    unsigned long mem_size = 30000;
 
     cudaFuncSetAttribute(
         flux_rmsnorm,

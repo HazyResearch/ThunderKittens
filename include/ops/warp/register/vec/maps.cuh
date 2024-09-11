@@ -197,6 +197,30 @@ __device__ static inline void relu(T &dst, const T &src) {
     unary_op<base_ops::relu, T>(dst, src);
 }
 
+/**
+ * @brief Applies the square root function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the square root values will be stored.
+ * @param src[in] Source vector to apply the square root function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void sqrt(T &dst, const T &src) {
+    unary_op<base_ops::sqrt, T>(dst, src);
+}
+
+/**
+ * @brief Applies the reciprocal square root function element-wise to a register vector.
+ *
+ * @tparam T Register vector type.
+ * @param dst[out] Destination vector where the reciprocal square root values will be stored.
+ * @param src[in] Source vector to apply the reciprocal square root function to.
+ */
+template<ducks::rv::all T>
+__device__ static inline void rsqrt(T &dst, const T &src) {
+    unary_op<base_ops::rsqrt, T>(dst, src);
+}
+
 // ---- binary ops ----
 
 /**
