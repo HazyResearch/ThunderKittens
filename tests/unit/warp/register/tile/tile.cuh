@@ -9,6 +9,13 @@
 #include "mma.cuh"
 #include "conversions.cuh"
 
+#ifdef TEST_WARP_REGISTER_TILE_COMPLEX
+
+//#include "complex/maps.cuh"
+#include "complex/complex_mma.cuh"
+//#include "complex/conversions.cuh"
+#endif
+
 namespace warp {
 namespace reg {
 namespace tile {
