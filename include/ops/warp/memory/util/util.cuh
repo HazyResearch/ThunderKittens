@@ -146,19 +146,21 @@ __device__ static inline void init_barrier(barrier& bar, int thread_count, int t
 /**
 * @brief Arrives at a barrier.
 *
-* Marks a thread arrival at an mbarrier
+* Marks a warp arrival at an mbarrier
 *
 * @param barrier Reference to the barrier variable.
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar, uint32_t count=1) {
-    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
-    asm volatile (
-        "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
-        :
-        : "r"(mbar_ptr), "r"(count)
-        : "memory"
-    );
+    if(laneid() == 0) {
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+        asm volatile (
+            "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
+            :
+            : "r"(mbar_ptr), "r"(count)
+            : "memory"
+        );
+    }
 }
 
 
@@ -224,8 +226,10 @@ template<ducks::sv::all SV> struct size_info<SV> {
     static constexpr uint32_t bytes    = SV::length * sizeof(typename SV::dtype);
 };
 }
-template<typename... Args>             inline constexpr uint32_t size_bytes             = 0; // base case
-template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
+template<typename... Args>                       inline constexpr uint32_t size_bytes             = 0; // base case
+template<typename T, typename... Args>           inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
+// template<typename T, size_t Dim>                 inline constexpr uint32_t size_bytes             = Dim*detail::size_info<T>::bytes;
+// template<typename T, size_t Dim, size_t... Dims> inline constexpr uint32_t size_bytes<T, Dims...> = Dim*detail::size_info<T, Dims...>::bytes;
 
 } // namespace kittens
 
