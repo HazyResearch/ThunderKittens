@@ -28,7 +28,7 @@ struct matmul_template {
     struct producer {
         struct state { int row_idx, col_idx, n_blocks; }; // persistent registers
         __device__ static void setup(state &s, globals &g) { // setup and load the first iteration
-            warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
+            // warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
             s.row_idx = blockIdx.x * NUM_CONSUMER_WARPGROUPS; // tiles vertical per block
             s.col_idx = blockIdx.y; // just 1 tile horizontal per block
             s.n_blocks = g.Ag.cols / a_tile::cols; // number of blocks to process
@@ -37,24 +37,28 @@ struct matmul_template {
             if(warpgroup::warpid() == 0) {
                 tma::expect_bytes(inputs_arrived, size_bytes<a_tile>*NUM_CONSUMER_WARPGROUPS + size_bytes<b_tile>);
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {
-                    tma::load_async(b.a_block[i], g.Ag, {0, 0, s.row_idx+i, iter}, inputs_arrived);
+                    tma::load_async(b.a_block[i], g.Ag, {s.row_idx+i, iter}, inputs_arrived);
                 }
-                tma::load_async(b.b_block, g.Bg, {0, 0, iter, s.col_idx}, inputs_arrived);
+                tma::load_async(b.b_block, g.Bg, {iter, s.col_idx}, inputs_arrived);
             }
+            else arrive(inputs_arrived);
             return iter < s.n_blocks-1; // return true if there are more blocks to process
         }
-        __device__ static bool store(state &s, output_block &b, globals &g, barrier &outputs_finished, int iter) { return false;} // no store needed
+        __device__ static void store(state &s, output_block &b, globals &g, barrier &outputs_finished, int iter) {
+            arrive(outputs_finished); // no store needed
+        }
     };
     struct consumer {
         struct state { rt_fl<1,c_tile::width> acc; int n_blocks; }; // persistent registers; none needed for this kernel.
         __device__ static void setup(state &s, scratch_block &_, globals &g) { // setup locals for before the first iteration
-            warpgroup::increase_registers<240>();
+            // warpgroup::increase_registers<240>();
             zero(s.acc);
             s.n_blocks = g.Ag.cols / a_tile::cols;
         }
-        __device__ static bool work(state &s, input_block &b, scratch_block &_, output_block &o, barrier &inputs_finished, barrier &outputs_ready, int iter) {
+        __device__ static bool work(state &s, input_block &b, scratch_block &_, output_block &o, barrier &inputs_finished, barrier &outputs_arrived, int iter) {
             warpgroup::mma_AB(s.acc, b.a_block[warpgroup::groupid()], b.b_block);
             warpgroup::mma_async_wait();
+            arrive(outputs_arrived); // we have no outputs, so we can do this early. (they're always ready.)
             arrive(inputs_finished);
             return iter < s.n_blocks-1;
         }
@@ -88,7 +92,8 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 int main() {
-    // const int M = 128, N = 256, K = 128; // Current constraints: M%128=0, N%256=0, K%64=0
+    // const int M = 128, N = 256, K = 256; // Current constraints: M%128=0, N%256=0, K%64=0
+    // const int M = 1024, N = 256, K = 4096; // Current constraints: M%128=0, N%256=0, K%64=0
     const int M = 4096, N = 4096, K = 4096; // Current constraints: M%128=0, N%256=0, K%64=0
 
     // Allocate host memory
@@ -101,7 +106,7 @@ int main() {
 
     // Initialize random number generator
     std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 gen(42);
     std::uniform_real_distribution<> dis(-1.0, 1.0);
 
     // Initialize matrices with random values
@@ -153,7 +158,7 @@ int main() {
 
     // Start timing
     cudaDeviceSynchronize();
-    std::cout << "Launching kernel" << std::endl;
+    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/matmul_template::a_tile::cols << " reduction block dimension\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = 100;
@@ -173,7 +178,6 @@ int main() {
     double flops = double(2.0) * M * N * K * ITERS; // 2 FLOPs per multiply-add
     double tflops = (flops / seconds) / 1e12;
 
-    std::cout << "Launched kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/matmul_template::a_tile::cols << " reduction block dimension\n";
     std::cout << "Kernel execution time: " << seconds << " seconds\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
     

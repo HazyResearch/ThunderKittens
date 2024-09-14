@@ -152,7 +152,7 @@ __device__ static inline void init_barrier(barrier& bar, int thread_count, int t
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar, uint32_t count=1) {
-    if(laneid() == 0) {
+    if(::kittens::laneid() == 0) {
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
         asm volatile (
             "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
@@ -202,6 +202,28 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
         "r"(kPhaseBit)
     );
 #endif
+}
+
+/**
+* @brief Checks if the requested barrier phase is ready.
+*
+* @param barrier Reference to the barrier variable.
+* @param kPhaseBit The phase bit used for the barrier.
+*/
+__device__ static inline int test_wait(barrier& bar, int kPhaseBit) {
+    void const* const ptr = &bar;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
+    int result;
+    asm volatile (
+        "{\n"
+        ".reg .pred P1;\n"
+        "mbarrier.test_wait.parity.shared::cta.b64 P1, [%1], %2;\n"
+        "selp.u32 %0,1,0,P1;"
+        "}\n"
+        : "=r"(result)
+        : "r"(mbar_ptr), "r"(kPhaseBit)
+    );
+    return result;
 }
 
 __device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit) {

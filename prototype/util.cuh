@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../include/kittens.cuh"
+#include "../include/kittens.cuh"
 
 namespace kittens {
 namespace prototype {

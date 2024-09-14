@@ -6,4 +6,4 @@
 #pragma once
 
 #include "../include/kittens.cuh"
-#include "pc/pc.cuh"
+#include "pc.cuh"

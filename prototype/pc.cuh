@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../include/kittens.cuh"
+#include "../include/kittens.cuh"
 #include "util.cuh"
 
 // parameters:
@@ -54,7 +54,7 @@ template<typename pct> concept pc_template = requires {
 namespace kittens {
 namespace prototype {
 
-template<int N> __device__ static inline int ring_advance(int ring) { return (ring + 1) % N; }
+template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
 template<int N> __device__ static inline int ring_retreat(int ring) { return (ring + N-1) % N; }
 
 template<typename pct>
@@ -80,27 +80,19 @@ void pc(typename pct::globals g) {
     input_block   (&input_smem) [INPUT_PIPE_STAGES]  = alloc.allocate<input_block,  INPUT_PIPE_STAGES >();
     output_block  (&output_smem)[OUTPUT_PIPE_STAGES] = alloc.allocate<output_block, OUTPUT_PIPE_STAGES>();
     scratch_block (&scratch_smem)                    = alloc.allocate<scratch_block>();
-    finish_block  (&finish_smem) = reinterpret_cast<finish_block&>(input_smem);
-    // if(threadIdx.x == 0) {
-    //     printf("smem address alignments (input0, a_block[0]): %llu\n", uint64_t(&input_smem[0].a_block[0].data[0]) % 1024);
-    //     printf("smem address alignments (input0, a_block[1]): %llu\n", uint64_t(&input_smem[0].a_block[1].data[0]) % 1024);
-    //     printf("smem address alignments (input0, b_block): %llu\n", uint64_t(&input_smem[0].b_block.data[0]) % 1024);
-    //     printf("smem address alignments (input1, a_block[0]): %llu\n", uint64_t(&input_smem[1].a_block[0].data[0]) % 1024);
-    //     printf("smem address alignments (input1, a_block[1]): %llu\n", uint64_t(&input_smem[1].a_block[1].data[0]) % 1024);
-    //     printf("smem address alignments (input1, b_block): %llu\n", uint64_t(&input_smem[1].b_block.data[0]) % 1024);
-    // }
+    finish_block  (&finish_smem)                     = reinterpret_cast<finish_block&>(input_smem);
 
     // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
     __shared__ kittens::barrier inputs_arrived[INPUT_PIPE_STAGES],   inputs_finished[INPUT_PIPE_STAGES];
     __shared__ kittens::barrier outputs_arrived[OUTPUT_PIPE_STAGES], outputs_finished[OUTPUT_PIPE_STAGES];
     if (warpid() == 0) { // a single warp (in fact a single thread) does these.
         for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
-            init_barrier(inputs_arrived[i], 0, 1); // needs to wait on just one memory transaction, each
+            init_barrier(inputs_arrived[i], 0, 4); // needs to wait on each producer warp
             init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
             }
         for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
-            init_barrier(outputs_arrived[i], 0, 1); // needs to wait on just one memory transaction, each
-            init_barrier(outputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+            init_barrier(outputs_arrived[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+            init_barrier(outputs_finished[i], 0, 4); // needs to wait on each producer warp
         }
     }
 
@@ -112,60 +104,60 @@ void pc(typename pct::globals g) {
     if(warpgroup::groupid() == NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
         typename pct::producer::state s;
         pct::producer::setup(s, g);
-        bool keep_going = true;
-        if constexpr (INPUT_PIPE_STAGES>1) {
-            warpgroup::sync();
-            keep_going = pct::producer::load(
+        int load_more = true, load_iter = 0, store_iter = 0;
+        #pragma unroll
+        for(int i = 0; i < INPUT_PIPE_STAGES && load_more; i++) { // fill the pipeline
+            load_more = pct::producer::load(
                 s,
                 input_smem[input_ring],
-                g, 
-                inputs_arrived[input_ring], 
-                0 // load initial block
-            );
-            warpgroup::sync();
-        }
-        if constexpr (INPUT_PIPE_STAGES>2) {
-            if(keep_going) keep_going = pct::producer::load(
-                s,
-                input_smem[ring_advance<INPUT_PIPE_STAGES>(input_ring)],
                 g,
-                inputs_arrived[ring_advance<INPUT_PIPE_STAGES>(input_ring)],
-                1 // load second block for pipeline
+                inputs_arrived[input_ring],
+                load_iter
             );
+            input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+            load_iter++;
         }
-        if constexpr (INPUT_PIPE_STAGES>3) {
-            if(keep_going) keep_going = pct::producer::load(
-                s,
-                input_smem[ring_advance<INPUT_PIPE_STAGES>(ring_advance<INPUT_PIPE_STAGES>(input_ring))],
-                g,
-                inputs_arrived[ring_advance<INPUT_PIPE_STAGES>(ring_advance<INPUT_PIPE_STAGES>(input_ring))],
-                2 // load third block for pipeline
-            );
-        }
-        for (int block_idx = INPUT_PIPE_STAGES-1; keep_going; block_idx++, input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring)) {
-            int ring_load = ring_retreat<INPUT_PIPE_STAGES>(input_ring); // maximally advanced, pipe_stages-1 times
-            keep_going = pct::producer::load(
-                s,
-                input_smem[ring_load],
-                g,
-                inputs_arrived[ring_load],
-                block_idx
-            );
-            wait(inputs_finished[input_ring], ((block_idx-(INPUT_PIPE_STAGES-1))/INPUT_PIPE_STAGES)%2); // phase changes at half the rate of the ring
+        while(load_more || store_iter < load_iter) {
+            if(store_iter < load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
+                pct::producer::store(
+                    s,
+                    output_smem[output_ring],
+                    g,
+                    outputs_finished[output_ring],
+                    store_iter
+                );
+                output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+                store_iter++;
+            }
+            // need to wait for the next stage to be available to write to.
+            if(load_more && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
+                load_more = pct::producer::load(
+                    s,
+                    input_smem[input_ring],
+                    g,
+                    inputs_arrived[input_ring],
+                    load_iter
+                );
+                input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                load_iter++;
+            }
+            __nanosleep(5);
         }
     }
     else { // other warpgroups are consumers
         typename pct::consumer::state s;
         pct::consumer::setup(s, scratch_smem, g);
-        int keep_going = true, block_idx = 0;
-        while(keep_going) {
-            wait(inputs_arrived[input_ring], (block_idx/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
-            keep_going = pct::consumer::work(s, input_smem[input_ring], scratch_smem, output_smem[output_ring], inputs_finished[input_ring], outputs_arrived[output_ring], block_idx);
-            block_idx++;
+        int work_more = true, iter = 0;
+        while(work_more) {
+            // wait(outputs_finished[output_ring], ((iter/OUTPUT_PIPE_STAGES)%2)^1); // wait for memory to arrive, phase changes at half the rate of the ring
+            wait(inputs_arrived[input_ring], (iter/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
+            work_more = pct::consumer::work(s, input_smem[input_ring], scratch_smem, output_smem[output_ring], inputs_finished[input_ring], outputs_arrived[output_ring], iter);
+            iter++;
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+            output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
         }
         group<NUM_CONSUMER_WARPS>::sync(0);
-        pct::consumer::finish(s, finish_smem, g, block_idx);
+        pct::consumer::finish(s, finish_smem, g, iter);
     }
 }
 
