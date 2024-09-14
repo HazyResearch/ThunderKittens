@@ -45,11 +45,10 @@ template<typename pct> concept pc_template = requires {
     typename pct::consumer::state;
     pct::producer::setup;
     pct::producer::load;
-    pct::producer::store;
     pct::consumer::setup; 
     pct::consumer::work;
     pct::consumer::finish;
-};
+} && (pct::OUTPUT_PIPE_STAGES == 0 || requires { pct::producer::store; });
 
 namespace kittens {
 namespace prototype {
@@ -63,7 +62,7 @@ void pc(typename pct::globals g) {
     static_assert(pc_template<pct>, "pc template parameter does not satisfy concept requirements");
     constexpr int INPUT_PIPE_STAGES = pct::INPUT_PIPE_STAGES;
     static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 4, "Invalid number of input pipe stages");
-    constexpr int OUTPUT_PIPE_STAGES = pct::OUTPUT_PIPE_STAGES;
+    constexpr int OUTPUT_PIPE_STAGES = pct::OUTPUT_PIPE_STAGES == 0 ? 1 : pct::OUTPUT_PIPE_STAGES;
     static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 4, "Invalid number of output pipe stages");
     constexpr int NUM_CONSUMER_WARPS = pct::NUM_CONSUMER_WARPS;
     constexpr int NUM_CONSUMER_WARPGROUPS = num_consumer_warpgroups<pct>;
@@ -89,7 +88,7 @@ void pc(typename pct::globals g) {
         for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
             init_barrier(inputs_arrived[i], 0, 4); // needs to wait on each producer warp
             init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-            }
+        }
         for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
             init_barrier(outputs_arrived[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
             init_barrier(outputs_finished[i], 0, 4); // needs to wait on each producer warp
@@ -117,17 +116,19 @@ void pc(typename pct::globals g) {
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             load_iter++;
         }
-        while(load_more || store_iter < load_iter) {
-            if(store_iter < load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
-                pct::producer::store(
-                    s,
-                    output_smem[output_ring],
-                    g,
-                    outputs_finished[output_ring],
-                    store_iter
-                );
-                output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
-                store_iter++;
+        while(load_more || (pct::OUTPUT_PIPE_STAGES != 0 && store_iter < load_iter)) {
+            if constexpr (pct::OUTPUT_PIPE_STAGES != 0) {
+                if(store_iter < load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
+                    pct::producer::store(
+                        s,
+                        output_smem[output_ring],
+                        g,
+                        outputs_finished[output_ring],
+                        store_iter
+                    );
+                    output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+                    store_iter++;
+                }
             }
             // need to wait for the next stage to be available to write to.
             if(load_more && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
@@ -149,12 +150,16 @@ void pc(typename pct::globals g) {
         pct::consumer::setup(s, scratch_smem, g);
         int work_more = true, iter = 0;
         while(work_more) {
-            // wait(outputs_finished[output_ring], ((iter/OUTPUT_PIPE_STAGES)%2)^1); // wait for memory to arrive, phase changes at half the rate of the ring
+            if constexpr (pct::OUTPUT_PIPE_STAGES != 0) {
+                wait(outputs_finished[output_ring], ((iter/OUTPUT_PIPE_STAGES)%2)^1); // wait for memory to arrive, phase changes at half the rate of the ring
+            }
             wait(inputs_arrived[input_ring], (iter/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
             work_more = pct::consumer::work(s, input_smem[input_ring], scratch_smem, output_smem[output_ring], inputs_finished[input_ring], outputs_arrived[output_ring], iter);
             iter++;
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-            output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+            if constexpr (pct::OUTPUT_PIPE_STAGES != 0) {
+                output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+            }
         }
         group<NUM_CONSUMER_WARPS>::sync(0);
         pct::consumer::finish(s, finish_smem, g, iter);

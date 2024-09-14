@@ -10,7 +10,7 @@ struct matmul_template {
     using b_global = kittens::gl<bf16, 1, 1, -1, -1, b_tile>;
     using c_global = kittens::gl<bf16, 1, 1, -1, -1, c_tile>;
     static constexpr int NUM_CONSUMER_WARPS = 8, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    static constexpr int INPUT_PIPE_STAGES = 4, OUTPUT_PIPE_STAGES = 1; // irrelevant for this kernel
+    static constexpr int INPUT_PIPE_STAGES = 4, OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
     struct globals {
         a_global Ag;
         b_global Bg;
@@ -28,7 +28,7 @@ struct matmul_template {
     struct producer {
         struct state { int row_idx, col_idx, n_blocks; }; // persistent registers
         __device__ static void setup(state &s, globals &g) { // setup and load the first iteration
-            // warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
+            warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
             s.row_idx = blockIdx.x * NUM_CONSUMER_WARPGROUPS; // tiles vertical per block
             s.col_idx = blockIdx.y; // just 1 tile horizontal per block
             s.n_blocks = g.Ag.cols / a_tile::cols; // number of blocks to process
@@ -44,14 +44,11 @@ struct matmul_template {
             else arrive(inputs_arrived);
             return iter < s.n_blocks-1; // return true if there are more blocks to process
         }
-        __device__ static void store(state &s, output_block &b, globals &g, barrier &outputs_finished, int iter) {
-            arrive(outputs_finished); // no store needed
-        }
     };
     struct consumer {
-        struct state { rt_fl<1,c_tile::width> acc; int n_blocks; }; // persistent registers; none needed for this kernel.
+        struct state { rt_fl<1,c_tile::width> acc; int n_blocks; };
         __device__ static void setup(state &s, scratch_block &_, globals &g) { // setup locals for before the first iteration
-            // warpgroup::increase_registers<240>();
+            warpgroup::increase_registers<240>();
             zero(s.acc);
             s.n_blocks = g.Ag.cols / a_tile::cols;
         }
