@@ -1,11 +1,8 @@
 #pragma once
 
 #include "../include/kittens.cuh"
-#include "util.cuh"
 
-// parameters:
 /*
-
 int INPUT_PIPE_STAGES
 int OUTPUT_PIPE_STAGES
 int NUM_CONSUMER_WARPS
@@ -27,8 +24,10 @@ struct consumer {
     __device__ static bool work(state& s, input_block& b, output_block& o, barrier& inputs_finished, barrier& outputs_ready, int idx) {} // more to do?
     __device__ static void finish(state& s, globals& g, int idx) {}
 }
-
 */
+
+namespace kittens {
+namespace prototype {
 
 template<typename pct> concept pc_template = requires {
     pct::INPUT_PIPE_STAGES;
@@ -50,8 +49,9 @@ template<typename pct> concept pc_template = requires {
     pct::consumer::finish;
 } && (pct::OUTPUT_PIPE_STAGES == 0 || requires { pct::producer::store; });
 
-namespace kittens {
-namespace prototype {
+template<typename T> constexpr int num_threads = T::NUM_CONSUMER_WARPS * 32 + 128;
+template<typename T> constexpr int num_warps = T::NUM_CONSUMER_WARPS + 4;
+template<typename T> constexpr int num_consumer_warpgroups = T::NUM_CONSUMER_WARPS / 4;
 
 template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
 template<int N> __device__ static inline int ring_retreat(int ring) { return (ring + N-1) % N; }
@@ -61,12 +61,12 @@ __global__ __launch_bounds__(num_threads<pct>, 1)
 void pc(typename pct::globals g) {
     static_assert(pc_template<pct>, "pc template parameter does not satisfy concept requirements");
     constexpr int INPUT_PIPE_STAGES = pct::INPUT_PIPE_STAGES;
-    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 4, "Invalid number of input pipe stages");
+    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 32, "Invalid number of input pipe stages");
     constexpr int OUTPUT_PIPE_STAGES = pct::OUTPUT_PIPE_STAGES == 0 ? 1 : pct::OUTPUT_PIPE_STAGES;
-    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 4, "Invalid number of output pipe stages");
+    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 32, "Invalid number of output pipe stages");
     constexpr int NUM_CONSUMER_WARPS = pct::NUM_CONSUMER_WARPS;
-    constexpr int NUM_CONSUMER_WARPGROUPS = num_consumer_warpgroups<pct>;
     constexpr int NUM_WARPS = num_warps<pct>;
+    constexpr int NUM_CONSUMER_WARPGROUPS = num_consumer_warpgroups<pct>;
     constexpr int NUM_THREADS = num_threads<pct>;
     using globals = typename pct::globals;
     using input_block = typename pct::input_block;
@@ -129,9 +129,22 @@ void pc(typename pct::globals g) {
                     output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
                     store_iter++;
                 }
+                // need to wait for the next stage to be available to write to.
+                if(load_more && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
+                    load_more = pct::producer::load(
+                        s,
+                        input_smem[input_ring],
+                        g,
+                        inputs_arrived[input_ring],
+                        load_iter
+                    );
+                    input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                    load_iter++;
+                }
+                __nanosleep(5);
             }
-            // need to wait for the next stage to be available to write to.
-            if(load_more && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
+            else { // just do the load
+                wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1);
                 load_more = pct::producer::load(
                     s,
                     input_smem[input_ring],
@@ -142,7 +155,6 @@ void pc(typename pct::globals g) {
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
                 load_iter++;
             }
-            __nanosleep(5);
         }
     }
     else { // other warpgroups are consumers
@@ -162,7 +174,7 @@ void pc(typename pct::globals g) {
             }
         }
         group<NUM_CONSUMER_WARPS>::sync(0);
-        pct::consumer::finish(s, finish_smem, g, iter);
+        pct::consumer::finish(s, finish_smem, scratch_smem, g, iter);
     }
 }
 

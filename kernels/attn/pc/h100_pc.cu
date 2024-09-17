@@ -99,7 +99,7 @@ struct attn_fwd_template {
             arrive(inputs_finished);
             return iter < s.n_blocks-1;
         }
-        __device__ static void finish(state &s, finish_block &f, globals &g, int _) {
+        __device__ static void finish(state &s, finish_block &f, scratch_block &scratch, globals &g, int _) {
             if((blockIdx.x*NUM_CONSUMER_WARPGROUPS + s.id)*q_tile::rows < g.Qg.rows) {
                 warpgroup::store(f.o[s.id], s.o_reg);
                 warpgroup::sync();

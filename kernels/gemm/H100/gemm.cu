@@ -2,15 +2,15 @@
 #include "prototype.cuh"
 
 using namespace kittens;
+template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
 struct matmul_template {
-    using a_tile = st_bf<4,4>;
-    using b_tile = st_bf<4,16>;
-    using c_tile = st_bf<4,16>;
+    using a_tile = st_bf<4,BLOCK_K/16>;
+    using b_tile = st_bf<BLOCK_K/16,BLOCK_N/16>;
+    using c_tile = st_bf<4,BLOCK_N/16>;
+    static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
     using a_global = kittens::gl<bf16, 1, 1, -1, -1, a_tile>;
     using b_global = kittens::gl<bf16, 1, 1, -1, -1, b_tile>;
     using c_global = kittens::gl<bf16, 1, 1, -1, -1, c_tile>;
-    static constexpr int NUM_CONSUMER_WARPS = 8, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    static constexpr int INPUT_PIPE_STAGES = 4, OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
     struct globals {
         a_global Ag;
         b_global Bg;
@@ -20,6 +20,7 @@ struct matmul_template {
         a_tile a_block[NUM_CONSUMER_WARPGROUPS];
         b_tile b_block;
     };
+    static constexpr int INPUT_PIPE_STAGES = 220000/sizeof(input_block), OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
     struct output_block {}; // nothing here, we store at the end in the consumer finish
     struct scratch_block {};
     struct finish_block {
@@ -48,7 +49,7 @@ struct matmul_template {
     struct consumer {
         struct state { rt_fl<1,c_tile::width> acc; int n_blocks; };
         __device__ static void setup(state &s, scratch_block &_, globals &g) { // setup locals for before the first iteration
-            warpgroup::increase_registers<240>();
+            warpgroup::increase_registers<480/NUM_CONSUMER_WARPGROUPS - 8*(NUM_CONSUMER_WARPGROUPS>3)>();
             zero(s.acc);
             s.n_blocks = g.Ag.cols / a_tile::cols;
         }
@@ -59,7 +60,7 @@ struct matmul_template {
             arrive(inputs_finished);
             return iter < s.n_blocks-1;
         }
-        __device__ static void finish(state &s, finish_block &f, globals &g, int _) {
+        __device__ static void finish(state &s, finish_block &f, scratch_block &scratch, globals &g, int _) {
             warpgroup::store(f.c_block[warpgroup::groupid()], s.acc);
             warpgroup::sync();
             if(warpgroup::warpid() == 0) {
@@ -89,9 +90,11 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 int main() {
-    // const int M = 128, N = 256, K = 256; // Current constraints: M%128=0, N%256=0, K%64=0
-    // const int M = 1024, N = 256, K = 4096; // Current constraints: M%128=0, N%256=0, K%64=0
-    const int M = 4096, N = 4096, K = 4096; // Current constraints: M%128=0, N%256=0, K%64=0
+    // const int M = 3072, N = 12288, K = 3072; using mmt = matmul_template<192, 192, 64>; // 760 TFLOPs
+    // const int M = 3072, N = 3072, K = 12288; using mmt = matmul_template<192, 192, 64>; // 813.5 TFLOPs
+    // const int M = 256, N = 12288, K = 3072; using mmt = matmul_template<128, 192, 64>; // 574.5 TFLOPs
+    // const int M = 256, N = 3072, K = 12288; using mmt = matmul_template<128, 64, 128>; // 433 TFLOPs
+    const int M = 3072, N = 3072, K = 3072; using mmt = matmul_template<192, 192, 64>; // 740 TFLOPs
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -125,13 +128,13 @@ int main() {
 
     std::cout << "Allocated device memory" << std::endl;
 
-    std::cout << "a_tile::rows=" << matmul_template::a_tile::rows << " a_tile::cols=" << matmul_template::a_tile::cols << std::endl;
-    std::cout << "b_tile::rows=" << matmul_template::b_tile::rows << " b_tile::cols=" << matmul_template::b_tile::cols << std::endl;
-    std::cout << "c_tile::rows=" << matmul_template::c_tile::rows << " c_tile::cols=" << matmul_template::c_tile::cols << std::endl;
-    matmul_template::a_global Ag{d_A, nullptr, nullptr, M, K};
-    matmul_template::b_global Bg{d_B, nullptr, nullptr, K, N};
-    matmul_template::c_global Cg{d_C, nullptr, nullptr, M, N};
-    matmul_template::globals globals{Ag, Bg, Cg};
+    std::cout << "a_tile::rows=" << mmt::a_tile::rows << " a_tile::cols=" << mmt::a_tile::cols << std::endl;
+    std::cout << "b_tile::rows=" << mmt::b_tile::rows << " b_tile::cols=" << mmt::b_tile::cols << std::endl;
+    std::cout << "c_tile::rows=" << mmt::c_tile::rows << " c_tile::cols=" << mmt::c_tile::cols << std::endl;
+    mmt::a_global Ag{d_A, nullptr, nullptr, M, K};
+    mmt::b_global Bg{d_B, nullptr, nullptr, K, N};
+    mmt::c_global Cg{d_C, nullptr, nullptr, M, N};
+    mmt::globals globals{Ag, Bg, Cg};
 
     std::cout << "Allocated memory" << std::endl;
 
@@ -146,21 +149,22 @@ int main() {
 
     std::cout << "Copied matrices to device" << std::endl;
 
-    unsigned long mem_size = 200000; // need to launch two blocks if possible.
+    unsigned long mem_size = 226000; // need to launch two blocks if possible.
     
-    cudaFuncSetAttribute(prototype::pc<matmul_template>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
-    dim3 grid(M / (matmul_template::c_tile::rows*prototype::num_consumer_warpgroups<matmul_template>), N / matmul_template::c_tile::cols); // rows, cols
-    dim3 block(prototype::num_threads<matmul_template>);
+    dim3 grid(M / (mmt::c_tile::rows*prototype::num_consumer_warpgroups<mmt>), N / mmt::c_tile::cols); // rows, cols
+    dim3 block(prototype::num_threads<mmt>);
 
     // Start timing
     cudaDeviceSynchronize();
-    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/matmul_template::a_tile::cols << " reduction block dimension\n";
+    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/mmt::a_tile::cols << " reduction block dimension\n";
+    std::cout << "Kernel has " << mmt::INPUT_PIPE_STAGES << " input pipeline stages and " << mmt::OUTPUT_PIPE_STAGES << " output pipeline stages\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = 100;
     for(int i = 0; i < ITERS; i++) {
-        prototype::pc<matmul_template><<<grid, block, mem_size>>>(globals);
+        prototype::pc<mmt><<<grid, block, mem_size>>>(globals);
     }
     cudaDeviceSynchronize();
 
