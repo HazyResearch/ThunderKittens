@@ -19,11 +19,11 @@ template<int N> __device__ static inline void init_bias(rt_fl<1,N> &acc, const s
 }
 __device__ static inline float epilogue(float f) {
     // linear
-    return f;
+    // return f;
     // approximate GeLU
     // return f * 0.5f * (1.0f + tanh(f * 0.79788456f * (1 + f * f *0.044715f)));
     // ReLU
-    // return f > 0.0f ? f : 0.0f;
+    return f > 0.0f ? f : 0.0f;
 }
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
 struct linear_template {
@@ -84,20 +84,17 @@ struct linear_template {
             warpgroup::mma_AB(s.acc, b.w[warpgroup::groupid()], b.x);
             warpgroup::mma_async_wait();
             arrive(inputs_finished);
-            if(iter == s.n_blocks-1) { // put the epilogue before the global consumer synchronization, which marginally improves pipeline utilization
-                #pragma unroll
-                for(int i = 0; i < y_tile::width; i++) {
-                    #pragma unroll
-                    for(int j = 0; j < 4; j++) {
-                        s.acc.tiles[0][i].data[j].x = epilogue(s.acc.tiles[0][i].data[j].x);
-                        s.acc.tiles[0][i].data[j].y = epilogue(s.acc.tiles[0][i].data[j].y);
-                    }
-                }
-                return false;
-            }
-            else return true;
+            return iter < s.n_blocks-1;
         }
         __device__ static void finish(state &s, finish_block &f, scratch_block &scratch, globals &g, int _) {
+            #pragma unroll
+            for(int i = 0; i < y_tile::width; i++) {
+                #pragma unroll
+                for(int j = 0; j < 4; j++) {
+                    s.acc.tiles[0][i].data[j].x = epilogue(s.acc.tiles[0][i].data[j].x);
+                    s.acc.tiles[0][i].data[j].y = epilogue(s.acc.tiles[0][i].data[j].y);
+                }
+            }
             warpgroup::store(f.y[warpgroup::groupid()], s.acc);
             warpgroup::sync();
             if(warpgroup::warpid() == 0) {
@@ -122,6 +119,7 @@ void cpu_gemm(float* a, float* b, float *bias, float* c, int M, int N, int K) {
                 sum += a[i * K + k] * b[k * N + j];
             }
             c[i * N + j] = sum + bias[j];
+            if(c[i * N + j] < 0.0f) c[i * N + j] = 0.0f;
         }
     }
 }
