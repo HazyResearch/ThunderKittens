@@ -9,6 +9,7 @@
 
 #include "../../common/common.cuh"
 #include "rt_layout.cuh"
+#include "rv_layout.cuh"
 
 namespace kittens {
 
@@ -64,8 +65,8 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<dtype>::num(); // 4
     static constexpr int registers_per_thread = packed_per_thread * sizeof(dtype) / 4; // 4 or 8, registers are 32-bit words
 
-    static constexpr int col_vec_pack = layout::is_row ? 1 : 2; // for holding row reductions
-    static constexpr int row_vec_pack = layout::is_row ? 2 : 1; // for holding column reductions
+    using row_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::align, ducks::rv_layout::ortho>; // for holding column reductions
+    using col_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::ortho, ducks::rv_layout::align>; // for holding row reductions
 
     dtype data[packed_per_thread]; ///< The actual storage for the base tile
 };

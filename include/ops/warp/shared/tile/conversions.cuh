@@ -48,12 +48,14 @@ __device__ static inline void copy(st<T, _height, _width> &dst, const st<U, _hei
 *
 * @note The subtile {height, width} must evenly divide the tile {height, width}.
 */
-template<int subtile_height, int subtile_width, ducks::st::all ST>
-__device__ inline typename ST::subtile<subtile_height, subtile_width> subtile_inplace(ST &src, int row_idx, int col_idx) {
-    static_assert(ST::height % subtile_height == 0);
-    static_assert(ST::width % subtile_width == 0);
-    return typename ST::subtile<subtile_height, subtile_width>(
-        &src[0], subtile_height*16*row_idx, subtile_width*16*col_idx
+template<int subtile_rows, int subtile_cols, ducks::st::all ST>
+__device__ inline typename ST::subtile<subtile_rows, subtile_cols> subtile_inplace(ST &src, int row_idx, int col_idx) {
+    static_assert(subtile_rows % TILE_DIM == 0);
+    static_assert(subtile_cols % TILE_DIM == 0);
+    static_assert(ST::height % (subtile_rows/TILE_DIM) == 0);
+    static_assert(ST::width % (subtile_cols/TILE_DIM) == 0);
+    return typename ST::subtile<subtile_rows, subtile_cols>(
+        &src[0], subtile_rows*row_idx, subtile_cols*col_idx
     );
 }
 

@@ -33,7 +33,7 @@ __device__ static inline void reduce(
         const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
     using T = base_types::packing<typename RV::dtype>::unpacked_type;
     int laneid = kittens::laneid();
-    if constexpr (RV::inner_dim == 1) {
+    if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         T accum = op::template op<T>(src[0][0].x, src[0][0].y);
         #pragma unroll
         for(int i = 1; i < src.outer_dim; i++) {
@@ -49,7 +49,7 @@ __device__ static inline void reduce(
         // final result has now been achieved (incorporating src_accum if necessary), finally broadcast back to all threads.
         dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0);
     }
-    else if constexpr (RV::inner_dim == 2) {
+    else if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         T accum = op::template op<T>(src[0][0].x, src[0][0].y);
         accum = op::template op<T>(accum,       src[0][1].x);
         accum = op::template op<T>(accum,       src[0][1].y);
@@ -69,8 +69,21 @@ __device__ static inline void reduce(
         // final result has now been achieved (incorporating src_accum if necessary), finally broadcast back to all threads from lane 0
         dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0);
     }
-    else {
-        static_assert(RV::inner_dim==1 || RV::inner_dim==2, "RV's can only have an inner dimension of 1 or 2!");
+    else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
+        T accum = src[0][0];
+        #pragma unroll
+        for(int i = 1; i < src.outer_dim; i++) {
+            if (i < src.outer_dim-1 || i*TILE_DIM*2 + laneid < src.length) {
+                accum = op::template op<T>(accum, src[i][0]);
+            }
+        }
+        if(src.length > 16) accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 8));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 4));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 2));
+        accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 1));
+        if constexpr (!reset) accum = op::template op<T>(accum, src_accum);
+        dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0);
     }
 }
 

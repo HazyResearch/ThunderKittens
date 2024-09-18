@@ -135,6 +135,26 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 
 /* ----------  SHARED MEMORY UTILS  ---------- */
 
+// namespace ducks {
+// namespace sb {
+// struct identifier {};
+// }
+// }
+
+// template<typename Args...>
+// struct sb {
+//     using identifier = ducks::sb::identifier;
+//     Args... args;
+// };
+
+// namespace ducks {
+// namespace sb {
+// template<typename T> concept all = requires {
+//     typename T::identifier;
+// } && std::is_same_v<T::identifier, identifier>;
+// }
+// }
+
 // Joyously stolen from https://github.com/NVIDIA/cutlass/blob/5c447dd84f8ae0e1d48ff9a2eae26ce8c4958101/include/cute/container/alignment.hpp#L51
 #if defined(__CUDACC__)
 #define KITTENS_ALIGN_AS(n) __align__(n)
@@ -202,6 +222,7 @@ struct shared_allocator {
         */
         template<typename A, size_t... dims> 
         __device__ inline variadic_array_t<A, dims...>& allocate() {
+            // static_assert(sizeof(A) % default_alignment == 0, "Type is not aligned properly for array allocation");
             align_ptr<default_alignment>();
             using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);
@@ -217,6 +238,7 @@ struct shared_allocator {
         */
         template<int alignment, typename A, size_t... dims> 
         __device__ inline variadic_array_t<A, dims...>& allocate() {
+            // static_assert(sizeof(A) % alignment == 0, "Type is not aligned properly for array allocation");
             align_ptr<alignment>();
             using at = variadic_array_t<A, dims...>;
             at*p = reinterpret_cast<at*>(ptr);

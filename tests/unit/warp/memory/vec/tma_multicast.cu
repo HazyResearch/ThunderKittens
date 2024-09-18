@@ -21,7 +21,7 @@ struct test_load_multicast { // load with TMA, write out normally
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         int rank = blockIdx.x % 4;
         
         __shared__ kittens::barrier smem_barrier; 
@@ -63,7 +63,7 @@ struct tmamulti_wrapper_1d {
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
-            using GL = typename kittens::gl<dtype, 1, 1, 4, S*16, kittens::sv<dtype, S>>;
+            using GL = typename kittens::gl<dtype, 1, 1, 4, S*16, kittens::sv<dtype, 16*S>>;
             GL input(d_i, nullptr, nullptr, nullptr, nullptr);
             GL output(d_o, nullptr, nullptr, nullptr, nullptr);
             // run kernel

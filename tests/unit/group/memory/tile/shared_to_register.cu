@@ -17,10 +17,10 @@ struct group_shared_reg_load_store {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         G::load(shared_tile, input, {});
         __syncthreads();
-        kittens::rt<dtype, H/NW, W, RL> reg_tile;
+        kittens::rt<dtype, 16*H/NW, 16*W, RL> reg_tile;
         G::load(reg_tile, shared_tile);
         __syncthreads();
         G::store(shared_tile, reg_tile);

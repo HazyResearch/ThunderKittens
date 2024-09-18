@@ -16,7 +16,7 @@ struct test_load { // load with TMA, write out normally
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         
         __shared__ kittens::barrier smem_barrier; 
         kittens::init_barrier(smem_barrier, 0, 1);
@@ -47,7 +47,7 @@ struct test_store { // load normally, store with TMA
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols/shared_vec.length; d++) {
                 kittens::load(shared_vec, input, {a, b, c, d});
@@ -77,7 +77,7 @@ struct test_store_add_reduce {
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols/shared_vec.length; d++) {
                 kittens::load(shared_vec, input, {a, b, c, d});
@@ -108,7 +108,7 @@ struct test_store_min_reduce {
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols/shared_vec.length; d++) {
                 kittens::load(shared_vec, input, {a, b, c, d});
@@ -137,7 +137,7 @@ struct test_store_max_reduce {
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols/shared_vec.length; d++) {
                 kittens::load(shared_vec, input, {a, b, c, d});
@@ -168,7 +168,7 @@ struct tma_wrapper_1d {
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
-            using GL = typename kittens::gl<dtype, -1, -1, R, C*S*16, kittens::sv<dtype, S>>;
+            using GL = typename kittens::gl<dtype, -1, -1, R, C*S*16, kittens::sv<dtype, 16*S>>;
             GL input(d_i, B, D, nullptr, nullptr);
             GL output(d_o, B, D, nullptr, nullptr);
             // run kernel

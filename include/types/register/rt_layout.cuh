@@ -19,11 +19,11 @@ namespace rt_layout {
 /**
  * @brief A dummy type used to identify a row-major layout for a register tile.
  */
-struct row { static constexpr bool is_row=true;  }; // for most matrices
+struct row {}; // for most matrices
 /**
  * @brief A dummy type used to identify a col-major layout for a register tile.
  */
-struct col { static constexpr bool is_row=false; }; // for the B-matrix of MMA ops.
+struct col {}; // for the B-matrix of MMA ops.
 
 /**
  * @brief A concept to check if a type is a register tile layout.
@@ -37,6 +37,6 @@ concept all = std::is_same_v<T, row> || std::is_same_v<T, col>;
 template<all L> struct transpose      { using type = col; };
 template<>      struct transpose<col> { using type = row; };
 
-} // namespace ducks::rt_layout::all
+} // namespace rt_layout
 } // namespace ducks
 } // namespace kittens

@@ -21,8 +21,8 @@ struct test_dsmem { // load with dsmem, write out normally
     __device__ static void device_func(const GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> (&src_tile) = al.allocate<kittens::st<dtype, H, W>>();
-        kittens::st<dtype, H, W> (&dst_tile) = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> (&src_tile) = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
+        kittens::st<dtype, 16*H, 16*W> (&dst_tile) = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         
         kittens::load(src_tile, input, kittens::index{0, (int)blockIdx.x, 0, 0});
 

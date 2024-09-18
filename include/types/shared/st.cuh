@@ -44,10 +44,10 @@ struct st_subtile;
  * @brief Shared memory tile structure for various data types and layouts.
  *
  * @tparam T The data type of the elements in the tile. Not packed!
- * @tparam _height The height of the tile in units of 16-element subtiles.
- * @tparam _width The width of the tile in units of 16-element subtiles.
+ * @tparam _rows The height of the tile.
+ * @tparam _cols The width of the tile.
  */
-template<typename _T, int _height, int _width>
+template<typename _T, int _rows, int _cols>
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
@@ -55,16 +55,18 @@ struct KITTENS_DEFAULT_ALIGN st {
     using dtype = T; ///< Data type of the elements in the tile.
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
-    static constexpr int underlying_height        = _height;
-    static constexpr int underlying_width         = _width;
-    static constexpr int underlying_rows          = underlying_height * kittens::TILE_DIM;
-    static constexpr int underlying_cols          = underlying_width  * kittens::TILE_DIM;
+    static constexpr int underlying_rows          = _rows;
+    static constexpr int underlying_cols          = _cols;
+    static constexpr int underlying_height        = _rows / kittens::TILE_DIM;
+    static constexpr int underlying_width         = _cols / kittens::TILE_DIM;
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
-    static constexpr int height              = _height; ///< Height of the tile in terms of 16-element subtiles.
-    static constexpr int width               = _width; ///< Width of the tile in terms of 16-element subtiles.
-    static constexpr int rows                = height * kittens::TILE_DIM; ///< Total number of rows in the tile.
-    static constexpr int cols                = width  * kittens::TILE_DIM; ///< Total number of cols in the tile.
+    static constexpr int rows                = _rows; ///< Total number of rows in the tile.
+    static_assert(rows % TILE_DIM == 0, "Rows must be divisible by the tile dimension");
+    static constexpr int cols                = _cols; ///< Total number of cols in the tile.
+    static_assert(cols % TILE_DIM == 0, "Cols must be divisible by the tile dimension");
+    static constexpr int height              = _rows / kittens::TILE_DIM; ///< Height of the tile in terms of 16-element subtiles.
+    static constexpr int width               = _cols / kittens::TILE_DIM; ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
@@ -110,10 +112,10 @@ struct KITTENS_DEFAULT_ALIGN st {
     }
 
     // vector types
-    using col_vec = sv<dtype, height>; ///< Column vector type for this tile
-    using row_vec = sv<dtype, width>; ///< Row vector type for this tile
-    template<int subtile_height, int subtile_width> using subtile = st_subtile<
-        dtype, height, width, subtile_height, subtile_width
+    using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
+    using row_vec = sv<dtype, cols>; ///< Row vector type for this tile
+    template<int subtile_rows, int subtile_cols> using subtile = st_subtile<
+        dtype, rows, cols, subtile_rows, subtile_cols
     >; ///< A templated subtile type wrapper for this tile.
 };
 
@@ -130,10 +132,10 @@ struct KITTENS_DEFAULT_ALIGN st {
  */
 template<
     typename _T,
-    int _underlying_height,
-    int _underlying_width,
-    int _subtile_height,
-    int _subtile_width
+    int _underlying_rows,
+    int _underlying_cols,
+    int _subtile_rows,
+    int _subtile_cols
 >
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
@@ -141,16 +143,20 @@ struct st_subtile {
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
 
-    static constexpr int underlying_height        = _underlying_height;
-    static constexpr int underlying_width         = _underlying_width;
-    static constexpr int underlying_rows          = underlying_height * kittens::TILE_DIM;
-    static constexpr int underlying_cols          = underlying_width  * kittens::TILE_DIM;
+    static constexpr int underlying_rows          = _underlying_rows;
+    static_assert(underlying_rows % TILE_DIM == 0, "Underlying rows must be divisible by the tile dimension");
+    static constexpr int underlying_cols          = _underlying_cols;
+    static_assert(underlying_cols % TILE_DIM == 0, "Underlying cols must be divisible by the tile dimension");
+    static constexpr int underlying_height        = underlying_rows / kittens::TILE_DIM;
+    static constexpr int underlying_width         = underlying_cols / kittens::TILE_DIM;
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
-    static constexpr int height              = _subtile_height;
-    static constexpr int width               = _subtile_width;
-    static constexpr int rows                = height * kittens::TILE_DIM;
-    static constexpr int cols                = width  * kittens::TILE_DIM;
+    static constexpr int rows                = _subtile_rows;
+    static_assert(rows % TILE_DIM == 0, "Rows must be divisible by the tile dimension");
+    static constexpr int cols                = _subtile_cols;
+    static_assert(cols % TILE_DIM == 0, "Cols must be divisible by the tile dimension");
+    static constexpr int height              = rows / kittens::TILE_DIM;
+    static constexpr int width               = cols / kittens::TILE_DIM;
     static constexpr int num_elements        = rows * cols;
 
     static constexpr int swizzle_bytes = (
@@ -226,42 +232,5 @@ template<typename T> concept all = requires {
 template<int _height, int _width> using st_bf = st<bf16, _height, _width>;
 template<int _height, int _width> using st_hf = st<half, _height, _width>;
 template<int _height, int _width> using st_fl = st<float, _height, _width>;
-
-
-using st_bf_1x1 = st_bf<1, 1>;
-using st_bf_1x2 = st_bf<1, 2>;
-using st_bf_1x4 = st_bf<1, 4>;
-using st_bf_1x8 = st_bf<1, 8>;
-using st_bf_2x1 = st_bf<2, 1>;
-using st_bf_2x2 = st_bf<2, 2>;
-using st_bf_2x4 = st_bf<2, 4>;
-using st_bf_4x1 = st_bf<4, 1>;
-using st_bf_4x2 = st_bf<4, 2>;
-using st_bf_4x4 = st_bf<4, 4>;
-using st_bf_8x1 = st_bf<8, 1>;
-
-using st_hf_1x1 = st_hf<1, 1>;
-using st_hf_1x2 = st_hf<1, 2>;
-using st_hf_1x4 = st_hf<1, 4>;
-using st_hf_1x8 = st_hf<1, 8>;
-using st_hf_2x1 = st_hf<2, 1>;
-using st_hf_2x2 = st_hf<2, 2>;
-using st_hf_2x4 = st_hf<2, 4>;
-using st_hf_4x1 = st_hf<4, 1>;
-using st_hf_4x2 = st_hf<4, 2>;
-using st_hf_4x4 = st_hf<4, 4>;
-using st_hf_8x1 = st_hf<8, 1>;
-
-using st_fl_1x1 = st_fl<1, 1>;
-using st_fl_1x2 = st_fl<1, 2>;
-using st_fl_1x4 = st_fl<1, 4>;
-using st_fl_1x8 = st_fl<1, 8>;
-using st_fl_2x1 = st_fl<2, 1>;
-using st_fl_2x2 = st_fl<2, 2>;
-using st_fl_2x4 = st_fl<2, 4>;
-using st_fl_4x1 = st_fl<4, 1>;
-using st_fl_4x2 = st_fl<4, 2>;
-using st_fl_4x4 = st_fl<4, 4>;
-using st_fl_8x1 = st_fl<8, 1>;
 
 }

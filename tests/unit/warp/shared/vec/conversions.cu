@@ -15,8 +15,8 @@ struct shared_vec_convert {
     }
     template<int S, int NW, gl_t GL>
     __device__ static void device_func(const GL &input, GL &output) {
-        __shared__ kittens::col_vec<kittens::st<dtype, S, S>> vec1;
-        __shared__ kittens::col_vec<kittens::st<dtype, S, S>> vec2;
+        __shared__ kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> vec1;
+        __shared__ kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> vec2;
         kittens::load(vec1, input, {});
         kittens::copy(vec2, vec1);
         kittens::store(output, vec2, {});

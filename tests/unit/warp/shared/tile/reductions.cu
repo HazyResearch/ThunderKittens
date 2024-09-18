@@ -59,7 +59,7 @@ struct normalize_row {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, {});
         kittens::row_sum(accum, shared_tile);
@@ -126,7 +126,7 @@ struct normalize_col {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, {});
         kittens::col_sum(accum, shared_tile);
@@ -190,7 +190,7 @@ struct broadcast_row {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, {});
         kittens::mul(shared_tile, shared_tile, kittens::base_types::convertor<dtype, float>::convert(0.125f));
@@ -254,7 +254,7 @@ struct broadcast_col {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         kittens::load(shared_tile, input, {});
         kittens::mul(shared_tile, shared_tile, kittens::base_types::convertor<dtype, float>::convert(0.125f));

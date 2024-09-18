@@ -14,7 +14,7 @@ struct vec_load_store {
     }
     template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<NW>;
-        kittens::col_vec<kittens::rt<dtype, S, S, L>> reg_vec;
+        kittens::col_vec<kittens::rt<dtype, 16*S, 16*S, L>> reg_vec;
         G::load(reg_vec, input, {});
         G::store(output, reg_vec, {});
     }

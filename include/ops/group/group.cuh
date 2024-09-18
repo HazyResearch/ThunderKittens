@@ -59,4 +59,6 @@ template<int n_reg> __device__ static inline void decrease_registers() {
 
 };
 
+using warpgroup = group<4>; // special scope commonly used by SM_90 and later.
+
 }

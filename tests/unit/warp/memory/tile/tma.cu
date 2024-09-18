@@ -16,13 +16,13 @@ struct test_load { // load with TMA, write out normally
     __device__ static void device_func(GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
-        kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>(); // assuming compile-time known dimensions
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>(); // assuming compile-time known dimensions
         
         __shared__ kittens::barrier smem_barrier; 
         kittens::init_barrier(smem_barrier, 0, 1);
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
-            kittens::tma::expect_bytes(smem_barrier, kittens::size_bytes<kittens::st<T, H, W>> * 2 * 2);
+            kittens::tma::expect_bytes(smem_barrier, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::tma::load_async(shared_tile[i][j], input, {a, b, i, j}, smem_barrier);
             }
@@ -48,7 +48,7 @@ struct test_store { // load normally, store with TMA
     __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
-        kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -80,7 +80,7 @@ struct test_store_add_reduce {
     __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
-        kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -113,7 +113,7 @@ struct test_store_min_reduce {
     __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -146,7 +146,7 @@ struct test_store_max_reduce {
     __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
-        kittens::st<T, H, W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, H, W>, 2, 2>();
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -184,7 +184,7 @@ struct tma_wrapper_2d {
             initialize<dtype, initializers::RANDOM>(&d_i, &d_o, i_ref, o_ref); 
             
             // make descriptors
-            using GL = typename kittens::gl<dtype, -1, -1, R*H*16, C*W*16, kittens::st<dtype, H, W>>;
+            using GL = typename kittens::gl<dtype, -1, -1, R*H*16, C*W*16, kittens::st<dtype, 16*H, 16*W>>;
             GL input(d_i, B, D, nullptr, nullptr);
             GL output(d_o, B, D, nullptr, nullptr);
             // run kernel

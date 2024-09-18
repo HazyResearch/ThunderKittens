@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "rv_layout.cuh"
 #include "rt_layout.cuh"
 #include "rt_base.cuh"
 #include "rv.cuh"

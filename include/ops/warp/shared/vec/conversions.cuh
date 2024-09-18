@@ -39,17 +39,17 @@ __device__ static inline void copy(SV1 &dst, const SV2 &src) {
 /**
 * @brief Returns a reference to a subvec of a given shared vector
 *
-* @tparam subvec_tiles The length, in subtiles, of the subvec.
+* @tparam subvec_length The length, in elements, of the subvec.
 * @tparam SV The type of the input vector, which must satisfy the ducks::sv::all concept.
 * @param src The input tile.
-* @param vec_idx The index of the subtile, in units of subvec_tiles*16 elements.
+* @param vec_idx The index of the subvec, in units of subvec_length elements.
 * @return A reference to the subvec.
 *
 * @note The subvec length must evenly divide the vector length.
 */
-template<int subvec_tiles, ducks::sv::all SV>
-__device__ inline typename SV::subvec<subvec_tiles> &subvec_inplace(SV &src, int vec_idx) {
-    return *(typename SV::subvec<subvec_tiles>*)(&src[vec_idx*kittens::TILE_DIM*subvec_tiles]);
+template<int subvec_length, ducks::sv::all SV>
+__device__ inline typename SV::subvec<subvec_length> &subvec_inplace(SV &src, int vec_idx) {
+    return *(typename SV::subvec<subvec_length>*)(&src[vec_idx*kittens::TILE_DIM*subvec_length]);
 }
 
 }

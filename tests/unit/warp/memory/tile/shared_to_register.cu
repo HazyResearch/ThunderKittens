@@ -16,10 +16,10 @@ struct sharedreg_load_store {
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all RL> __device__ static void device_func(const GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<T, H, W> &shared_tile = al.allocate<kittens::st<T, H, W>>();
+        kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
         kittens::load(shared_tile, input, {0, 0, 0, 0});
         __syncthreads();
-        kittens::rt_bf<H, W, RL> reg_tile;
+        kittens::rt_bf<16*H, 16*W, RL> reg_tile;
         kittens::load(reg_tile, shared_tile);
         __syncthreads();
         kittens::store(shared_tile, reg_tile);

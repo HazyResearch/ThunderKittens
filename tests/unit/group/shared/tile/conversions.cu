@@ -12,8 +12,8 @@ struct test_shared_copy {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &t1 = al.allocate<kittens::st_bf<H, W>>();
-        kittens::st_bf<H, W> &t2 = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &t1 = al.allocate<kittens::st_bf<16*H, 16*W>>();
+        kittens::st_bf<16*H, 16*W> &t2 = al.allocate<kittens::st_bf<16*H, 16*W>>();
         G::load(t2, input, {});
         G::sync();
         G::copy(t1, t2);

@@ -1,0 +1,29 @@
+warp/register/tile/conversions.cu(102): error: expected a type specifier
+          kittens::rt<16*H, 16*W> reg_tile;
+                      ^
+
+warp/register/tile/conversions.cu(102): error: too few arguments for class template "kittens::rt"
+          kittens::rt<16*H, 16*W> reg_tile;
+                                ^
+
+warp/register/tile/conversions.cu(102): error: expected a declaration
+          kittens::rt<16*H, 16*W> reg_tile;
+          ^
+
+warp/register/tile/conversions.cu(103): error: identifier "reg_tile" is undefined
+          kittens::load(reg_tile, input, {});
+                        ^
+
+warp/register/tile/conversions.cu(121): error: expected a type specifier
+          kittens::rt<16*H, 16*W, L> reg_tile;
+                      ^
+
+warp/register/tile/conversions.cu(121): error: type name is not allowed
+          kittens::rt<16*H, 16*W, L> reg_tile;
+                                  ^
+
+6 errors detected in the compilation of "warp/register/tile/conversions.cu".
+make: *** [Makefile:64: build/./warp/register/tile/conversions.o] Error 255
+make: *** Waiting for unfinished jobs....
+nvcc: Interrupt
+make: *** [Makefile:63: build/./warp/register/tile/mma.o] Error 255

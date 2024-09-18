@@ -16,9 +16,9 @@ struct normalize_row {
         }
     }
     template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
-        kittens::rt_fl<H, W, L> reg_tile;
+        kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
-        typename kittens::rt_fl<H, W, L>::col_vec accum;
+        typename kittens::rt_fl<16*H, 16*W, L>::col_vec accum;
         kittens::row_sum(accum, reg_tile);
         kittens::div_row(reg_tile, reg_tile, accum);
         kittens::store(output, reg_tile, {});
@@ -38,9 +38,9 @@ struct normalize_col {
         }
     }
     template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
-        kittens::rt_fl<H, W, L> reg_tile;
+        kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
-        typename kittens::rt_fl<H, W, L>::row_vec accum;
+        typename kittens::rt_fl<16*H, 16*W, L>::row_vec accum;
         kittens::col_sum(accum, reg_tile);
         kittens::div_col(reg_tile, reg_tile, accum);
         kittens::store(output, reg_tile, {});
@@ -60,9 +60,9 @@ struct broadcast_row {
         }
     }
     template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
-        kittens::rt_fl<H, W, L> reg_tile;
+        kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
-        typename kittens::rt_fl<H, W, L>::col_vec accum;
+        typename kittens::rt_fl<16*H, 16*W, L>::col_vec accum;
         kittens::row_sum(accum, reg_tile);
         kittens::broadcast_row(reg_tile, accum);
         kittens::store(output, reg_tile, {});
@@ -82,9 +82,9 @@ struct broadcast_col {
         }
     }
     template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
-        kittens::rt_fl<H, W, L> reg_tile;
+        kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
-        typename kittens::rt_fl<H, W, L>::row_vec accum;
+        typename kittens::rt_fl<16*H, 16*W, L>::row_vec accum;
         kittens::col_sum(accum, reg_tile);
         kittens::broadcast_col(reg_tile, accum);
         kittens::store(output, reg_tile, {});

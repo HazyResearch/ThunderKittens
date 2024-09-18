@@ -17,7 +17,7 @@ struct group_shared_load_store {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         G::load(shared_tile, input, {});
         G::store(output, shared_tile, {});
     }
@@ -39,7 +39,7 @@ struct group_shared_load_store_async {
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         __syncthreads();
         
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
 
         G::load_async(shared_tile, input, {});
         G::load_async_wait();

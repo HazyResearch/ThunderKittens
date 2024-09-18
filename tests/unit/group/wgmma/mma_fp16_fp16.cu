@@ -24,9 +24,9 @@ struct test_mma_AB_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<H, K> &a = al.allocate<kittens::st_hf<H, K>>();
-        kittens::st_hf<K, W> &b = al.allocate<kittens::st_hf<K, W>>();
-        kittens::rt_hf<1, W> c;
+        kittens::st_hf<16*H, 16*K> &a = al.allocate<kittens::st_hf<16*H, 16*K>>();
+        kittens::st_hf<16*K, 16*W> &b = al.allocate<kittens::st_hf<16*K, 16*W>>();
+        kittens::rt_hf<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();
@@ -60,9 +60,9 @@ struct test_mma_ABt_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<H, K> &a = al.allocate<kittens::st_hf<H, K>>();
-        kittens::st_hf<W, K> &b = al.allocate<kittens::st_hf<W, K>>();
-        kittens::rt_hf<1, W> c;
+        kittens::st_hf<16*H, 16*K> &a = al.allocate<kittens::st_hf<16*H, 16*K>>();
+        kittens::st_hf<16*W, 16*K> &b = al.allocate<kittens::st_hf<16*W, 16*K>>();
+        kittens::rt_hf<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();
@@ -96,9 +96,9 @@ struct test_mma_AtB_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<K, H> &a = al.allocate<kittens::st_hf<K, H>>();
-        kittens::st_hf<K, W> &b = al.allocate<kittens::st_hf<K, W>>();
-        kittens::rt_hf<1, W> c;
+        kittens::st_hf<16*K, 16*H> &a = al.allocate<kittens::st_hf<16*K, 16*H>>();
+        kittens::st_hf<16*K, 16*W> &b = al.allocate<kittens::st_hf<16*K, 16*W>>();
+        kittens::rt_hf<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();
@@ -132,9 +132,9 @@ struct test_mma_AtBt_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<K, H> &a = al.allocate<kittens::st_hf<K, H>>();
-        kittens::st_hf<W, K> &b = al.allocate<kittens::st_hf<W, K>>();
-        kittens::rt_hf<1, W> c;
+        kittens::st_hf<16*K, 16*H> &a = al.allocate<kittens::st_hf<16*K, 16*H>>();
+        kittens::st_hf<16*W, 16*K> &b = al.allocate<kittens::st_hf<16*W, 16*K>>();
+        kittens::rt_hf<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();
@@ -170,10 +170,10 @@ struct reg_test_mma_AB_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<H, K> &a = al.allocate<kittens::st_hf<H, K>>();
-        kittens::st_hf<K, W> &b = al.allocate<kittens::st_hf<K, W>>();
-        kittens::rt_hf<H/4, K> a_reg;
-        kittens::rt_hf<H/4, W> c;
+        kittens::st_hf<16*H, 16*K> &a = al.allocate<kittens::st_hf<16*H, 16*K>>();
+        kittens::st_hf<16*K, 16*W> &b = al.allocate<kittens::st_hf<16*K, 16*W>>();
+        kittens::rt_hf<4*H, 16*K> a_reg;
+        kittens::rt_hf<4*H, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();
@@ -210,10 +210,10 @@ struct reg_test_mma_ABt_fp16_fp16 {
         constexpr int K = _K::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::st_hf<H, K> &a = al.allocate<kittens::st_hf<H, K>>();
-        kittens::st_hf<W, K> &b = al.allocate<kittens::st_hf<W, K>>();
-        kittens::rt_hf<H/4, K> a_reg;
-        kittens::rt_hf<H/4, W> c;
+        kittens::st_hf<16*H, 16*K> &a = al.allocate<kittens::st_hf<16*H, 16*K>>();
+        kittens::st_hf<16*W, 16*K> &b = al.allocate<kittens::st_hf<16*W, 16*K>>();
+        kittens::rt_hf<4*H, 16*K> a_reg;
+        kittens::rt_hf<4*H, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait();

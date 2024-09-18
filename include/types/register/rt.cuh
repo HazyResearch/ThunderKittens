@@ -51,7 +51,7 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename _T, int _height, int _width, ducks::rt_layout::all _layout=ducks::rt_layout::row>
+template<typename _T, int _rows, int _cols, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt {
     using identifier = ducks::rt::identifier; ///< Type identifier for the rt structure.
     using layout = _layout; ///< Layout of the matrix tile.
@@ -60,10 +60,12 @@ struct rt {
     using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
 
-    static constexpr int height              = _height; ///< Height in subtiles.
-    static constexpr int width               = _width; ///< Width in subtiles.
-    static constexpr int rows                = height  * rt_base<T, layout>::tile_size; ///< Total number of rows.
-    static constexpr int cols                = width   * rt_base<T, layout>::tile_size; ///< Total number of columns.
+    static constexpr int rows                = _rows; ///< Total number of rows.
+    static_assert(rows % rt_base<T, layout>::tile_size == 0, "Rows must be divisible by the tile size");
+    static constexpr int cols                = _cols; ///< Total number of columns.
+    static_assert(cols % rt_base<T, layout>::tile_size == 0, "Columns must be divisible by the tile size");
+    static constexpr int height              = rows / rt_base<T, layout>::tile_size; ///< Height in subtiles.
+    static constexpr int width               = cols / rt_base<T, layout>::tile_size; ///< Width in subtiles.
     static constexpr int tile_size           = rt_base<T, layout>::tile_size; ///< Size of the base tile.
     static constexpr int num_elements        = rt_base<T, layout>::num_elements        * width * height; ///< Total number of elements.
     static constexpr int elements_per_thread = rt_base<T, layout>::elements_per_thread * width * height; ///< Elements handled per thread.
@@ -72,8 +74,8 @@ struct rt {
 
     rt_base<T, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
 
-    using col_vec = rv<T, height, rt_base<T, layout>::col_vec_pack>; ///< A type representing a column vector for this tile.
-    using row_vec = rv<T, width , rt_base<T, layout>::row_vec_pack>; ///< A type representing a column vector for this tile.
+    using row_vec = rv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a column vector for this tile.
+    using col_vec = rv<T, rows, typename rt_base<T, layout>::col_vec_layout>; ///< A type representing a column vector for this tile.
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -119,75 +121,8 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 
 // layout and type wrappers
 
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16, _height, _width, layout>;
-template<int _height, int _width, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half, _height, _width, layout>;
-
-// layout, type, and size wrappers
-// sizes are chosen with the assumption that you aren't going to want to fit more than
-// 8 subtiles on a warp. (Could be wrong!)
-
-///  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x1 = rt_fl<1, 1, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x2 = rt_fl<1, 2, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x4 = rt_fl<1, 4, layout>;
-/// 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_1x8 = rt_fl<1, 8, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x1 = rt_fl<2, 1, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x2 = rt_fl<2, 2, layout>;
-/// 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_2x4 = rt_fl<2, 4, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x1 = rt_fl<4, 1, layout>;
-/// 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_4x2 = rt_fl<4, 2, layout>;
-/// 64 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl_8x1 = rt_fl<8, 1, layout>;
-
-///  4 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x1 = rt_bf<1, 1, layout>;
-///  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x2 = rt_bf<1, 2, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x4 = rt_bf<1, 4, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_1x8 = rt_bf<1, 8, layout>;
-///  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x1 = rt_bf<2, 1, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x2 = rt_bf<2, 2, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_2x4 = rt_bf<2, 4, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x1 = rt_bf<4, 1, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_4x2 = rt_bf<4, 2, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf_8x1 = rt_bf<8, 1, layout>;
-
-///  4 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x1 = rt_hf<1, 1, layout>;
-///  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x2 = rt_hf<1, 2, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x4 = rt_hf<1, 4, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_1x8 = rt_hf<1, 8, layout>;
-///  8 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x1 = rt_hf<2, 1, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x2 = rt_hf<2, 2, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_2x4 = rt_hf<2, 4, layout>;
-/// 16 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_4x1 = rt_hf<4, 1, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_4x2 = rt_hf<4, 2, layout>;
-/// 32 registers used
-template<ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf_8x1 = rt_hf<8, 1, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float, _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16,  _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half,  _r, _c, layout>;
 
 } // namespace kittens

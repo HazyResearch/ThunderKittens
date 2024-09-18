@@ -89,16 +89,16 @@ struct descriptor {
 };
 
 // templated wrapper for PTX
-template<typename T_D, typename T_AB, int width, int trans_a, int trans_b>
+template<typename T_D, typename T_AB, int cols, int trans_a, int trans_b>
 struct base {
     __device__ static inline void rt_st(
-        rt_fl<1, width, ducks::rt_layout::row> &dst,
-        const rt_bf<1, 1, ducks::rt_layout::row> & a_rt,
+        rt<T_D, 16, cols, ducks::rt_layout::row> &dst,
+        const rt<T_AB, 16, cols, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
         int scale_d = 1
     );
     __device__ static inline void st_st(
-        rt_fl<1, width, ducks::rt_layout::row> &dst,
+        rt<T_D, 16, cols, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
         int scale_d = 1
@@ -106,22 +106,22 @@ struct base {
 };
 
 // all the ptx's
-#include "4x1.impl"
-#include "4x2.impl"
-#include "4x3.impl"
-#include "4x4.impl"
-#include "4x5.impl"
-#include "4x6.impl"
-#include "4x7.impl"
-#include "4x8.impl"
-#include "4x9.impl"
-#include "4x10.impl"
-#include "4x11.impl"
-#include "4x12.impl"
-#include "4x13.impl"
-#include "4x14.impl"
-#include "4x15.impl"
-#include "4x16.impl"
+#include "64x16.impl"
+#include "64x32.impl"
+#include "64x48.impl"
+#include "64x64.impl"
+#include "64x80.impl"
+#include "64x96.impl"
+#include "64x112.impl"
+#include "64x128.impl"
+#include "64x144.impl"
+#include "64x160.impl"
+#include "64x176.impl"
+#include "64x192.impl"
+#include "64x208.impl"
+#include "64x224.impl"
+#include "64x240.impl"
+#include "64x256.impl"
 
 }
 namespace ducks {

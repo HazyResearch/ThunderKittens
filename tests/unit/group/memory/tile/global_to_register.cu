@@ -14,7 +14,7 @@ struct group_load_store {
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<NW>;
-        kittens::rt<dtype, H/NW, W, L> reg_tile;
+        kittens::rt<dtype, 16*H/NW, 16*W, L> reg_tile;
         G::load(reg_tile, input, {});
         G::store(output, reg_tile, {});
     }

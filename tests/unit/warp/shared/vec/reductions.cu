@@ -37,8 +37,8 @@ struct vec_norm {
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::col_vec<kittens::st<dtype, S, S>> &vec    = al.allocate<kittens::col_vec<kittens::st<dtype, S, S>>>();
-        kittens::col_vec<kittens::st<dtype, S, S>> &absvec = al.allocate<kittens::col_vec<kittens::st<dtype, S, S>>>();
+        kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &vec    = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
+        kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &absvec = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
         kittens::load(vec, input, {});
         kittens::abs(absvec, vec);
         dtype f = kittens::base_types::constants<dtype>::one();

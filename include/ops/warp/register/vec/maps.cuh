@@ -77,7 +77,7 @@ __device__ static inline void bin_op(T &dst, const T &src, const typename T::dty
  * @param src[in] The source vector for the operation.
  * @param param[in] The unpacked scalar parameter for the operation.
  */
-template<typename op, ducks::rv::all T>
+template<typename op, ducks::rv::tile_layout T>
 __device__ static inline void bin_op(T &dst, const T &src, const typename base_types::packing<typename T::dtype>::unpacked_type &param) {
     bin_op<op, T>(dst, src, base_types::packing<typename T::dtype>::pack(param));
 }

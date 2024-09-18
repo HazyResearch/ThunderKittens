@@ -104,8 +104,8 @@ __device__ inline rt_base<T2, typename ducks::rt_layout::transpose<layout>::type
  * @param tile[in,out] Reference to the register tile to be swapped in place.
  * @return A reference to the swapped register tile.
  */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt<T2, _height, _width, layout> &tile) {
+template<typename T2, int _rows, int _cols, ducks::rt_layout::all layout>
+__device__ static inline rt<T2, _rows, _cols, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt<T2, _rows, _cols, layout> &tile) {
     #pragma unroll
     for(int i = 0; i < tile.height; i++) {
         #pragma unroll
@@ -113,7 +113,7 @@ __device__ static inline rt<T2, _height, _width, typename ducks::rt_layout::tran
             swap_layout_inplace(tile.tiles[i][j]);
         }
     }
-    return *(rt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>*)(&tile);
+    return *(rt<T2, _rows, _cols, typename ducks::rt_layout::transpose<layout>::type>*)(&tile);
 }
 
 /* ----------  TRANSPOSE  ---------- */
@@ -149,13 +149,13 @@ __device__ inline void transpose(rt_base<T, layout> &dst, const rt_base<T, layou
  * @param dst[out] Reference to the register tile in which to store the transposed src.
  * @param src[in] Reference to the register tile to be transposed.
  */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void transpose_sep(rt<T2, _width, _height, layout> &dst, const rt<T2, _height, _width, layout> &src) {
+template<ducks::rt::all RT>
+__device__ static inline void transpose_sep(RT &dst, const rt<typename RT::T, RT::cols, RT::rows, typename RT::layout> &src) {
     #pragma unroll
-    for(int i = 0; i < _height; i++) {
+    for(int i = 0; i < RT::height; i++) {
         #pragma unroll
-        for(int j = 0; j < _width; j++) {
-            transpose(dst.tiles[j][i], src.tiles[i][j]);
+        for(int j = 0; j < RT::width; j++) {
+            transpose(dst.tiles[i][j], src.tiles[j][i]);
         }
     }
 }
@@ -183,11 +183,11 @@ __device__ inline rt_base<T2, layout>& transpose_inplace(rt_base<T2, layout> &sr
  * @param src[in] Reference to the register tile to be transposed.
  * @return A reference to the transposed register tile.
  */
-template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt<T2, _height, _width, layout>& transpose_inplace(rt<T2, _height, _width, layout> &tile) {
-    static_assert(_width == _height, "in-place register tile transpose is only allowed for square tiles.");
+template<typename T2, int _rows, int _cols, ducks::rt_layout::all layout>
+__device__ static inline rt<T2, _rows, _cols, layout>& transpose_inplace(rt<T2, _rows, _cols, layout> &tile) {
+    static_assert(_cols == _rows, "in-place register tile transpose is only allowed for square tiles.");
     #pragma unroll
-    for(int i = 0; i < _height; i++) {
+    for(int i = 0; i < tile.height; i++) {
         #pragma unroll
         for(int j = 0; j < i; j++) {
             rt_base<T2, layout> tmp;
@@ -314,11 +314,11 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
 *
 * @note The subtile height must evenly divide the tile height.
 */
-template<int subtile_height, ducks::rt::all RT>
-__device__ inline rt<typename RT::T, subtile_height, RT::width, typename RT::layout> &subtile_inplace(RT & src, int idx) {
-    static_assert(RT::height % subtile_height == 0, "subtile height should evenly divide tile height.");
-    return reinterpret_cast<rt<typename RT::T, subtile_height, RT::width, typename RT::layout>&>(
-        src.tiles[idx*subtile_height]
+template<int subtile_rows, ducks::rt::all RT>
+__device__ inline rt<typename RT::T, subtile_rows, RT::cols, typename RT::layout> &subtile_inplace(RT & src, int idx) {
+    static_assert(RT::height % (subtile_rows / TILE_DIM) == 0, "subtile height should evenly divide tile height.");
+    return reinterpret_cast<rt<typename RT::T, subtile_rows, RT::cols, typename RT::layout>&>(
+        src.tiles[idx*(subtile_rows / TILE_DIM)]
     );
 }
 

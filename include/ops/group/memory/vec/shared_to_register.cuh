@@ -18,8 +18,8 @@ __device__ inline static void load(RV &dst, const SV &_src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    static_assert(_src.tiles == dst.outer_dim*N_WARPS);// confirm size correct
-    auto &src = subvec_inplace<dst.outer_dim>(_src, warpid()); // pretend it's smaller and do warp-level load
+    static_assert(_src.length == dst.length*N_WARPS);// confirm size correct
+    auto &src = subvec_inplace<dst.length>(_src, warpid()); // pretend it's smaller and do warp-level load
 
     ::kittens::load(dst, src); // warp-level
 }
@@ -39,8 +39,8 @@ __device__ inline static void store(SV &_dst, const RV &src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    static_assert(_dst.tiles == src.outer_dim*N_WARPS);// confirm size correct
-    auto &dst = subvec_inplace<src.outer_dim>(_dst, warpid()); // pretend it's smaller and do warp-level load
+    static_assert(_dst.length == src.length*N_WARPS);// confirm size correct
+    auto &dst = subvec_inplace<src.length>(_dst, warpid()); // pretend it's smaller and do warp-level load
 
     ::kittens::store(dst, src); // warp-level
 }

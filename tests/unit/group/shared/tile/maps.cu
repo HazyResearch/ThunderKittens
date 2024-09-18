@@ -12,7 +12,7 @@ struct test_exp {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         G::load(shared_tile, input, {});
         G::sync();
         G::exp(shared_tile, shared_tile);

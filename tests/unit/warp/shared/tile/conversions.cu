@@ -17,8 +17,8 @@ struct test_swap_layout {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &t1 = al.allocate<kittens::st<dtype, H, W>>();
-        kittens::st<dtype, H, W> &t2 = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &t1 = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
+        kittens::st<dtype, 16*H, 16*W> &t2 = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         kittens::load(t2, input, {});
         kittens::copy(t1, t2);
         kittens::store(output, t1, {});
@@ -43,12 +43,12 @@ struct test_subtile {
         constexpr int ST_H = _ST_H::value, ST_W = _ST_W::value;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &t = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &t = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         kittens::load(t, input, {});
         for(int i = 0; i < H/ST_H; i++) {
             for(int j = 0; j < W/ST_W; j++) {
-                auto ref = kittens::subtile_inplace<ST_H, ST_W>(t, i, j);
-                kittens::rt_fl<ST_H, ST_W> reg;
+                auto ref = kittens::subtile_inplace<16*ST_H, 16*ST_W>(t, i, j);
+                kittens::rt_fl<16*ST_H, 16*ST_W> reg;
                 kittens::load(reg, ref);
                 kittens::mul(reg, reg, float(i));
                 kittens::add(reg, reg, float(j));

@@ -43,6 +43,20 @@ template<int S, int NW, kittens::ducks::rt_layout::all L1, kittens::ducks::rt_la
     else label += "_[rt_col_layout]";
     return label;
 }
+template<int S, int NW, kittens::ducks::rv_layout::all L> std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<S,NW>(test_id);
+    if constexpr (std::is_same_v<L, kittens::naive_l>) label += "_[rv_naive_layout]";
+    else if constexpr (std::is_same_v<L, kittens::ortho_l>) label += "_[rv_ortho_layout]";
+    else label += "_[rv_align_layout]";
+    return label;
+}
+template<int S, int NW, kittens::ducks::rv_layout::all L1, kittens::ducks::rv_layout::all L2> std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<S,NW,L1>(test_id);
+    if constexpr (std::is_same_v<L2, kittens::naive_l>) label += "_[rv_naive_layout]";
+    else if constexpr (std::is_same_v<L2, kittens::ortho_l>) label += "_[rv_ortho_layout]";
+    else label += "_[rv_align_layout]";
+    return label;
+}
 
 // 2D test names
 

@@ -9,7 +9,7 @@ struct test_exp {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = ::expf(i_ref[i]);
     }
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
-        kittens::rt_bf<H, W, L> reg_tile;
+        kittens::rt_bf<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         kittens::exp(reg_tile, reg_tile);
         kittens::store(output, reg_tile, {});

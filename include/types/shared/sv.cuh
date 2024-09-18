@@ -41,22 +41,23 @@ struct identifier {};
  * Unlike every other structure present in ThunderKittens, these have a simple
  * uniform layout which is just an array in memory. EZ!
  */
-template<typename _T, size_t _tiles>
+template<typename _T, size_t _length>
 struct KITTENS_DEFAULT_ALIGN sv {
     using identifier = ducks::sv::identifier;
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
 
-    static constexpr int tiles  = _tiles; ///< Length in subtiles.
-    static constexpr int length = tiles * kittens::TILE_DIM; ///< Length in elements.
+    static constexpr int length = _length; ///< Length in elements.
+    static_assert(length % TILE_DIM == 0, "Length must be divisible by the tile dimension");
+    static constexpr int tiles  = length / TILE_DIM; ///< Length in subtiles.
 
     dtype data[length]; ///< The actual shared vector data.
 
     __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
     __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
 
-    template<size_t sub_tiles> using subvec = sv<dtype, sub_tiles>; ///< A subvector which allows warpgroups and blocks to work cooperatively.
+    template<size_t sub_length> using subvec = sv<dtype, sub_length>; ///< A subvector which allows warpgroups and blocks to work cooperatively.
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -82,23 +83,8 @@ concept all = requires {
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // vector types
-template<size_t _tiles> using sv_bf = sv<bf16,  _tiles>;
-template<size_t _tiles> using sv_hf = sv<half,  _tiles>;
-template<size_t _tiles> using sv_fl = sv<float, _tiles>;
-
-using sv_bf_1 = sv<bf16,  1>;
-using sv_bf_2 = sv<bf16,  2>;
-using sv_bf_4 = sv<bf16,  4>;
-using sv_bf_8 = sv<bf16,  8>;
-
-using sv_hf_1 = sv<half,  1>;
-using sv_hf_2 = sv<half,  2>;
-using sv_hf_4 = sv<half,  4>;
-using sv_hf_8 = sv<half,  8>;
-
-using sv_fl_1 = sv<float, 1>;
-using sv_fl_2 = sv<float, 2>;
-using sv_fl_4 = sv<float, 4>;
-using sv_fl_8 = sv<float, 8>;
+template<size_t _length> using sv_bf = sv<bf16,  _length>;
+template<size_t _length> using sv_hf = sv<half,  _length>;
+template<size_t _length> using sv_fl = sv<float, _length>;
 
 } // namespace kittens

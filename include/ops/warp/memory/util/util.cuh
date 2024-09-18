@@ -163,7 +163,6 @@ __device__ static inline void arrive(barrier& bar, uint32_t count=1) {
     }
 }
 
-
 /**
 * @brief Waits for the requested barrier phase.
 *

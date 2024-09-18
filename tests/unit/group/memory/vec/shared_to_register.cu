@@ -16,8 +16,8 @@ struct vec_load_store {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::col_vec<kittens::st<dtype, S, S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, S, S>>>();
-        kittens::col_vec<kittens::rt<dtype, S/NW, S/NW, L>> reg_vec;
+        kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
+        kittens::col_vec<kittens::rt<dtype, 16*S/NW, 16*S/NW, L>> reg_vec;
         G::load(shared_vec, input, {});
         __syncthreads();
         G::load(reg_vec, shared_vec);

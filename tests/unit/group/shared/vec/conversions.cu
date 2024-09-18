@@ -10,8 +10,8 @@ struct vec_copy {
     }
     template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         using G = kittens::group<NW>;
-        __shared__ kittens::col_vec<kittens::st_bf<S, S>> vec1;
-        __shared__ kittens::col_vec<kittens::st_bf<S, S>> vec2;
+        __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec1;
+        __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec2;
         G::load(vec1, input, {});
         G::sync();
         G::copy(vec2, vec1);

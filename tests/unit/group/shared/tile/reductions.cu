@@ -23,7 +23,7 @@ struct group_normalize_row {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
         G::sync();
@@ -55,7 +55,7 @@ struct group_normalize_col {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
         G::sync();
@@ -87,7 +87,7 @@ struct group_broadcast_row {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
         G::sync();
@@ -119,7 +119,7 @@ struct group_broadcast_col {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st_bf<H, W> &shared_tile = al.allocate<kittens::st_bf<H, W>>();
+        kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
         G::sync();

@@ -9,7 +9,7 @@
 #include <type_traits>
 
 #include "../../common/common.cuh"
-#include "rt_layout.cuh"
+#include "rv_layout.cuh"
 
 namespace kittens {
 
@@ -45,18 +45,21 @@ struct identifier {};
  * the register layouts used by the tensor cores. ThunderKittens wants you working with tiles
  * where possible!
  */
-template<typename _T, size_t _outer_dim, size_t _inner_dim=1>
+template<typename _T, size_t _length, ducks::rv_layout::all _layout=ducks::rv_layout::naive>
 struct rv {
     using identifier = ducks::rv::identifier; ///< Type identifier for the rv structure.
     static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
+    using layout = _layout;
+    static constexpr bool is_naive = std::is_same_v<layout, ducks::rv_layout::naive>;
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
-    using dtype = T2; ///< Data type of the matrix elements
+    using dtype = std::conditional_t<is_naive, T, T2>; ///< Data type of the matrix elements
 
-    static constexpr int outer_dim = _outer_dim; ///< Length in subtiles.
-    static constexpr int inner_dim = _inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
-    static constexpr int tiles  = _outer_dim; ///< Length in subtiles, aliased for consistency with sv type
-    static constexpr int length = tiles * kittens::TILE_DIM; ///< Length in elements.
+    static constexpr int length = _length; ///< Length in elements.
+    static_assert(length % kittens::TILE_DIM == 0, "Length must be divisible by the tile dimension");
+    static constexpr int tiles  = _length / kittens::TILE_DIM; ///< Length in subtiles, aliased for consistency with sv type
+    static constexpr int inner_dim = layout::inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
+    static constexpr int outer_dim = is_naive ? (tiles+1)/2 : tiles; ///< Outer dim (also length in tiles)
 
     dtype data[outer_dim][inner_dim]; ///< The actual register vector data.
 
@@ -82,13 +85,16 @@ concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rv::identifier.
 
+template<typename T> concept naive_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::naive>;
+template<typename T> concept align_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::align>;
+template<typename T> concept ortho_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::ortho>;
+template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; // vector layouts for interacting with tiles.
+
 } // namespace rv
 } // namespace ducks
 
-
-
-// No rv_fl, rv_bf, rv_hf, etc, because we rv's are tricky enough that it's better to encourage initialization as row_vec<rt_bf<4,4>> / similar.
-
-
+template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_fl = rv<float, _l, layout>;
+template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_bf = rv<bf16,  _l, layout>;
+template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_hf = rv<half,  _l, layout>;
 
 } // namespace kittens

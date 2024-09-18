@@ -20,8 +20,8 @@ struct test_dsmem_vec { // load with dsmem, write out normally
     __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
-        kittens::row_vec<kittens::st<dtype, S, S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
-        kittens::row_vec<kittens::st<dtype, S, S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, S, S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
+        kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
 
         __shared__ kittens::barrier dsmem_barrier;
         kittens::load(src_vec, input, {(int)blockIdx.x, 0});

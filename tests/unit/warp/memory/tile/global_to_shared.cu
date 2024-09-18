@@ -59,7 +59,7 @@ struct st_load_store {
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<T, H, W> &shared_tile = al.allocate<kittens::st<T, H, W>>();
+        kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
         for(int i = 0; i < input.batch; i++) for(int j = 0; j < input.depth; j++) for(int k = 0; k < input.rows/shared_tile.rows; k++) for(int l = 0; l < input.cols/shared_tile.cols; l++) {
             kittens::load(shared_tile, input, {i, j, k, l});
             kittens::store(output, shared_tile, {i, j, k, l});
@@ -80,7 +80,7 @@ struct st_load_store_async {
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL input, GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<T, H, W> &shared_tile = al.allocate<kittens::st<T, H, W>>();
+        kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
 
         __syncthreads();
         

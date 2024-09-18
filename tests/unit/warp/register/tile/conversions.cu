@@ -53,7 +53,7 @@ struct test_swap_layout {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
-        kittens::rt_bf<H, W, L> reg_tile;
+        kittens::rt_bf<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         auto reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
         kittens::store(output, reg_tile_other_layout, {});
@@ -68,8 +68,8 @@ struct test_transpose {
                 o_ref[i+j*H*16] = i_ref[i*W*16+j];
     }
     template<int H, int W, int NW, gl_t GTL_I, gl_t GTL_O, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GTL_I input, GTL_O output) {
-        kittens::rt_bf<H, W, L> reg_tile;
-        kittens::rt_bf<W, H, L> reg_tile_transpose;
+        kittens::rt_bf<16*H, 16*W, L> reg_tile;
+        kittens::rt_bf<16*W, 16*H, L> reg_tile_transpose;
         kittens::load(reg_tile, input, {});
         kittens::transpose_sep(reg_tile_transpose, reg_tile);
         kittens::store(output, reg_tile_transpose, {});
@@ -82,8 +82,8 @@ struct test_type_convert {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __device__ static void device_func(const GL input, GL output) {
-        kittens::rt<U2, H, W> reg_tile_U2;
-        kittens::rt<T2, H, W> reg_tile_T2;
+        kittens::rt<U2, 16*H, 16*W> reg_tile_U2;
+        kittens::rt<T2, 16*H, 16*W> reg_tile_T2;
         kittens::load(reg_tile_U2, input, {});
         kittens::copy(reg_tile_T2, reg_tile_U2);
         kittens::store(output, reg_tile_T2, {});
@@ -99,11 +99,11 @@ struct test_subtile {
     }
     template<int H, int W, int NW, gl_t GL, typename _ST_H> __device__ static void device_func(const GL input, GL output) {
         constexpr int ST_H = _ST_H::value;
-        kittens::rt_fl<H, W> reg_tile;
+        kittens::rt_fl<16*H, 16*W> reg_tile;
         kittens::load(reg_tile, input, {});
         #pragma unroll
         for(int i = 0; i < H/ST_H; i++) {
-            auto &ref = kittens::subtile_inplace<ST_H>(reg_tile, i);
+            auto &ref = kittens::subtile_inplace<ST_H*16>(reg_tile, i);
             kittens::add(ref, ref, float(i));
         }
         kittens::store(output, reg_tile, {});
@@ -118,7 +118,7 @@ struct test_make_causal {
                 o_ref[i*W*16 + j] = j<=i ? i_ref[i*W*16 + j] : 0;
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
-        kittens::rt_fl<H, W, L> reg_tile;
+        kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         kittens::make_causal(reg_tile, reg_tile);
         kittens::store(output, reg_tile, {});

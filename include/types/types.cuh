@@ -49,4 +49,13 @@ using col_vec = T::col_vec;
 
 // ^ this code lives here because it applies to both sv and rv types
 
+// register tile layouts
+using row_l = ducks::rt_layout::row;
+using col_l = ducks::rt_layout::col;
+
+// register vector layouts
+using align_l = ducks::rv_layout::align;
+using ortho_l = ducks::rv_layout::ortho;
+using naive_l = ducks::rv_layout::naive;
+
 }

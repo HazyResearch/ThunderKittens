@@ -3,17 +3,17 @@
 #ifdef TEST_WARP_REGISTER_VEC_CONVERSIONS
 
 struct vec_copy_convert {
-    template<int S, int NW, kittens::ducks::rt_layout::all L1, kittens::ducks::rt_layout::all L2>
+    template<int S, int NW, kittens::ducks::rv_layout::all L1, kittens::ducks::rv_layout::all L2>
     using valid = std::bool_constant<NW == 1 && S<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_vec_convert";
-    template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L1, kittens::ducks::rt_layout::all L2>
+    template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L1, kittens::ducks::rv_layout::all L2>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L1, kittens::ducks::rt_layout::all L2>
+    template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L1, kittens::ducks::rv_layout::all L2>
     __device__ static void device_func(const GL &input, GL &output) {
-        kittens::col_vec<kittens::rt_bf<S, S, L1>> vec1;
-        kittens::col_vec<kittens::rt_bf<S, S, L2>> vec2;
+        kittens::rv_bf<16*S, L1> vec1;
+        kittens::rv_bf<16*S, L2> vec2;
         kittens::load(vec1, input, {});
         kittens::copy(vec2, vec1);
         kittens::store(output, vec2, {});
@@ -27,10 +27,15 @@ void warp::reg::vec::conversions::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
-    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ducks::rt_layout::row, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ducks::rt_layout::row, kittens::ducks::rt_layout::col>::run(results);
-    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ducks::rt_layout::col, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ducks::rt_layout::col, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::align_l, kittens::align_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::align_l, kittens::ortho_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::align_l, kittens::naive_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ortho_l, kittens::align_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ortho_l, kittens::ortho_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::ortho_l, kittens::naive_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::align_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::ortho_l>::run(results);
+    sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::naive_l>::run(results);
 }
 
 #endif

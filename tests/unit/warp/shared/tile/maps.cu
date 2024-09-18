@@ -15,7 +15,7 @@ struct test_exp {
     template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
-        kittens::st<dtype, H, W> &shared_tile = al.allocate<kittens::st<dtype, H, W>>();
+        kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         kittens::load(shared_tile, input, {});
         kittens::exp(shared_tile, shared_tile);
         kittens::store(output, shared_tile, {});

@@ -19,9 +19,9 @@ struct test_mma_AB {
     }
     template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
-        kittens::rt_bf<H, K> a;
-        kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
-        kittens::rt_fl<H, W> c;
+        kittens::rt_bf<16*H, 16*K> a;
+        kittens::rt_bf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<16*H, 16*W> c;
         kittens::load(a, a_input, {});
         kittens::load(b, b_input, {});
         kittens::zero(c);
@@ -49,9 +49,9 @@ struct test_mma_ABt {
     }
     template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
-        kittens::rt_bf<H, K> a;
-        kittens::rt_bf<W, K> b;
-        kittens::rt_fl<H, W> c;
+        kittens::rt_bf<16*H, 16*K> a;
+        kittens::rt_bf<16*W, 16*K> b;
+        kittens::rt_fl<16*H, 16*W> c;
         kittens::load(a, a_input, {});
         kittens::load(b, b_input, {});
         kittens::zero(c);
@@ -79,9 +79,9 @@ struct test_mma_AtB {
     }
     template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
-        kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
-        kittens::rt_bf<K, W, kittens::ducks::rt_layout::col> b;
-        kittens::rt_fl<H, W> c;
+        kittens::rt_bf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_bf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<16*H, 16*W> c;
         kittens::load(a, a_input, {});
         kittens::load(b, b_input, {});
         kittens::zero(c);
@@ -109,9 +109,9 @@ struct test_mma_AtBt {
     }
     template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
         constexpr int K = _K::value;
-        kittens::rt_bf<K, H, kittens::ducks::rt_layout::col> a;
-        kittens::rt_bf<W, K> b;
-        kittens::rt_fl<H, W> c;
+        kittens::rt_bf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_bf<16*W, 16*K> b;
+        kittens::rt_fl<16*H, 16*W> c;
         kittens::load(a, a_input, {});
         kittens::load(b, b_input, {});
         kittens::zero(c);
