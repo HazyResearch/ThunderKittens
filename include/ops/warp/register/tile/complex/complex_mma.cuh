@@ -67,20 +67,27 @@ __device__ static inline void mma_AB(rt_cmplx_fl<N, M, ducks::rt_layout::row> &d
                                const rt_cmplx_bf<K, M, ducks::rt_layout::col> &b,
                                const rt_cmplx_fl<N, M, ducks::rt_layout::row> &c) {
     
+    // Test out of place accum registers
+    kittens::rt_fl<N, M, ducks::rt_layout::row> rdst;
+    kittens::rt_fl<N, M, ducks::rt_layout::row> idst;
+
     // Copy data from input accumulate register into output
-    copy(d.real, c.real);
-    copy(d.imag, c.imag);
+    copy(rdst, c.real);
+    copy(idst, c.imag);
 
     // Negative on B matrix so we can use single accum register
     kittens::rt_bf<N, K, ducks::rt_layout::row> tmp;
     // Hex value for -1 in bf16
     constexpr bf16 factor = std::bit_cast<__nv_bfloat16>(uint16_t(0xBF80));
     mul(tmp, a.imag, factor);
-    mma_AB(d.real, a.real, b.real, d.real);
-    mma_AB(d.real, tmp, b.imag, d.real);
+    mma_AB(rdst, a.real, b.real, rdst);
+    mma_AB(rdst, tmp, b.imag, rdst);
 
-    mma_AB(d.imag, a.real, b.imag, d.imag);
-    mma_AB(d.imag, a.imag, b.real, d.imag);
+    mma_AB(idst, a.real, b.imag, idst);
+    mma_AB(idst, a.imag, b.real, idst);
+
+    copy(d.real, rdst);
+    copy(d.imag, idst);
 }
 
 

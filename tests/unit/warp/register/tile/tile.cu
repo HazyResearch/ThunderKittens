@@ -22,8 +22,8 @@ void warp::reg::tile::tests(test_data &results) {
 #ifdef TEST_WARP_REGISTER_TILE_CONVERSIONS_COMPLEX
     warp::reg::tile::conversions::tests(results);
 #endif
-#ifdef TEST_WARP_REGISTER_TILE_MAPS_COMPLEX
-    warp::reg::tile::maps::tests(results);
+#ifdef TEST_WARP_REGISTER_TILE_MUL_COMPLEX
+    warp::reg::tile::mul::tests(results);
 #endif
 #ifdef TEST_WARP_REGISTER_TILE_MMA_COMPLEX
     warp::reg::tile::mma::tests(results);

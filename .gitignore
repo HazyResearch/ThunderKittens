@@ -12,7 +12,7 @@
 *.egg
 **/printouts
 #**/old
-**/arjun_dev
+**/flash-fft-conv
 *.ncu-rep
 *.sass
 *.txt

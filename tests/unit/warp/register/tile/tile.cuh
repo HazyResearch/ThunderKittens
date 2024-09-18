@@ -11,7 +11,7 @@
 
 #ifdef TEST_WARP_REGISTER_TILE_COMPLEX
 
-//#include "complex/maps.cuh"
+#include "complex/complex_mul.cuh"
 #include "complex/complex_mma.cuh"
 //#include "complex/conversions.cuh"
 #endif

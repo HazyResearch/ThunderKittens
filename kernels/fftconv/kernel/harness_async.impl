@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <stdlib.h>
+#include <bitset>
 
 #include <fstream>
 using namespace kittens;
@@ -210,6 +211,16 @@ int main(int argc, char **argv) {
     } else {
         exit(1);
     }
+
+    // both -0 and +0 are same bf16 val
+    // bf16 a = __float2bfloat16(-0.0f);
+    // bf16 b = __float2bfloat16(0.0f);
+    // //printf("-0: %.3f, +0: %.3f", __bfloat162float(a), __bfloat162float(b));
+    // std::bitset<16> x1(a);
+    // std::bitset<16> x2(b);
+    // std::cout << x1 << '\n';
+    // std::cout << x2 << '\n';
+    // exit(1);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);

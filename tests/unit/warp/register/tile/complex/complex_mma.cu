@@ -34,6 +34,7 @@ struct test_cmplx_mma_AB {
                 for(int k = 0; k < K*16; k++) {
                     sum += im_i_ref[i*16*K + k]*im_i_ref[(256*H*K) + k*16*W + j];
                 }
+                // (ac-bd)
                 re_o_ref[i*16*W + j] -= sum;
             }
         }
@@ -56,6 +57,7 @@ struct test_cmplx_mma_AB {
                 for(int k = 0; k < K*16; k++) {
                     sum += im_i_ref[i*16*K + k]*re_i_ref[(256*H*K) + k*16*W + j];
                 }
+                // (ad + bc)i
                 im_o_ref[i*16*W + j] += sum;
             }
         }

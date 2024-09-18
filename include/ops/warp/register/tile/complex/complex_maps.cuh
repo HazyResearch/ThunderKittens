@@ -106,19 +106,22 @@ __device__ static inline void mul(T &dst, const T &lhs, const T &rhs) {
     dtype tmp;
     // out of place storage regs
     dtype rdst;
+    dtype rdst1;
+    dtype idst1;
     dtype idst;
 
     // Real component
-    mul(rdst, lhs.real, rhs.real);
+    mul(rdst1, lhs.real, rhs.real);
     mul(tmp, lhs.imag, rhs.imag);
     
-    sub(rdst, rdst, tmp);
+    // Is there some blowup here bc we sub a reg onto itself?
+    sub(rdst, rdst1, tmp);
     //sub(dst.real, dst.real, tmp);
     // Imag component
-    mul(idst, lhs.imag, rhs.real);
+    mul(idst1, lhs.imag, rhs.real);
     //mul(dst.imag, lhs.imag, rhs.real);
     mul(tmp, lhs.real, rhs.imag);
-    add(idst, idst, tmp);
+    add(idst, idst1, tmp);
     //add(dst.imag, dst.imag, tmp);
 
     copy(dst.real, rdst);
