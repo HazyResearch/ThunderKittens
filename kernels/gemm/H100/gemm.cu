@@ -2,69 +2,63 @@
 #include "prototype.cuh"
 
 using namespace kittens;
+using namespace kittens::prototype;
+template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
+struct matmul_layout {
+    struct globals {
+        kittens::gl<bf16, 1, 1, -1, -1, st_bf<64,      BLOCK_K>> a;
+        kittens::gl<bf16, 1, 1, -1, -1, st_bf<BLOCK_K, BLOCK_N>> b;
+        kittens::gl<bf16, 1, 1, -1, -1, st_bf<64,      BLOCK_N>> c;
+    };
+    struct input_block {
+        st_bf<64,      BLOCK_K> a[BLOCK_M/64];
+        st_bf<BLOCK_K, BLOCK_N> b;
+    };
+    struct producer_state { int row_idx, col_idx, n_blocks; };
+    struct consumer_state { rt_fl<16, BLOCK_N> acc; int n_blocks; };
+    struct finish_block   { st_bf<64, BLOCK_N> c[BLOCK_M/64]; };
+};
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
 struct matmul_template {
-    using a_tile = st_bf<4,BLOCK_K/16>;
-    using b_tile = st_bf<BLOCK_K/16,BLOCK_N/16>;
-    using c_tile = st_bf<4,BLOCK_N/16>;
+    using layout = matmul_layout<BLOCK_M, BLOCK_N, BLOCK_K>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    using a_global = kittens::gl<bf16, 1, 1, -1, -1, a_tile>;
-    using b_global = kittens::gl<bf16, 1, 1, -1, -1, b_tile>;
-    using c_global = kittens::gl<bf16, 1, 1, -1, -1, c_tile>;
-    struct globals {
-        a_global Ag;
-        b_global Bg;
-        c_global Cg;
-    };
-    struct input_block { // the chunk of data that the producer and consumer are working on
-        a_tile a_block[NUM_CONSUMER_WARPGROUPS];
-        b_tile b_block;
-    };
-    static constexpr int INPUT_PIPE_STAGES = 220000/sizeof(input_block), OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
-    struct output_block {}; // nothing here, we store at the end in the consumer finish
-    struct scratch_block {};
-    struct finish_block {
-        c_tile c_block[NUM_CONSUMER_WARPGROUPS];
-    };
+    static constexpr int INPUT_PIPE_STAGES = 226000/sizeof(typename layout::input_block), OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
     struct producer {
-        struct state { int row_idx, col_idx, n_blocks; }; // persistent registers
-        __device__ static void setup(state &s, globals &g) { // setup and load the first iteration
+        __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
-            s.row_idx = blockIdx.x * NUM_CONSUMER_WARPGROUPS; // tiles vertical per block
-            s.col_idx = blockIdx.y; // just 1 tile horizontal per block
-            s.n_blocks = g.Ag.cols / a_tile::cols; // number of blocks to process
+            args.state.row_idx = blockIdx.x * NUM_CONSUMER_WARPGROUPS; // tiles vertical per block
+            args.state.col_idx = blockIdx.y; // just 1 tile horizontal per block
+            args.state.n_blocks = args.globals.a.cols / BLOCK_K; // number of blocks to process
         }
-        __device__ static bool load(state &s, input_block &b, globals &g, barrier &inputs_arrived, int iter) { // barrier for the producer to load into
+        __device__ static bool load(producer_load_args<layout> args) { // barrier for the producer to load into
             if(warpgroup::warpid() == 0) {
-                tma::expect_bytes(inputs_arrived, size_bytes<a_tile>*NUM_CONSUMER_WARPGROUPS + size_bytes<b_tile>);
+                tma::expect_bytes(args.inputs_arrived, size_bytes<st_bf<64, BLOCK_K>> * NUM_CONSUMER_WARPGROUPS + size_bytes<st_bf<BLOCK_K, BLOCK_N>>);
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {
-                    tma::load_async(b.a_block[i], g.Ag, {s.row_idx+i, iter}, inputs_arrived);
+                    tma::load_async(args.input.a[i], args.globals.a, {args.state.row_idx+i, args.iter}, args.inputs_arrived);
                 }
-                tma::load_async(b.b_block, g.Bg, {iter, s.col_idx}, inputs_arrived);
+                tma::load_async(args.input.b, args.globals.b, {args.iter, args.state.col_idx}, args.inputs_arrived);
             }
-            else arrive(inputs_arrived);
-            return iter < s.n_blocks-1; // return true if there are more blocks to process
+            else arrive(args.inputs_arrived);
+            return args.iter < args.state.n_blocks-1; // return true if there are more blocks to process
         }
     };
     struct consumer {
-        struct state { rt_fl<1,c_tile::width> acc; int n_blocks; };
-        __device__ static void setup(state &s, scratch_block &_, globals &g) { // setup locals for before the first iteration
+        __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
             warpgroup::increase_registers<480/NUM_CONSUMER_WARPGROUPS - 8*(NUM_CONSUMER_WARPGROUPS>3)>();
-            zero(s.acc);
-            s.n_blocks = g.Ag.cols / a_tile::cols;
+            zero(args.state.acc);
+            args.state.n_blocks = args.globals.a.cols / BLOCK_K;
         }
-        __device__ static bool work(state &s, input_block &b, scratch_block &_, output_block &o, barrier &inputs_finished, barrier &outputs_arrived, int iter) {
-            warpgroup::mma_AB(s.acc, b.a_block[warpgroup::groupid()], b.b_block);
+        __device__ static bool work(consumer_work_args<layout> args) {
+            warpgroup::mma_AB(args.state.acc, args.input.a[warpgroup::groupid()], args.input.b);
             warpgroup::mma_async_wait();
-            arrive(outputs_arrived); // we have no outputs, so we can do this early. (they're always ready.)
-            arrive(inputs_finished);
-            return iter < s.n_blocks-1;
+            arrive(args.inputs_finished);
+            return args.iter < args.state.n_blocks-1;
         }
-        __device__ static void finish(state &s, finish_block &f, scratch_block &scratch, globals &g, int _) {
-            warpgroup::store(f.c_block[warpgroup::groupid()], s.acc);
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.acc);
             warpgroup::sync();
             if(warpgroup::warpid() == 0) {
-                tma::store_async(g.Cg, f.c_block[warpgroup::groupid()], {blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), blockIdx.y});
+                tma::store_async(args.globals.c, args.finish.c[warpgroup::groupid()], {blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), blockIdx.y});
             }
             tma::store_async_read_wait();
         }
@@ -90,11 +84,23 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 int main() {
-    const int M = 3072, N = 12288, K = 3072; using mmt = matmul_template<192, 192, 64>; // 760 TFLOPs
+    // const int M = 3072, N = 12288, K = 3072; using mmt = matmul_template<192, 192, 64>; // 760 TFLOPs
     // const int M = 3072, N = 3072, K = 12288; using mmt = matmul_template<192, 192, 64>; // 813.5 TFLOPs
     // const int M = 256, N = 12288, K = 3072; using mmt = matmul_template<128, 192, 64>; // 574.5 TFLOPs
     // const int M = 256, N = 3072, K = 12288; using mmt = matmul_template<128, 64, 128>; // 433 TFLOPs
     // const int M = 3072, N = 3072, K = 3072; using mmt = matmul_template<192, 192, 64>; // 740 TFLOPs
+    const int M = 3072, N = 3072, K = 12288; using mmt = matmul_template<192, 192, 64>; // 813.5 TFLOPs
+
+    using a_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::input_block>().a[0])>::type;
+    using b_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::input_block>().b)>::type;
+    using c_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::finish_block>().c[0])>::type;
+    using a_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().a)>::type;
+    using b_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().b)>::type;
+    using c_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().c)>::type;
+    using globals  = typename mmt::layout::globals;
+
+    std::cout << "Has store: "  << kittens::prototype::has_store<mmt> << '\n';
+    std::cout << "Has finish: " << kittens::prototype::has_finish<mmt> << '\n';
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -128,13 +134,13 @@ int main() {
 
     std::cout << "Allocated device memory" << std::endl;
 
-    std::cout << "a_tile::rows=" << mmt::a_tile::rows << " a_tile::cols=" << mmt::a_tile::cols << std::endl;
-    std::cout << "b_tile::rows=" << mmt::b_tile::rows << " b_tile::cols=" << mmt::b_tile::cols << std::endl;
-    std::cout << "c_tile::rows=" << mmt::c_tile::rows << " c_tile::cols=" << mmt::c_tile::cols << std::endl;
-    mmt::a_global Ag{d_A, nullptr, nullptr, M, K};
-    mmt::b_global Bg{d_B, nullptr, nullptr, K, N};
-    mmt::c_global Cg{d_C, nullptr, nullptr, M, N};
-    mmt::globals globals{Ag, Bg, Cg};
+    std::cout << "a_tile::rows=" << a_tile::rows << " a_tile::cols=" << a_tile::cols << std::endl;
+    std::cout << "b_tile::rows=" << b_tile::rows << " b_tile::cols=" << b_tile::cols << std::endl;
+    std::cout << "c_tile::rows=" << c_tile::rows << " c_tile::cols=" << c_tile::cols << std::endl;
+    a_global Ag{d_A, nullptr, nullptr, M, K};
+    b_global Bg{d_B, nullptr, nullptr, K, N};
+    c_global Cg{d_C, nullptr, nullptr, M, N};
+    globals G{Ag, Bg, Cg};
 
     std::cout << "Allocated memory" << std::endl;
 
@@ -153,18 +159,18 @@ int main() {
     
     cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
-    dim3 grid(M / (mmt::c_tile::rows*prototype::num_consumer_warpgroups<mmt>), N / mmt::c_tile::cols); // rows, cols
+    dim3 grid(M / (c_tile::rows*prototype::num_consumer_warpgroups<mmt>), N / c_tile::cols); // rows, cols
     dim3 block(prototype::num_threads<mmt>);
 
     // Start timing
     cudaDeviceSynchronize();
-    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/mmt::a_tile::cols << " reduction block dimension\n";
+    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/a_tile::cols << " reduction block dimension\n";
     std::cout << "Kernel has " << mmt::INPUT_PIPE_STAGES << " input pipeline stages and " << mmt::OUTPUT_PIPE_STAGES << " output pipeline stages\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = 100;
     for(int i = 0; i < ITERS; i++) {
-        prototype::pc<mmt><<<grid, block, mem_size>>>(globals);
+        prototype::pc<mmt><<<grid, block, mem_size>>>(G);
     }
     cudaDeviceSynchronize();
 

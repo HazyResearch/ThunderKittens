@@ -6,4 +6,11 @@
 #pragma once
 
 #include "../include/kittens.cuh"
+
+namespace kittens {
+namespace prototype {
+struct empty {};
+}
+}
+
 #include "pc.cuh"
