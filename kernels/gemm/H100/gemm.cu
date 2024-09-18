@@ -22,7 +22,6 @@ template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
 struct matmul_template {
     using layout = matmul_layout<BLOCK_M, BLOCK_N, BLOCK_K>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    static constexpr int INPUT_PIPE_STAGES = 226000/sizeof(typename layout::input_block), OUTPUT_PIPE_STAGES = 0; // irrelevant for this kernel
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::decrease_registers<24>(); // decrease registers for the producer warpgroup
@@ -99,8 +98,8 @@ int main() {
     using c_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().c)>::type;
     using globals  = typename mmt::layout::globals;
 
-    std::cout << "Has store: "  << kittens::prototype::has_store<mmt> << '\n';
-    std::cout << "Has finish: " << kittens::prototype::has_finish<mmt> << '\n';
+    std::cout << "Has store: "  << (bool)kittens::prototype::detail::has_store<mmt> << '\n';
+    std::cout << "Has finish: " << (bool)kittens::prototype::detail::has_finish<mmt> << '\n';
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -155,7 +154,7 @@ int main() {
 
     std::cout << "Copied matrices to device" << std::endl;
 
-    unsigned long mem_size = 226000; // need to launch two blocks if possible.
+    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
@@ -165,7 +164,7 @@ int main() {
     // Start timing
     cudaDeviceSynchronize();
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/a_tile::cols << " reduction block dimension\n";
-    std::cout << "Kernel has " << mmt::INPUT_PIPE_STAGES << " input pipeline stages and " << mmt::OUTPUT_PIPE_STAGES << " output pipeline stages\n";
+    std::cout << "Kernel has " << kittens::prototype::input_pipe_stages<mmt> << " input pipeline stages and " << kittens::prototype::output_pipe_stages<mmt> << " output pipeline stages\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = 100;

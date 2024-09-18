@@ -3,9 +3,10 @@
 #include "../include/kittens.cuh"
 
 /*
-int INPUT_PIPE_STAGES
-int OUTPUT_PIPE_STAGES
-int NUM_CONSUMER_WARPS
+int INPUT_PIPE_STAGES=-1 (default however much fits)
+int OUTPUT_PIPE_STAGES=1 (default)
+int NUM_CONSUMER_WARPS=8 (default)
+int NUM_PRODUCER_WARPS=4 (default)
 
 struct globals {}
 struct input_block {}
@@ -133,9 +134,6 @@ template<pc_layout T> struct consumer_finish_args {
         : finish(_finish), state(_state), scratch(_scratch), globals(_globals), iter(_iter) {}
 };
 template<typename pct> concept pc_template = requires {
-    pct::INPUT_PIPE_STAGES;
-    pct::OUTPUT_PIPE_STAGES;
-    pct::NUM_CONSUMER_WARPS;
     typename pct::layout;
     typename pct::producer;
     typename pct::consumer;
@@ -144,12 +142,26 @@ template<typename pct> concept pc_template = requires {
     pct::consumer::setup; 
     pct::consumer::work;
 } && pc_layout<typename pct::layout>;
+namespace detail {
 template<typename pct> concept has_store  = requires { pct::producer::store; };
 template<typename pct> concept has_finish = requires { pct::consumer::finish; };
+template<typename pct> concept has_num_consumer_warps = requires { pct::NUM_CONSUMER_WARPS; };
+template<typename pct> concept has_num_producer_warps = requires { pct::NUM_PRODUCER_WARPS; };
+template<typename pct> concept has_input_pipe_stages = requires { pct::INPUT_PIPE_STAGES; };
+template<typename pct> concept has_output_pipe_stages = requires { pct::producer::store; };
+}
+template<typename pct> constexpr int input_pipe_stages = -1;
+template<detail::has_input_pipe_stages pct> constexpr int input_pipe_stages<pct> = pct::INPUT_PIPE_STAGES;
+template<typename pct> constexpr int output_pipe_stages = 1;
+template<detail::has_output_pipe_stages pct> constexpr int output_pipe_stages<pct> = pct::OUTPUT_PIPE_STAGES;
+template<typename pct> constexpr int num_consumer_warps = 8;
+template<detail::has_num_consumer_warps pct> constexpr int num_consumer_warps<pct> = pct::NUM_CONSUMER_WARPS;
+template<typename pct> constexpr int num_producer_warps = 4;
+template<detail::has_num_producer_warps pct> constexpr int num_producer_warps<pct> = pct::NUM_PRODUCER_WARPS;
 
-template<typename T> constexpr int num_threads = T::NUM_CONSUMER_WARPS * 32 + 128;
-template<typename T> constexpr int num_warps = T::NUM_CONSUMER_WARPS + 4;
-template<typename T> constexpr int num_consumer_warpgroups = T::NUM_CONSUMER_WARPS / 4;
+template<pc_template T> constexpr int num_threads = (num_consumer_warps<T> + num_producer_warps<T>) * 32;
+template<pc_template T> constexpr int num_warps = num_consumer_warps<T> + num_producer_warps<T>;
+template<pc_template T> constexpr int num_consumer_warpgroups = num_consumer_warps<T> / 4;
 
 template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
 template<int N> __device__ static inline int ring_retreat(int ring) { return (ring + N-1) % N; }
@@ -159,14 +171,6 @@ __global__ __launch_bounds__(num_threads<pct>, 1)
 void pc(typename pct::layout::globals g) {
     static_assert(pc_template<pct>, "pc template parameter does not satisfy concept requirements");
     using layout = complete_pc_layout<typename pct::layout>; // complete the layout by filling in the optional types with empty
-    constexpr int INPUT_PIPE_STAGES = pct::INPUT_PIPE_STAGES;
-    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 32, "Invalid number of input pipe stages");
-    constexpr int OUTPUT_PIPE_STAGES = pct::OUTPUT_PIPE_STAGES == 0 ? 1 : pct::OUTPUT_PIPE_STAGES; // Even if the producer doesn't have a store, we need to allocate the empty struct
-    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 32, "Invalid number of output pipe stages");
-    constexpr int NUM_CONSUMER_WARPS = pct::NUM_CONSUMER_WARPS;
-    constexpr int NUM_WARPS = num_warps<pct>;
-    constexpr int NUM_CONSUMER_WARPGROUPS = num_consumer_warpgroups<pct>;
-    constexpr int NUM_THREADS = num_threads<pct>;
     using globals        = typename layout::globals;
     using input_block    = typename layout::input_block;
     using producer_state = typename layout::producer_state;
@@ -174,6 +178,17 @@ void pc(typename pct::layout::globals g) {
     using output_block   = typename layout::output_block_type;
     using scratch_block  = typename layout::scratch_block_type;
     using finish_block   = typename layout::finish_block_type;
+    constexpr int OUTPUT_PIPE_STAGES = output_pipe_stages<pct> < 1 ? 1 : output_pipe_stages<pct>; // Even if the producer doesn't have a store, we need to allocate the empty struct
+    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 32, "Invalid number of output pipe stages");
+    constexpr int INPUT_PIPE_STAGES = input_pipe_stages<pct> == -1 ?
+        (MAX_SHARED_MEMORY-2048-sizeof(scratch_block)-OUTPUT_PIPE_STAGES*sizeof(output_block)) / sizeof(input_block) :
+        input_pipe_stages<pct>;
+    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 32, "Invalid number of input pipe stages");
+    constexpr int NUM_CONSUMER_WARPS = num_consumer_warps<pct>;
+    constexpr int NUM_PRODUCER_WARPS = num_producer_warps<pct>;
+    constexpr int NUM_WARPS = num_warps<pct>;
+    constexpr int NUM_CONSUMER_WARPGROUPS = num_consumer_warpgroups<pct>;
+    constexpr int NUM_THREADS = num_threads<pct>;
 
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
@@ -187,12 +202,12 @@ void pc(typename pct::layout::globals g) {
     __shared__ kittens::barrier outputs_arrived[OUTPUT_PIPE_STAGES], outputs_finished[OUTPUT_PIPE_STAGES];
     if (warpid() == 0) { // a single warp (in fact a single thread) does these.
         for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
-            init_barrier(inputs_arrived[i], 0, 4); // needs to wait on each producer warp
+            init_barrier(inputs_arrived[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
             init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
         }
         for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
             init_barrier(outputs_arrived[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-            init_barrier(outputs_finished[i], 0, 4); // needs to wait on each producer warp
+            init_barrier(outputs_finished[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
         }
     }
     int input_ring  = 0; // tracking which input block is being loaded
@@ -200,7 +215,7 @@ void pc(typename pct::layout::globals g) {
 
     __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
 
-    if(warpgroup::groupid() == NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
+    if(warpid() >= NUM_CONSUMER_WARPS) { // last warpgroup is a producer
         producer_state s;
         pct::producer::setup({g, s, scratch_smem});
         int load_more = true, load_iter = 0, store_iter = 0;
@@ -217,7 +232,7 @@ void pc(typename pct::layout::globals g) {
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             load_iter++;
         }
-        if constexpr (has_store<pct>) {
+        if constexpr (detail::has_store<pct>) {
             while(load_more || store_iter < load_iter) {
                 if(store_iter < load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
                     pct::producer::store({
@@ -268,7 +283,7 @@ void pc(typename pct::layout::globals g) {
         pct::consumer::setup({g, s, scratch_smem});
         int work_more = true, iter = 0;
         while(work_more) {
-            if constexpr (has_store<pct>) {
+            if constexpr (detail::has_store<pct>) {
                 wait(outputs_finished[output_ring], ((iter/OUTPUT_PIPE_STAGES)%2)^1); // wait for memory to arrive, phase changes at half the rate of the ring
             }
             wait(inputs_arrived[input_ring], (iter/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
@@ -284,11 +299,11 @@ void pc(typename pct::layout::globals g) {
             });
             iter++;
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-            if constexpr (has_store<pct>) {
+            if constexpr (detail::has_store<pct>) {
                 output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
             }
         }
-        if constexpr (has_finish<pct>) {
+        if constexpr (detail::has_finish<pct>) {
             group<NUM_CONSUMER_WARPS>::sync(0); // cannot overwrite finish block until all consumer warps are done.
             pct::consumer::finish({
                 finish_smem,
