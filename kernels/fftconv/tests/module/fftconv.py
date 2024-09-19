@@ -4,7 +4,7 @@ import sys
 
 sys.path.append("../kernel")
 import fftconv_tk as mod
-import fftconv_tk_h100 as mod_h100
+# import fftconv_tk_h100 as mod_h100
 
 def fft_matrix(N):
     n = torch.arange(N)
@@ -84,19 +84,30 @@ class TKFFTConv(torch.nn.Module):
         kfT_imag = k_fT.imag.to(self.dtype).contiguous()
 
         if self.use_h100:
-            out = mod_h100.fftconv_tk_h100(
-                u_real, u_imag, kfT_real, kfT_imag, 
-                self.f_real, self.f_imag, self.finv_real, self.finv_imag,
-                self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
-                B, H, self.N, self.N1
-            )
+            assert False, print("Not implemented")
+            # out = mod_h100.fftconv_tk_h100(
+            #     u_real, u_imag, kfT_real, kfT_imag, 
+            #     self.f_real, self.f_imag, self.finv_real, self.finv_imag,
+            #     self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
+            #     B, H, self.N, self.N1
+            # )
         else:
+            # # check for nans in any of the inputs
+            # if torch.isnan(u_real).any() or torch.isnan(u_imag).any() or torch.isnan(kfT_real).any() or torch.isnan(kfT_imag).any():
+            #     print("Nans in inputs")
+            #     print(u_real)
+            #     print(u_imag)
+            #     print(kfT_real)
+            #     print(kfT_imag)
+            #     sys.exit(1)
             out = mod.fftconv_tk(
                 u_real, u_imag, kfT_real, kfT_imag, 
                 self.f_real, self.f_imag, self.finv_real, self.finv_imag,
                 self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
                 B, H, self.N, self.N1
             )
+
+        # print(out[0, 0, 0, :1])
 
         return out.reshape(B, H, self.N).contiguous()
 

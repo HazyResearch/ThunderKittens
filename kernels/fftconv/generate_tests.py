@@ -96,6 +96,11 @@ def pytorch_test(u, k, TESTNAME='all'):
 
 u_real, u_imag, kfT_real, kfT_imag, f_real, f_imag, finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, o_real = pytorch_test(u, k, TESTNAME=TESTNAME)
 
+# debug
+f_real = torch.ones_like(f_real)
+f_imag = torch.zeros_like(f_imag)
+
+
 with open(f'{TESTNAME}.txt', 'w') as f:
     u_real_f = u_real.to(torch.float32).flatten().cpu().numpy()
     u_imag_f = u_imag.to(torch.float32).flatten().cpu().numpy()

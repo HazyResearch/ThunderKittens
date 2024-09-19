@@ -96,8 +96,8 @@ void launch_fftconv_tk(
     bf16 *o, int b, int h, int n, int n1
 ) {
     
-    const int B_TILE = 1; // Number of batches per SM
-    const int H_TILE = 1; // Number of heads per SM
+    const int B_TILE = 8; // Number of batches per SM
+    const int H_TILE = 8; // Number of heads per SM
 
     // 1 warp for 32x32 case
     const dim3 block_dim{
