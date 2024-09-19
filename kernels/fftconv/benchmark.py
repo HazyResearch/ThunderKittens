@@ -16,7 +16,6 @@ def ref_fftconv(u, k, N):
     y = torch.fft.ifft(y_f, n = N).real[..., :L].to(u.dtype).contiguous()
     return y
 
-
 def test_correctness(x, y, atol=1e0):
     assert torch.allclose(x, y, atol=atol), f"Expected {x} to equal {y}"
 

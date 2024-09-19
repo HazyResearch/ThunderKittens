@@ -51,6 +51,15 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
 
+    const bf16 *f_real_g = reinterpret_cast<const bf16*>(f_real); // doesn't change with batch, head
+    const bf16 *f_imag_g = reinterpret_cast<const bf16*>(f_imag); // doesn't change with batch, head
+    const bf16 *finv_real_g = reinterpret_cast<const bf16*>(finv_real); // doesn't change with batch, head
+    const bf16 *finv_imag_g = reinterpret_cast<const bf16*>(finv_imag); // doesn't change with batch, head
+    const bf16 *tw_real_g = reinterpret_cast<const bf16*>(tw_real); // doesn't change with batch, head
+    const bf16 *tw_imag_g = reinterpret_cast<const bf16*>(tw_imag); // doesn't change with batch, head
+    const bf16 *twinv_real_g = reinterpret_cast<const bf16*>(twinv_real); // doesn't change with batch, head
+    const bf16 *twinv_imag_g = reinterpret_cast<const bf16*>(twinv_imag); // doesn't change with batch, head
+
     kittens::st_cmplx_bf<2, 2> (&f_smem) = al.allocate<st_cmplx_bf<2, 2>>();
     kittens::st_cmplx_bf<2, 2> (&finv_smem) = al.allocate<st_cmplx_bf<2, 2>>();
     kittens::st_cmplx_bf<2, 2> (&tw_smem) = al.allocate<st_cmplx_bf<2, 2>>();
@@ -75,10 +84,10 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
 
     // Global loads
     if (warpid == 0) {
-        kittens::load(f_smem, f_real, f_imag, n1, n1);
-        kittens::load(finv_smem, finv_real, finv_imag, n1, n1);
-        kittens::load(tw_smem, tw_real, tw_imag, n1, n1);
-        kittens::load(twinv_smem, twinv_real, twinv_imag, n1, n1);
+        kittens::load(f_smem, f_real_g, f_imag_g, n1, n1);
+        kittens::load(finv_smem, finv_real_g, finv_imag_g, n1, n1);
+        kittens::load(tw_smem, tw_real_g, tw_imag_g, n1, n1);
+        kittens::load(twinv_smem, twinv_real_g, twinv_imag_g, n1, n1);
         load_async(kf_smem[k_tic], kf_real + (h_start*h_stride), kf_imag + (h_start*h_stride), n1, n1, k_barrier);
     }
     __syncthreads();
@@ -91,6 +100,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
 
     for (int i = 0; i < H_TILE; i++, k_tic ^=1, k_toc ^=1) {
         k_barrier.arrive_and_wait();
+        __syncthreads();
         kittens::load(k_reg, kf_smem[k_tic]);
 
         int k_start = (h_start + i) * h_stride;
@@ -110,6 +120,7 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
         for (int j = 0; j < batches; j++, x_tic ^=1, x_toc ^=1) {
             // TODO remove barrier in inner loop
             x_barrier.arrive_and_wait();
+            __syncthreads();
             // Next batch but w/ same head
             int next_batch = ((b_start + j+1) * b_stride) + k_start;
             if (j < batches - 1) {
@@ -151,26 +162,19 @@ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, con
             //kittens::mul(a_tr, a_tr, twinv_reg);
             // Large values here too
             kittens::mul(accum, accum, twinv_reg);
-            kittens::store(o + ((b_start + j) * b_stride) + k_start, accum.imag, n1);
             
             // Y = XFinv
             //kittens::load(b_reg, finv_smem[0]);
             kittens::zero(mma_reg);
             //kittens::mma_AB(mma_reg, a_tr, finv_reg, mma_reg);
-            
-            // accum gets really big - could be a logic issue b/c MMA seems to work fine
 
-            //kittens::mma_AB(mma_reg.imag, accum.real, finv_reg.imag, mma_reg.imag);
-            //kittens::mma_AB(mma_reg.imag, accum.imag, finv_reg.real, mma_reg.imag);
-
-            // accum values are big by the time they get here, but this is where they turn NaN
             kittens::mma_AB(mma_reg, accum, finv_reg, mma_reg);
             kittens::copy(accum, mma_reg);
             // Write Y^T to HBM
             //kittens::transpose_sep(a_tr, accum);
             
             accum = kittens::transpose_inplace(accum);
-            //kittens::store(o + ((b_start + j) * b_stride) + k_start, accum.real, n1);
+            kittens::store(o + ((b_start + j) * b_stride) + k_start, accum.real, n1);
         }
     }
 }

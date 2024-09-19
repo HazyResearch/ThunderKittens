@@ -55,14 +55,16 @@ __device__ static inline void store(const typename CST::dtype::dtype *redst, con
  * @param[in] imsrc The source global memory array for the imaginary component.
  * @param re_row_stride[in] The stride between rows in the real component source array.
  * @param im_row_stride[in] The stride between rows in the imaginary component source array.
- * @param barrier[in,out] The CUDA barrier used for synchronization.
+ * @param re_barrier[in,out] The CUDA barrier used for synchronization of the real array.
+ * @param im_barrier[in,out] The CUDA barrier used for synchronization of the imag array.
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::complex CST>
-__device__ static inline void load_async(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    load_async(dst.real, resrc, re_row_stride, barrier);
-    load_async(dst.imag, imsrc, im_row_stride, barrier);
+__device__ static inline void load_async(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride, 
+                                        cuda::barrier<cuda::thread_scope_block> &re_barrier, cuda::barrier<cuda::thread_scope_block> &im_barrier) {
+    load_async(dst.real, resrc, re_row_stride, re_barrier);
+    load_async(dst.imag, imsrc, im_row_stride, im_barrier);
 }
 
 /**
@@ -79,9 +81,10 @@ __device__ static inline void load_async(CST &dst, const typename CST::dtype::dt
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::complex CST>
-__device__ static inline void store_async(typename CST::dtype::dtype *redst, typename CST::dtype::dtype *imdst, const CST &src, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    store_async(redst, src.real, re_row_stride, barrier);
-    store_async(imdst, src.imag, im_row_stride, barrier);
+__device__ static inline void store_async(typename CST::dtype::dtype *redst, typename CST::dtype::dtype *imdst, const CST &src, const int re_row_stride, const int im_row_stride, 
+                            cuda::barrier<cuda::thread_scope_block> &re_barrier, cuda::barrier<cuda::thread_scope_block> &im_barrier) {
+    store_async(redst, src.real, re_row_stride, re_barrier);
+    store_async(imdst, src.imag, im_row_stride, im_barrier);
 }
 
 }

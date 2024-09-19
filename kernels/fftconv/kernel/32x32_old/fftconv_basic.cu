@@ -5,9 +5,9 @@
 using namespace kittens;
 
 // Number of batches per SM
-#define B_TILE 16
+#define B_TILE 8
 // Number of heads per SM
-#define H_TILE 32
+#define H_TILE 8
 
 #define NUM_WORKERS 1
 
@@ -33,7 +33,6 @@ __global__ void fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *k
     // Separate reg to hold accumulated X values (in bf)
     kittens::rt_cmplx_bf<2, 2> accum;
     kittens::rt_cmplx_bf<2, 2, ducks::rt_layout::col> b_reg;
-
     
     #pragma unroll
     for (int i = 0; i < H_TILE; i++) {
@@ -84,7 +83,7 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
                         const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
                         const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
                         bf16 *o, 
-                        int b, int h, int n, int n1, long mem_size) {
+                        int b, int h, int n, int n1) {
     // 1 warp for 32x32 case
     const dim3 block_dim{
         (unsigned int)(kittens::WARP_THREADS)
@@ -93,6 +92,14 @@ void launch_fftconv_tk(const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_re
         (unsigned int)(b + B_TILE - 1) / B_TILE,
         (unsigned int)(h + H_TILE - 1) / H_TILE
     };
+
+    long mem_size = 1000;
+
+    cudaFuncSetAttribute(
+        fftconv_tk,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
 
     cudaFuncSetAttribute(
         fftconv_tk,
@@ -186,7 +193,7 @@ torch::Tensor fftconv_tk(
     const bf16* twinv_imag_bf               = reinterpret_cast<const bf16*>(twinv_imag_ptr);
           bf16* o_bf                        = reinterpret_cast<bf16*>(o_ptr);
 
-    unsigned long mem_size = 108000;
+    unsigned long mem_size = 1000;
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -203,5 +210,5 @@ torch::Tensor fftconv_tk(
     return out;
 }
 #else
-#include "../harness.impl"
+#include "harness_async.impl"
 #endif
