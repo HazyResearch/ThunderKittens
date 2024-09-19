@@ -73,6 +73,13 @@ class TKFFTConv(torch.nn.Module):
     def forward(self, u, k):
         B, H, L = u.shape
 
+        if (H < 768 and L < 1024):
+            B_TILE = 1
+            H_TILE = 1
+        else:
+            B_TILE = 8
+            H_TILE = 8
+
         # Right now only working with N = 1024
         assert L == self.N
 
@@ -104,7 +111,7 @@ class TKFFTConv(torch.nn.Module):
                 u_real, u_imag, kfT_real, kfT_imag, 
                 self.f_real, self.f_imag, self.finv_real, self.finv_imag,
                 self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
-                B, H, self.N, self.N1
+                B, H, self.N, self.N1, B_TILE, H_TILE
             )
 
         # print(out[0, 0, 0, :1])

@@ -22,7 +22,9 @@ extern torch::Tensor fftconv_tk(
     int B,
     int H,
     int N,
-    int N1
+    int N1,
+    int B_TILE,
+    int H_TILE
 );
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

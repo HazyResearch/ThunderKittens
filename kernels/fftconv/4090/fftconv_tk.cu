@@ -93,11 +93,8 @@ void launch_fftconv_tk(
     const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
     const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
     const bf16 *tw_real, const bf16 *tw_imag, const bf16 *twinv_real, const bf16 *twinv_imag, 
-    bf16 *o, int b, int h, int n, int n1
+    bf16 *o, int b, int h, int n, int n1, const int B_TILE, const int H_TILE
 ) {
-    
-    const int B_TILE = 1; // Number of batches per SM
-    const int H_TILE = 1; // Number of heads per SM
 
     // 1 warp for 32x32 case
     const dim3 block_dim{
@@ -151,7 +148,9 @@ torch::Tensor fftconv_tk(
     int B,
     int H,
     int N,
-    int N1
+    int N1,
+    const int B_TILE,
+    const int H_TILE
 ) {
     CHECK_INPUT(u_real);
     CHECK_INPUT(u_imag);
@@ -220,8 +219,7 @@ torch::Tensor fftconv_tk(
         f_real_bf, f_imag_bf, finv_real_bf, finv_imag_bf,
         tw_real_bf, tw_imag_bf, twinv_real_bf, twinv_imag_bf,
         o_bf,
-        B, H, N, N1
-        //, mem_size
+        B, H, N, N1, B_TILE, H_TILE
     );
 
     CHECK_CUDA_ERROR(cudaGetLastError());
