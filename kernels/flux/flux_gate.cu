@@ -1,3 +1,6 @@
+// #define RUN_MAIN
+#define TORCH_COMPILE_GATE
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
@@ -116,6 +119,8 @@ struct flux_matmul_gate_template {
 
 #include <iostream>
 #include <random>
+
+#ifdef RUN_MAIN
 #include <math.h>
 #include <cuda_bf16.h>
 
@@ -319,3 +324,111 @@ int main() {
 
     return 0;
 }
+#endif
+
+#ifdef TORCH_COMPILE_GATE
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+
+template<int M_tile, int K_tile, int N_tile, int transpose_lhs, int transpose_rhs>
+void dispatch_fused_flux_linear_gate(
+    bf16 * d_x,
+    bf16 * d_weight,
+    bf16 * d_bias,
+    bf16 * d_gate,
+    bf16 * d_y,
+    bf16 * d_out,
+    uint M, uint K, uint N
+) {
+    using fmt = flux_matmul_gate_template<M_tile, K_tile, N_tile, transpose_lhs, transpose_rhs>;
+
+    using lhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().lhs[0])>::type;
+    using rhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().rhs)>::type;
+    using acc_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::finish_block>().acc[0])>::type;
+    using lhs_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().lhs)>::type;
+    using rhs_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().rhs)>::type;
+    using bias_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().bias)>::type;
+    using acc_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().acc)>::type;
+    using globals  = typename fmt::layout::globals;
+
+    lhs_global Ag{d_x, nullptr, nullptr, transpose_lhs ? K : M, transpose_lhs ? M : K};
+    rhs_global Bg{d_weight, nullptr, nullptr, transpose_rhs ? N : K, transpose_rhs ? K : N};
+    acc_global Cg{d_out, nullptr, nullptr, M, N};
+    acc_global Yg{d_y, nullptr, nullptr, M, N};
+    bias_global Biasg{d_bias, nullptr, nullptr, nullptr, N};
+    bias_global Gateg{d_gate, nullptr, nullptr, nullptr, N};
+    globals G{Ag, Bg, Biasg, Gateg, Yg, Cg};
+
+    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    
+    cudaFuncSetAttribute(prototype::pc<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    // Launch kernel
+    dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
+    dim3 block(prototype::num_threads<fmt>);
+
+    prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+}
+
+torch::Tensor fused_flux_linear_gate(
+    const torch::Tensor x,
+    const torch::Tensor weight,
+    const torch::Tensor bias,
+    const torch::Tensor gate,
+    const torch::Tensor y
+) {
+    CHECK_INPUT(x);
+    CHECK_INPUT(weight);
+    CHECK_INPUT(bias);
+    CHECK_INPUT(gate);
+    CHECK_INPUT(y);
+
+    const uint M = x.size(0);
+    const uint K = x.size(1);
+    const uint N = weight.size(0);
+    
+    TORCH_CHECK(weight.size(1) == K, "weight has incompatible shape");
+    TORCH_CHECK(bias.size(0) == N, "bias has incompatible shape");
+    TORCH_CHECK(gate.size(0) == N, "gate has incompatible shape");
+    TORCH_CHECK(y.size(0) == M, "y has incompatible shape");
+    TORCH_CHECK(y.size(1) == N, "y has incompatible shape");
+
+    TORCH_CHECK(y.is_contiguous(), "y must be contiguous");
+
+    // x contiguous means x is M x K format, so transpose_lhs = false
+    const bool transpose_lhs = !x.is_contiguous();
+    // weight contiguous means weight is in N x K format, so transpose_rhs = true!
+    const bool transpose_rhs = weight.is_contiguous();
+
+    torch::Tensor out = torch::empty({M, N}, y.options());
+
+    // convert to bf16
+    c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *weight_bf16 = weight.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *bias_bf16 = bias.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *gate_bf16 = gate.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *y_bf16 = y.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *out_bf16 = out.data_ptr<c10::BFloat16>();
+
+    bf16 *d_x = reinterpret_cast<bf16*>(x_bf16);
+    bf16 *d_weight = reinterpret_cast<bf16*>(weight_bf16);
+    bf16 *d_bias = reinterpret_cast<bf16*>(bias_bf16);
+    bf16 *d_gate = reinterpret_cast<bf16*>(gate_bf16);
+    bf16 *d_y = reinterpret_cast<bf16*>(y_bf16);
+    bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
+
+    if (transpose_lhs && transpose_rhs) {
+        dispatch_fused_flux_linear_gate<192, 192, 64, true, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    } else if (transpose_lhs && !transpose_rhs) {
+        dispatch_fused_flux_linear_gate<192, 192, 64, true, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    } else if (!transpose_lhs && transpose_rhs) {
+        dispatch_fused_flux_linear_gate<192, 192, 64, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    } else {
+        dispatch_fused_flux_linear_gate<192, 192, 64, false, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    }
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+
+    return out;
+}
+
+#endif

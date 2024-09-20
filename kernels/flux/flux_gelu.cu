@@ -1,3 +1,5 @@
+// #define RUN_MAIN
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
@@ -102,6 +104,7 @@ struct flux_matmul_gelu_template {
     };
 };
 
+#ifdef RUN_MAIN
 #include <iostream>
 #include <random>
 #include <math.h>
@@ -297,3 +300,4 @@ int main() {
 
     return 0;
 }
+#endif

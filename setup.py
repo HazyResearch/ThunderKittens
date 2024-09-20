@@ -28,6 +28,7 @@ cuda_flags = [
     '-Xptxas=--verbose',
     '-Xptxas=--warn-on-spills',
     f'-I{thunderkittens_root}/include',
+    f'-I{thunderkittens_root}/prototype',
     f'-I{python_include}',
     '-DTORCH_COMPILE'
 ] + torch_include.split()
