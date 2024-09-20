@@ -394,10 +394,13 @@ torch::Tensor fused_flux_linear_gate(
 
     TORCH_CHECK(y.is_contiguous(), "y must be contiguous");
 
-    // x contiguous means x is M x K format, so transpose_lhs = false
-    const bool transpose_lhs = !x.is_contiguous();
-    // weight contiguous means weight is in N x K format, so transpose_rhs = true!
-    const bool transpose_rhs = weight.is_contiguous();
+    TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
+    TORCH_CHECK(weight.is_contiguous(), "weight must be in N x K format");
+
+    // // x contiguous means x is M x K format, so transpose_lhs = false
+    // const bool transpose_lhs = !x.is_contiguous();
+    // // weight contiguous means weight is in N x K format, so transpose_rhs = true!
+    // const bool transpose_rhs = weight.is_contiguous();
 
     torch::Tensor out = torch::empty({M, N}, y.options());
 
@@ -416,14 +419,24 @@ torch::Tensor fused_flux_linear_gate(
     bf16 *d_y = reinterpret_cast<bf16*>(y_bf16);
     bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
 
-    if (transpose_lhs && transpose_rhs) {
-        dispatch_fused_flux_linear_gate<192, 192, 64, true, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    } else if (transpose_lhs && !transpose_rhs) {
-        dispatch_fused_flux_linear_gate<192, 192, 64, true, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    } else if (!transpose_lhs && transpose_rhs) {
-        dispatch_fused_flux_linear_gate<192, 192, 64, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    if (M > 512) {
+        const int M_tile = 192;
+        const int K_tile = 192;
+        const int N_tile = 64;
+
+        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    } else if (K > 3072) {
+        const int M_tile = 128;
+        const int K_tile = 64;
+        const int N_tile = 128;
+        
+        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
     } else {
-        dispatch_fused_flux_linear_gate<192, 192, 64, false, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+        const int M_tile = 128;
+        const int K_tile = 192;
+        const int N_tile = 64;
+        
+        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
     }
 
     CHECK_CUDA_ERROR(cudaGetLastError());
