@@ -36,11 +36,11 @@ with torch.inference_mode():
 
     timing = do_bench(lambda: ref_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
-    print(f"Reference: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+    print(f"Reference: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
     timing = do_bench(lambda: tk_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
-    print(f"ThunderKittens: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+    print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
 print("Linear + gelu")
 output_ref = ref_gelu(x, linear)
@@ -51,8 +51,8 @@ with torch.inference_mode():
 
     timing = do_bench(lambda: ref_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
-    print(f"Reference: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+    print(f"Reference: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
     timing = do_bench(lambda: tk_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
-    print(f"ThunderKittens: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+    print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
