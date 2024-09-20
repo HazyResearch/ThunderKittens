@@ -296,6 +296,7 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
                     dst.tiles[i][j].data[3].y = val;
                 }
             }
+            __syncwarp();
         }
     }
 }

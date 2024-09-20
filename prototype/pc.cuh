@@ -35,8 +35,6 @@ namespace prototype {
 template<typename T> concept pc_layout = requires {
     typename T::globals;
     typename T::input_block;
-    typename T::producer_state;
-    typename T::consumer_state;    
 };
 namespace detail {
 template<typename T> concept has_output_block  = pc_layout<T> && requires { typename T::output_block;  };
@@ -48,17 +46,25 @@ template<has_scratch_block T> struct scratch_block_getter<T> { using type = type
 template<typename T> concept has_finish_block  = pc_layout<T> && requires { typename T::finish_block;  };
 template<typename T> struct finish_block_getter { using type = empty; };
 template<has_finish_block T> struct finish_block_getter<T> { using type = typename T::finish_block; };
+template<typename T> concept has_producer_state = pc_layout<T> && requires { typename T::producer_state; };
+template<typename T> struct producer_state_getter { using type = empty; };
+template<has_producer_state T> struct producer_state_getter<T> { using type = typename T::producer_state; };
+template<typename T> concept has_consumer_state = pc_layout<T> && requires { typename T::consumer_state; };
+template<typename T> struct consumer_state_getter { using type = empty; };
+template<has_consumer_state T> struct consumer_state_getter<T> { using type = typename T::consumer_state; };
 }
 template<pc_layout T> struct complete_pc_layout : T {
     using output_block_type  = typename detail::output_block_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using finish_block_type  = typename detail::finish_block_getter<T>::type;
+    using producer_state_type = typename detail::producer_state_getter<T>::type;
+    using consumer_state_type = typename detail::consumer_state_getter<T>::type;
 };
 
 template<pc_layout T> struct producer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
-    using producer_state_type = typename T::producer_state;
+    using producer_state_type = typename detail::producer_state_getter<T>::type;
     globals_type& globals;
     producer_state_type& state;
     scratch_block_type& scratch;
@@ -67,7 +73,7 @@ template<pc_layout T> struct producer_setup_args {
 };
 template<pc_layout T> struct producer_load_args {
     using input_block_type = typename T::input_block;
-    using producer_state_type = typename T::producer_state;
+    using producer_state_type = typename detail::producer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
     input_block_type& input;
@@ -81,7 +87,7 @@ template<pc_layout T> struct producer_load_args {
 };
 template<pc_layout T> struct producer_store_args {
     using output_block_type = typename detail::output_block_getter<T>::type;
-    using producer_state_type = typename T::producer_state;
+    using producer_state_type = typename detail::producer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
     output_block_type& output;
@@ -96,7 +102,7 @@ template<pc_layout T> struct producer_store_args {
 template<pc_layout T> struct consumer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
-    using consumer_state_type = typename T::consumer_state;
+    using consumer_state_type = typename detail::consumer_state_getter<T>::type;
     globals_type& globals;
     consumer_state_type& state;
     scratch_block_type& scratch;
@@ -106,7 +112,7 @@ template<pc_layout T> struct consumer_setup_args {
 template<pc_layout T> struct consumer_work_args {
     using input_block_type = typename T::input_block;
     using output_block_type = typename detail::output_block_getter<T>::type;
-    using consumer_state_type = typename T::consumer_state;
+    using consumer_state_type = typename detail::consumer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
     input_block_type& input;
@@ -122,7 +128,7 @@ template<pc_layout T> struct consumer_work_args {
 };
 template<pc_layout T> struct consumer_finish_args {
     using finish_block_type = typename detail::finish_block_getter<T>::type;
-    using consumer_state_type = typename T::consumer_state;
+    using consumer_state_type = typename detail::consumer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
     finish_block_type& finish;
@@ -137,6 +143,7 @@ template<typename pct> concept pc_template = requires {
     typename pct::layout;
     typename pct::producer;
     typename pct::consumer;
+    pct::iters;
     pct::producer::setup;
     pct::producer::load;
     pct::consumer::setup; 
@@ -149,6 +156,7 @@ template<typename pct> concept has_num_consumer_warps = requires { pct::NUM_CONS
 template<typename pct> concept has_num_producer_warps = requires { pct::NUM_PRODUCER_WARPS; };
 template<typename pct> concept has_input_pipe_stages = requires { pct::INPUT_PIPE_STAGES; };
 template<typename pct> concept has_output_pipe_stages = requires { pct::producer::store; };
+template<typename pct> concept has_num_blocks = requires { pct::NUM_BLOCKS; };
 }
 template<typename pct> constexpr int input_pipe_stages = -1;
 template<detail::has_input_pipe_stages pct> constexpr int input_pipe_stages<pct> = pct::INPUT_PIPE_STAGES;
@@ -158,6 +166,8 @@ template<typename pct> constexpr int num_consumer_warps = 8;
 template<detail::has_num_consumer_warps pct> constexpr int num_consumer_warps<pct> = pct::NUM_CONSUMER_WARPS;
 template<typename pct> constexpr int num_producer_warps = 4;
 template<detail::has_num_producer_warps pct> constexpr int num_producer_warps<pct> = pct::NUM_PRODUCER_WARPS;
+template<typename pct> constexpr int num_blocks = 1;
+template<detail::has_num_blocks pct> constexpr int num_blocks<pct> = pct::NUM_BLOCKS;
 
 template<pc_template T> constexpr int num_threads = (num_consumer_warps<T> + num_producer_warps<T>) * 32;
 template<pc_template T> constexpr int num_warps = num_consumer_warps<T> + num_producer_warps<T>;
@@ -167,14 +177,14 @@ template<int N> __device__ static inline int ring_advance(int ring, int distance
 template<int N> __device__ static inline int ring_retreat(int ring) { return (ring + N-1) % N; }
 
 template<typename pct>
-__global__ __launch_bounds__(num_threads<pct>, 1)
+__global__ __launch_bounds__(num_threads<pct>, num_blocks<pct>)
 void pc(typename pct::layout::globals g) {
     static_assert(pc_template<pct>, "pc template parameter does not satisfy concept requirements");
     using layout = complete_pc_layout<typename pct::layout>; // complete the layout by filling in the optional types with empty
     using globals        = typename layout::globals;
     using input_block    = typename layout::input_block;
-    using producer_state = typename layout::producer_state;
-    using consumer_state = typename layout::consumer_state;
+    using producer_state = typename layout::producer_state_type;
+    using consumer_state = typename layout::consumer_state_type;
     using output_block   = typename layout::output_block_type;
     using scratch_block  = typename layout::scratch_block_type;
     using finish_block   = typename layout::finish_block_type;
@@ -210,6 +220,7 @@ void pc(typename pct::layout::globals g) {
             init_barrier(outputs_finished[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
         }
     }
+    int iters = pct::iters(g);
     int input_ring  = 0; // tracking which input block is being loaded
     int output_ring = 0; // tracking which output block is being written
 
@@ -218,10 +229,10 @@ void pc(typename pct::layout::globals g) {
     if(warpid() >= NUM_CONSUMER_WARPS) { // last warpgroup is a producer
         producer_state s;
         pct::producer::setup({g, s, scratch_smem});
-        int load_more = true, load_iter = 0, store_iter = 0;
+        int load_iter = 0, store_iter = 0;
         #pragma unroll
-        for(int i = 0; i < INPUT_PIPE_STAGES && load_more; i++) { // fill the pipeline
-            load_more = pct::producer::load({
+        for(int i = 0; i < INPUT_PIPE_STAGES && load_iter<iters; i++) { // fill the pipeline
+            pct::producer::load({
                 input_smem[input_ring],
                 s,
                 scratch_smem,
@@ -233,8 +244,8 @@ void pc(typename pct::layout::globals g) {
             load_iter++;
         }
         if constexpr (detail::has_store<pct>) {
-            while(load_more || store_iter < load_iter) {
-                if(store_iter < load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
+            while(load_iter<iters || store_iter<load_iter) {
+                if(store_iter<load_iter && test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2)) {
                     pct::producer::store({
                         output_smem[output_ring],
                         s,
@@ -247,8 +258,8 @@ void pc(typename pct::layout::globals g) {
                     store_iter++;
                 }
                 // need to wait for the next stage to be available to write to.
-                if(load_more && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
-                    load_more = pct::producer::load({
+                if(load_iter<iters && test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1)) {
+                    pct::producer::load({
                         input_smem[input_ring],
                         s,
                         scratch_smem,
@@ -263,9 +274,9 @@ void pc(typename pct::layout::globals g) {
             }
         }
         else { // just do the load
-            while(load_more) {
+            while(load_iter<iters) {
                 wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1);
-                load_more = pct::producer::load({
+                pct::producer::load({
                     input_smem[input_ring],
                     s,
                     scratch_smem,
@@ -281,13 +292,12 @@ void pc(typename pct::layout::globals g) {
     else { // other warpgroups are consumers
         consumer_state s;
         pct::consumer::setup({g, s, scratch_smem});
-        int work_more = true, iter = 0;
-        while(work_more) {
+        for(int iter = 0; iter < iters; iter++) {
             if constexpr (detail::has_store<pct>) {
                 wait(outputs_finished[output_ring], ((iter/OUTPUT_PIPE_STAGES)%2)^1); // wait for memory to arrive, phase changes at half the rate of the ring
             }
             wait(inputs_arrived[input_ring], (iter/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
-            work_more = pct::consumer::work({
+            pct::consumer::work({
                 input_smem[input_ring],
                 output_smem[output_ring],
                 s,
@@ -297,7 +307,6 @@ void pc(typename pct::layout::globals g) {
                 outputs_arrived[output_ring],
                 iter
             });
-            iter++;
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             if constexpr (detail::has_store<pct>) {
                 output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
@@ -310,7 +319,7 @@ void pc(typename pct::layout::globals g) {
                 s,
                 scratch_smem,
                 g,
-                iter
+                iters
             });
         }
     }

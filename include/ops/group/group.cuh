@@ -54,6 +54,8 @@ template<int n_reg> __device__ static inline void decrease_registers() {
     static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");
     asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(n_reg));
 }
+__device__ static inline void producer_registers() { decrease_registers<24>(); }
+template<int NCWG> __device__ static inline void consumer_registers() { increase_registers<480/NCWG - 8*(NCWG>3) - 224*(NCWG==1)>(); }
 
 #endif
 

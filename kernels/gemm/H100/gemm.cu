@@ -14,20 +14,20 @@ struct matmul_layout {
         st_bf<64,      BLOCK_K> a[BLOCK_M/64];
         st_bf<BLOCK_K, BLOCK_N> b;
     };
-    struct producer_state { int n_blocks; };
-    struct consumer_state { int n_blocks; rt_fl<16, BLOCK_N> accumulator; };
+    using  producer_state = empty;
+    struct consumer_state { rt_fl<16, BLOCK_N> accumulator;   };
     struct finish_block   { st_bf<64, BLOCK_N> c[BLOCK_M/64]; };
 };
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K>
 struct matmul_template {
     using layout = matmul_layout<BLOCK_M, BLOCK_N, BLOCK_K>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
+    __device__ static inline int iters(typename layout::globals &g) { return g.a.cols / BLOCK_K; }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
-            args.state.n_blocks = args.globals.a.cols / BLOCK_K; // number of blocks to process
         }
-        __device__ static bool load(producer_load_args<layout> args) { // barrier for the producer to load into
+        __device__ static void load(producer_load_args<layout> args) { // barrier for the producer to load into
             if(warpgroup::warpid() == 0) {
                 tma::expect_bytes(args.inputs_arrived, sizeof(layout::input_block));
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++)
@@ -35,20 +35,17 @@ struct matmul_template {
                 tma::load_async(args.input.b, args.globals.b, {args.iter, (int)blockIdx.y}, args.inputs_arrived);
             }
             else arrive(args.inputs_arrived);
-            return args.iter < args.state.n_blocks-1; // return true if there are more blocks to process
         }
     };
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
             warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
             zero(args.state.accumulator);
-            args.state.n_blocks = args.globals.a.cols / BLOCK_K;
         }
-        __device__ static bool work(consumer_work_args<layout> args) {
+        __device__ static void work(consumer_work_args<layout> args) {
             warpgroup::mma_AB(args.state.accumulator, args.input.a[warpgroup::groupid()], args.input.b);
             warpgroup::mma_async_wait();
             arrive(args.inputs_finished);
-            return args.iter < args.state.n_blocks-1;
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accumulator);
