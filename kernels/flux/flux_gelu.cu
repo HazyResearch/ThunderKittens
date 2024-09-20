@@ -19,7 +19,7 @@ template<kittens::ducks::sv::all SV> __device__ static inline void init_bias(rt_
 }
 using namespace kittens::prototype;
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs, int transpose_rhs>
-struct flux_matmul_layout {
+struct flux_matmul_gelu_layout {
     using lhs_tile  = std::conditional_t<transpose_lhs, st_bf<BLOCK_K,      64>, st_bf<     64, BLOCK_K>>;
     using rhs_tile  = std::conditional_t<transpose_rhs, st_bf<BLOCK_N, BLOCK_K>, st_bf<BLOCK_K, BLOCK_N>>;
     using acc_tile  = st_bf<64, BLOCK_N>;
@@ -39,8 +39,8 @@ struct flux_matmul_layout {
     struct finish_block   { acc_tile           acc[BLOCK_M/64]; };
 };
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs=0, int transpose_rhs=0>
-struct flux_matmul_template {
-    using layout = flux_matmul_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
+struct flux_matmul_gelu_template {
+    using layout = flux_matmul_gelu_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
     __device__ static inline int iters(typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
     struct producer {
@@ -135,12 +135,12 @@ void cpu_gemm(float* a, float* b, float *bias, float* c, int M, int N, int K) {
 
 int main() {
     constexpr int transpose_lhs = 0, transpose_rhs = 1;
-    // const int M = 3072, N = 12288, K = 3072; using fmt = flux_matmul_template<192, 192, 64>; // 760 TFLOPs
-    // const int M = 3072, N = 3072, K = 12288; using fmt = flux_matmul_template<192, 192, 64>; // 813.5 TFLOPs
-    // const int M = 256, N = 12288, K = 3072; using fmt = flux_matmul_template<128, 192, 64>; // 574.5 TFLOPs
-    // const int M = 256, N = 3072, K = 12288; using fmt = flux_matmul_template<128, 64, 128>; // 433 TFLOPs
-    // const int M = 3072, N = 3072, K = 3072; using fmt = flux_matmul_template<192, 192, 64>; // 740 TFLOPs
-    const int M = 3072, N = 3072, K = 6144; using fmt = flux_matmul_template<192, 192, 64, transpose_lhs, transpose_rhs>; // 813.5 TFLOPs
+    // const int M = 3072, N = 12288, K = 3072; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 760 TFLOPs
+    // const int M = 3072, N = 3072, K = 12288; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 813.5 TFLOPs
+    // const int M = 256, N = 12288, K = 3072; using fmt = flux_matmul_gelu_template<128, 192, 64>; // 574.5 TFLOPs
+    // const int M = 256, N = 3072, K = 12288; using fmt = flux_matmul_gelu_template<128, 64, 128>; // 433 TFLOPs
+    // const int M = 3072, N = 3072, K = 3072; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 740 TFLOPs
+    const int M = 3072, N = 3072, K = 6144; using fmt = flux_matmul_gelu_template<192, 192, 64, transpose_lhs, transpose_rhs>; // 813.5 TFLOPs
 
     using lhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().lhs[0])>::type;
     using rhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().rhs)>::type;
