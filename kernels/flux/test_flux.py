@@ -1,4 +1,4 @@
-from thunderkittens import tk_flux_linear_gate
+from thunderkittens import tk_flux_linear_gate, tk_flux_linear_gelu
 import torch
 import time
 
@@ -15,22 +15,44 @@ with torch.device('cuda'):
     gate = torch.randn(N, dtype=torch.bfloat16)
     y = torch.randn(M, N, dtype=torch.bfloat16)
 
-def ref(x, linear, gate, y):
+def ref_gate(x, linear, gate, y):
     return linear(x) * gate + y
 
-def tk(x, linear, gate, y):
+def tk_gate(x, linear, gate, y):
     return tk_flux_linear_gate(x, linear.weight, linear.bias, gate, y)
 
-output_ref = ref(x, linear, gate, y)
-output = tk(x, linear, gate, y)
+def ref_gelu(x, linear):
+    return torch.nn.functional.gelu(linear(x), approximate='tanh')
+
+def tk_gelu(x, linear):
+    return tk_flux_linear_gelu(x, linear.weight, linear.bias)
+
+print('Linear + gate')
+output_ref = ref_gate(x, linear, gate, y)
+output = tk_gate(x, linear, gate, y)
 print((output_ref-output).abs().max())
 
 with torch.inference_mode():
 
-    timing = do_bench(lambda: ref(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
+    timing = do_bench(lambda: ref_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
     print(f"Reference: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
 
-    timing = do_bench(lambda: tk(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
+    timing = do_bench(lambda: tk_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
+    tflops = (2 * M * K * N) / 1e12 / (timing)
+    print(f"ThunderKittens: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+
+print("Linear + gelu")
+output_ref = ref_gelu(x, linear)
+output = tk_gelu(x, linear)
+print((output_ref-output).abs().max())
+
+with torch.inference_mode():
+
+    timing = do_bench(lambda: ref_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
+    tflops = (2 * M * K * N) / 1e12 / (timing)
+    print(f"Reference: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")
+
+    timing = do_bench(lambda: tk_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
     tflops = (2 * M * K * N) / 1e12 / (timing)
     print(f"ThunderKittens: {timing * 1e3:.2f}ms, {tflops:.2f}TFLOPS")

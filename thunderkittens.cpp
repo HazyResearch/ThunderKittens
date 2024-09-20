@@ -83,6 +83,11 @@ extern torch::Tensor fused_flux_linear_gate(
     const torch::Tensor gate,
     const torch::Tensor y
 );
+extern torch::Tensor fused_flux_linear_gelu(
+    const torch::Tensor x,
+    const torch::Tensor weight,
+    const torch::Tensor bias
+);
 #endif
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -123,5 +128,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_FLUX
     m.def("tk_flux_linear_gate", fused_flux_linear_gate, "Flux linear gate. Takes tensors (x, weight, bias, gate, y).  x is (B, H1), weight is (H2, H1), bias and gate are (H2), y is (B, H2). x, weight, bias, gate, y are bf16. Returns (B, H2) in bf16.");
+    m.def("tk_flux_linear_gelu", fused_flux_linear_gelu, "Flux linear gelu. Takes tensors (x, weight, bias).  x is (B, H1), weight is (H2, H1), bias is (H2). x, weight, bias are bf16. Returns (B, H2) in bf16.");
 #endif
 }
