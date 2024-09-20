@@ -190,8 +190,9 @@ void pc(typename pct::layout::globals g) {
     using finish_block   = typename layout::finish_block_type;
     constexpr int OUTPUT_PIPE_STAGES = output_pipe_stages<pct> < 1 ? 1 : output_pipe_stages<pct>; // Even if the producer doesn't have a store, we need to allocate the empty struct
     static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 32, "Invalid number of output pipe stages");
+    constexpr int NUM_BLOCKS = num_blocks<pct>;
     constexpr int INPUT_PIPE_STAGES = input_pipe_stages<pct> == -1 ?
-        (MAX_SHARED_MEMORY-2048-sizeof(scratch_block)-OUTPUT_PIPE_STAGES*sizeof(output_block)) / sizeof(input_block) :
+        ((MAX_SHARED_MEMORY-2048)/NUM_BLOCKS-sizeof(scratch_block)-OUTPUT_PIPE_STAGES*sizeof(output_block)) / sizeof(input_block) :
         input_pipe_stages<pct>;
     static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 32, "Invalid number of input pipe stages");
     constexpr int NUM_CONSUMER_WARPS = num_consumer_warps<pct>;
@@ -270,7 +271,7 @@ void pc(typename pct::layout::globals g) {
                     input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
                     load_iter++;
                 }
-                __nanosleep(5);
+                // __nanosleep(5);
             }
         }
         else { // just do the load
