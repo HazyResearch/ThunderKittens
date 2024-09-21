@@ -5,6 +5,7 @@ import time
 from triton.testing import do_bench
 
 repeats = 100
+warmups = 5
 
 def ref_gate(x, linear, gate, y):
     return linear(x) * gate + y
@@ -27,11 +28,11 @@ def benchmark_gated(M, N, K):
 
     with torch.inference_mode():
 
-        timing = do_bench(lambda: ref_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
+        timing = do_bench(lambda: ref_gate(x, linear, gate, y), warmup=warmups, rep=repeats) * 1e-3
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"PyTorch Reference: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
-        timing = do_bench(lambda: tk_gate(x, linear, gate, y), warmup=1, rep=repeats) * 1e-3
+        timing = do_bench(lambda: tk_gate(x, linear, gate, y), warmup=warmups, rep=repeats) * 1e-3
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
@@ -42,11 +43,11 @@ def benchmark_gelu(M, N, K):
 
     with torch.inference_mode():
 
-        timing = do_bench(lambda: ref_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
+        timing = do_bench(lambda: ref_gelu(x, linear), warmup=warmups, rep=repeats) * 1e-3
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"PyTorch Reference: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
-        timing = do_bench(lambda: tk_gelu(x, linear), warmup=1, rep=repeats) * 1e-3
+        timing = do_bench(lambda: tk_gelu(x, linear), warmup=warmups, rep=repeats) * 1e-3
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 

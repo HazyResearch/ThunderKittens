@@ -424,10 +424,16 @@ torch::Tensor fused_flux_linear_gate(
         const int K_tile = 192;
         const int N_tile = 64;
 
+        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+    } else if (M > 256 && K > 3072) {
+        const int M_tile = 128;
+        const int K_tile = 96;
+        const int N_tile = 128;
+        
         dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
     } else if (K > 3072) {
-        const int M_tile = 128;
-        const int K_tile = 64;
+        const int M_tile = 64;
+        const int K_tile = 96;
         const int N_tile = 128;
         
         dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
