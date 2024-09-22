@@ -17,13 +17,13 @@ using namespace kittens;
 
 
 __device__ static void inner_loop(
-    bf16 *u_real, bf16 *u_imag, 
+    st_cmplx_bf_32x1024 u,
     const bf16 *kf_real, const bf16 *kf_imag, 
     st_cmplx_bf_32x32 fft_mat, st_cmplx_bf_32x32 fft_inv_mat, 
     const bf16 *tw_real, const bf16 *tw_imag, 
     const bf16 *twinv_real, const bf16 *twinv_imag, 
     bf16 *o, 
-    int h, int n, int n1,
+    int b, int h, int n, int n1,
     int B_TILE, int H_TILE
 ) {
     int warpid = kittens::warpid();
@@ -35,80 +35,47 @@ __device__ static void inner_loop(
     int b_start = blockIdx.x * B_TILE;
 
     // Registers; everyone loads
-    rt_cmplx_bf_32x32 a_reg;       // Doing 32x32 tiles
-    rt_cmplx_fl_32x32 mma_reg;     // Bc we're using HMMA instructions, we need an fl accum reg for MMA
-    rt_cmplx_bf_32x32 accum;       // Separate reg to hold accumulated X values (in bf)
+    rt_cmplx_bf_32x32 a_reg;  
+    rt_cmplx_fl_32x32 mma_reg;  
+    rt_cmplx_bf_32x32 accum;       
     rt_cmplx_bf_32x32_col b_reg;
 
-    int num_chunks = 32;
-    int chunk_stride = N_1024;
-    // #pragma unroll
-    for (int chunk = 0; chunk < num_chunks; chunk ++ ) {
-
-        for (int i = 0; i < H_TILE; i++) {
-            int k_start = (h_start + i) * h_stride;
-
-            // #pragma unroll
-            for (int j = 0; j < B_TILE; j++) {
-                // specific B, H, sequence
-                
-                // block = block @ f_sqrt_N_fft  # Apply FFT again
-                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
-                // block = x[:, :, i*chunk_size:(i+1)*chunk_size].transpose(-1, -2)
-                int u_start = ((b_start + j) * b_stride) + k_start + (chunk * chunk_stride);
-
-                // block = block @ f_sqrt_N_fft  # Apply FFT
-                kittens::load(a_reg, fft_mat); 
-                // block = block.transpose(-1, -2)  # TODO: is this the right spot for the transpose? 
+    // now se have 32x1024 and we want the strip of 1024
+    int N_TILE = 32; 
+    for (int h = 0; h < H_TILE; h++) {
+        for (int b = 0; b < B_TILE; b++) {
+            for (int i = 0; i < N_TILE; i ++) {
+                // load block of u
+                auto ref_real = kittens::subtile_inplace<2, 2>(u.real, 0, i);
                 transpose_inplace(a_reg);
-                kittens::load(b_reg, u_real + u_start, u_imag + u_start, n1, n1);
-                kittens::zero(mma_reg);
-                kittens::mma_AB(mma_reg, a_reg, b_reg, mma_reg);
-                kittens::copy(accum, mma_reg);
-                // block = block * twiddle_factors_fft
-                kittens::load(a_reg, tw_real, tw_imag, n1, n1); 
-                kittens::mul(accum, accum, a_reg);
-                // X = X * F  (TODO: can we avoid loading fft mat a second time?)
-                kittens::load(b_reg, fft_mat);      
-                kittens::zero(mma_reg);        
-                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-                kittens::copy(accum, mma_reg);
 
-                // X = X * K_f^T (TODO: check)
-                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = x2[:, :, i*chunk_size:(i+1)*chunk_size] * k_f[:, i*chunk_size:(i+1)*chunk_size]
-                kittens::load(a_reg, kf_real + k_start, kf_imag + k_start, n1, n1);
-                kittens::mul(accum, accum, a_reg);
+                // // x = x @ f_32_fft 
+                // zero(mma_reg);
+                // mma_AB(mma_reg, a_reg, fft_mat, mma_reg);
+                // copy(a_reg, mma_reg);
 
-                // block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
-                // block = block @ f_sqrt_N_ifft  # Apply iFFT
-                kittens::load(b_reg, fft_inv_mat);
-                kittens::zero(mma_reg);
-                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-                kittens::copy(accum, mma_reg);
-                // block = block.transpose(-1, -2)
-                transpose_inplace(accum);
-                // block = block * twiddle_factors_ifft  # Element-wise multiplication with iFFT twiddle factors
-                kittens::load(a_reg, twinv_real, twinv_imag, n1, n1);
-                kittens::mul(accum, accum, a_reg);
-                // block = block @ f_sqrt_N_ifft  # Apply second iFFT
-                kittens::zero(mma_reg);
-                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-                kittens::copy(accum, mma_reg);
-                // block = block.transpose(-1, -2)  # Final transpose to restore shape
-                transpose_inplace(accum);
+                // x = x.transpose(-1, -2) # ... 16, 1K
+                transpose_inplace(a_reg);
 
-                // Write Y^T to SMEM (TODO)
-                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
-                // kittens::store(o + u_start, accum, n1);
-                store(u_real + u_start, accum.real, n1);
-                store(u_imag + u_start, accum.imag, n1);
+                // x = x * twiddle_factors_fft
+                load(accum, tw_real, tw_imag, 32, 32);
+                mul(a_reg, a_reg, accum);
+
+                // // block = block @ f_32_fft
+                // zero(mma_reg);
+                // mma_AB(mma_reg, a_reg, fft_mat, mma_reg);
+                // copy(a_reg, mma_reg);
+
+                // store(o + u_start, a_reg.real, 1024);
             }
         }   
     }
 }
 
+
 __global__ void fftconv_tk(
-    bf16 *u_real, bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
+    bf16 *u_real, bf16 *u_imag, 
+    const bf16 *kf_real, const bf16 *kf_imag, 
     const bf16 *f_real, const bf16 *f_imag, 
     const bf16 *finv_real, const bf16 *finv_imag, 
     const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, 
@@ -139,10 +106,11 @@ __global__ void fftconv_tk(
     // SMEM; 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    // st_cmplx_bf_32x32 (&u) [32]  = al.allocate<st_cmplx_bf_32x32, 32>(); // 131,072
+    st_cmplx_bf_32x1024 (&u)  = al.allocate<st_cmplx_bf_32x1024>(); 
     st_cmplx_bf_32x32 (&fft_mat) = al.allocate<st_cmplx_bf_32x32>();
     st_cmplx_bf_32x32 (&fft_inv_mat) = al.allocate<st_cmplx_bf_32x32>();
     if (warpid == 0) {
+        load(u, u_real_g, u_imag_g, 1024, 1024);
         load(fft_mat, f_real_g, f_imag_g, n1, n1);
         load(fft_inv_mat, finv_real_g, finv_imag_g, n1, n1);
     }
@@ -150,15 +118,10 @@ __global__ void fftconv_tk(
     rt_cmplx_bf_32x32 a_reg;
     rt_cmplx_bf_32x32 b_reg;
     rt_cmplx_fl_32x32 mma_reg; 
-
-
     rt_cmplx_bf_32x32_col fft_mat_reg;
     load(fft_mat_reg, fft_mat);
 
-    // # compute the FFT
-    // x = x.reshape(B, H, sqrt_N_32, N_1024) (handled in torch)
-    // x = x.transpose(-1, -2) # ... 1K, 16   (handled in torch)
-    // first fft
+    // compute the FFT
     int chunk_size = 32;
     int N_TILE = 32; // / chunk_size;
     for (int h = 0; h < H_TILE; h++) {
@@ -168,80 +131,98 @@ __global__ void fftconv_tk(
                 int u_start = (
                     ((b_start + b) * b_stride) + 
                     ((h_start + h) * h_stride) + 
-                    (i * chunk_size * n1)
+                    (i * chunk_size)
                 ); 
-                load(a_reg, u_real + u_start, u_imag + u_start, n1, n1);
-                // transpose_inplace(a_reg);
+                auto ref_real = kittens::subtile_inplace<2, 2>(u.real, 0, i);
+                load(a_reg.real, ref_real);
+                auto ref_imag = kittens::subtile_inplace<2, 2>(u.imag, 0, i);
+                load(a_reg.imag, ref_imag);
 
-                // // x = x @ f_32_fft    # ... 1K, 16
+                transpose_inplace(a_reg);
+
+                // x = x @ f_32_fft    # ... 1K, 16
                 // zero(mma_reg);
+                // transpose_inplace(fft_mat_reg);
                 // mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
                 // copy(a_reg, mma_reg);
 
-                // // x = x.transpose(-1, -2) # ... 16, 1K
-                // transpose_inplace(a_reg);
+                // x = x.transpose(-1, -2) # ... 16, 1K
+                transpose_inplace(a_reg);
                 
                 // x = x * twiddle_factors_fft 
-                load(b_reg, tw_32_1k_real, tw_32_1k_imag, n1, n1);
-                mul(b_reg, a_reg, b_reg);
+                int tw_start = (i * chunk_size);
+                load(b_reg, tw_32_1k_real + tw_start, tw_32_1k_imag + tw_start, 1024, 1024);
+                mul(a_reg, a_reg, b_reg);
 
                 // store the result back to u
-                // store(u_real + u_start, b_reg.real, n1);
-                // // store(u_imag + u_start, b_reg.imag, n1);
-
-                store(o + u_start, b_reg.real, n1);
-                __syncthreads();
+                store(ref_real, a_reg.real);
+                store(ref_imag, a_reg.imag);
             }
         }
     }
 
-    // // inner loop
-    // inner_loop(
-    //     u_real, u_imag, kf_real, kf_imag, 
-    //     fft_mat, fft_inv_mat, 
-    //     tw_32_32_real, tw_32_32_imag, twinv_32_32_real, twinv_32_32_imag, 
-    //     o, 
-    //     h, n, n1,
-    //     B_TILE, H_TILE
-    // );
+    // inner loop
+    inner_loop(
+        u, 
+        kf_real, kf_imag, 
+        fft_mat, fft_inv_mat, 
+        tw_32_32_real, tw_32_32_imag, 
+        twinv_32_32_real, twinv_32_32_imag, 
+        o, 
+        b, h, n, n1,
+        B_TILE, H_TILE
+    );
 
-    // // compute the IFFT (similar to FFT)
-    // load(fft_mat_reg, fft_inv_mat);
-    // for (int h = 0; h < H_TILE; h++) {
-    //     for (int b = 0; b < B_TILE; b++) {
-    //         for (int i = 0; i < N_TILE; i ++) {
-    //             int u_start = ((b_start + b) * b_stride) + (h_start + h) * h_stride + i * chunk_size;
-    //             load(a_reg, u_real + u_start, u_imag + u_start, n1, n1);
+    // compute the IFFT (similar to FFT)
+    load(fft_mat_reg, fft_inv_mat);
+    for (int h = 0; h < H_TILE; h++) {
+        for (int b = 0; b < B_TILE; b++) {
+            for (int i = 0; i < N_TILE; i ++) {
+                // load block of u
+                int u_start = (
+                    ((b_start + b) * b_stride) + 
+                    ((h_start + h) * h_stride) + 
+                    (i * chunk_size)
+                );
+                auto ref_real = kittens::subtile_inplace<2, 2>(u.real, 0, i);
+                load(a_reg.real, ref_real);
+                auto ref_imag = kittens::subtile_inplace<2, 2>(u.imag, 0, i);
+                load(a_reg.imag, ref_imag);
                 
-    //             // // x = x * twiddle_factors_ifft # ... 16, 1K
-    //             int tw_start = (h_start + h) * h_stride + i * chunk_size;
-    //             load(a_reg, twinv_32_1k_real + tw_start, twinv_32_1k_imag + tw_start, n1, n1);
-    //             mul(a_reg, a_reg, b_reg);
+                // x = x * twiddle_factors_ifft 
+                int tw_start = (i * chunk_size);
+                load(b_reg, twinv_32_1k_real + tw_start, twinv_32_1k_imag + tw_start, 1024, 1024);
+                mul(a_reg, a_reg, b_reg);
 
-    //             // x = x.transpose(-1, -2) # ... 1K, 16
-    //             transpose_inplace(a_reg);
+                // x = x.transpose(-1, -2) 
+                transpose_inplace(a_reg);
 
-    //             // x = x @ f_32_ifft   # ... 1K, 16
-    //             zero(mma_reg);
-    //             mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
-    //             copy(b_reg, mma_reg);
+                // x = x @ f_32_ifft  
+                // zero(mma_reg);
+                // mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+                // copy(b_reg, mma_reg);
 
-    //             // x = x.transpose(-1, -2) # ... 16, 1K
-    //             transpose_inplace(b_reg);
+                // x = x.transpose(-1, -2)
+                transpose_inplace(a_reg);
 
-    //             // store the result back to u
-    //             store(o + u_start, a_reg.real, n1);
-    //         }
-    //     }
-    // }
+                // store the result back to u
+                store(o + u_start, a_reg.real, 1024);
+            }
+        }
+    }
 }
 
 void launch_fftconv_tk(
-    bf16 *u_real, bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
-    const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
-    const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, const bf16 *twinv_32_1k_real, const bf16 *twinv_32_1k_imag,
-    const bf16 *tw_32_32_real, const bf16 *tw_32_32_imag, const bf16 *twinv_32_32_real, const bf16 *twinv_32_32_imag,
-    bf16 *o, int b, int h, int n, int n1, const int B_TILE, const int H_TILE
+    bf16 *u_real, bf16 *u_imag,
+    const bf16 *kf_real, const bf16 *kf_imag, 
+    const bf16 *f_real, const bf16 *f_imag, 
+    const bf16 *finv_real, const bf16 *finv_imag, 
+    const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, 
+    const bf16 *twinv_32_1k_real, const bf16 *twinv_32_1k_imag,
+    const bf16 *tw_32_32_real, const bf16 *tw_32_32_imag, 
+    const bf16 *twinv_32_32_real, const bf16 *twinv_32_32_imag,
+    bf16 *o, 
+    int b, int h, int n, int n1, const int B_TILE, const int H_TILE
 ) {
 
     // 1 warp for 32x32 case
@@ -268,114 +249,17 @@ void launch_fftconv_tk(
     );
 
     fftconv_tk<<<grid_dim, block_dim, mem_size>>>(
-        u_real, u_imag, kf_real, kf_imag, 
-        f_real, f_imag, finv_real, finv_imag, 
-        tw_32_1k_real, tw_32_1k_imag, twinv_32_1k_real, twinv_32_1k_real,
-        tw_32_32_real, tw_32_32_imag, twinv_32_32_real, twinv_32_32_imag,
+        u_real, u_imag, 
+        kf_real, kf_imag, 
+        f_real, f_imag, 
+        finv_real, finv_imag, 
+        tw_32_1k_real, tw_32_1k_imag, 
+        twinv_32_1k_real, twinv_32_1k_real,
+        tw_32_32_real, tw_32_32_imag, 
+        twinv_32_32_real, twinv_32_32_imag,
         o, 
-        b, h, n, n1,
-        B_TILE, H_TILE
+        b, h, n, n1, B_TILE, H_TILE
     );
 }
 
-// For launching from PyTorch
-#ifdef TORCH_COMPILE
-#include "include/common/pyutils/torch_helpers.cuh"
-torch::Tensor fftconv_tk(
-    const torch::Tensor u_real,
-    const torch::Tensor u_imag,
-    const torch::Tensor kf_real,
-    const torch::Tensor kf_imag,
-    const torch::Tensor f_real,
-    const torch::Tensor f_imag,
-    const torch::Tensor finv_real,
-    const torch::Tensor finv_imag,
-    const torch::Tensor tw_real,
-    const torch::Tensor tw_imag,
-    const torch::Tensor twinv_real,
-    const torch::Tensor twinv_imag,
-    int B,
-    int H,
-    int N,
-    int N1,
-    const int B_TILE,
-    const int H_TILE
-) {
-    CHECK_INPUT(u_real);
-    CHECK_INPUT(u_imag);
-    CHECK_INPUT(kf_real);
-    CHECK_INPUT(kf_imag);
-    CHECK_INPUT(f_real);
-    CHECK_INPUT(f_imag);
-    CHECK_INPUT(finv_real);
-    CHECK_INPUT(finv_imag);
-    CHECK_INPUT(tw_real);
-    CHECK_INPUT(tw_imag);
-    CHECK_INPUT(twinv_real);
-    CHECK_INPUT(twinv_imag);
-
-    TORCH_CHECK(u_real.size(0) == B && u_real.size(1) == H 
-        && u_real.size(2) == N1 && u_real.size(3) == N1, "u_real correct shape?");
-    TORCH_CHECK(u_imag.size(0) == B && u_imag.size(1) == H 
-        && u_imag.size(2) == N1 && u_imag.size(3) == N1, "u_imag correct shape?");
-    TORCH_CHECK(kf_real.size(0) == H && kf_real.size(1) == N1 && kf_real.size(2) == N1, "kf_real correct shape?");
-    TORCH_CHECK(kf_imag.size(0) == H && kf_imag.size(1) == N1 && kf_imag.size(2) == N1, "kf_imag correct shape?");
-    TORCH_CHECK(f_real.size(0) == N1 && f_real.size(1) == N1, "f_real correct shape?");
-    TORCH_CHECK(f_imag.size(0) == N1 && f_imag.size(1) == N1, "f_imag correct shape?");
-    TORCH_CHECK(finv_real.size(0) == N1 && finv_real.size(1) == N1, "finv_real correct shape?");
-    TORCH_CHECK(finv_imag.size(0) == N1 && finv_imag.size(1) == N1, "finv_imag correct shape?");
-    TORCH_CHECK(tw_real.size(0) == N1 && tw_real.size(1) == N1, "tw_real correct shape?");
-    TORCH_CHECK(tw_imag.size(0) == N1 && tw_imag.size(1) == N1, "tw_imag correct shape?");
-    TORCH_CHECK(twinv_real.size(0) == N1 && twinv_real.size(1) == N1, "twinv_real correct shape?");
-    TORCH_CHECK(twinv_imag.size(0) == N1 && twinv_imag.size(1) == N1, "twinv_imag correct shape?");
-
-    torch::Tensor out = torch::empty({B, H, N1, N1}, u_real.options());
-
-    c10::BFloat16 *u_real_ptr               = u_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *u_imag_ptr               = u_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kf_real_ptr              = kf_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kf_imag_ptr              = kf_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *f_real_ptr               = f_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *f_imag_ptr               = f_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *finv_real_ptr            = finv_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *finv_imag_ptr            = finv_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *tw_real_ptr              = tw_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *tw_imag_ptr              = tw_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *twinv_real_ptr           = twinv_real.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *twinv_imag_ptr           = twinv_imag.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *o_ptr                    = out.data_ptr<c10::BFloat16>();
-
-    const bf16* u_real_bf                   = reinterpret_cast<const bf16*>(u_real_ptr);
-    const bf16* u_imag_bf                   = reinterpret_cast<const bf16*>(u_imag_ptr);
-    const bf16* kf_real_bf                  = reinterpret_cast<const bf16*>(kf_real_ptr);
-    const bf16* kf_imag_bf                  = reinterpret_cast<const bf16*>(kf_imag_ptr);
-    const bf16* f_real_bf                   = reinterpret_cast<const bf16*>(f_real_ptr);
-    const bf16* f_imag_bf                   = reinterpret_cast<const bf16*>(f_imag_ptr);
-    const bf16* finv_real_bf                = reinterpret_cast<const bf16*>(finv_real_ptr);
-    const bf16* finv_imag_bf                = reinterpret_cast<const bf16*>(finv_imag_ptr);
-    const bf16* tw_real_bf                  = reinterpret_cast<const bf16*>(tw_real_ptr);
-    const bf16* tw_imag_bf                  = reinterpret_cast<const bf16*>(tw_imag_ptr);
-    const bf16* twinv_real_bf               = reinterpret_cast<const bf16*>(twinv_real_ptr);
-    const bf16* twinv_imag_bf               = reinterpret_cast<const bf16*>(twinv_imag_ptr);
-          bf16* o_bf                        = reinterpret_cast<bf16*>(o_ptr);
-
-    unsigned long mem_size = 1000;
-
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    launch_fftconv_tk(
-        u_real_bf, u_imag_bf, kf_real_bf, kf_imag_bf,
-        f_real_bf, f_imag_bf, finv_real_bf, finv_imag_bf,
-        tw_real_bf, tw_imag_bf, twinv_real_bf, twinv_imag_bf,
-        o_bf,
-        B, H, N, N1, B_TILE, H_TILE
-    );
-
-    CHECK_CUDA_ERROR(cudaGetLastError());
-    cudaStreamDestroy(stream);
-
-    return out;
-}
-#else
 #include "harness_async.impl"
-#endif
