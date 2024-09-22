@@ -6,19 +6,117 @@ using namespace kittens;
 #define NUM_WORKERS 1
 #define NUM_THREADS NUM_WORKERS * kittens::WARP_THREADS
 
+#define N_1024 1024
+
 #define rt_cmplx_bf_32x32 rt_cmplx_bf<2, 2>
 #define rt_cmplx_bf_32x32_col rt_cmplx_bf<2, 2, ducks::rt_layout::col>
 #define rt_cmplx_fl_32x32 rt_cmplx_fl<2, 2>
 #define st_cmplx_bf_32x32 st_cmplx_bf<2, 2>
 
+#define st_cmplx_bf_32x1024 st_cmplx_bf<2, 64>
 
-__global__ void fftconv_tk(
-    const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
-    const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
-    const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, const bf16 *twinv_32_1k_real, const bf16 *twinv_32_1k_imag,
-    const bf16 *tw_32_32_real, const bf16 *tw_32_32_imag, const bf16 *twinv_32_32_real, const bf16 *twinv_32_32_imag,
+
+__device__ static void inner_loop(
+    bf16 *u_real, bf16 *u_imag, 
+    const bf16 *kf_real, const bf16 *kf_imag, 
+    st_cmplx_bf_32x32 fft_mat, st_cmplx_bf_32x32 fft_inv_mat, 
+    const bf16 *tw_real, const bf16 *tw_imag, 
+    const bf16 *twinv_real, const bf16 *twinv_imag, 
     bf16 *o, 
     int h, int n, int n1,
+    int B_TILE, int H_TILE
+) {
+    int warpid = kittens::warpid();
+
+    // Every block loads same seq tile
+    int h_stride = n;
+    int b_stride = h * n;
+    int h_start = blockIdx.y * H_TILE;
+    int b_start = blockIdx.x * B_TILE;
+
+    // Registers; everyone loads
+    rt_cmplx_bf_32x32 a_reg;       // Doing 32x32 tiles
+    rt_cmplx_fl_32x32 mma_reg;     // Bc we're using HMMA instructions, we need an fl accum reg for MMA
+    rt_cmplx_bf_32x32 accum;       // Separate reg to hold accumulated X values (in bf)
+    rt_cmplx_bf_32x32_col b_reg;
+
+    int num_chunks = 32;
+    int chunk_stride = N_1024;
+    // #pragma unroll
+    for (int chunk = 0; chunk < num_chunks; chunk ++ ) {
+
+        for (int i = 0; i < H_TILE; i++) {
+            int k_start = (h_start + i) * h_stride;
+
+            // #pragma unroll
+            for (int j = 0; j < B_TILE; j++) {
+                // specific B, H, sequence
+                
+                // block = block @ f_sqrt_N_fft  # Apply FFT again
+                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+                // block = x[:, :, i*chunk_size:(i+1)*chunk_size].transpose(-1, -2)
+                int u_start = ((b_start + j) * b_stride) + k_start + (chunk * chunk_stride);
+
+                // block = block @ f_sqrt_N_fft  # Apply FFT
+                kittens::load(a_reg, fft_mat); 
+                // block = block.transpose(-1, -2)  # TODO: is this the right spot for the transpose? 
+                transpose_inplace(a_reg);
+                kittens::load(b_reg, u_real + u_start, u_imag + u_start, n1, n1);
+                kittens::zero(mma_reg);
+                kittens::mma_AB(mma_reg, a_reg, b_reg, mma_reg);
+                kittens::copy(accum, mma_reg);
+                // block = block * twiddle_factors_fft
+                kittens::load(a_reg, tw_real, tw_imag, n1, n1); 
+                kittens::mul(accum, accum, a_reg);
+                // X = X * F  (TODO: can we avoid loading fft mat a second time?)
+                kittens::load(b_reg, fft_mat);      
+                kittens::zero(mma_reg);        
+                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
+                kittens::copy(accum, mma_reg);
+
+                // X = X * K_f^T (TODO: check)
+                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = x2[:, :, i*chunk_size:(i+1)*chunk_size] * k_f[:, i*chunk_size:(i+1)*chunk_size]
+                kittens::load(a_reg, kf_real + k_start, kf_imag + k_start, n1, n1);
+                kittens::mul(accum, accum, a_reg);
+
+                // block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
+                // block = block @ f_sqrt_N_ifft  # Apply iFFT
+                kittens::load(b_reg, fft_inv_mat);
+                kittens::zero(mma_reg);
+                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
+                kittens::copy(accum, mma_reg);
+                // block = block.transpose(-1, -2)
+                transpose_inplace(accum);
+                // block = block * twiddle_factors_ifft  # Element-wise multiplication with iFFT twiddle factors
+                kittens::load(a_reg, twinv_real, twinv_imag, n1, n1);
+                kittens::mul(accum, accum, a_reg);
+                // block = block @ f_sqrt_N_ifft  # Apply second iFFT
+                kittens::zero(mma_reg);
+                kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
+                kittens::copy(accum, mma_reg);
+                // block = block.transpose(-1, -2)  # Final transpose to restore shape
+                transpose_inplace(accum);
+
+                // Write Y^T to SMEM (TODO)
+                // x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+                // kittens::store(o + u_start, accum, n1);
+                store(u_real + u_start, accum.real, n1);
+                store(u_imag + u_start, accum.imag, n1);
+            }
+        }   
+    }
+}
+
+__global__ void fftconv_tk(
+    bf16 *u_real, bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
+    const bf16 *f_real, const bf16 *f_imag, 
+    const bf16 *finv_real, const bf16 *finv_imag, 
+    const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, 
+    const bf16 *twinv_32_1k_real, const bf16 *twinv_32_1k_imag,
+    const bf16 *tw_32_32_real, const bf16 *tw_32_32_imag, 
+    const bf16 *twinv_32_32_real, const bf16 *twinv_32_32_imag,
+    bf16 *o, 
+    int b, int h, int n, int n1,
     int B_TILE, int H_TILE
 ){
     int warpid = kittens::warpid();
@@ -28,70 +126,118 @@ __global__ void fftconv_tk(
     int b_stride = h * n;
     int h_start = blockIdx.y * H_TILE;
     int b_start = blockIdx.x * B_TILE;
+    int offset = (b_start*b_stride) + (h_start*h_stride);
+
+    // shared memory setup to load from hbm
+    bf16 *u_real_g = reinterpret_cast<bf16*>(u_real) + offset; 
+    bf16 *u_imag_g = reinterpret_cast<bf16*>(u_imag) + offset;
+    const bf16 *f_real_g = reinterpret_cast<const bf16*>(f_real); 
+    const bf16 *f_imag_g = reinterpret_cast<const bf16*>(f_imag); 
+    const bf16 *finv_real_g = reinterpret_cast<const bf16*>(finv_real);
+    const bf16 *finv_imag_g = reinterpret_cast<const bf16*>(finv_imag);
+
+    // SMEM; 
+    extern __shared__ alignment_dummy __shm[];
+    shared_allocator al((int*)&__shm[0]);
+    // st_cmplx_bf_32x32 (&u) [32]  = al.allocate<st_cmplx_bf_32x32, 32>(); // 131,072
+    st_cmplx_bf_32x32 (&fft_mat) = al.allocate<st_cmplx_bf_32x32>();
+    st_cmplx_bf_32x32 (&fft_inv_mat) = al.allocate<st_cmplx_bf_32x32>();
+    if (warpid == 0) {
+        load(fft_mat, f_real_g, f_imag_g, n1, n1);
+        load(fft_inv_mat, finv_real_g, finv_imag_g, n1, n1);
+    }
+
+    rt_cmplx_bf_32x32 a_reg;
+    rt_cmplx_bf_32x32 b_reg;
+    rt_cmplx_fl_32x32 mma_reg; 
 
 
-    // Registers; everyone loads
-    rt_cmplx_bf_32x32 a_reg;       // Doing 32x32 tiles
-    rt_cmplx_fl_32x32 mma_reg;     // Bc we're using HMMA instructions, we need an fl accum reg for MMA
-    rt_cmplx_bf_32x32 accum;       // Separate reg to hold accumulated X values (in bf)
-    rt_cmplx_bf_32x32_col b_reg;
+    rt_cmplx_bf_32x32_col fft_mat_reg;
+    load(fft_mat_reg, fft_mat);
 
-    
-    // #pragma unroll
-    for (int i = 0; i < H_TILE; i++) {
-        int k_start = (h_start + i) * h_stride;
+    // # compute the FFT
+    // x = x.reshape(B, H, sqrt_N_32, N_1024) (handled in torch)
+    // x = x.transpose(-1, -2) # ... 1K, 16   (handled in torch)
+    // first fft
+    int chunk_size = 32;
+    int N_TILE = 32; // / chunk_size;
+    for (int h = 0; h < H_TILE; h++) {
+        for (int b = 0; b < B_TILE; b++) {
+            for (int i = 0; i < N_TILE; i ++) {
+                // load block of u
+                int u_start = (
+                    ((b_start + b) * b_stride) + 
+                    ((h_start + h) * h_stride) + 
+                    (i * chunk_size * n1)
+                ); 
+                load(a_reg, u_real + u_start, u_imag + u_start, n1, n1);
+                // transpose_inplace(a_reg);
 
-        // #pragma unroll
-        for (int j = 0; j < B_TILE; j++) {
-            int u_start = ((b_start + j) * b_stride) + k_start;
-            
-            // X = F^T X
-            kittens::load(a_reg, f_real, f_imag, n1, n1);  // load the fft matrices into a_reg
-            transpose_inplace(a_reg);
-            kittens::load(b_reg, u_real + u_start, u_imag + u_start, n1, n1);
-            kittens::zero(mma_reg);
-            kittens::mma_AB(mma_reg, a_reg, b_reg, mma_reg);
-            kittens::copy(accum, mma_reg);
+                // // x = x @ f_32_fft    # ... 1K, 16
+                // zero(mma_reg);
+                // mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+                // copy(a_reg, mma_reg);
 
-            // X = X * tw
-            // kittens::load(a_reg, tw_real, tw_imag, n1, n1);
-            kittens::mul(accum, accum, a_reg);
+                // // x = x.transpose(-1, -2) # ... 16, 1K
+                // transpose_inplace(a_reg);
+                
+                // x = x * twiddle_factors_fft 
+                load(b_reg, tw_32_1k_real, tw_32_1k_imag, n1, n1);
+                mul(b_reg, a_reg, b_reg);
 
-            // X = XF
-            kittens::load(b_reg, f_real, f_imag, n1, n1);
-            kittens::zero(mma_reg);
-            kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-            kittens::copy(accum, mma_reg);
+                // store the result back to u
+                // store(u_real + u_start, b_reg.real, n1);
+                // // store(u_imag + u_start, b_reg.imag, n1);
 
-            // X = X * K_f^T
-            kittens::load(a_reg, kf_real + k_start, kf_imag + k_start, n1, n1);
-            kittens::mul(accum, accum, a_reg);
-
-            // X = XFinv
-            kittens::load(b_reg, finv_real, finv_imag, n1, n1);
-            kittens::zero(mma_reg);
-            kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-            kittens::copy(accum, mma_reg);
-
-            // X = X^T * twinv
-            transpose_inplace(accum);
-            // kittens::load(a_reg, twinv_real, twinv_imag, n1, n1);
-            kittens::mul(accum, accum, a_reg);
-
-            // Y = XFinv
-            kittens::zero(mma_reg);
-            kittens::mma_AB(mma_reg, accum, b_reg, mma_reg);
-            kittens::copy(accum, mma_reg);
-
-            // // Write Y^T to HBM
-            transpose_inplace(accum);
-            kittens::store(o + u_start, accum.real, n1);
+                store(o + u_start, b_reg.real, n1);
+                __syncthreads();
+            }
         }
     }
+
+    // // inner loop
+    // inner_loop(
+    //     u_real, u_imag, kf_real, kf_imag, 
+    //     fft_mat, fft_inv_mat, 
+    //     tw_32_32_real, tw_32_32_imag, twinv_32_32_real, twinv_32_32_imag, 
+    //     o, 
+    //     h, n, n1,
+    //     B_TILE, H_TILE
+    // );
+
+    // // compute the IFFT (similar to FFT)
+    // load(fft_mat_reg, fft_inv_mat);
+    // for (int h = 0; h < H_TILE; h++) {
+    //     for (int b = 0; b < B_TILE; b++) {
+    //         for (int i = 0; i < N_TILE; i ++) {
+    //             int u_start = ((b_start + b) * b_stride) + (h_start + h) * h_stride + i * chunk_size;
+    //             load(a_reg, u_real + u_start, u_imag + u_start, n1, n1);
+                
+    //             // // x = x * twiddle_factors_ifft # ... 16, 1K
+    //             int tw_start = (h_start + h) * h_stride + i * chunk_size;
+    //             load(a_reg, twinv_32_1k_real + tw_start, twinv_32_1k_imag + tw_start, n1, n1);
+    //             mul(a_reg, a_reg, b_reg);
+
+    //             // x = x.transpose(-1, -2) # ... 1K, 16
+    //             transpose_inplace(a_reg);
+
+    //             // x = x @ f_32_ifft   # ... 1K, 16
+    //             zero(mma_reg);
+    //             mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+    //             copy(b_reg, mma_reg);
+
+    //             // x = x.transpose(-1, -2) # ... 16, 1K
+    //             transpose_inplace(b_reg);
+
+    //             // store the result back to u
+    //             store(o + u_start, a_reg.real, n1);
+    //         }
+    //     }
+    // }
 }
 
 void launch_fftconv_tk(
-    const bf16 *u_real, const bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
+    bf16 *u_real, bf16 *u_imag, const bf16 *kf_real, const bf16 *kf_imag, 
     const bf16 *f_real, const bf16 *f_imag, const bf16 *finv_real, const bf16 *finv_imag, 
     const bf16 *tw_32_1k_real, const bf16 *tw_32_1k_imag, const bf16 *twinv_32_1k_real, const bf16 *twinv_32_1k_imag,
     const bf16 *tw_32_32_real, const bf16 *tw_32_32_imag, const bf16 *twinv_32_32_real, const bf16 *twinv_32_32_imag,
@@ -107,7 +253,7 @@ void launch_fftconv_tk(
         (unsigned int)(h + H_TILE - 1) / H_TILE
     };
 
-    long mem_size = 1000;
+    long mem_size = 200000;
 
     cudaFuncSetAttribute(
         fftconv_tk,
@@ -127,7 +273,7 @@ void launch_fftconv_tk(
         tw_32_1k_real, tw_32_1k_imag, twinv_32_1k_real, twinv_32_1k_real,
         tw_32_32_real, tw_32_32_imag, twinv_32_32_real, twinv_32_32_imag,
         o, 
-        h, n, n1,
+        b, h, n, n1,
         B_TILE, H_TILE
     );
 }

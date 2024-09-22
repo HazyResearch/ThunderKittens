@@ -138,7 +138,12 @@ void loads(
     for(int i = 0; i < H*N; i++) infile >> kf_real[i];
     for(int i = 0; i < H*N; i++) infile >> kf_imag[i];
     std::cout << "Finished loading Kf" << std::endl;
-    for(int i = 0; i < N1*N1; i++) infile >> f_real[i];
+    for(int i = 0; i < N1*N1; i++) {
+        infile >> f_real[i];
+        if (i < 10) {
+            std::cout << "f_real[" << i << "] = " << f_real[i] << std::endl;
+        }
+    }
     for(int i = 0; i < N1*N1; i++) infile >> f_imag[i];
     std::cout << "Finished loading F" << std::endl;
     for(int i = 0; i < N1*N1; i++) infile >> finv_real[i];
@@ -164,13 +169,10 @@ void loads(
     // Convert to bf16
     for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_real_bf[i] = __float2bfloat16(u_real[i]);}
     for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf[i] = __float2bfloat16(u_imag[i]);}
-    for(int i = 0; i < H*N; i++) { kf_real_bf[i] = __float2bfloat16(kf_real[i]);}
-    for(int i = 0; i < H*N; i++) { kf_imag_bf[i] = __float2bfloat16(kf_imag[i]);}
-    for(int i = 0; i < N1*N1; i++) { 
-        f_real_bf[i] = __float2bfloat16(f_real[i]);
-        // printf("f_real_bf[%d] = %f\n", i, __bfloat162float(f_real_bf[i]));
-    }
-    for(int i = 0; i < N1*N1; i++) { f_imag_bf[i] = __float2bfloat16(f_imag[i]);}
+    for(int i = 0; i < H*N1*N1; i++) { kf_real_bf[i] = __float2bfloat16(kf_real[i]); }
+    for(int i = 0; i < H*N1*N1; i++) { kf_imag_bf[i] = __float2bfloat16(kf_imag[i]); }
+    for(int i = 0; i < N1*N1; i++) { f_real_bf[i] = __float2bfloat16(f_real[i]); }
+    for(int i = 0; i < N1*N1; i++) { f_imag_bf[i] = __float2bfloat16(f_imag[i]); }
     for(int i = 0; i < N1*N1; i++) { finv_real_bf[i] = __float2bfloat16(finv_real[i]);}
     for(int i = 0; i < N1*N1; i++) { finv_imag_bf[i] = __float2bfloat16(finv_imag[i]);}
 
@@ -229,8 +231,6 @@ void loads(
 
 int main(int argc, char **argv) {
     printf("Starting\n");
-    //int TOTAL_INPUT_ELEMENTS = B * H * N;
-
     float *o_ref = new float[TOTAL_INPUT_ELEMENTS];
     // On host after kernel
     float *o = new float[TOTAL_INPUT_ELEMENTS];
@@ -279,8 +279,8 @@ int main(int argc, char **argv) {
 
     // Reduce criteria from 0.5 to 1 abs difference (we had 50 elements out of 262144 violate threshold,
     // all diffs were between 0.5 and 1)
-    constexpr float abs_tol = 1.0e-0f;
-    constexpr float rel_tol = 1.0e-1f;
+    constexpr float abs_tol = 1.0e-2f;
+    constexpr float rel_tol = 1.0e-2f;
 
     std::cout << "Total output elements: " << TOTAL_INPUT_ELEMENTS << std::endl;
     if (check_value(abs_tol, rel_tol, o, o_ref, TOTAL_INPUT_ELEMENTS)) {
@@ -296,10 +296,12 @@ int main(int argc, char **argv) {
     cudaFree(d_u_imag);
     cudaFree(d_kf_real);
     cudaFree(d_kf_imag);
+
     cudaFree(d_f_real);
     cudaFree(d_f_imag);
     cudaFree(d_finv_real);
     cudaFree(d_finv_imag);
+
     cudaFree(d_tw_32_1k_real);
     cudaFree(d_tw_32_1k_imag);
     cudaFree(d_tw_inv_32_1k_real);
@@ -308,6 +310,7 @@ int main(int argc, char **argv) {
     cudaFree(d_tw_32_32_imag);
     cudaFree(d_tw_inv_32_32_real);
     cudaFree(d_tw_inv_32_32_imag);
+    
     cudaFree(d_o);
     cudaStreamDestroy(stream);
 

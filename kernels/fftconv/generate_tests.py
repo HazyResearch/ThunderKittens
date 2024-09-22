@@ -18,8 +18,8 @@ if TESTNAME in ['ones_all']:
     k = (torch.ones((H, N), dtype=torch.cfloat, device='cpu'))
 elif TESTNAME in ['randn_all']:
     torch.random.manual_seed(42)
-    u = (torch.randn((B, H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32) 
-    k = (torch.randn((H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32)
+    u = (torch.randn((B, H, N), dtype=torch.cfloat, device='cpu'))
+    k = (torch.randn((H, N), dtype=torch.cfloat, device='cpu'))
 else:
     print('Invalid test name')
     sys.exit(0)
@@ -39,7 +39,7 @@ def ref_fftconv(u, k, N):
 def fft_matrix(N):
     n = torch.arange(N)
     k = n.view(-1, 1)
-    M = torch.exp(-2j * torch.pi * n * k / N)
+    M = torch.exp(-2j * torch.pi * n * k / N) 
     return M
 
 def compute_twiddle_factors_fft(n, m):
@@ -135,6 +135,11 @@ def monarch_conv_full(
 
 
 def pytorch_test(u, k, TESTNAME='all'):
+    u = u.reshape(B, H, 32, 1024)
+    for i in range(32):
+        u[:, :, i, :] = torch.arange(1024)
+    u = u.reshape(B, H, N).to(torch.cfloat)
+
     # input
     u_real = u.to(torch.bfloat16)
     u_imag = torch.zeros_like(u, dtype=torch.bfloat16)
@@ -184,15 +189,31 @@ def pytorch_test(u, k, TESTNAME='all'):
     )   # B, H, 32, 1024
     out_with_kernel_inputs = out_with_kernel_inputs.real.to(torch.bfloat16).contiguous()
 
-    # output; using pytorch fft as reference
+    # input reshaped
+    u_real = u_real.reshape(B, H, 32, 1024).to(torch.bfloat16).contiguous()
+    u_imag = u_imag.reshape(B, H, 32, 1024).to(torch.bfloat16).contiguous()
+
+    # verify that the kernel inputs are correct
     o_real = ref_fftconv(u, k, N)   # B, H, N 
     o_real = o_real.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
+    print(torch.allclose(out_with_kernel_inputs, o_real, atol=2))
+    print(f"out_with_kernel_inputs\n{out_with_kernel_inputs[4, 3, 6, 56:60]}")
+    print(f"o_real\n{o_real[4, 3, 6, 56:60]}")
 
-    print(torch.allclose(out_with_kernel_inputs, o_real, atol=1e-2))
 
-    # input reshaped
-    u_real = u_real.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
-    u_imag = u_imag.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
+    ############# KERNEL INPUTS GENERATED #############
+
+    chunk_size = 32 
+    chunks = 32 
+    x2 = u.clone().reshape(B, H, 32, 1024).to(torch.cfloat)
+    for i in range(chunks):
+        block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size]
+        # block = block.transpose(-1, -2) 
+        # block = block @ f_mat 
+        # block = block.transpose(-1, -2)
+        block = block * tw_32_1k[:, i*chunk_size:(i+1)*chunk_size]
+        x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
+    o_real = x2.real.to(torch.bfloat16).contiguous()
 
     return (
         # input and filter
@@ -240,7 +261,6 @@ def pytorch_test(u, k, TESTNAME='all'):
 
 # print shapes
 print(f"{u_real.shape=} {u_imag.shape=} {kfT_real.shape=} {kfT_imag.shape=} {f_real.shape=} {f_imag.shape=} {finv_real.shape=} {finv_imag.shape=} {tw_32_1k_real.shape=} {tw_32_1k_imag.shape=} {tw_32_1k_inv_real.shape=} {tw_32_1k_inv_imag.shape=} {tw_32_32_real.shape=} {tw_32_32_imag.shape=} {tw_32_32_inv_real.shape=} {tw_32_32_inv_imag.shape=} {o_real.shape=}")
-
 
 with open(f'{TESTNAME}.txt', 'w') as f:
 

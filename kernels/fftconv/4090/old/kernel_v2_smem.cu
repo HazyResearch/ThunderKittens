@@ -60,28 +60,7 @@ void fftconv_tk(
         load(tw_mat, tw_real_g, tw_imag_g, n1, n1);
         load(fft_inv_mat, finv_real_g, finv_imag_g, n1, n1);
     }
-    // if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&tw_mat) - (uint64_t)(&__shm[0]));
-    // // print fft_mat 
-    // if (do_print) {
-    //     const int x_width = fft_mat.real.rows;
-    //     const int x_height = fft_mat.real.cols;
-    //     printf("width = %d, height = %d\n", x_width, x_height);
-    //     for (int i = 0; i < x_width; i ++ ) { 
-    //         if (i < 1 ) {
-    //             printf("i = %d\n", i);
-    //             for (int j = 0; j < x_height; j++) {
-    //                 float real = __bfloat162float(fft_mat.real[i*x_width + j]);
-    //                 printf("real = %f\n", real);        
-    //             } 
-    //         }
-    //     }
-    // }
-    
-    // if (do_print) {
-    //     printf("Num head tiles = %d, Num batch tiles = %d\n", H_TILE, B_TILE); // 8 and 8
-    //     printf("h = %d, n = %d, n1 = %d\n", h, n, n1);                         // 64, 1024, 32
-    //     printf("h_stride = %d, b_stride = %d\n", h_stride, b_stride);          // 1024, 65536
-    // }
+
     // #pragma unroll
     for (int i = 0; i < H_TILE; i++) {
         int k_start = (h_start + i) * h_stride;
