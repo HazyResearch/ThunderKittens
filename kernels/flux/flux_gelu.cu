@@ -1,3 +1,6 @@
+// #define RUN_MAIN
+#define TORCH_COMPILE_GELU
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
@@ -42,7 +45,7 @@ template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs=0, int transpo
 struct flux_matmul_gelu_template {
     using layout = flux_matmul_gelu_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    __device__ static inline int iters(typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
+    __device__ static inline int iters(const typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
@@ -102,6 +105,7 @@ struct flux_matmul_gelu_template {
     };
 };
 
+#ifdef RUN_MAIN
 #include <iostream>
 #include <random>
 #include <math.h>
@@ -297,3 +301,108 @@ int main() {
 
     return 0;
 }
+#endif
+
+
+#ifdef TORCH_COMPILE_GELU
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+
+template<int M_tile, int K_tile, int N_tile, int transpose_lhs, int transpose_rhs>
+void dispatch_fused_flux_linear_gelu(
+    bf16 * d_x,
+    bf16 * d_weight,
+    bf16 * d_bias,
+    bf16 * d_out,
+    uint M, uint K, uint N
+) {
+    using fmt = flux_matmul_gelu_template<M_tile, K_tile, N_tile, transpose_lhs, transpose_rhs>;
+
+    using lhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().lhs[0])>::type;
+    using rhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().rhs)>::type;
+    using acc_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::finish_block>().acc[0])>::type;
+    using lhs_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().lhs)>::type;
+    using rhs_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().rhs)>::type;
+    using bias_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().bias)>::type;
+    using acc_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().acc)>::type;
+    using globals  = typename fmt::layout::globals;
+
+    lhs_global Ag{d_x, nullptr, nullptr, transpose_lhs ? K : M, transpose_lhs ? M : K};
+    rhs_global Bg{d_weight, nullptr, nullptr, transpose_rhs ? N : K, transpose_rhs ? K : N};
+    acc_global Cg{d_out, nullptr, nullptr, M, N};
+    bias_global Biasg{d_bias, nullptr, nullptr, nullptr, N};
+    globals G{Ag, Bg, Biasg, Cg};
+
+    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    
+    cudaFuncSetAttribute(prototype::pc<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    // Launch kernel
+    dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
+    dim3 block(prototype::num_threads<fmt>);
+
+    prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+}
+
+torch::Tensor fused_flux_linear_gelu(
+    const torch::Tensor x,
+    const torch::Tensor weight,
+    const torch::Tensor bias
+) {
+    CHECK_INPUT(x);
+    CHECK_INPUT(weight);
+    CHECK_INPUT(bias);
+
+    const uint M = x.size(0);
+    const uint K = x.size(1);
+    const uint N = weight.size(0);
+    
+    TORCH_CHECK(weight.size(1) == K, "weight has incompatible shape");
+    TORCH_CHECK(bias.size(0) == N, "bias has incompatible shape");
+
+    TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
+    TORCH_CHECK(weight.is_contiguous(), "weight must be in N x K format");
+
+    // // x contiguous means x is M x K format, so transpose_lhs = false
+    // const bool transpose_lhs = !x.is_contiguous();
+    // // weight contiguous means weight is in N x K format, so transpose_rhs = true!
+    // const bool transpose_rhs = weight.is_contiguous();
+
+    torch::Tensor out = torch::empty({M, N}, x.options());
+
+    // convert to bf16
+    c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *weight_bf16 = weight.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *bias_bf16 = bias.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *out_bf16 = out.data_ptr<c10::BFloat16>();
+
+    bf16 *d_x = reinterpret_cast<bf16*>(x_bf16);
+    bf16 *d_weight = reinterpret_cast<bf16*>(weight_bf16);
+    bf16 *d_bias = reinterpret_cast<bf16*>(bias_bf16);
+    bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
+
+    if (M > 512) {
+        const int M_tile = 192;
+        const int K_tile = 192;
+        const int N_tile = 64;
+
+        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
+    } else if (K > 3072) {
+        const int M_tile = 128;
+        const int K_tile = 64;
+        const int N_tile = 128;
+        
+        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
+    } else {
+        const int M_tile = 128;
+        const int K_tile = 192;
+        const int N_tile = 64;
+        
+        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
+    }
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+
+    return out;
+}
+
+#endif

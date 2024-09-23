@@ -75,6 +75,21 @@ extern void cylon_bwd(
 );
 #endif
 
+#ifdef TK_COMPILE_FLUX
+extern torch::Tensor fused_flux_linear_gate(
+    const torch::Tensor x,
+    const torch::Tensor weight,
+    const torch::Tensor bias,
+    const torch::Tensor gate,
+    const torch::Tensor y
+);
+extern torch::Tensor fused_flux_linear_gelu(
+    const torch::Tensor x,
+    const torch::Tensor weight,
+    const torch::Tensor bias
+);
+#endif
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -109,5 +124,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #ifdef TK_COMPILE_CYLON
     m.def("cylon", cylon, """Cylon forward. Takes tensors (q, k, v, o, kv_state, q_map, k_map). q, k, v, o are bf16 (B,H,N,64), kv_state is fp32 (B,H,E,64,64), q_map and k_map are bf16 (H,E,64,64).""");
     m.def("cylon_bwd", cylon_bwd, "Cylon backward. Takes tensors (q, k, v, q_map, k_map, o_grad, kv_state, q_grad, k_grad, v_grad, q_map_grad, k_map_grad). q, k, v, o_grad are bf16 (B,H,N,64), q_map and k_map are bf16 (H,E,64,64), kv_state is fp32 (B,H,E,64,64). Outputs q_grad, k_grad, v_grad are fp32 (B,H,N,64) and q_map_grad, k_map_grad are fp32 (H,E,64,64).");
+#endif
+
+#ifdef TK_COMPILE_FLUX
+    m.def("tk_flux_linear_gate", fused_flux_linear_gate, "Flux linear gate. Takes tensors (x, weight, bias, gate, y).  x is (B, H1), weight is (H2, H1), bias and gate are (H2), y is (B, H2). x, weight, bias, gate, y are bf16. Returns (B, H2) in bf16.");
+    m.def("tk_flux_linear_gelu", fused_flux_linear_gelu, "Flux linear gelu. Takes tensors (x, weight, bias).  x is (B, H1), weight is (H2, H1), bias is (H2). x, weight, bias are bf16. Returns (B, H2) in bf16.");
 #endif
 }

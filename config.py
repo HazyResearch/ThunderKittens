@@ -38,13 +38,21 @@ sources = {
         'source_files': {
             'h100': 'kernels/cylon/cylon.cu'
         }
+    },
+    'flux': {
+        'source_files': {
+            'h100': [
+                'kernels/flux/flux_gate.cu',
+                'kernels/flux/flux_gelu.cu'
+            ]
+        }
     }
 }
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
 # kernels = ['attn_inference', 'attn_causal_inference', 'attn_training', 'attn_causal_training', 'hedgehog'm, 'cylon']
-kernels = ['cylon']
+kernels = ['flux']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'
