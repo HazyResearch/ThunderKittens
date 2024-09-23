@@ -14,64 +14,10 @@ using namespace kittens;
 #define st_cmplx_bf_32x32 st_cmplx_bf<2, 2>
 
 #define st_cmplx_bf_32x1024 st_cmplx_bf<2, 64>
-// #define sv_cmplx_bf_32x1024_vec row_vec<st_cmplx_bf<2, 64>>
-
-
-/**
- * @brief Load row of data from a larger shared tile into a register tile.
- * @tparam RT The register tile type
- * @tparam ST The shared tile type
- * @param dst[out] The destination register tile.
- * @param src[in]  The source shared tile.
- */
-template<ducks::rt::all RT, ducks::st::all ST>
-__device__ inline static void load_row(RT &dst, const ST &src, int row_idx) {
-
-    // static_assert(RT::height == ST::height, "register tile and shared tile must match height");
-    // static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
-    static_assert(std::is_same_v<typename RT::layout, ducks::rt_layout::row>, "unsupported layout, only row supported");
-
-    using T2 = RT::dtype;
-    using T  = base_types::packing<T2>::unpacked_type;
-    using U  = ST::dtype;
-    using U2 = base_types::packing<U >::packed_type;
-
-    int do_print = (blockIdx.x == 0 && blockIdx.y == 0) && (
-        threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3
-    );
-
-    int laneid = threadIdx.x % 32;
-    int height = dst.height;
-    int width  = dst.width;
-    if (do_print) {
-        // printf("laneid: %d, height: %d, width: %d\n", laneid, dst.height, dst.width);
-    }
-
-    // 0:3 --> handle 0:32 (non-consecutively vs. mine)
-
-    // zero(dst);
-    // #pragma unroll
-    // for(int i = 0; i < height; i++) {
-    //     #pragma unroll
-    //     for(int j = 0; j < width; j++) {
-    //         int row = 0; // grab one row
-    //         int col = (laneid)*2; -> 18
-
-    //         // threads 0:32 should grab values 0:64 and put them in the first core matrix
-    //         // packed values -- everyone has two values loaded in 
-    //         dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col}]));
-    //         dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+64}]));
-    //         dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+128}]));
-    //         dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+192}]));
-    //     }
-    // }
-
-}
 
 template<ducks::rt::all RT, ducks::st::all ST>
 __device__  inline void subtile_load(RT &dst, ST &src, int row_id) {
     static_assert(RT::rows * RT::cols == ST::cols);
-    // printf("RT::rows: %d, RT::cols: %d, ST::cols: %d\n", RT::rows, RT::cols, ST::cols);
     for(int i = 0; i < RT::height; i++) {
         for(int j = 0; j < RT::width; j++) {
             int base_row = i*16 + laneid()/4;
@@ -303,10 +249,6 @@ void launch_fftconv_tk(
         (unsigned int)(b + B_TILE - 1) / B_TILE,
         (unsigned int)(h + H_TILE - 1) / H_TILE
     };
-    // const dim3 grid_dim{
-    //     (unsigned int)(1),
-    //     (unsigned int)(1)
-    // };
 
     long mem_size = 200000;
 
@@ -338,19 +280,3 @@ void launch_fftconv_tk(
 
 #include "harness_async.impl"
 
-
- // 2 x 64 old TK --> 32 x 1024 new TK
-    // if (threadIdx.x == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
-    //     int rows = u.real.rows;
-    //     int cols = u.real.cols;
-    //     for (int i = 0; i < 1; i ++) { 
-    //         for (int j = 0; j < cols; j ++ ) {
-    //             if (j < 64) {
-    //                 printf("i: %d, j: %d, value=%f\n", i, j, __bfloat162float(u.real[{i, j}]));
-
-    //             }
-    //         }
-    //     }
-    //     printf("rows: %d, cols: %d\n", rows, cols);
-    // }
-    // __syncthreads();
