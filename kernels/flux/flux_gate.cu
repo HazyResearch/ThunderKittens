@@ -61,7 +61,7 @@ template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs=0, int transpo
 struct flux_matmul_gate_template {
     using layout = flux_matmul_gate_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
-    __device__ static inline int iters(typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
+    __device__ static inline int iters(const typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
