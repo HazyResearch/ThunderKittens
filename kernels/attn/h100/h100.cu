@@ -12,30 +12,48 @@ namespace cg = cooperative_groups;
 
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
-    constexpr static int tile_width = (64/kittens::TILE_DIM);
-    constexpr static int qo_height  = (4);
-    constexpr static int kv_height  = (12);
+    constexpr static int tile_cols = 64;
+    constexpr static int qo_rows  = 64;
+    constexpr static int kv_rows  = 192;
+    using q_global = gl<-1, -1, -1, 64, st_bf<qo_rows, tile_cols>>;
+    using k_global = gl<-1, -1, -1, 64, st_bf<kv_rows, tile_cols>>;
+    using v_global = gl<-1, -1, -1, 64, st_bf<kv_rows, tile_cols>>;
+    using o_global = gl<-1, -1, -1, 64, st_bf<qo_rows, tile_cols>>;
+    using l_global = gl<-1, -1,  1,  -1, sv_fl<qo_rows>>
 };
 template<> struct fwd_attend_ker_tile_dims<128> {
-    constexpr static int tile_width = (128/kittens::TILE_DIM);
-    constexpr static int qo_height  = (4);
-    constexpr static int kv_height  = (8);
+    constexpr static int tile_cols = 128;
+    constexpr static int qo_rows   = 64;
+    constexpr static int kv_rows   = 128;
+    using q_global = gl<-1, -1, -1, 128, st_bf<qo_rows, tile_cols>>;
+    using k_global = gl<-1, -1, -1, 128, st_bf<kv_rows, tile_cols>>;
+    using v_global = gl<-1, -1, -1, 128, st_bf<kv_rows, tile_cols>>;
+    using o_global = gl<-1, -1, -1, 128, st_bf<qo_rows, tile_cols>>;
+    using l_global = gl<-1, -1,  1,  -1, sv_fl<qo_rows>>;
+};
+template<int D> struct fwd_globals {
+    fwd_attend_ker_tile_dims<D>::q_global Q;
+    fwd_attend_ker_tile_dims<D>::k_global K;
+    fwd_attend_ker_tile_dims<D>::v_global V;
+    fwd_attend_ker_tile_dims<D>::o_global O;
+    fwd_attend_ker_tile_dims<D>::l_global L;
 };
 
 template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
-void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_o, CUtensorMap* tma_l) {
+void fwd_attend_ker(fwd_globals<D> globals) {
+    int N = globals.Q.rows, heads_ratio = globals.Q.depth / globals.K.depth;
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
     int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     using K = fwd_attend_ker_tile_dims<D>;
 
-    using q_tile    = st_bf<K::qo_height, K::tile_width>;
-    using k_tile    = st_bf<K::kv_height, K::tile_width>;
-    using v_tile    = st_bf<K::kv_height, K::tile_width>;
-    using l_col_vec = col_vec<st_fl<K::qo_height, K::tile_width>>;
-    using o_tile    = st_bf<K::qo_height, K::tile_width>;
+    using q_tile    = st_bf<K::qo_rows, K::tile_cols>;
+    using k_tile    = st_bf<K::kv_rows, K::tile_cols>;
+    using v_tile    = st_bf<K::kv_rows, K::tile_cols>;
+    using l_col_vec = col_vec<st_fl<K::qo_rows, K::tile_cols>>;
+    using o_tile    = st_bf<K::qo_rows, K::tile_cols>;
     
     q_tile    (&q_smem)[CONSUMER_WARPGROUPS] = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
     k_tile    (&k_smem)[2]                   = al.allocate<k_tile, 2                  >();
@@ -43,7 +61,7 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
     l_col_vec (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
     auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
     
-    int kv_blocks = N / (K::kv_height*TILE_DIM);
+    int kv_blocks = N / K::kv_rows;
 
     __shared__ kittens::barrier qsmem_barrier, k_smem_arrived[2], v_smem_arrived[2], compute_done[2];
     if (threadIdx.x == 0) { // initialize barriers and initial loads
@@ -61,8 +79,8 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
         }
         
         int kv_tile_idx = ((blockIdx.y/heads_ratio) * kv_blocks) + 0; 
-        tma::expect<typeof(k_smem[0])>(k_smem_arrived[0]);
-        tma::expect<typeof(v_smem[0])>(v_smem_arrived[0]);
+        tma::expect(k_smem_arrived[0], k_smem[0]);
+        tma::expect(v_smem_arrived[0], v_smem[0]);
         tma::load_async(k_smem[0], tma_k, k_smem_arrived[0], kv_tile_idx); 
         tma::load_async(v_smem[0], tma_v, v_smem_arrived[0], kv_tile_idx);
     }
@@ -71,12 +89,12 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
 
     int tic = 0, toc = 1;
     if(warpgroupid == NUM_WARPGROUPS-1) { // producer warpgroup
-        asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(32));           
+        warpgroup::reduce_registers<32>();
         
         int kv_iters; 
         if constexpr (is_causal) {
-            kv_iters = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_height) - 1 + (CONSUMER_WARPGROUPS * K::qo_height); 
-            kv_iters = ((kv_iters / K::kv_height) == 0) ? (0) : ((kv_iters / K::kv_height) - 1);
+            kv_iters = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_rows) - 1 + (CONSUMER_WARPGROUPS * K::qo_rows); 
+            kv_iters = ((kv_iters / K::kv_rows) == 0) ? (0) : ((kv_iters / K::kv_rows) - 1);
         }
         else {
             kv_iters = kv_blocks-2; 
@@ -86,10 +104,10 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
             for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++, tic^=1, toc^=1) {
                 int kv_tile_idx = ((blockIdx.y/heads_ratio) * kv_blocks) + (kv_idx + 1);
                 
-                tma::expect<typeof(k_smem[0])>(k_smem_arrived[toc]); 
+                tma::expect(k_smem_arrived[toc], k_smem[toc]); 
                 tma::load_async(k_smem[toc], tma_k, k_smem_arrived[toc], kv_tile_idx, 0);
                 
-                tma::expect<typeof(v_smem[0])>(v_smem_arrived[toc]); 
+                tma::expect(v_smem_arrived[toc], v_smem[toc]); 
                 tma::load_async(v_smem[toc], tma_v, v_smem_arrived[toc], kv_tile_idx, 0);
                 
                 wait(compute_done[tic], (kv_idx/2)%2);
@@ -98,18 +116,18 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
         __syncthreads();
     }
     else { // consumer warpgroup
-        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(160));
+        warpgroup::increase_registers<160>();
 
         // premultiply by temperature and lg(e)
         wait(qsmem_barrier, 0);
         if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); }
         else                   { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
     
-        rt_fl<1, K::kv_height> att_block;
-        rt_bf<1, K::kv_height> att_block_mma;
-        rt_fl<1, K::tile_width> o_reg;
-        col_vec<rt_fl<1, K::kv_height>> max_vec_last, max_vec;
-        col_vec<rt_fl<1, K::kv_height>> norm_vec_last, norm_vec;
+        rt_fl<1, K::kv_rows> att_block;
+        rt_bf<1, K::kv_rows> att_block_mma;
+        rt_fl<1, K::tile_cols> o_reg;
+        col_vec<rt_fl<1, K::kv_rows>> max_vec_last, max_vec;
+        col_vec<rt_fl<1, K::kv_rows>> norm_vec_last, norm_vec;
         
         neg_infty(max_vec); // clear registers for the Q chunk
         zero(norm_vec);
@@ -117,14 +135,14 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
 
         int kv_iters; 
         if constexpr (is_causal) {
-            kv_iters = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_height) - 1 + ((warpgroupid + 1) * K::qo_height);
-            kv_iters = (kv_iters/K::kv_height);
+            kv_iters = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_rows) - 1 + ((warpgroupid + 1) * K::qo_rows);
+            kv_iters = (kv_iters/K::kv_rows);
         }
         else { 
             kv_iters = kv_blocks - 1; 
         }
         
-        const int kv_do = (blockIdx.x * CONSUMER_WARPGROUPS)/(K::kv_height/K::qo_height);
+        const int kv_do = (blockIdx.x * CONSUMER_WARPGROUPS)/(K::kv_rows/K::qo_rows);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++, tic^=1, toc^=1) {
         
@@ -142,11 +160,11 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
             warpgroup::mma_async_wait();
 
             if constexpr (is_causal) {
-                int q_blk = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_height) + warpid; 
-                int k_blk = (kv_idx * K::kv_height); 
+                int q_blk = (blockIdx.x * CONSUMER_WARPGROUPS * K::qo_rows) + warpid; 
+                int k_blk = (kv_idx * K::kv_rows); 
 
                 #pragma unroll
-                for (int j = 0; j < K::kv_height; j++) {
+                for (int j = 0; j < K::kv_rows; j++) {
                     int k_idx = k_blk + j;
                     auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block.tiles[0][j]);
 
@@ -188,7 +206,7 @@ void fwd_attend_ker(int N, int heads_ratio, const CUtensorMap* tma_q, const CUte
 
         if (warpid % 4 == 0) { // store o
             int tile_idx = (blockIdx.y * CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * CONSUMER_WARPGROUPS) + warpgroupid;
-            tma::store_async(tma_o, o_smem[warpgroupid], tile_idx); 
+            tma::store_async(globals.O, o_smem[warpgroupid], tile_idx); 
             tma::store_commit_group(); 
         }
 
@@ -218,9 +236,9 @@ void bwd_attend_prep_ker(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tm
     int warpid = kittens::warpid();
 
     // initialize shared memory
-    using og_tile = st_bf<4, D/kittens::TILE_DIM>;
-    using o_tile  = st_bf<4, D/kittens::TILE_DIM>;
-    using d_tile  = col_vec<st_fl<4, D/kittens::TILE_DIM>>;
+    using og_tile = st_bf<64, D>;
+    using o_tile  = st_bf<64, D>;
+    using d_tile  = col_vec<st_fl<64, D>>;
 
     og_tile (&og_smem)[4] = al.allocate<og_tile, 4>();
     o_tile  (&o_smem) [4] = al.allocate<o_tile , 4>();
@@ -228,8 +246,8 @@ void bwd_attend_prep_ker(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tm
     //////////////////////
 
     // initialize registers
-    using fl_reg_tile = rt_fl<4, D/kittens::TILE_DIM>;
-    using fl_reg_col  = col_vec<rt_fl<4, D/kittens::TILE_DIM>>;
+    using fl_reg_tile = rt_fl<4, D>;
+    using fl_reg_col  = col_vec<rt_fl<4, D>>;
     
     fl_reg_tile og_reg;
     fl_reg_tile  o_reg; 
@@ -276,17 +294,15 @@ void bwd_attend_prep_ker(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tm
 
 template<int D> struct bwd_attend_ker_tile_dims {};
 template<> struct bwd_attend_ker_tile_dims<64> {
-    constexpr static int tile_width = (64/kittens::TILE_DIM);
-    constexpr static int tile_h  = (4);
-    constexpr static int tile_h_qo  = (4);
-
+    constexpr static int tile_cols = 64;
+    constexpr static int tile_h    = 64;
+    constexpr static int tile_h_qo = 64;
     constexpr static int blocks_sm = 1;
 };
 template<> struct bwd_attend_ker_tile_dims<128> {
-    constexpr static int tile_width = (128/kittens::TILE_DIM);
-    constexpr static int tile_h  = (4);
-    constexpr static int tile_h_qo  = (4);
-
+    constexpr static int tile_cols = 128;
+    constexpr static int tile_h    = 64;
+    constexpr static int tile_h_qo = 64;
     constexpr static int blocks_sm = 1; 
 };
 
@@ -307,26 +323,26 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
     using G = bwd_attend_ker_tile_dims<D>;
     ////////////////////////////// SHARED MEMORY //////////////////////////////
-    using kg_tile = st_fl<G::tile_h, G::tile_width>;
-    using vg_tile = st_fl<G::tile_h, G::tile_width>;
+    using kg_tile = st_fl<G::tile_h, G::tile_cols>;
+    using vg_tile = st_fl<G::tile_h, G::tile_cols>;
 
-    using k_tile = st_bf<G::tile_h, G::tile_width>;
-    using v_tile = st_bf<G::tile_h, G::tile_width>;
+    using k_tile = st_bf<G::tile_h, G::tile_cols>;
+    using v_tile = st_bf<G::tile_h, G::tile_cols>;
 
-    using q_tile  = st_bf<G::tile_h_qo, G::tile_width>;
-    using og_tile = st_bf<G::tile_h_qo, G::tile_width>;
-    using qg_tile = st_fl<G::tile_h_qo, G::tile_width>;
+    using q_tile  = st_bf<G::tile_h_qo, G::tile_cols>;
+    using og_tile = st_bf<G::tile_h_qo, G::tile_cols>;
+    using qg_tile = st_fl<G::tile_h_qo, G::tile_cols>;
 
-    using l_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
-    using d_tile = col_vec<st_fl<G::tile_h_qo, G::tile_width>>;
+    using l_tile = col_vec<st_fl<G::tile_h_qo, G::tile_cols>>;
+    using d_tile = col_vec<st_fl<G::tile_h_qo, G::tile_cols>>;
 
     using attn_tile = st_bf<G::tile_h_qo, G::tile_h>; 
     /////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////// REGISTERS ////////////////////////////////////
-    using kg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
-    using vg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_width>;
-    using qg_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_width>; 
+    using kg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_cols>;
+    using vg_reg_tile = rt_fl<G::tile_h/kittens::WARPGROUP_WARPS, G::tile_cols>;
+    using qg_reg_tile = rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_cols>; 
 
     using l_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
     using d_reg_vec  = col_vec<rt_fl<G::tile_h_qo/kittens::WARPGROUP_WARPS, G::tile_h>>;
@@ -355,7 +371,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     int warpid = kittens::warpid();
     int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
-    const int qo_blocks = N / (G::tile_h_qo * kittens::TILE_DIM);
+    const int qo_blocks = N / G::tile_h_qo;
 
     __shared__ kittens::barrier kv_b, q_b[2], o_b[2], vec_b[2];
     __shared__ kittens::barrier compute_done[2]; 
@@ -399,7 +415,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
 
     // producer
     if (warpgroupid == BWD_NUM_WARPGROUPS - 1) {
-        asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(24));
+        warpgroup::reduce_registers<24>();
 
         if (warpid % kittens::WARPGROUP_WARPS == 0) {
             for (auto qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
@@ -422,7 +438,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     }
     // consumer
     else {
-        asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(240));
+        warpgroup::increase_registers<240>();
 
         // initialize registers
         kg_reg_tile kg_reg;
@@ -464,10 +480,9 @@ void bwd_attend_ker(const int N, const int heads_ratio,
                 int q_blk = (qo_idx * G::tile_h_qo) + (warpid % kittens::WARPGROUP_WARPS);
                 int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * G::tile_h) + (warpgroupid * G::tile_h);
 
-                for (int j = 0; j < G::tile_h; j++) {
+                for (int j = 0; j < 4; j++) {
                     int k_idx = k_blk + j;
                     auto &attn_subtile = reinterpret_cast<rt_fl_1x1<>&>(att_block.tiles[0][j]);
-
                     if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
                     else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
                 }
@@ -479,7 +494,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
             copy(att_block_mma, att_block);
 
             warpgroup::store(att_smem[warpgroupid], att_block_mma);
-            asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroupid));
+            warpgroup::sync();
 
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, og_smem[tic], v_smem[warpgroupid]);
@@ -509,7 +524,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
             warpgroup::mm_AB(qg_reg, att_block_mma, k_smem[warpgroupid]);
             warpgroup::mma_commit_group(); 
 
-            asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroupid));
+            warpgroup::sync();
 
             warpgroup::mma_fence(kg_reg);
             warpgroup::mma_AtB(kg_reg, att_smem[warpgroupid], q_smem[tic]);
@@ -518,9 +533,9 @@ void bwd_attend_ker(const int N, const int heads_ratio,
             if (qo_idx > 0) tma::store_async_wait();
             warpgroup::mma_async_wait<1>(); 
 
-            asm volatile("bar.sync 10, 256;\n");
+            warpgroup::sync();
             warpgroup::store(qg_smem[warpgroupid], qg_reg);
-            asm volatile("bar.sync 10, 256;\n");
+            warpgroup::sync();
 
             warpgroup::mma_async_wait(); 
 
@@ -537,7 +552,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
         }
 
         tma::store_async_wait();
-        asm volatile("bar.sync 10, 256;\n");
+        warpgroup::sync();
 
         if (warpgroupid == 0) {
             warpgroup::store(*kg_smem, kg_reg);
@@ -548,7 +563,7 @@ void bwd_attend_ker(const int N, const int heads_ratio,
             warpgroup::store(qg_smem[1], vg_reg);
         }
 
-        asm volatile("bar.sync 10, 256;\n");
+        warpgroup::sync();
 
         if (warpid == 0) {
             int tile_idx = ((blockIdx.y/heads_ratio) * BWD_CONSUMER_WARPGROUPS * gridDim.x) + (blockIdx.x * BWD_CONSUMER_WARPGROUPS); 
@@ -566,7 +581,11 @@ void bwd_attend_ker(const int N, const int heads_ratio,
     }
 }
 
-// #include "harness.impl"
+#ifndef TORCH_COMPILE
+
+#include "harness.impl"
+
+#else
 
 #include "include/common/pyutils/torch_helpers.cuh"
 #include <iostream>
@@ -632,19 +651,19 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     CUtensorMap* tma_l_d; 
 
     if (head_dim == 64) {
-        tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
-        tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_height * kittens::TILE_DIM));
-        tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_height * kittens::TILE_DIM));
-        tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
-        tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
+        tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_rows, fwd_attend_ker_tile_dims<64>::tile_cols> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_rows * kittens::TILE_DIM));
+        tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_rows, fwd_attend_ker_tile_dims<64>::tile_cols> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_rows * kittens::TILE_DIM));
+        tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_rows, fwd_attend_ker_tile_dims<64>::tile_cols> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_rows * kittens::TILE_DIM));
+        tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_rows, fwd_attend_ker_tile_dims<64>::tile_cols> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_rows * kittens::TILE_DIM));
+        tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_rows, fwd_attend_ker_tile_dims<64>::tile_cols>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_rows * kittens::TILE_DIM));
     }
 
     if (head_dim == 128) {
-        tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
-        tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_height * kittens::TILE_DIM));
-        tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_height * kittens::TILE_DIM));
-        tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
-        tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
+        tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_rows, fwd_attend_ker_tile_dims<128>::tile_cols> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_rows * kittens::TILE_DIM));
+        tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_rows, fwd_attend_ker_tile_dims<128>::tile_cols> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_rows * kittens::TILE_DIM));
+        tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_rows, fwd_attend_ker_tile_dims<128>::tile_cols> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_rows * kittens::TILE_DIM));
+        tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_rows, fwd_attend_ker_tile_dims<128>::tile_cols> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_rows * kittens::TILE_DIM));
+        tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_rows, fwd_attend_ker_tile_dims<128>::tile_cols>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_rows * kittens::TILE_DIM));
     }
 
     auto mem_size = kittens::MAX_SHARED_MEMORY;
@@ -653,46 +672,42 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
     dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), batch*qo_heads, 1);
 
-    if (is_causal && head_dim == 64) {
-        cudaFuncSetAttribute(
-            fwd_attend_ker<64, true>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
-        );
-
-        fwd_attend_ker<64, true><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    if(head_dim == 64) {
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<64, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            fwd_attend_ker<64, true><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        }
+        else {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<64, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            fwd_attend_ker<64, false><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        }
     }
-
-    if (is_causal && head_dim == 128) {
-        cudaFuncSetAttribute(
-            fwd_attend_ker<128, true>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
-        );
-
-        fwd_attend_ker<128, true><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+    else if(head_dim == 128) {
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            fwd_attend_ker<128, true><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        }
+        else {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            fwd_attend_ker<128, false><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
+        }
     }
-
-    if (!is_causal && head_dim == 64) {
-        cudaFuncSetAttribute(
-            fwd_attend_ker<64, false>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
-        );
-
-        fwd_attend_ker<64, false><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-    }
-
-    if (!is_causal && head_dim == 128) {
-        cudaFuncSetAttribute(
-            fwd_attend_ker<128, false>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
-        );
-
-        fwd_attend_ker<128, false><<<grid, threads, mem_size>>>(seq_len, heads_ratio, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-    }
-
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -804,9 +819,9 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
     dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), batch*qo_heads, 1);
 
     if (head_dim == 64) {
-        tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<4, 64/kittens::TILE_DIM> >(d_o,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
-        tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<4, 64/kittens::TILE_DIM> >(d_og, (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
-        tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<4, 64/kittens::TILE_DIM>>>(d_d,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<64, 64/kittens::TILE_DIM> >(d_o,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<64, 64/kittens::TILE_DIM> >(d_og, (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<64, 64/kittens::TILE_DIM>>>(d_d,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
 
         cudaFuncSetAttribute(
             bwd_attend_prep_ker<64>,
@@ -816,21 +831,21 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
         bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size>>>(tma_prep_o_d, tma_prep_d_d, tma_prep_og_d); 
 
-        tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM)); 
-        tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-        tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-        tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-        tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-        tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-        tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-        tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-        tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
+        tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_cols>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM)); 
+        tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_cols>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
+        tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_cols>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
+        tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_cols>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
+        tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_cols>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
+        tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_cols>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
+        tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_cols>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
+        tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_cols>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
+        tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_cols>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
     }
 
     if (head_dim == 128) {
-        tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<4, 128/kittens::TILE_DIM> >(d_o,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
-        tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<4, 128/kittens::TILE_DIM> >(d_og, (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
-        tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<4, 128/kittens::TILE_DIM>>>(d_d,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<64, 128/kittens::TILE_DIM> >(d_o,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<64, 128/kittens::TILE_DIM> >(d_og, (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
+        tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<64, 128/kittens::TILE_DIM>>>(d_d,  (batch*qo_heads*seq_len)/(4 * kittens::TILE_DIM));
 
         cudaFuncSetAttribute(
             bwd_attend_prep_ker<128>,
@@ -840,15 +855,15 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
         bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size>>>(tma_prep_o_d, tma_prep_d_d, tma_prep_og_d);
 
-        tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM)); 
-        tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-        tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-        tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-        tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-        tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-        tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-        tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-        tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
+        tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_cols>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM)); 
+        tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_cols>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
+        tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_cols>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
+        tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_cols>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
+        tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_cols>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
+        tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_cols>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
+        tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_cols>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
+        tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_cols>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
+        tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_cols>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
     }
 
     TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
@@ -910,3 +925,5 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
+
+#endif

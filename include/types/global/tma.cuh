@@ -3,6 +3,8 @@
 #include <cuda.h>
 #include <iostream>
 #include <assert.h>
+#include <functional> // for std::hash
+#include <unordered_map>
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 
@@ -259,6 +261,6 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typenam
     return tma_map_d;
 }
 
-}
-}
-}
+} // namespace detail
+} // namespace tma
+} // namespace kittens
