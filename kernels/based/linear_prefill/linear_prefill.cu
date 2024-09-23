@@ -87,7 +87,7 @@ struct based_prefill_layout {
     struct input_block {
         qk_tile q;
         qk_tile k;
-        vo_tile v, v2, v3;
+        vo_tile v, v2;
     };
     struct output_block { vo_tile o; };
     struct scratch_block {
@@ -116,7 +116,6 @@ struct based_prefill_template {
             tma::load_async(args.input.k,  args.globals.k, index, args.inputs_arrived);
             tma::load_async(args.input.v,  args.globals.v, index, args.inputs_arrived);
             tma::load_async(args.input.v2, args.globals.v, index, args.inputs_arrived);
-            tma::load_async(args.input.v3, args.globals.v, index, args.inputs_arrived);
             arrive(args.inputs_arrived, 3); // arrive on behalf of other warps
         }
         __device__ static void store(producer_store_args<layout> args) {
@@ -199,12 +198,12 @@ struct based_prefill_template {
             warpgroup::store(args.output.o, o);
             warpgroup::sync();
             arrive(args.outputs_arrived);
-            accumulate_a0(args.scratch.a0, args.input.v3);
+            accumulate_a0(args.scratch.a0, args.input.v2);
             warpgroup::sync();
             arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            
+
         }
     };
 };
