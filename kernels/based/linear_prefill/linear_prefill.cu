@@ -1,53 +1,35 @@
 #include "kittens.cuh"
-#include <cuda/pipeline>
-#include <cooperative_groups.h>
-
-#define NUM_WORKERS (4) // hardcoded, don't change
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
-#define D_QK (16) // hardcoded, don't change
-#define D_VO (64) // hardcoded but can be changed with some effort
+#include "prototype.cuh"
 
 using namespace kittens;
 
-using tile_kv_a2_2_smem = st_bf_4x4;
-using tile_kv_a1_2_smem = st_bf_4x1;
-using tile_kv_a0_2_smem = sv_bf<4>;
+// ----- HELPER FUNCTIONS NEEDED BY BASED LINEAR PREFILL -----
 
 // cumulative sum of v onto a0_total
 template<kittens::ducks::st::all ST>
-__device__ void accumulate_a0(sv_bf<ST::width> &a0_total, const ST &v) {
+__device__ void accumulate_a0(sv_bf<ST::cols> &a0_total, const ST &v) {
     int col = threadIdx.x*2;
-    constexpr int PARALLEL_LOADS = 16;
-    float2 v_data[PARALLEL_LOADS];
     if(col < ST::cols) {
         float2 acc = __bfloat1622float2(*(bf16_2*)&a0_total[col]);
         #pragma unroll
-        for(int k = 0; k < ST::rows/PARALLEL_LOADS; k++) {
-            #pragma unroll
-            for(int i = 0; i < PARALLEL_LOADS; i++) { // load it all in
-                int row = k*PARALLEL_LOADS+i;
-                v_data[i] = __bfloat1622float2(*(bf16_2*)&v[int2{row, col}]);
-            }
-            #pragma unroll
-            for(int i = 0; i < PARALLEL_LOADS; i++) { // accumulate, through registers, and write
-                acc.x += v_data[i].x;
-                acc.y += v_data[i].y;
-            }
+        for(int row = 0; row < ST::rows; row++) {
+            float2 v_data = __bfloat1622float2(*(bf16_2*)&v[int2{row, col}]);
+            acc.x += v_data.x;
+            acc.y += v_data.y;
         }
         *(bf16_2*)&a0_total[col] = __float22bfloat162_rn(acc);
     }
 }
 
-
 // in pytorch, this computes, for a 16x64 tensor dst and 16x16 tensor src:
 // dst = torch.cat([src * src[:,starting_col+i].unsqueeze(0) for i in range(4)], dim=-1)
-__device__ static void mul_slice_row(rt_bf_1x4<> &dst, const rt_bf_1x1<> &src, const int starting_col) {
+__device__ static void mul_slice_row(rt_bf<16,64> &dst, const rt_bf<16,16> &src, const int starting_col) {
 
     const int lane = kittens::laneid(); // 0...31    
     // each thread is responsible for two rows
     #pragma unroll
     for(int i = 0; i < 4; i++) {
-        copy(reinterpret_cast<rt_bf_1x1<>&>(dst.tiles[0][i]), src);
+        copy(reinterpret_cast<rt_bf<16,16>&>(dst.tiles[0][i]), src);
         const int target_col = starting_col + i;
         #pragma unroll
         for(int row_offset = 0; row_offset < 2; row_offset++) {
@@ -65,7 +47,7 @@ __device__ static void mul_slice_row(rt_bf_1x4<> &dst, const rt_bf_1x1<> &src, c
 
 // in pytorch, this computes, for a 16x64 tensor dst and 16x16 tensor src:
 // dst = torch.cat([src * src[:,starting_col].unsqueeze(-1) for _ in range(4)], dim=-1)
-__device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, const int target_row) {
+__device__ static void mul_slice_col(rt_bf<16,64> &dst, const rt_bf<16,64> &src, const int target_row) {
 
     const int lane = kittens::laneid(); // 0...31    
     // each thread is responsible for two cols
@@ -85,314 +67,146 @@ __device__ static void mul_slice_col(rt_bf_1x4<> &dst, const rt_bf_1x4<> &src, c
     }
 }
 
-__global__ __launch_bounds__(NUM_THREADS, 2)
-void based_linear_attention(
-    int n, int add_scale, int output_state, 
-    CUtensorMap* tma_q, CUtensorMap* tma_k, CUtensorMap* tma_v, CUtensorMap* tma_v_3, CUtensorMap* tma_o, 
-    CUtensorMap* tma_kv_a2, CUtensorMap* tma_kv_a1, CUtensorMap* tma_kv_a0
-) {
 
-    int laneid = kittens::laneid(); // who am i? when am i?
-    int warpid = kittens::warpid(); // who am i? when am i?
-    int tic = 0, toc = 1;
+// ----- BASED LINEAR PREFILL KERNEL -----
 
-    extern __shared__ alignment_dummy __shm[];
-    tma_swizzle_allocator al((int*)&__shm[0]);
-    st_bf_4x1 (&q_s)  [2]   = al.allocate<st_bf_4x1, 2>(); // 4096 bytes
-    st_bf_4x1 (&k_s)  [2]   = al.allocate<st_bf_4x1, 2>(); // 4096 bytes
-    st_bf_4x4 (&v_s)  [2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes
-    st_bf_4x4 (&v_s_2)[2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes -- needed to prevent wgmma from breaking
-    st_bf_4x4 (&v_s_3)[2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes -- used to reduce bank conflicts for a0 sum
-    st_bf_4x4 (&o_s)  [2]   = al.allocate<st_bf_4x4, 2>(); // 16384 bytes
 
-    rt_fl_1x1<> a1_trans; // transposed chunk of a1.
-    rt_fl_1x4<> a2[4]; // a2 gets propagated through here.
-    st_bf_4x1 (&a1_trans_s) = al.allocate<st_bf_4x1>(); // 2048 bytes
-    st_bf_4x4 (&a2_s)       = al.allocate<st_bf_4x4>(); // 8192 bytes
-
-    sv_bf_4 &a0_total = al.allocate<sv_bf_4>();
-
-    if(warpid == 0) {
-        zero(a0_total);
-    }
-    warpgroup::zero(a1_trans_s);
-    zero(a1_trans); // everyone zeroes a2.
-    #pragma unroll
-    for(int i = 0; i < 4; i++) {
-        zero(a2[i]); // everyone zeroes a2.
-    }
-
-    int n_blocks = n / (q_s[0].rows);
-
-    // initial load
-    __shared__ barrier bar;
-    if (warpid == 0) init_barrier(bar, 0, 1); // don't wait on threads, do wait on one memory transaction
-    __syncthreads();
-    if (warpid == 0) {
-        tma::expect_bytes(bar,
-            size_bytes<typeof(q_s[0])> +
-            size_bytes<typeof(k_s[0])> +
-            size_bytes<typeof(v_s[0])>*3
-        );
-        int tile_idx = blockIdx.x * n_blocks;
-        tma::load_async(q_s[tic],   tma_q,   bar, tile_idx);
-        tma::load_async(k_s[tic],   tma_k,   bar, tile_idx);
-        tma::load_async(v_s[tic],   tma_v,   bar, tile_idx); // it's actually faster to have TMA fill a few copies than for the warps to do it.
-        tma::load_async(v_s_2[tic], tma_v,   bar, tile_idx);
-        tma::load_async(v_s_3[tic], tma_v_3, bar, tile_idx);
-    }
-
-    for (int block = 0; block < n_blocks; block++, tic^=1, toc^=1) {
-        rt_bf_1x4<> local_attn_bf; // 4 registers each -- 16
-        rt_fl_1x4<> local_attn, temp_attn_accum; // 32 registers each -- 64
-        rt_fl_1x4<> o; // 32 registers each -- 64
-
-        // arrive memory
-        wait(bar, tic);
-        __syncthreads(); // everybody on the same page?
-        if (warpid == 0 && block+1<n_blocks) { // go get the next K from HBM
-            tma::expect_bytes(bar,
-                size_bytes<typeof(q_s[0])> +
-                size_bytes<typeof(k_s[0])> +
-                size_bytes<typeof(v_s[0])>*3
-            );
-            int next_tile_idx = (blockIdx.x * n_blocks) + block + 1;
-            tma::load_async(q_s[toc],   tma_q,   bar, next_tile_idx);
-            tma::load_async(k_s[toc],   tma_k,   bar, next_tile_idx);
-            tma::load_async(v_s[toc],   tma_v,   bar, next_tile_idx);
-            tma::load_async(v_s_2[toc], tma_v,   bar, next_tile_idx);
-            tma::load_async(v_s_3[toc], tma_v_3, bar, next_tile_idx);
+using qk_tile = st_bf<64,16>;
+using vo_tile = st_bf<64,64>;
+using a2_tile = st_bf<64,64>;
+using a1_tile = st_bf<64,16>;
+using a0_vec  = sv_bf<64>;
+using namespace kittens::prototype;
+struct based_prefill_layout {
+    struct globals { // global layout (here with TMA descriptors)
+        gl<bf16, -1, -1, -1, qk_tile::cols, qk_tile> q;
+        gl<bf16, -1, -1, -1, qk_tile::cols, qk_tile> k;
+        gl<bf16, -1, -1, -1, vo_tile::cols, vo_tile> v;
+        gl<bf16, -1, -1, -1, vo_tile::cols, vo_tile> o;
+    };
+    struct input_block {
+        qk_tile q;
+        qk_tile k;
+        vo_tile v, v2, v3;
+    };
+    struct output_block { vo_tile o; };
+    struct scratch_block {
+        a2_tile a2;
+        a1_tile a1_trans;
+        a0_vec a0;
+    };
+    struct consumer_state {
+        rt_fl<16,16> a1_trans;
+        rt_fl<16,64> a2[4];
+    };
+};
+struct based_prefill_template {
+    using layout = based_prefill_layout;
+    static constexpr int NUM_CONSUMER_WARPS = 4, NUM_BLOCKS = 2, OUTPUT_PIPE_STAGES = 2, INPUT_PIPE_STAGES = 2;
+    __device__ static int iters(layout::globals &g) { return g.q.rows / qk_tile::rows; }
+    struct producer {
+        __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
+            warpgroup::producer_registers(); // decrease registers for the producer warpgroup
         }
-
-        // we start by doing the very local computations. Then, we'll follow up later with the rest.
-        warpgroup::mma_fence(local_attn); // qk matmul fence
-        warpgroup::mm_ABt(local_attn, q_s[tic], k_s[tic]); // clear registers -- note mm_ABt, not mma_ABt.
-        warpgroup::mma_commit_group(); // dew it
-        warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
-
-        // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
-        if (add_scale > 0) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 1.");}
-            mul(local_attn, local_attn, 0.25f);                 // divide by sqrt(d)
+        __device__ static void load(producer_load_args<layout> args) { // barrier for the producer to load into
+            if(warpgroup::warpid() != args.iter%2) return;
+            int4 index = { (int)blockIdx.y, (int)blockIdx.x, args.iter, 0 };
+            tma::expect(args.inputs_arrived, args.input);
+            tma::load_async(args.input.q,  args.globals.q, index, args.inputs_arrived);
+            tma::load_async(args.input.k,  args.globals.k, index, args.inputs_arrived);
+            tma::load_async(args.input.v,  args.globals.v, index, args.inputs_arrived);
+            tma::load_async(args.input.v2, args.globals.v, index, args.inputs_arrived);
+            tma::load_async(args.input.v3, args.globals.v, index, args.inputs_arrived);
+            arrive(args.inputs_arrived, 3); // arrive on behalf of other warps
         }
-        copy(temp_attn_accum, local_attn);
-        // BEGIN comment-out for removing T2 (debug)
-        mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it; note this converts sqrt(d) to d
-        mul(temp_attn_accum, temp_attn_accum, 0.5f);            // divide by 2
-        add(temp_attn_accum, temp_attn_accum, local_attn);      // add back in 1x for the linear term
-        add(temp_attn_accum, temp_attn_accum, 1.f);             // cumulative sum for a0
-        // END comment-out for removing T2 (debug)
-        copy(local_attn_bf, temp_attn_accum); // now stored.
-        // now make causal
-        #pragma unroll
-        for(int j = 0; j < 4; j++) {
-            auto &attn_subtile = reinterpret_cast<rt_bf_1x1<>&>(local_attn_bf.tiles[0][j]);
-            if (j>warpid) zero(attn_subtile);
-            else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<bf16>::zero());
+        __device__ static void store(producer_store_args<layout> args) {
+            if(warpgroup::warpid() != 2+args.iter%2) return;
+            int4 index = { (int)blockIdx.y, (int)blockIdx.x, args.iter, 0 };
+            tma::store_async(args.globals.o, args.output.o, index);
+            tma::store_async_read_wait();
+            arrive(args.outputs_finished, 4);
         }
-
-        warpgroup::mma_fence(o);                            // av matmul fence
-        warpgroup::mma_fence(a1_trans);                     // a1 accumulation matmul fence
-        warpgroup::mm_AB(o, local_attn_bf, v_s[tic]);       // reset o here, and do local chunk.
-        warpgroup::mma_commit_group();                      // dew it
-        
-        warpgroup::mma_ABt(o, q_s[tic], a1_trans_s);        // incorporate a1 onto o
-        warpgroup::mma_commit_group();                      // dew it
-        
-        warpgroup::mma_AtB(a1_trans, v_s_2[tic], k_s[tic]); // we now have 4 1x4 registers that need to eventually be summed.
-        warpgroup::mma_commit_group(); // dew it
-        warpgroup::mma_async_wait();   // tmp
-        warpgroup::store(a1_trans_s, a1_trans);
-
-        rt_bf_1x1<> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
-        warpgroup::load(q_src, q_s[tic]);
-        mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here.
-        if (add_scale > 0) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 2.");}
-            mul(q_src, q_src, __float2bfloat16(0.25));          // divide by sqrt(d=16) for A2 here.
+    };
+    struct consumer {
+        __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
+            warpgroup::increase_registers<232>();
+            warpgroup::zero(args.scratch.a0);
+            warpgroup::zero(args.scratch.a1_trans);
+            warpgroup::zero(args.scratch.a2);
+            zero(args.state.a1_trans);
+            for(int i = 0; i < 4; i++) zero(args.state.a2[i]);
+            warpgroup::sync();
         }
-        rt_bf_4x1<> k_src_tmp;
-        rt_bf_1x4<> k_src;
-        load(k_src_tmp, k_s[tic]);
-        transpose_sep(k_src, k_src_tmp); // transpose K into Kt
-
-        // 2nd order taylor
-        // about 75% of execution time is in this loop
-        #pragma unroll
-        for(int t = 0; t < 4; t++) {
-            rt_bf_1x4<> q, k;
-            mul_slice_row(q, q_src, t*4);
-            mul_slice_col(k, k_src, t*4+warpid);
-            warpgroup::store(a2_s, a2[t]); // take previous one and move up to smem for wgmma.
-            __syncthreads();
-
-            warpgroup::mma_fence(o); // av matmul fence
-            warpgroup::mma_fence(a2[t]); // av matmul fence
-            warpgroup::mma_AB(o, q, a2_s); // incorporate a1 onto o
-            warpgroup::mma_commit_group(); // dew it
-            
-            warpgroup::mma_AB(a2[t], k, v_s[tic]); // incorporate KtV onto a2
-            warpgroup::mma_commit_group(); // dew it
-            
-            warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
-        }
-
-        // now we do the sum of the previous a0 onto o
-        #pragma unroll
-        for(int i = 0; i < 4; i++) {
+        __device__ static void work(consumer_work_args<layout> args) {
+            int warp = warpgroup::warpid();
+            rt_bf<16,64> local_attn_bf; // 4 registers
+            rt_fl<16,64> local_attn, temp_attn_accum; // 32 registers
+            rt_fl<16,64> o; // 32 registers
+            warpgroup::mm_ABt(local_attn, args.input.q, args.input.k);
+            warpgroup::mma_async_wait();
+            copy(temp_attn_accum, local_attn);
+            mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it; note this converts sqrt(d) to d
+            mul(temp_attn_accum, temp_attn_accum, 0.5f);            // divide by 2
+            add(temp_attn_accum, temp_attn_accum, local_attn);      // add back in 1x for the linear term
+            add(temp_attn_accum, temp_attn_accum, 1.f);             // cumulative sum for a0
+            copy(local_attn_bf, temp_attn_accum); // now stored.
+            // now make causal
             #pragma unroll
-            for(int j = 0; j < 2; j++) {
-                int col = i*16 + j*8 + (laneid%4)*2;
-                float2 data = __bfloat1622float2(*(bf16_2*)&a0_total[col]);
-                o.tiles[0][i].data[2*j].x   += data.x;
-                o.tiles[0][i].data[2*j].y   += data.y;
-                o.tiles[0][i].data[2*j+1].x += data.x;
-                o.tiles[0][i].data[2*j+1].y += data.y;
+            for(int j = 0; j < 4; j++) {
+                auto &attn_subtile = reinterpret_cast<rt_bf<16,16>&>(local_attn_bf.tiles[0][j]);
+                if (j>warp) zero(attn_subtile);
+                else if (j==warp) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<bf16>::zero());
             }
-        }
-
-        // do the cumulative sum last, after everything is stored
-        warpgroup::store(o_s[tic], o);
-        __syncthreads();
-        accumulate_a0(a0_total, v_s_3[tic]); // cumulative sum of V onto O in shared memory
-        __syncthreads();
-
-        // save the chunks of output
-        if (block>0) tma::store_async_wait();
-        if (warpid == 0) { // go get the next K from HBM
-            tma::store_async(tma_o, o_s[tic], (blockIdx.x * n_blocks) + block); 
-            tma::store_commit_group(); // dew it
-        }
-    }
-
-    if (output_state > 0) {
-
-        // save the KV state (A2)
-        for (int rt = 0; rt < 4; rt++) {
-            // The reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
-            // Instead, it tells the compiler to treat the memory location of a2_s as if it were a reference to st_bf<4, 4>.
-            auto &kv_smem_2 = reinterpret_cast<st_bf_4x4&>(a2_s); // this layout is better for global HBM stores so we cast.
-            mul(a2[rt], a2[rt], 0.70710678118); // Taylor normalization
-            if (add_scale > 0) {
-                // if (warpid==0 and threadIdx.x==0) {printf("scale 3.");}
-                mul(a2[rt], a2[rt], 0.25);
+            warpgroup::mm_AB(o, local_attn_bf, args.input.v);       // reset o here, and do local chunk.
+            warpgroup::mma_ABt(o, args.input.q, args.scratch.a1_trans);
+            warpgroup::mma_async_wait();
+            warpgroup::mma_AtB(args.state.a1_trans, args.input.v2, args.input.k);
+            warpgroup::mma_async_wait();
+            warpgroup::store(args.scratch.a1_trans, args.state.a1_trans); // store up to shared memory
+            warpgroup::sync();
+            rt_bf<16,16> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
+            warpgroup::load(q_src, args.input.q);
+            mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here.
+            rt_bf<64,16> k_src_tmp;
+            rt_bf<16,64> k_src;
+            load(k_src_tmp, args.input.k);
+            transpose_sep(k_src, k_src_tmp); // transpose K into Kt
+            // 2nd order taylor, about 75% of execution time is in this loop
+            #pragma unroll
+            for(int t = 0; t < 4; t++) {
+                rt_bf<16,64> q, k;
+                mul_slice_row(q, q_src, t*4);
+                mul_slice_col(k, k_src, t*4+warp);
+                warpgroup::store(args.scratch.a2, args.state.a2[t]); // take previous one and move up to smem for wgmma.
+                __syncwarp();
+                warpgroup::mma_AB(o, q, args.scratch.a2); // incorporate a1 onto o
+                warpgroup::mma_AB(args.state.a2[t], k, args.input.v); // incorporate KtV onto a2
+                warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
             }
-            warpgroup::store(kv_smem_2, a2[rt]); 
-            __syncthreads();
-            if (warpid == 0) {
-                int tile_idx = (blockIdx.x * 4) + rt; 
-                tma::store_async(tma_kv_a2, kv_smem_2, tile_idx); 
-                tma::store_commit_group(); 
+            // now we do the sum of the previous a0 onto o
+            #pragma unroll
+            for(int i = 0; i < 4; i++) {
+                #pragma unroll
+                for(int j = 0; j < 2; j++) {
+                    int col = i*16 + j*8 + (kittens::laneid()%4)*2;
+                    float2 data = __bfloat1622float2(*(bf16_2*)&args.scratch.a0[col]);
+                    o.tiles[0][i].data[2*j].x   += data.x;
+                    o.tiles[0][i].data[2*j].y   += data.y;
+                    o.tiles[0][i].data[2*j+1].x += data.x;
+                    o.tiles[0][i].data[2*j+1].y += data.y;
+                }
             }
-            tma::store_async_wait();
+            warpgroup::store(args.output.o, o);
+            warpgroup::sync();
+            arrive(args.outputs_arrived);
+            accumulate_a0(args.scratch.a0, args.input.v3);
+            warpgroup::sync();
+            arrive(args.inputs_finished);
         }
-
-        // save the KV state A1
-        auto &kv_smem_1 = reinterpret_cast<st_bf_4x1&>(a1_trans_s);
-        if (add_scale > 0 ) {
-            // if (warpid==0 and threadIdx.x==0) {printf("scale 4.");} 
-            mul(a1_trans, a1_trans, 0.5);       // divides by math.sqrt(math.sqrt(D_QK))
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            
         }
-        warpgroup::store(kv_smem_1,a1_trans);   // from individual warps to shared address
-        __syncthreads();
-        if (warpid == 0) {      // one warp takes care of the write to HBM
-            int tile_idx = (blockIdx.x); 
-            tma::store_async(tma_kv_a1, kv_smem_1, tile_idx); 
-            tma::store_commit_group(); 
-        }
-        tma::store_async_wait();
+    };
+};
 
-        // save the KV state A0
-        if (warpid == 0) {      // one warp takes care of the write to HBM
-            int tile_idx = (blockIdx.x); 
-            tma::store_async(tma_kv_a0, a0_total, tile_idx); 
-            tma::store_commit_group(); 
-        }
-        tma::store_async_wait();
-
-    }
-}
-
-// #include "harness.impl"
-
-#include "common/pyutils/torch_helpers.cuh"
-#include <iostream>
-void based_linear_prefill(
-    int add_scale, int output_state,
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
-    torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0
-) {
-    CHECK_INPUT(q);
-    CHECK_INPUT(k);
-    CHECK_INPUT(v);
-    CHECK_INPUT(o);
-    CHECK_INPUT(kv_a2);
-    CHECK_INPUT(kv_a1);
-    CHECK_INPUT(kv_a0);
-
-    auto batch   = q.size(0);
-    auto heads   = q.size(1);
-    auto threads = NUM_THREADS; 
-    auto n       = q.size(2); 
-
-    bool k_same  = true; 
-    bool o_same  = true; 
-    for (auto i = 0; i < 4; i++) {
-        k_same &= q.size(i) == k.size(i);
-        o_same &= v.size(i) == o.size(i);
-    }
-
-    TORCH_CHECK(k_same, "q and k must have the same shape");
-    TORCH_CHECK(o_same, "v and o must have the same shape");
-    TORCH_CHECK(q.scalar_type() == c10::ScalarType::BFloat16, "q must be bf16");
-    TORCH_CHECK(k.scalar_type() == c10::ScalarType::BFloat16, "k must be bf16");
-    TORCH_CHECK(v.scalar_type() == c10::ScalarType::BFloat16, "v must be bf16");
-    TORCH_CHECK(o.scalar_type() == c10::ScalarType::BFloat16, "o must be bf16");
-    TORCH_CHECK(n % (NUM_WORKERS*kittens::TILE_DIM) == 0, "n must be divisible by 64");
-
-    // convert to bf16
-    c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
-    c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
-    c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
-    c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a2_ptr = kv_a2.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a1_ptr = kv_a1.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *kv_a0_ptr = kv_a0.data_ptr<c10::BFloat16>();
-
-    const bf16* d_q  = reinterpret_cast<const bf16*>(q_ptr);
-    const bf16* d_k  = reinterpret_cast<const bf16*>(k_ptr);
-    const bf16* d_v  = reinterpret_cast<const bf16*>(v_ptr);
-          bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
-          bf16* d_kv_a2 = reinterpret_cast<bf16*>(kv_a2_ptr);
-          bf16* d_kv_a1 = reinterpret_cast<bf16*>(kv_a1_ptr); 
-          bf16* d_kv_a0 = reinterpret_cast<bf16*>(kv_a0_ptr);
-
-    CUtensorMap* tma_q_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1>(d_q, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_k_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1>(d_k, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_v_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_v_3_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_v, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_o_d     = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4>(d_o, (batch*heads*n)/(4 * kittens::TILE_DIM)); 
-    CUtensorMap* tma_kv_a2_d = tma::allocate_and_create_tensor_map<tile_kv_a2_2_smem> (d_kv_a2, batch*heads*(D_QK*D_QK));
-    CUtensorMap* tma_kv_a1_d = tma::allocate_and_create_tensor_map<tile_kv_a1_2_smem> (d_kv_a1, batch*heads*(D_QK));
-    CUtensorMap* tma_kv_a0_d = tma::allocate_and_create_tensor_map<tile_kv_a0_2_smem> (d_kv_a0, batch*heads);
-
-    unsigned long mem_size = 98000; 
-    
-    using T = kittens::bf16;
-    using H = kittens::bf16;
-
-    cudaFuncSetAttribute(
-        based_linear_attention,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    ); 
-
-    based_linear_attention<<<batch*heads, threads, mem_size>>>(
-        n, add_scale, output_state, 
-        tma_q_d, tma_k_d, tma_v_d, tma_v_3_d, tma_o_d, 
-        tma_kv_a2_d, tma_kv_a1_d, tma_kv_a0_d
-    );
-
-    CHECK_CUDA_ERROR(cudaGetLastError());
-}
-
+#include "harness.impl"
