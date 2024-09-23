@@ -237,7 +237,9 @@ template<int N=0> __device__ static inline void load_async_wait() { // for compl
 
 // meant to be used only with shared tiles and shared vectors
 namespace detail {
-template<typename T> struct size_info;
+template<typename T> struct size_info {
+    static constexpr uint32_t bytes    = sizeof(std::remove_reference_t<T>);
+};
 template<ducks::st::all ST> struct size_info<ST> {
     static constexpr uint32_t elements = ST::num_elements;
     static constexpr uint32_t bytes    = ST::num_elements * sizeof(typename ST::dtype);
@@ -249,8 +251,6 @@ template<ducks::sv::all SV> struct size_info<SV> {
 }
 template<typename... Args>                       inline constexpr uint32_t size_bytes             = 0; // base case
 template<typename T, typename... Args>           inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
-// template<typename T, size_t Dim>                 inline constexpr uint32_t size_bytes             = Dim*detail::size_info<T>::bytes;
-// template<typename T, size_t Dim, size_t... Dims> inline constexpr uint32_t size_bytes<T, Dims...> = Dim*detail::size_info<T, Dims...>::bytes;
 
 } // namespace kittens
 
