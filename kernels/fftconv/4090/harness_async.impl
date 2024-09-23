@@ -62,10 +62,10 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
-            if ( i % 8 == 0) {
-                o_ref_file << o_ref[i] << '\n';
-                o_file << o[i] << '\n';
-                diff_file << diff << '\n';
+            if ( i % 8 == 7) {
+                o_ref_file << '\n';
+                o_file << '\n';
+                diff_file << '\n';
             }
         }
         if (diff > max(abs_tol, actual * rel_tol)) {
@@ -261,10 +261,14 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     const auto start = std::chrono::high_resolution_clock::now();
     launch_fftconv_tk(
-        d_u_real, d_u_imag, d_kf_real, d_kf_imag, 
-        d_f_real, d_f_imag, d_finv_real, d_finv_imag,
-        d_tw_32_1k_real, d_tw_32_1k_imag, d_tw_inv_32_1k_real, d_tw_inv_32_1k_imag,
-        d_tw_32_32_real, d_tw_32_32_imag, d_tw_inv_32_32_real, d_tw_inv_32_32_imag, 
+        d_u_real, d_u_imag, 
+        d_kf_real, d_kf_imag, 
+        d_f_real, d_f_imag, 
+        d_finv_real, d_finv_imag,
+        d_tw_32_1k_real, d_tw_32_1k_imag,
+        d_tw_inv_32_1k_real, d_tw_inv_32_1k_imag,
+        d_tw_32_32_real, d_tw_32_32_imag, 
+        d_tw_inv_32_32_real, d_tw_inv_32_32_imag, 
         d_o,
         B, H, N, N1, B_TILE, H_TILE
     );

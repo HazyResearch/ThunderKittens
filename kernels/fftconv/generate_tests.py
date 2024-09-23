@@ -14,12 +14,12 @@ N2 = 32
 TESTNAME = sys.argv[1]
 
 if TESTNAME in ['ones_all']:
-    u = (torch.ones((B, H, N), dtype=torch.cfloat, device='cpu'))
-    k = (torch.ones((H, N), dtype=torch.cfloat, device='cpu'))
+    u = (torch.ones((B, H, N), dtype=torch.cfloat, device='cpu')) * 100
+    k = (torch.ones((H, N), dtype=torch.cfloat, device='cpu')) * 100
 elif TESTNAME in ['randn_all']:
     torch.random.manual_seed(42)
-    u = (torch.randn((B, H, N), dtype=torch.cfloat, device='cpu'))
-    k = (torch.randn((H, N), dtype=torch.cfloat, device='cpu'))
+    u = (torch.randn((B, H, N), dtype=torch.cfloat, device='cpu')) 
+    k = (torch.randn((H, N), dtype=torch.cfloat, device='cpu')) 
 else:
     print('Invalid test name')
     sys.exit(0)
@@ -136,8 +136,8 @@ def monarch_conv_full(
 
 def pytorch_test(u, k, TESTNAME='all'):
     u = u.reshape(B, H, 32, 1024)
-    for i in range(32):
-        u[:, :, i, :] = torch.arange(1024)
+    # for i in range(32):
+    #     u[:, :, i, :] = torch.arange(1024)
     u = u.reshape(B, H, N).to(torch.cfloat)
 
     # input
@@ -178,6 +178,8 @@ def pytorch_test(u, k, TESTNAME='all'):
     kfT_real = k_f_permuted.real.to(torch.bfloat16).contiguous()
     kfT_imag = k_f_permuted.imag.to(torch.bfloat16).contiguous()
 
+    print(f"{k_f_permuted.shape=}")
+
     # check that our inputs to the kernel will be good
     out_with_kernel_inputs = monarch_conv_full(
         u, k_f_permuted, 
@@ -194,11 +196,12 @@ def pytorch_test(u, k, TESTNAME='all'):
     u_imag = u_imag.reshape(B, H, 32, 1024).to(torch.bfloat16).contiguous()
 
     # verify that the kernel inputs are correct
+    print("\nVerifying:")
     o_real = ref_fftconv(u, k, N)   # B, H, N 
     o_real = o_real.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
     print(torch.allclose(out_with_kernel_inputs, o_real, atol=2))
     print(f"out_with_kernel_inputs\n{out_with_kernel_inputs[4, 3, 6, 56:60]}")
-    print(f"o_real\n{o_real[4, 3, 6, 56:60]}")
+    print(f"o_real\n{o_real[4, 3, 6, 56:60]}\n")
 
 
     ############# KERNEL INPUTS GENERATED #############
@@ -208,12 +211,62 @@ def pytorch_test(u, k, TESTNAME='all'):
     x2 = u.clone().reshape(B, H, 32, 1024).to(torch.cfloat)
     for i in range(chunks):
         block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size]
-        # block = block.transpose(-1, -2) 
-        # block = block @ f_mat 
-        # block = block.transpose(-1, -2)
+        block = block.transpose(-1, -2) 
+        block = block @ f_mat 
+        block = block.transpose(-1, -2)
         block = block * tw_32_1k[:, i*chunk_size:(i+1)*chunk_size]
         x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
-    o_real = x2.real.to(torch.bfloat16).contiguous()
+
+    x2 = x2.reshape(B, H, 32, 32, 32)
+    k_f = k_f.reshape(H, 32, 32, 32)
+    chunk_size = 4 
+    chunks = x2.shape[2] // chunk_size
+    for i in range(chunks):
+        block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
+        block = block.transpose(-1, -2)
+        block = block @ f_mat  # Apply FFT
+        block = block.transpose(-1, -2)
+        block = block * tw_32_32
+        block = block @ f_mat  # Apply FFT again
+        x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+        
+        # breakpoint()
+        # pointwise multiplication
+        x2[:, :, i*chunk_size:(i+1)*chunk_size] = x2[:, :, i*chunk_size:(i+1)*chunk_size] * k_f[:, i*chunk_size:(i+1)*chunk_size]
+
+        # Now apply the IFFT
+        block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
+        block = block @ finv_mat  # Apply iFFT
+        block = block.transpose(-1, -2)
+        block = block * tw_32_32_inv 
+        block = block @ finv_mat
+        block = block.transpose(-1, -2) 
+        x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+
+    x2 = x2.reshape(B, H, 32, 1024)
+    print(f"{k_f.shape=}")
+
+    # compute ifft
+    chunk_size = 32 
+    chunks = 32 
+    for i in range(chunks):
+        block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size] 
+        block = block * tw_32_1k_inv[:, i*chunk_size:(i+1)*chunk_size] 
+        block = block.transpose(-1, -2) 
+        block = block @ finv_mat  
+        block = block.transpose(-1, -2)
+        x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
+
+    # print(f"{kfT_real.shape=}")
+    # # try reshape
+    kfT_real = kfT_real.reshape(H, 1024, 32)
+    kfT_imag = kfT_imag.reshape(H, 1024, 32)
+
+    o_real_check = x2.real.to(torch.bfloat16).contiguous()
+
+    print(f"\nVerifying chunked code:")
+    print(torch.allclose(o_real_check, o_real, atol=2))
+    # breakpoint()
 
     return (
         # input and filter
@@ -260,7 +313,24 @@ def pytorch_test(u, k, TESTNAME='all'):
 ) = pytorch_test(u, k, TESTNAME=TESTNAME)
 
 # print shapes
-print(f"{u_real.shape=} {u_imag.shape=} {kfT_real.shape=} {kfT_imag.shape=} {f_real.shape=} {f_imag.shape=} {finv_real.shape=} {finv_imag.shape=} {tw_32_1k_real.shape=} {tw_32_1k_imag.shape=} {tw_32_1k_inv_real.shape=} {tw_32_1k_inv_imag.shape=} {tw_32_32_real.shape=} {tw_32_32_imag.shape=} {tw_32_32_inv_real.shape=} {tw_32_32_inv_imag.shape=} {o_real.shape=}")
+print("\nPrinting shapes:")
+print(f"{u_real.shape=}")
+print(f"{u_imag.shape=}")
+print(f"{kfT_real.shape=}")
+print(f"{kfT_imag.shape=}")
+print(f"{f_real.shape=}")
+print(f"{f_imag.shape=}")
+print(f"{finv_real.shape=}")
+print(f"{finv_imag.shape=}")
+print(f"{tw_32_1k_real.shape=}")
+print(f"{tw_32_1k_imag.shape=}")
+print(f"{tw_32_1k_inv_real.shape=}")
+print(f"{tw_32_1k_inv_imag.shape=}")
+print(f"{tw_32_32_real.shape=}")
+print(f"{tw_32_32_imag.shape=}")
+print(f"{tw_32_32_inv_real.shape=}")
+print(f"{tw_32_32_inv_imag.shape=}")
+print(f"{o_real.shape=}")
 
 with open(f'{TESTNAME}.txt', 'w') as f:
 

@@ -14,61 +14,96 @@ using namespace kittens;
 #define st_cmplx_bf_32x32 st_cmplx_bf<2, 2>
 
 #define st_cmplx_bf_32x1024 st_cmplx_bf<2, 64>
+// #define sv_cmplx_bf_32x1024_vec row_vec<st_cmplx_bf<2, 64>>
 
 
-__device__ static void inner_loop(
-    st_cmplx_bf_32x1024 u,
-    const bf16 *kf_real, const bf16 *kf_imag, 
-    st_cmplx_bf_32x32 fft_mat, st_cmplx_bf_32x32 fft_inv_mat, 
-    const bf16 *tw_real, const bf16 *tw_imag, 
-    const bf16 *twinv_real, const bf16 *twinv_imag, 
-    bf16 *o, 
-    int b, int h, int n, int n1,
-    int B_TILE, int H_TILE
-) {
-    int warpid = kittens::warpid();
+/**
+ * @brief Load row of data from a larger shared tile into a register tile.
+ * @tparam RT The register tile type
+ * @tparam ST The shared tile type
+ * @param dst[out] The destination register tile.
+ * @param src[in]  The source shared tile.
+ */
+template<ducks::rt::all RT, ducks::st::all ST>
+__device__ inline static void load_row(RT &dst, const ST &src, int row_idx) {
 
-    // Every block loads same seq tile
-    int h_stride = n;
-    int b_stride = h * n;
-    int h_start = blockIdx.y * H_TILE;
-    int b_start = blockIdx.x * B_TILE;
+    // static_assert(RT::height == ST::height, "register tile and shared tile must match height");
+    // static_assert(RT::width  == ST::width,  "register tile and shared tile must match width");
+    static_assert(std::is_same_v<typename RT::layout, ducks::rt_layout::row>, "unsupported layout, only row supported");
 
-    // Registers; everyone loads
-    rt_cmplx_bf_32x32 a_reg;  
-    rt_cmplx_fl_32x32 mma_reg;  
-    rt_cmplx_bf_32x32 accum;       
-    rt_cmplx_bf_32x32_col b_reg;
+    using T2 = RT::dtype;
+    using T  = base_types::packing<T2>::unpacked_type;
+    using U  = ST::dtype;
+    using U2 = base_types::packing<U >::packed_type;
 
-    // now se have 32x1024 and we want the strip of 1024
-    int N_TILE = 32; 
-    for (int h = 0; h < H_TILE; h++) {
-        for (int b = 0; b < B_TILE; b++) {
-            for (int i = 0; i < N_TILE; i ++) {
-                // load block of u
-                auto ref_real = kittens::subtile_inplace<2, 2>(u.real, 0, i);
-                transpose_inplace(a_reg);
+    int do_print = (blockIdx.x == 0 && blockIdx.y == 0) && (
+        threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3
+    );
 
-                // // x = x @ f_32_fft 
-                // zero(mma_reg);
-                // mma_AB(mma_reg, a_reg, fft_mat, mma_reg);
-                // copy(a_reg, mma_reg);
+    int laneid = threadIdx.x % 32;
+    int height = dst.height;
+    int width  = dst.width;
+    if (do_print) {
+        // printf("laneid: %d, height: %d, width: %d\n", laneid, dst.height, dst.width);
+    }
 
-                // x = x.transpose(-1, -2) # ... 16, 1K
-                transpose_inplace(a_reg);
+    // 0:3 --> handle 0:32 (non-consecutively vs. mine)
 
-                // x = x * twiddle_factors_fft
-                load(accum, tw_real, tw_imag, 32, 32);
-                mul(a_reg, a_reg, accum);
+    // zero(dst);
+    // #pragma unroll
+    // for(int i = 0; i < height; i++) {
+    //     #pragma unroll
+    //     for(int j = 0; j < width; j++) {
+    //         int row = 0; // grab one row
+    //         int col = (laneid)*2; -> 18
 
-                // // block = block @ f_32_fft
-                // zero(mma_reg);
-                // mma_AB(mma_reg, a_reg, fft_mat, mma_reg);
-                // copy(a_reg, mma_reg);
+    //         // threads 0:32 should grab values 0:64 and put them in the first core matrix
+    //         // packed values -- everyone has two values loaded in 
+    //         dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col}]));
+    //         dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+64}]));
+    //         dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+128}]));
+    //         dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(*(U2*)(&src[{row, col+192}]));
+    //     }
+    // }
 
-                // store(o + u_start, a_reg.real, 1024);
-            }
-        }   
+}
+
+template<ducks::rt::all RT, ducks::st::all ST>
+__device__  inline void subtile_load(RT &dst, ST &src, int row_id) {
+    static_assert(RT::rows * RT::cols == ST::cols);
+    // printf("RT::rows: %d, RT::cols: %d, ST::cols: %d\n", RT::rows, RT::cols, ST::cols);
+    for(int i = 0; i < RT::height; i++) {
+        for(int j = 0; j < RT::width; j++) {
+            int base_row = i*16 + laneid()/4;
+            int base_col = j*16 + 2*(laneid()%4);
+            int col = base_row*RT::cols + base_col;
+            dst.tiles[i][j].data[0] = (*(bf16_2*)&src[{row_id, col}]);
+            dst.tiles[i][j].data[1] = (*(bf16_2*)&src[{row_id, col + 8*RT::cols}]);
+            dst.tiles[i][j].data[2] = (*(bf16_2*)&src[{row_id, col + 8}]);
+            dst.tiles[i][j].data[3] = (*(bf16_2*)&src[{row_id, col + 8*RT::cols + 8}]);
+        }
+    }
+}
+
+template<ducks::rt::all RT, ducks::st::all ST>
+__device__  inline void subtile_store(ST &dst, RT &src, int row_id) {
+    static_assert(RT::rows * RT::cols == ST::cols);
+
+    using T2 = RT::dtype;
+    using T  = base_types::packing<T2>::unpacked_type;
+    using U  = ST::dtype;
+    using U2 = base_types::packing<U >::packed_type;
+    
+    for(int i = 0; i < RT::height; i++) {
+        for(int j = 0; j < RT::width; j++) {
+            int base_row = i*16 + laneid()/4;
+            int base_col = j*16 + 2*(laneid()%4);
+            int col = base_row*RT::cols + base_col;
+            *(U2*)(&dst[{row_id, col}]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            *(U2*)(&dst[{row_id, col + 8*RT::cols}]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            *(U2*)(&dst[{row_id, col + 8}]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+            *(U2*)(&dst[{row_id, col + 8*RT::cols + 8}]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+        }
     }
 }
 
@@ -87,6 +122,7 @@ __global__ void fftconv_tk(
     int B_TILE, int H_TILE
 ){
     int warpid = kittens::warpid();
+    int do_print = threadIdx.x == 0 && blockIdx.x == 0 && blockIdx.y == 0;
 
     // Every block loads same seq tile
     int h_stride = n;
@@ -103,7 +139,7 @@ __global__ void fftconv_tk(
     const bf16 *finv_real_g = reinterpret_cast<const bf16*>(finv_real);
     const bf16 *finv_imag_g = reinterpret_cast<const bf16*>(finv_imag);
 
-    // SMEM; 
+    // shared memory allocation
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
     st_cmplx_bf_32x1024 (&u)  = al.allocate<st_cmplx_bf_32x1024>(); 
@@ -115,15 +151,18 @@ __global__ void fftconv_tk(
         load(fft_inv_mat, finv_real_g, finv_imag_g, n1, n1);
     }
 
+    // register allocation
     rt_cmplx_bf_32x32 a_reg;
     rt_cmplx_bf_32x32 b_reg;
     rt_cmplx_fl_32x32 mma_reg; 
-    rt_cmplx_bf_32x32_col fft_mat_reg;
-    load(fft_mat_reg, fft_mat);
+    rt_cmplx_bf_32x32_col fft_mat_reg; // keep in register
+    rt_cmplx_bf_32x32_col fft_mat_inv_reg; // keep in register
+
 
     // compute the FFT
     int chunk_size = 32;
-    int N_TILE = 32; // / chunk_size;
+    int N_TILE = 32;
+    load(fft_mat_reg, fft_mat);
     for (int h = 0; h < H_TILE; h++) {
         for (int b = 0; b < B_TILE; b++) {
             for (int i = 0; i < N_TILE; i ++) {
@@ -134,26 +173,22 @@ __global__ void fftconv_tk(
                     (i * chunk_size)
                 ); 
                 auto ref_real = kittens::subtile_inplace<2, 2>(u.real, 0, i);
-                load(a_reg.real, ref_real);
                 auto ref_imag = kittens::subtile_inplace<2, 2>(u.imag, 0, i);
+                load(a_reg.real, ref_real);
                 load(a_reg.imag, ref_imag);
-
-                transpose_inplace(a_reg);
-
-                // x = x @ f_32_fft    # ... 1K, 16
-                // zero(mma_reg);
-                // transpose_inplace(fft_mat_reg);
-                // mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
-                // copy(a_reg, mma_reg);
-
-                // x = x.transpose(-1, -2) # ... 16, 1K
-                transpose_inplace(a_reg);
                 
+                // transpose
+                transpose_inplace(a_reg);
+                // x = x @ f_32_fft    # ... 1K, 16
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+                copy(a_reg, mma_reg);
+                // transpose
+                transpose_inplace(a_reg);
                 // x = x * twiddle_factors_fft 
                 int tw_start = (i * chunk_size);
                 load(b_reg, tw_32_1k_real + tw_start, tw_32_1k_imag + tw_start, 1024, 1024);
                 mul(a_reg, a_reg, b_reg);
-
                 // store the result back to u
                 store(ref_real, a_reg.real);
                 store(ref_imag, a_reg.imag);
@@ -161,20 +196,60 @@ __global__ void fftconv_tk(
         }
     }
 
-    // inner loop
-    inner_loop(
-        u, 
-        kf_real, kf_imag, 
-        fft_mat, fft_inv_mat, 
-        tw_32_32_real, tw_32_32_imag, 
-        twinv_32_32_real, twinv_32_32_imag, 
-        o, 
-        b, h, n, n1,
-        B_TILE, H_TILE
-    );
+    int N_ROWS = 32; 
+    load(fft_mat_inv_reg, fft_inv_mat);
+    for (int h = 0; h < H_TILE; h++) {
+        for (int b = 0; b < B_TILE; b++) {
+            for (int i = 0; i < N_ROWS; i ++) {
+                // u is 32x1024 and we want the vector of 1x1024
+                subtile_load(a_reg.real, u.real, i);
+                subtile_load(a_reg.imag, u.imag, i);
+                // transpose    
+                transpose_inplace(a_reg);
+                // x = x @ f_32_fft  
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+                copy(a_reg, mma_reg);
+                // transpose
+                transpose_inplace(a_reg);
+                // twiddle factors
+                load(b_reg, tw_32_32_real, tw_32_32_imag, 32, 32);
+                mul(a_reg, a_reg, b_reg);
+                // x = x @ f_32_fft
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
+                copy(a_reg, mma_reg);
+
+                // pointwise multiplication with conv filter
+                int k_start = (((h_start + h) * h_stride) + (i * 1024));
+                load(b_reg, kf_real + k_start, kf_imag + k_start, 32, 32);
+                mul(a_reg, a_reg, b_reg);
+
+                // transpose
+                transpose_inplace(a_reg);
+                // apply the ifft 
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_inv_reg, mma_reg);
+                copy(a_reg, mma_reg);
+                // twiddle inverse
+                load(b_reg, twinv_32_32_real, twinv_32_32_imag, 32, 32);
+                mul(a_reg, a_reg, b_reg);
+                // apply the ifft
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_inv_reg, mma_reg);
+                copy(a_reg, mma_reg);
+                // transpose
+                transpose_inplace(a_reg);
+                // write down the row
+                subtile_store(u.real, a_reg.real, i);
+                subtile_store(u.imag, a_reg.imag, i);
+            }
+        }   
+    }
 
     // compute the IFFT (similar to FFT)
-    load(fft_mat_reg, fft_inv_mat);
+    if (do_print) { printf("h: %d, b: %d\n", h, b); }
+
     for (int h = 0; h < H_TILE; h++) {
         for (int b = 0; b < B_TILE; b++) {
             for (int i = 0; i < N_TILE; i ++) {
@@ -188,23 +263,18 @@ __global__ void fftconv_tk(
                 load(a_reg.real, ref_real);
                 auto ref_imag = kittens::subtile_inplace<2, 2>(u.imag, 0, i);
                 load(a_reg.imag, ref_imag);
-                
                 // x = x * twiddle_factors_ifft 
                 int tw_start = (i * chunk_size);
                 load(b_reg, twinv_32_1k_real + tw_start, twinv_32_1k_imag + tw_start, 1024, 1024);
                 mul(a_reg, a_reg, b_reg);
-
                 // x = x.transpose(-1, -2) 
                 transpose_inplace(a_reg);
-
                 // x = x @ f_32_ifft  
-                // zero(mma_reg);
-                // mma_AB(mma_reg, a_reg, fft_mat_reg, mma_reg);
-                // copy(b_reg, mma_reg);
-
+                zero(mma_reg);
+                mma_AB(mma_reg, a_reg, fft_mat_inv_reg, mma_reg);
+                copy(a_reg, mma_reg);
                 // x = x.transpose(-1, -2)
                 transpose_inplace(a_reg);
-
                 // store the result back to u
                 store(o + u_start, a_reg.real, 1024);
             }
@@ -233,6 +303,10 @@ void launch_fftconv_tk(
         (unsigned int)(b + B_TILE - 1) / B_TILE,
         (unsigned int)(h + H_TILE - 1) / H_TILE
     };
+    // const dim3 grid_dim{
+    //     (unsigned int)(1),
+    //     (unsigned int)(1)
+    // };
 
     long mem_size = 200000;
 
@@ -263,3 +337,20 @@ void launch_fftconv_tk(
 }
 
 #include "harness_async.impl"
+
+
+ // 2 x 64 old TK --> 32 x 1024 new TK
+    // if (threadIdx.x == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+    //     int rows = u.real.rows;
+    //     int cols = u.real.cols;
+    //     for (int i = 0; i < 1; i ++) { 
+    //         for (int j = 0; j < cols; j ++ ) {
+    //             if (j < 64) {
+    //                 printf("i: %d, j: %d, value=%f\n", i, j, __bfloat162float(u.real[{i, j}]));
+
+    //             }
+    //         }
+    //     }
+    //     printf("rows: %d, cols: %d\n", rows, cols);
+    // }
+    // __syncthreads();
