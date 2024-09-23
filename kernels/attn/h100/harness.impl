@@ -178,11 +178,11 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
 
-    CUtensorMap* tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width> >(d_q, ATTN_B*QO_HEADS*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
-    CUtensorMap* tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width> >(d_k, ATTN_B*KV_HEADS*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
-    CUtensorMap* tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width> >(d_v, ATTN_B*KV_HEADS*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::kv_height * 16));
-    CUtensorMap* tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width> >(d_o, ATTN_B*QO_HEADS*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
-    CUtensorMap* tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>>(d_l, ATTN_B*QO_HEADS*ATTN_N/(fwd_attend_ker_tile_dims<ATTN_D>::qo_height * 16));
+    q_global qg{d_q, ATTN_B, QO_HEADS, ATTN_N, nullptr};
+    k_global kg{d_k, ATTN_B, KV_HEADS, ATTN_N, nullptr};
+    v_global vg{d_v, ATTN_B, KV_HEADS, ATTN_N, nullptr};
+    o_global og{d_o, ATTN_B, QO_HEADS, ATTN_N, nullptr};
+    l_global lg{d_l, ATTN_B, QO_HEADS, nullptr, ATTN_N};
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
