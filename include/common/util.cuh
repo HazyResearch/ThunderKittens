@@ -254,4 +254,4 @@ using tma_allocator = shared_allocator<1024>;
 using tma_swizzle_allocator = tma_allocator; // swizzled TMA modes require up to 1024 byte alignments :/
 #endif
 
-}
+} // namespace kittens

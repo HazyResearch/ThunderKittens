@@ -8,6 +8,9 @@
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"
+#ifdef KITTENS_HOPPER
+#include "tma.cuh"
+#endif
 
 namespace kittens {
 
@@ -20,6 +23,7 @@ struct descriptor_dict {
     template<typename T> __host__ descriptor_dict(T _, int b, int d, int r, int c) {}
     __host__ __device__ descriptor_dict(const descriptor_dict &other) {}
 #ifdef KITTENS_HOPPER
+    template<typename T> __host__ descriptor_dict(T _1, int b, int d, int r, int c, tma::tma_cache & _2) {}
     template<typename T> __device__ CUtensorMap* get() const {
         static_assert(
             std::is_same_v<T, std::true_type> && std::is_same_v<T, std::false_type>,
@@ -40,13 +44,16 @@ struct descriptor_dict<T, Args...> {
     __host__ descriptor_dict(typename T::dtype *data, int b, int d, int r, int c): other_descs(data, b, d, r, c) {
         tma_desc = tma::detail::allocate_and_create_tensor_map<T>(data, b, d, r, c);
     }
+    __host__ descriptor_dict(typename T::dtype *data, int b, int d, int r, int c, tma::tma_cache & cache): other_descs(data, b, d, r, c, cache) {
+        tma_desc = cache.get_descriptor<T>(data, b, d, r, c);
+    }
     __host__ __device__ inline descriptor_dict(const descriptor_dict &other) :
         tma_desc(other.tma_desc), other_descs(other.other_descs) {}
     template<typename U> __device__ inline CUtensorMap* get() const {
         if constexpr (std::is_same_v<T, U>) { return tma_desc; }
         else                                { return other_descs.template get<U>(); }
     }
-    __host__ inline void cleanup() {
+    __host__ inline void cleanup() { // TODO: debug
         if(tma_desc != nullptr) {
             cudaFree(tma_desc);
             tma_desc = nullptr;
@@ -95,6 +102,17 @@ struct gl {
             raw_ptr(_data), batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
         tma_descs = detail::descriptor_dict<TMA_Types...>(raw_ptr, batch, depth, rows, cols);
     }
+#ifdef KITTENS_HOPPER
+    __host__ inline gl(T *_data,
+                        ducks::g::make_arg_t<b> _batch,
+                        ducks::g::make_arg_t<d> _depth,
+                        ducks::g::make_arg_t<r> _rows,
+                        ducks::g::make_arg_t<c> _cols,
+                        tma::tma_cache & _cache) :
+            raw_ptr(_data), batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
+        tma_descs = detail::descriptor_dict<TMA_Types...>(raw_ptr, batch, depth, rows, cols, _cache);
+    }
+#endif
     __host__ __device__ inline gl(const gl &other) :
             raw_ptr(other.raw_ptr), batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), tma_descs(other.tma_descs) {}
     __host__ inline void cleanup() {

@@ -5,8 +5,8 @@ using namespace kittens;
 using namespace kittens::prototype;
 template<int M_BLOCK=2, int N_BLOCK=4>
 struct matmul_layout {
-	using base_tile       = st_bf<64, 64>;
-	using global_layout   = gl<bf16, 1, 1, -1, -1, base_tile>;
+	using  base_tile      = st_bf<64, 64>;
+	using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile>;
 	struct globals        { global_layout A, B, C; };
 	struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
 	struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
@@ -102,19 +102,32 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 	}
 }
 
-template<typename mmt>
+template<typename mmt, bool use_cache>
+void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, int M, int N, int K, dim3 grid, dim3 block, kittens::tma::tma_cache & tma_cache) {
+	using global_layout = typename mmt::layout::global_layout;
+	using globals  = typename mmt::layout::globals;
+	if constexpr (use_cache) {
+		global_layout Ag{d_A, nullptr, nullptr, M, K, tma_cache};
+		global_layout Bg{d_B, nullptr, nullptr, K, N, tma_cache};
+		global_layout Cg{d_C, nullptr, nullptr, M, N, tma_cache};
+		globals G{Ag, Bg, Cg};
+		prototype::pc<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+	} else {
+		global_layout Ag{d_A, nullptr, nullptr, M, K};
+		global_layout Bg{d_B, nullptr, nullptr, K, N};
+		global_layout Cg{d_C, nullptr, nullptr, M, N};
+		globals G{Ag, Bg, Cg};
+		prototype::pc<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+	}
+	// cudaDeviceSynchronize();
+}
+
+template<typename mmt, bool use_cache>
 int run_benchmark(size_t M, size_t N, size_t K) {
 	cudaError_t cudaStatus;
 
-	using a_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::input_block>().a[0])>::type;
-	using b_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::input_block>().b[0])>::type;
-	using c_tile   = typename std::remove_reference<decltype(std::declval<typename mmt::layout::finish_block>().c[0])>::type;
-	using a_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().A)>::type;
-	using b_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().B)>::type;
-	using c_global = typename std::remove_reference<decltype(std::declval<typename mmt::layout::globals>().C)>::type;
-	using globals  = typename mmt::layout::globals;
-
-	std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+	std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------  ";
+	std::cout << (use_cache ? "USING TMA CACHE" : "NOT USING TMA CACHE") << std::endl;
 
 	// Allocate host memory
 	float *h_A = new float[M * K];
@@ -156,13 +169,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
 	std::cout << "Allocated device memory" << std::endl;
 
-	a_global Ag{d_A, nullptr, nullptr, M, K};
-	b_global Bg{d_B, nullptr, nullptr, K, N};
-	c_global Cg{d_C, nullptr, nullptr, M, N};
-	globals G{Ag, Bg, Cg};
-
-	std::cout << "Allocated memory" << std::endl;
-
 	// Convert to __nv_bfloat16 and copy to device
 	__nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
 	__nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[K * N];
@@ -177,22 +183,24 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 	unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
 	cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
+	kittens::tma::tma_cache tma_cache;
+
 	// Launch kernel
 	dim3 grid(mmt::grid(M, N, K));
 	dim3 block(prototype::num_threads<mmt>);
-	std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/a_tile::cols << " reduction block dimension\n";
+	std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
 	for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
-		prototype::pc<mmt><<<grid, block, mem_size>>>(G);
+		inner_run<mmt, use_cache>(d_A, d_B, d_C, M, N, K, grid, block, tma_cache);
 	}
 
 	// Start timing
 	cudaDeviceSynchronize();
-	std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/a_tile::cols << " reduction block dimension\n";
+	std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
 	auto start = std::chrono::high_resolution_clock::now();
 
-	constexpr int ITERS = (NCU ? 1 : 5);
+	constexpr int ITERS = (NCU ? 1 : 10);
 	for(int i = 0; i < ITERS; i++) {
-		prototype::pc<mmt><<<grid, block, mem_size>>>(G);
+		inner_run<mmt, use_cache>(d_A, d_B, d_C, M, N, K, grid, block, tma_cache);
 	}
 	cudaDeviceSynchronize();
 
@@ -277,7 +285,8 @@ int main() {
 	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
 	N = 4096;
 	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	run_benchmark<matmul_template<2,4,8>, false>(N, N, N);
+	run_benchmark<matmul_template<2,4,8>, true>(N, N, N);
 	// N = 6144;
 	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
 	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
@@ -290,6 +299,7 @@ int main() {
 	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
 	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
 	N = 16384;
-	run_benchmark<matmul_template<2,4,12>>(N, N, N);
+	run_benchmark<matmul_template<2,4,12>, false>(N, N, N);
+	run_benchmark<matmul_template<2,4,12>, true>(N, N, N);
 	return 0;
 }
