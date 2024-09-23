@@ -38,14 +38,14 @@ template<pc_layout T> struct producer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using producer_state_type = typename detail::producer_state_getter<T>::type;
-    globals_type & globals;
+    const globals_type & globals;
     producer_state_type & state;
     scratch_block_type & scratch;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
-    __device__ producer_setup_args(globals_type& _globals, producer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
+    __device__ producer_setup_args(const globals_type& _globals, producer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
         : globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
 };
 template<pc_layout T> struct producer_load_args {
@@ -56,14 +56,14 @@ template<pc_layout T> struct producer_load_args {
     input_block_type & input;
     producer_state_type & state;
     scratch_block_type & scratch;
-    globals_type & globals;
+    const globals_type & globals;
     barrier & inputs_arrived;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ producer_load_args(input_block_type& _input, producer_state_type& _state, scratch_block_type& _scratch, globals_type& _globals, barrier& _inputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+    __device__ producer_load_args(input_block_type& _input, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
         : input(_input), state(_state), scratch(_scratch), globals(_globals), inputs_arrived(_inputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct producer_store_args {
@@ -74,28 +74,28 @@ template<pc_layout T> struct producer_store_args {
     output_block_type & output;
     producer_state_type & state;
     scratch_block_type & scratch;
-    globals_type & globals;
+    const globals_type & globals;
     barrier & outputs_finished;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ producer_store_args(output_block_type& _output, producer_state_type& _state, scratch_block_type& _scratch, globals_type& _globals, barrier& _outputs_finished, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+    __device__ producer_store_args(output_block_type& _output, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _outputs_finished, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
         : output(_output), state(_state), scratch(_scratch), globals(_globals), outputs_finished(_outputs_finished), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct consumer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using consumer_state_type = typename detail::consumer_state_getter<T>::type;
-    globals_type & globals;
+    const globals_type & globals;
     consumer_state_type & state;
     scratch_block_type & scratch;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
-    __device__ consumer_setup_args(globals_type& _globals, consumer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
+    __device__ consumer_setup_args(const globals_type& _globals, consumer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
         : globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
 };
 template<pc_layout T> struct consumer_work_args {
@@ -108,7 +108,7 @@ template<pc_layout T> struct consumer_work_args {
     output_block_type & output;
     consumer_state_type & state;
     scratch_block_type & scratch;
-    globals_type & globals;
+    const globals_type & globals;
     barrier & inputs_finished;
     barrier & outputs_arrived;
     barrier * all_inputs_arrived;
@@ -116,7 +116,7 @@ template<pc_layout T> struct consumer_work_args {
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ consumer_work_args(input_block_type& _input, output_block_type& _output, consumer_state_type& _state, scratch_block_type& _scratch, globals_type& _globals, barrier& _inputs_finished, barrier& _outputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+    __device__ consumer_work_args(input_block_type& _input, output_block_type& _output, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_finished, barrier& _outputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
         : input(_input), output(_output), state(_state), scratch(_scratch), globals(_globals), inputs_finished(_inputs_finished), outputs_arrived(_outputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct consumer_finish_args {
@@ -127,13 +127,13 @@ template<pc_layout T> struct consumer_finish_args {
     finish_block_type & finish;
     consumer_state_type & state;
     scratch_block_type & scratch;
-    globals_type & globals;
+    const globals_type & globals;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ consumer_finish_args(finish_block_type& _finish, consumer_state_type& _state, scratch_block_type& _scratch, globals_type& _globals, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+    __device__ consumer_finish_args(finish_block_type& _finish, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
         : finish(_finish), state(_state), scratch(_scratch), globals(_globals), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<typename pct> concept pc_template = requires {
@@ -185,7 +185,7 @@ template<int N> __device__ static inline int ring_retreat(int ring) { return (ri
 
 template<typename pct>
 __global__ __launch_bounds__(num_threads<pct>, num_blocks<pct>)
-void pc(typename pct::layout::globals g) {
+void pc(const __grid_constant__ typename pct::layout::globals g) {
     static_assert(pc_template<pct>, "pc template parameter does not satisfy concept requirements");
     using layout         = complete_pc_layout<typename pct::layout>; // complete the layout by filling in the optional types with empty
     using globals        = typename layout::globals;

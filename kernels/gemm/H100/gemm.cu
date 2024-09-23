@@ -12,10 +12,11 @@ struct matmul_layout {
 	struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
 	struct producer_state { kittens::index coords; };
 	struct consumer_state { kittens::index coords;
-							            rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+									        rt_fl<16, N_BLOCK*base_tile::cols> accum; };
 };
-template<int M_BLOCK=2, int N_BLOCK=4, int SUPER_M=12>
+template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
+  static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
 	using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
 	using wide_tile = st_bf<64, 64*N_BLOCK>;
 	static constexpr int NUM_CONSUMER_WARPS = M_BLOCK*4;
@@ -23,14 +24,14 @@ struct matmul_template {
 	__host__ static inline dim3 grid(int M, int N, int K) {
 		return dim3(M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
 	}
-	__device__ static inline void get_coords(kittens::index &coords, typename layout::globals &g, int id) {
+	__device__ static inline void get_coords(kittens::index &coords, const typename layout::globals &g, int id) {
 		int Rblocks = g.A.rows / (M_BLOCK*64), Cblocks = g.A.cols / (N_BLOCK*64);
 		int super_rows = (Rblocks/SUPER_M)*SUPER_M,
-        final_rows = Rblocks - super_rows,
-        super_repeat = SUPER_M*Cblocks;
+		final_rows = Rblocks - super_rows,
+		super_repeat = SUPER_M*Cblocks;
 		if (blockIdx.x < super_rows * Cblocks)
 			coords = { SUPER_M*(blockIdx.x/super_repeat) + blockIdx.x%SUPER_M,
-					       (blockIdx.x%super_repeat)/SUPER_M };
+						   (blockIdx.x%super_repeat)/SUPER_M };
 		else {
 			int remainder_id = blockIdx.x - super_rows*Cblocks;
 			coords = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
@@ -38,7 +39,7 @@ struct matmul_template {
 		coords = { iters(g), coords.r*M_BLOCK + id, coords.c*N_BLOCK };
 	}
   // ThunderKittens template functions
-	__device__ static inline int iters(typename layout::globals &g) { return g.A.cols/64; }
+	__device__ static inline int iters(const typename layout::globals &g) { return g.A.cols/64; }
 	struct producer {
 		__device__ static void setup(producer_setup_args<layout> args) {
 			warpgroup::producer_registers(); // decrease registers for producers
@@ -49,10 +50,10 @@ struct matmul_template {
 				tma::expect(args.inputs_arrived, args.input);
 				for(int i = 0; i < M_BLOCK; i++)
 					tma::load_async(args.input.a[i], args.globals.A,
-									        {args.state.coords.r+i, args.iter}, args.inputs_arrived);
+						              {args.state.coords.r+i, args.iter}, args.inputs_arrived);
 				for(int i = 0; i < N_BLOCK; i++)
 					tma::load_async(args.input.b[i], args.globals.B,
-									        {args.iter, args.state.coords.c+i}, args.inputs_arrived);
+											    {args.iter, args.state.coords.c+i}, args.inputs_arrived);
 				arrive(args.inputs_arrived, 3);
 			}
 		}
@@ -77,7 +78,7 @@ struct matmul_template {
 			warpgroup::sync();
 			if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++)
 				tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-								         {args.state.coords.r, args.state.coords.c+i});
+										     {args.state.coords.r, args.state.coords.c+i});
 		}
 	};
 };
@@ -102,32 +103,23 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 	}
 }
 
-template<typename mmt, bool use_cache>
-void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, int M, int N, int K, dim3 grid, dim3 block, kittens::tma::tma_cache & tma_cache) {
+template<typename mmt>
+void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, int M, int N, int K, dim3 grid, dim3 block) {
 	using global_layout = typename mmt::layout::global_layout;
 	using globals  = typename mmt::layout::globals;
-	if constexpr (use_cache) {
-		global_layout Ag{d_A, nullptr, nullptr, M, K, tma_cache};
-		global_layout Bg{d_B, nullptr, nullptr, K, N, tma_cache};
-		global_layout Cg{d_C, nullptr, nullptr, M, N, tma_cache};
-		globals G{Ag, Bg, Cg};
-		prototype::pc<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
-	} else {
-		global_layout Ag{d_A, nullptr, nullptr, M, K};
-		global_layout Bg{d_B, nullptr, nullptr, K, N};
-		global_layout Cg{d_C, nullptr, nullptr, M, N};
-		globals G{Ag, Bg, Cg};
-		prototype::pc<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
-	}
-	// cudaDeviceSynchronize();
+	global_layout Ag{d_A, nullptr, nullptr, M, K};
+	global_layout Bg{d_B, nullptr, nullptr, K, N};
+	global_layout Cg{d_C, nullptr, nullptr, M, N};
+	globals G{Ag, Bg, Cg};
+	prototype::pc<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
 
-template<typename mmt, bool use_cache>
+template<typename mmt>
 int run_benchmark(size_t M, size_t N, size_t K) {
 	cudaError_t cudaStatus;
 
-	std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------  ";
-	std::cout << (use_cache ? "USING TMA CACHE" : "NOT USING TMA CACHE") << std::endl;
+	std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+	std::cout << "Block size: " << mmt::M_BLOCK*64 << "x" << mmt::N_BLOCK*64 << "\n";
 
 	// Allocate host memory
 	float *h_A = new float[M * K];
@@ -183,14 +175,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 	unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
 	cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
-	kittens::tma::tma_cache tma_cache;
-
 	// Launch kernel
 	dim3 grid(mmt::grid(M, N, K));
 	dim3 block(prototype::num_threads<mmt>);
 	std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
 	for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
-		inner_run<mmt, use_cache>(d_A, d_B, d_C, M, N, K, grid, block, tma_cache);
+		inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
 	}
 
 	// Start timing
@@ -200,7 +190,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
 	constexpr int ITERS = (NCU ? 1 : 10);
 	for(int i = 0; i < ITERS; i++) {
-		inner_run<mmt, use_cache>(d_A, d_B, d_C, M, N, K, grid, block, tma_cache);
+		inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
 	}
 	cudaDeviceSynchronize();
 
@@ -261,9 +251,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 	delete[] h_A_bf16;
 	delete[] h_B_bf16;
 	delete[] h_C_bf16;
-	// Ag.cleanup();
-	// Bg.cleanup();
-	// Cg.cleanup();
 	cudaFree(d_A);
 	cudaFree(d_B);
 	cudaFree(d_C);
@@ -278,28 +265,24 @@ int main() {
 	// run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
 	// run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
 	int N;
-	// N = 2048;
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
-	// N = 3072;
-	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
+	N = 2048;
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	N = 3072;
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	run_benchmark<matmul_template<3,3,8>>(N, N, N);
 	N = 4096;
 	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	run_benchmark<matmul_template<2,4,8>, false>(N, N, N);
-	run_benchmark<matmul_template<2,4,8>, true>(N, N, N);
-	// N = 6144;
-	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
-	// N = 8192;
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
-	// N = 9216;
-	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
-	// N = 12288;
-	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	// run_benchmark<matmul_template_128_256<8>>(N, N, N, N/128, N/256, N/128, N/256, dim3(N*N/(128*256)));
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	N = 6144;
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	run_benchmark<matmul_template<3,3,8>>(N, N, N);
+	N = 8192;
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	N = 12288;
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	run_benchmark<matmul_template<3,3,8>>(N, N, N);
 	N = 16384;
-	run_benchmark<matmul_template<2,4,12>, false>(N, N, N);
-	run_benchmark<matmul_template<2,4,12>, true>(N, N, N);
+	run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	run_benchmark<matmul_template<2,4,12>>(N, N, N);
 	return 0;
 }
