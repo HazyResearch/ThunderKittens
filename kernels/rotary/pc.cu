@@ -6,34 +6,29 @@ using namespace kittens::prototype;
 template<int _headdim, int _warps> struct rotary_layout {
     static constexpr int headdim = _headdim, warps = _warps;
     using seq_tile    = st_bf<16, headdim>;
-    using rope_tile   = rt_fl<16, headdim/2>;
-    using seq_global  = gl<bf16, -1, -1, -1, seq_tile::cols, seq_tile>;
-    using rope_global = gl<bf16,  1,  1, -1, rope_tile::cols>;
+    using seq_global  = gl<bf16, -1, -1, -1, headdim, seq_tile>;
+    using rope_global = gl<bf16,  1,  1, -1, headdim/2>;
     struct globals {
         seq_global o, x;
         rope_global sin, cos;
-        int batches; // how many batches are we processing, important for sizing grid
+        int batches; // how many batches per block, for sizing grid
     };
-    struct input_block {
-        seq_tile x[warps];
-    };
-    struct output_block {
-        seq_tile o[warps];
-    };
-    struct consumer_state {
-        rope_tile sin, cos; // long-resident tiles
-    };
+    struct input_block    { seq_tile x[warps];  };
+    struct output_block   { seq_tile o[warps];  };
+    struct producer_state { int active_warps;   };
+    struct consumer_state { rt_fl<16, headdim/2> sin, cos; }; // long-resident tiles
 };
 template<int _headdim> struct rotary_template {
     static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
-    static constexpr int ROWS_PER_ITER = NUM_CONSUMER_WARPS * layout::seq_tile::rows;
     __device__ static inline int iters(const typename layout::globals &g) {
         return g.batches * g.x.depth; // batches * number of heads handled by this block
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
             warpgroup::producer_registers();
+            args.state.active_warps = min((int)NUM_CONSUMER_WARPS,
+                                          (int)(args.globals.x.rows/16 - blockIdx.x*NUM_CONSUMER_WARPS));
         }
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
@@ -41,9 +36,8 @@ template<int _headdim> struct rotary_template {
                                        args.iter%args.globals.x.depth,
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
-                tma::expect(args.inputs_arrived, args.input);
-                for(int i = 0; i < layout::warps; i++) {
-                    if(idx.r+i >= args.globals.x.rows/16) break;
+                tma::expect_bytes(args.inputs_arrived, sizeof(layout::seq_tile)*args.state.active_warps);
+                for(int i = 0; i < args.state.active_warps; i++) {
                     tma::load_async(args.input.x[i], args.globals.x, {idx.b,idx.d,idx.r+i,idx.c}, args.inputs_arrived);
                 }
                 arrive(args.inputs_arrived, 3);
@@ -55,8 +49,7 @@ template<int _headdim> struct rotary_template {
                                        args.iter%args.globals.x.depth,
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
-                for(int i = 0; i < layout::warps; i++) {
-                    if(idx.r+i >= args.globals.x.rows/16) break;
+                for(int i = 0; i < args.state.active_warps; i++) {
                     tma::store_async(args.globals.o, args.output.o[i], {idx.b,idx.d,idx.r+i,idx.c});
                 }
                 tma::store_async_read_wait();
@@ -73,7 +66,7 @@ template<int _headdim> struct rotary_template {
         }
         __device__ static void work(consumer_work_args<layout> args) {
             rt_fl<16, headdim> x;
-            typename layout::rope_tile x1, x2, temp1, temp2;
+            rt_fl<16, headdim/2> x1, x2, temp1, temp2;
             load(x, args.input.x[warpid()]);
             arrive(args.inputs_finished);
             for(int i = 0; i < headdim/32; i++) {
@@ -249,7 +242,8 @@ int main(int argc, char **argv) {
     rope_t::layout::rope_global COSg{d_cos_in, nullptr, nullptr, ATTN_N, nullptr};
     rope_t::layout::globals g{Og, Xg, SINg, COSg, BATCHES_PER_BLOCK};
 
-    dim3 grid(ATTN_N/(rope_t::NUM_CONSUMER_WARPS*16), ATTN_B/BATCHES_PER_BLOCK);
+    constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
+    dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, ATTN_B/BATCHES_PER_BLOCK);
     dim3 block(num_threads<rope_t>);
 
     const int ITER = 1;
