@@ -101,7 +101,7 @@ template<int _headdim> struct rotary_template {
 #include <string>
 #include <fstream>
 
-#define ATTN_B 33
+#define ATTN_B 32
 #define ATTN_N 2048
 #define ATTN_H 16 // launches
 #define ATTN_D 128 // make sure to change in the kernel rotary.cu as well
