@@ -10,8 +10,8 @@ struct matmul_layout {
 	struct globals        { global_layout A, B, C; };
 	struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
 	struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
-	struct producer_state { kittens::index coords; };
-	struct consumer_state { kittens::index coords;
+	struct producer_state { kittens::coord coords; };
+	struct consumer_state { kittens::coord coords;
 									        rt_fl<16, N_BLOCK*base_tile::cols> accum; };
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
@@ -20,12 +20,12 @@ struct matmul_template {
 	using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
 	using wide_tile = st_bf<64, 64*N_BLOCK>;
 	static constexpr int NUM_CONSUMER_WARPS = M_BLOCK*4;
-  // Helper functions
+  	// Helper functions
 	__host__ static inline dim3 grid(int M, int N, int K) {
 		return dim3(M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
 	}
-	__device__ static inline void get_coords(kittens::index &coords, const typename layout::globals &g, int id) {
-		int Rblocks = g.A.rows / (M_BLOCK*64), Cblocks = g.A.cols / (N_BLOCK*64);
+	__device__ static inline void get_coords(kittens::coord &coords, const typename layout::globals &g, int id) {
+		int Rblocks = g.C.rows / (M_BLOCK*64), Cblocks = g.C.cols / (N_BLOCK*64);
 		int super_rows = (Rblocks/SUPER_M)*SUPER_M,
 		final_rows = Rblocks - super_rows,
 		super_repeat = SUPER_M*Cblocks;
@@ -265,24 +265,31 @@ int main() {
 	// run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
 	// run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
 	int N;
-	N = 2048;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	N = 3072;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	run_benchmark<matmul_template<3,3,8>>(N, N, N);
-	N = 4096;
-	// run_benchmark<matmul_template_192_192<8>>(N, N, N, N/192, N/192, N/192, N/192, dim3(N*N/(192*192)));
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	N = 6144;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	run_benchmark<matmul_template<3,3,8>>(N, N, N);
-	N = 8192;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	N = 12288;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	run_benchmark<matmul_template<3,3,8>>(N, N, N);
-	N = 16384;
-	run_benchmark<matmul_template<2,4,8>>(N, N, N);
-	run_benchmark<matmul_template<2,4,12>>(N, N, N);
+	// N = 2048;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// N = 3072;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// run_benchmark<matmul_template<3,3,8>>(N, N, N);
+	// N = 4096;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// N = 6144;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// run_benchmark<matmul_template<3,3,8>>(N, N, N);
+	// N = 8192;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// N = 12288;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// run_benchmark<matmul_template<3,3,8>>(N, N, N);
+	// N = 16384;
+	// run_benchmark<matmul_template<2,4,8>>(N, N, N);
+	// run_benchmark<matmul_template<2,4,12>>(N, N, N);
+	// run_benchmark<matmul_template<3,3,12>>(192*12, 192*11, 8192);
+	// run_benchmark<matmul_template<2,4,11>>(128*22, 256* 6, 8192);
+	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 4096);
+	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 8192);
+	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 16384);
+	// run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192);
+	// run_benchmark<matmul_template<3,3,12>>(192*12*2, 192*11*2, 8192*2);
+	// run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192*2);
 	return 0;
 }
