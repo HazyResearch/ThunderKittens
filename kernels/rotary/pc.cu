@@ -13,9 +13,9 @@ template<int _headdim, int _warps> struct rotary_layout {
         rope_global sin, cos;
         int batches; // how many batches per block, for sizing grid
     };
-    struct input_block    { seq_tile x[warps];  };
-    struct output_block   { seq_tile o[warps];  };
-    struct producer_state { int active_warps;   };
+    struct input_block    { seq_tile x[warps]; };
+    struct output_block   { seq_tile o[warps]; };
+    struct producer_state { int active_warps;  };
     struct consumer_state { rt_fl<16, headdim/2> sin, cos; }; // long-resident tiles
 };
 template<int _headdim> struct rotary_template {
