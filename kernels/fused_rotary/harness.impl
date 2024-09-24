@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 16
+#define ATTN_B 32
 #define ATTN_N 2048
 #define ATTN_H 16 // launches
 #define ATTN_D 128 // make sure to change in the kernel rotary.cu as well
@@ -28,6 +28,23 @@ inline void __cudaCheckError( const char *file, const int line ) {
                  file, line, cudaGetErrorString( err ) );
         exit( -1 );
     }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads) {
+    // feature map
+    long long f = batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
+    f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
+    f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
+    return f*2; // for q and k
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
 }
 
 int main(int argc, char **argv) {
@@ -108,13 +125,13 @@ int main(int argc, char **argv) {
 
     cudaDeviceSynchronize();
     CudaCheckError();
-    
-    unsigned long mem_size = 4096*(ATTN_D/64); //*NUM_WORKERS*2;  
+
+    unsigned long mem_size = 37000;
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        fused_rotary,
+        _fused_rotary,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -125,7 +142,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {  
-        fused_rotary<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
+        _fused_rotary<<<ATTN_B*ATTN_H,NUM_THREADS,mem_size>>>(
             ATTN_N, d_x, d_cos_in, d_sin_in, d_o
         );  
     }
@@ -156,7 +173,13 @@ int main(int argc, char **argv) {
     }
     if(good) std::cout << "Correct out :)\n";
     else std::cout << "Incorrect out :(\n";
-    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    std::cout << "Average execution time for " << ITER << " ITERS (Q and K): " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us" << std::endl;
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H);
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count());
+    std::cout << "FLOPS: " << f << std::endl;
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
 
     cudaFree(d_x);
     cudaFree(d_sin_in);
@@ -167,4 +190,3 @@ int main(int argc, char **argv) {
     delete[] sin_in, sin_in_bf, cos_in, cos_in_bf;
     return 0;
 }
-

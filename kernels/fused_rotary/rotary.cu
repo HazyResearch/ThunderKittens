@@ -7,35 +7,43 @@
 #include <cuda/barrier>
 
 #define NUM_WORKERS (1) 
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
+#define NUM_WARPS   (NUM_WORKERS*4)
+#define NUM_THREADS (NUM_WARPS*kittens::WARP_THREADS)
 
 const int N_CHUNK  = 16;
-const int head_dim =  64;                   
+const int head_dim =  128; 
 const float rope_embd_fraction = 1.0f;
 
 const int rope_dim = rope_embd_fraction * head_dim;
 const int half_rope_dim = ( rope_dim / 2 );
 const int excess_dim = head_dim - rope_dim; 
 
-const int seq_tiles = N_CHUNK / kittens::TILE_DIM;
+const int seq_tiles = 4 * (N_CHUNK / kittens::TILE_DIM);
 const int rope_tiles = rope_dim / kittens::TILE_DIM;
 const int half_rope_tiles = half_rope_dim / kittens::TILE_DIM;
 const int excess_rope_tiles = excess_dim / kittens::TILE_DIM;
 
 using namespace kittens;
 
+// shared memory
 #define tile_1xFULL_ROPE_D st<bf16, seq_tiles, rope_tiles>
 #define tile_1xHALF_ROPE_D st<bf16, seq_tiles, half_rope_tiles>
 #define tile_1xEXCESS_ROPE_D st<bf16, seq_tiles, excess_rope_tiles>
 
-#define reg_tile_1xFULL_ROPE_D rt_bf<seq_tiles, rope_tiles>
-#define reg_tile_1xHALF_ROPE_D rt_bf<seq_tiles, half_rope_tiles>
-#define reg_tile_1xEXCESS_ROPE_D rt_bf<seq_tiles, excess_rope_tiles>
+// register
+const int reg_seq_tiles = (N_CHUNK / kittens::TILE_DIM);
+#define reg_tile_1xFULL_ROPE_D rt_bf<reg_seq_tiles, rope_tiles>
+#define reg_tile_1xHALF_ROPE_D rt_bf<reg_seq_tiles, half_rope_tiles>
+#define reg_tile_1xEXCESS_ROPE_D rt_bf<reg_seq_tiles, excess_rope_tiles>
+
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void _fused_rotary( 
-    int n, const bf16* __x, const bf16* __cos_in, const bf16* __sin_in, bf16* __o 
+    int n, const bf16* __x, 
+    const bf16* __cos_in, const bf16* __sin_in, 
+    bf16* __o 
 ) {
+    auto workerid = warpgroup::groupid(); // which worker am I?
     auto warpid = kittens::warpid();
     auto lane = kittens::laneid();
 
@@ -49,26 +57,29 @@ void _fused_rotary(
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    tile_1xFULL_ROPE_D (&x_s)       = al.allocate<tile_1xFULL_ROPE_D>();    
-    tile_1xHALF_ROPE_D (&cos_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
-    tile_1xHALF_ROPE_D (&sin_s)     = al.allocate<tile_1xHALF_ROPE_D>(); 
+    tile_1xFULL_ROPE_D (&x_s) [NUM_WORKERS] = al.allocate<tile_1xFULL_ROPE_D,NUM_WORKERS>();    
+    tile_1xHALF_ROPE_D (&cos_s) [NUM_WORKERS] = al.allocate<tile_1xHALF_ROPE_D,NUM_WORKERS>(); // 27648
+    tile_1xHALF_ROPE_D (&sin_s) [NUM_WORKERS] = al.allocate<tile_1xHALF_ROPE_D,NUM_WORKERS>(); // 37000
+    // if(threadIdx.x ==0 && blockIdx.x == 0) printf("%llu\n", (uint64_t)(&cos_s) - (uint64_t)(&__shm[0]));
 
-    int tic = 0, toc = 1;    
     const int total_elements = N_CHUNK * head_dim;
-    int n_blocks = n / (NUM_WORKERS*kittens::TILE_DIM);
-    for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
+    const int total_rope_elements = N_CHUNK * half_rope_dim;
+    int n_blocks = n / (NUM_WARPS*kittens::TILE_DIM);
+    for (int block = 0; block < n_blocks; block ++) {
 
         // smem loads
-        load(x_s,  x_g    + (block * total_elements),      head_dim);
-        load(cos_s, cos_g + (block * cos_s.num_elements),  half_rope_dim);
-        load(sin_s, sin_g + (block * sin_s.num_elements),  half_rope_dim);
+        auto cur_idx = block*NUM_WARPS + workerid; 
+        warpgroup::load(x_s[workerid], x_g + (cur_idx * total_elements), head_dim);
+        warpgroup::load(cos_s[workerid], cos_g + (cur_idx * total_rope_elements), half_rope_dim);
+        warpgroup::load(sin_s[workerid], sin_g + (cur_idx * total_rope_elements), half_rope_dim);
+        __syncthreads(); 
 
         // register loads
         reg_tile_1xHALF_ROPE_D cos, sin, x1, x2, temp1, temp2;
         reg_tile_1xFULL_ROPE_D x;
-        load(x, x_s);
-        load(cos, cos_s);
-        load(sin, sin_s);
+        warpgroup::load(x, x_s[workerid]);
+        warpgroup::load(cos, cos_s[workerid]);
+        warpgroup::load(sin, sin_s[workerid]);
 
         const int x_width = x.width;
         const int x1_width = x1.width;
@@ -96,9 +107,10 @@ void _fused_rotary(
             x.tiles[0][i] = temp1.tiles[0][i];
             x.tiles[0][i+x1_width] = temp2.tiles[0][i];
         }
-        
+
         // store out
-        store(o_g + ( block*x.num_elements ), x, rope_dim);
+        warpgroup::store(o_g + cur_idx*x.num_elements, x, rope_dim);
+        __syncthreads();
     }
 }
 
@@ -144,8 +156,8 @@ fused_rotary(
           bf16* o_bf           = reinterpret_cast<bf16*>(o_ptr);
 
     // launch variables
-    auto threads = NUM_WORKERS * kittens::WARP_THREADS;
-    unsigned long mem_size = N_CHUNK*head_dim*2 + N_CHUNK*half_rope_dim*2*2 + 4800;
+    auto threads = NUM_THREADS;
+    unsigned long mem_size = 37000;
     cudaFuncSetAttribute(
         _fused_rotary,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -162,4 +174,3 @@ fused_rotary(
 #else
 #include "harness.impl"
 #endif
-

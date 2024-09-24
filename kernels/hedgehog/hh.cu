@@ -337,7 +337,7 @@ void hedgehog_forward(
     auto D = q.size(3);
     TORCH_CHECK(D == 128, "D must be 128");
 
-    std::cout << "batch: " << batch << " heads: " << heads << " N: " << N << " D: " << D << std::endl;
+    // std::cout << "batch: " << batch << " heads: " << heads << " N: " << N << " D: " << D << std::endl;
 
     // check K, V, O dimensions, too.
     TORCH_CHECK(k.dim() == 4 && k.size(0) == batch && k.size(1) == heads && v.size(2) == N && k.size(3) == D, "k must be (B,H,N,128)");
