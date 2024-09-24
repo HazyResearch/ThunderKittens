@@ -22,7 +22,7 @@ template<int _headdim> struct rotary_template {
     static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
     __device__ static inline int iters(const typename layout::globals &g) {
-        return g.batches * g.x.depth; // batches * number of heads handled by this block
+        return min(g.batches, (int)(g.x.batch-blockIdx.y*g.batches)) * g.x.depth; // batches*heads handled by block
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -101,7 +101,7 @@ template<int _headdim> struct rotary_template {
 #include <string>
 #include <fstream>
 
-#define ATTN_B 32
+#define ATTN_B 33
 #define ATTN_N 2048
 #define ATTN_H 16 // launches
 #define ATTN_D 128 // make sure to change in the kernel rotary.cu as well
@@ -243,7 +243,7 @@ int main(int argc, char **argv) {
     rope_t::layout::globals g{Og, Xg, SINg, COSg, BATCHES_PER_BLOCK};
 
     constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
-    dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, ATTN_B/BATCHES_PER_BLOCK);
+    dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, (ATTN_B+BATCHES_PER_BLOCK-1)/BATCHES_PER_BLOCK);
     dim3 block(num_threads<rope_t>);
 
     const int ITER = 1;
