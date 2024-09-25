@@ -4,7 +4,3 @@
 *.ptx
 *.cubin
 *.fatbin
-*build/*
-*.egg
-*.o
-*.txt
