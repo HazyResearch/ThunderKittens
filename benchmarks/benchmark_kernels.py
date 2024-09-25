@@ -603,16 +603,23 @@ def get_rotary_inputs(b, h, n, dv, dt):
     cos = rotary_emb._cos_cached
     return qkv, cos, sin, rotary_max_seqlen, rotary_emb
 
-
+from baselines.rotary import apply_rotary_emb
 def apply_flash_rotary(dt, b, h, n, dv):
     # Reference: https://github.com/Dao-AILab/flash-attention/blob/898dd4bbf237b24ed8fd2a3d13ee33bd156bfb23/flash_attn/modules/mha.py#L957
+
+    qkv, cos, sin, rotary_max_seqlen, rotary_emb  = get_rotary_inputs(b, h, n, dv, dt)
+    q = qkv[:,:,0]
+    k = qkv[:,:,1]
+
     torch.cuda.synchronize()
     start = time.time()
 
-    qkv, cos, sin, rotary_max_seqlen, rotary_emb  = get_rotary_inputs(b, h, n, dv, dt)
+    qkv_emb_flash = apply_rotary_emb(
+        q, cos, sin
+    )
 
-    qkv_emb_flash = rotary_emb(
-        qkv, seqlen_offset=0, max_seqlen=rotary_max_seqlen
+    qkv_emb_flash = apply_rotary_emb(
+        k, cos, sin
     )
 
     torch.cuda.synchronize()
@@ -640,7 +647,7 @@ def apply_rotary_emb_torch(dt, b, h, n, dv):
     o_dt = qkv.dtype
     ro_dim = cos.shape[-1] * 2
     assert ro_dim <= qkv.shape[-1]
-    interleaved = True
+    interleaved = False
     q = qkv[:, :, 0]
     k = qkv[:, :, 1]
 
@@ -730,7 +737,6 @@ def measure_efficiency(dt, n, method_name, method, verbose=False, use_ones=False
         lst = [method(dt, b, h, n, dv) for _ in range(num_iters)]
         lst_time = [x[-1] for x in lst][2:] # skip the first two iterations (warmup)
         _time = median(lst_time)
-        # if _time < 0: exit()
 
         microseconds = _time * 1000000
         eff = efficiency(flops, microseconds)
@@ -772,7 +778,7 @@ if __name__ == "__main__":
 
         # rotary
         'rotary flash': apply_flash_rotary,
-        'rotary torch': apply_rotary_emb_torch,
+        # 'rotary torch': apply_rotary_emb_torch,
         'rotary tk': apply_rotary_emb_tk
     }
 

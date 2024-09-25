@@ -6,18 +6,18 @@ import sys
 torch.set_grad_enabled(False)
 
 N = 32 * 32 * 32
-B = 8
-H = 8
+B = 1
+H = 1
 N1 = 32
 N2 = 32
 
 TESTNAME = sys.argv[1]
 
 if TESTNAME in ['ones_all']:
-    u = (torch.ones((B, H, N), dtype=torch.cfloat, device='cpu')) * 100
-    k = (torch.ones((H, N), dtype=torch.cfloat, device='cpu')) * 100
+    u = (torch.ones((B, H, N), dtype=torch.cfloat, device='cpu'))
+    k = (torch.ones((H, N), dtype=torch.cfloat, device='cpu'))
 elif TESTNAME in ['randn_all']:
-    torch.random.manual_seed(42)
+    torch.random.manual_seed(41)
     u = (torch.randn((B, H, N), dtype=torch.cfloat, device='cpu')) 
     k = (torch.randn((H, N), dtype=torch.cfloat, device='cpu')) 
 else:
@@ -136,8 +136,10 @@ def monarch_conv_full(
 
 def pytorch_test(u, k, TESTNAME='all'):
     u = u.reshape(B, H, 32, 1024)
+    for i in range(1024):
+        u[:, :, :, i] = torch.arange(32) + 1
     # for i in range(32):
-    #     u[:, :, i, :] = torch.arange(1024)
+    #     u[:, :, i,:] = torch.arange(1024)
     u = u.reshape(B, H, N).to(torch.cfloat)
 
     # input
@@ -197,11 +199,11 @@ def pytorch_test(u, k, TESTNAME='all'):
 
     # verify that the kernel inputs are correct
     print("\nVerifying:")
-    o_real = ref_fftconv(u, k, N)   # B, H, N 
-    o_real = o_real.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
-    print(torch.allclose(out_with_kernel_inputs, o_real, atol=2))
-    print(f"out_with_kernel_inputs\n{out_with_kernel_inputs[4, 3, 6, 56:60]}")
-    print(f"o_real\n{o_real[4, 3, 6, 56:60]}\n")
+    o_real_ref = ref_fftconv(u, k, N)   # B, H, N 
+    o_real_ref = o_real_ref.reshape(B, H, N1, 1024).to(torch.bfloat16).contiguous()
+    print(torch.allclose(out_with_kernel_inputs, o_real_ref, atol=2))
+    print(f"out_with_kernel_inputs\n{out_with_kernel_inputs[0, 0, 6, 56:60]}")
+    print(f"o_real_ref\n{o_real_ref[0, 0, 6, 56:60]}\n")
 
 
     ############# KERNEL INPUTS GENERATED #############
@@ -210,63 +212,69 @@ def pytorch_test(u, k, TESTNAME='all'):
     chunks = 32 
     x2 = u.clone().reshape(B, H, 32, 1024).to(torch.cfloat)
     for i in range(chunks):
-        block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size]
-        block = block.transpose(-1, -2) 
-        block = block @ f_mat 
-        block = block.transpose(-1, -2)
-        block = block * tw_32_1k[:, i*chunk_size:(i+1)*chunk_size]
-        x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
-
-    x2 = x2.reshape(B, H, 32, 32, 32)
-    k_f = k_f.reshape(H, 32, 32, 32)
-    chunk_size = 4 
-    chunks = x2.shape[2] // chunk_size
-    for i in range(chunks):
-        block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
-        block = block.transpose(-1, -2)
-        block = block @ f_mat  # Apply FFT
-        block = block.transpose(-1, -2)
-        block = block * tw_32_32
-        block = block @ f_mat  # Apply FFT again
-        x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
-        
-        # breakpoint()
-        # pointwise multiplication
-        x2[:, :, i*chunk_size:(i+1)*chunk_size] = x2[:, :, i*chunk_size:(i+1)*chunk_size] * k_f[:, i*chunk_size:(i+1)*chunk_size]
-
-        # Now apply the IFFT
-        block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
-        block = block @ finv_mat  # Apply iFFT
-        block = block.transpose(-1, -2)
-        block = block * tw_32_32_inv 
-        block = block @ finv_mat
-        block = block.transpose(-1, -2) 
-        x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
-
-    x2 = x2.reshape(B, H, 32, 1024)
-    print(f"{k_f.shape=}")
-
-    # compute ifft
-    chunk_size = 32 
-    chunks = 32 
-    for i in range(chunks):
         block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size] 
-        block = block * tw_32_1k_inv[:, i*chunk_size:(i+1)*chunk_size] 
-        block = block.transpose(-1, -2) 
-        block = block @ finv_mat  
-        block = block.transpose(-1, -2)
+        if i == 0: print(block.real[0][0])
+        # block = block.transpose(-1, -2) 
+        block = block @ f_mat 
+        # block = block.transpose(-1, -2)
+        # block = block * tw_32_1k[:, i*chunk_size:(i+1)*chunk_size]
+        # if i > 1: 
+            # block = torch.zeros_like(block)
         x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
+        # break
 
-    # print(f"{kfT_real.shape=}")
-    # # try reshape
+    # print(f_mat.real)
+
+
+    # print(f"{tw_32_1k[:, i*chunk_size:(i+1)*chunk_size].shape=}")
+    # x2 = x2.reshape(B, H, 32, 32, 32)
+    # k_f = k_f.reshape(H, 32, 32, 32)
+    # chunk_size = 4 
+    # chunks = x2.shape[2] // chunk_size
+    # for i in range(chunks):
+    #     block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
+    #     block = block.transpose(-1, -2)
+    #     # block = block @ f_mat  # Apply FFT
+    #     block = block.transpose(-1, -2)
+    #     block = block * tw_32_32
+    #     # block = block @ f_mat  # Apply FFT again
+    #     x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+        
+    #     # breakpoint()
+    #     # pointwise multiplication
+    #     # x2[:, :, i*chunk_size:(i+1)*chunk_size] = x2[:, :, i*chunk_size:(i+1)*chunk_size] * k_f[:, i*chunk_size:(i+1)*chunk_size]
+
+    #     # Now apply the IFFT
+    #     block = x2[:, :, i*chunk_size:(i+1)*chunk_size]
+    #     # block = block @ finv_mat  # Apply iFFT
+    #     block = block.transpose(-1, -2)
+    #     block = block * tw_32_32_inv 
+    #     # block = block @ finv_mat
+    #     block = block.transpose(-1, -2) 
+    #     x2[:, :, i*chunk_size:(i+1)*chunk_size] = block
+
+    # x2 = x2.reshape(B, H, 32, 1024)
+
+    # # compute ifft
+    # chunk_size = 32 
+    # chunks = 32 
+    # for i in range(chunks):
+    #     block = x2[:, :, :, i*chunk_size:(i+1)*chunk_size] 
+    # #     block = block * tw_32_1k_inv[:, i*chunk_size:(i+1)*chunk_size] 
+    #     block = block.transpose(-1, -2) 
+    # #     block = block @ finv_mat  
+    #     block = block.transpose(-1, -2)
+    #     x2[:, :, :, i*chunk_size:(i+1)*chunk_size] = block
+
+    # # print(f"{kfT_real.shape=}")
+    # # # try reshape
     kfT_real = kfT_real.reshape(H, 1024, 32)
     kfT_imag = kfT_imag.reshape(H, 1024, 32)
 
-    o_real_check = x2.real.to(torch.bfloat16).contiguous()
+    o_real = x2.real.to(torch.bfloat16).contiguous()
 
     print(f"\nVerifying chunked code:")
-    print(torch.allclose(o_real_check, o_real, atol=2))
-    # breakpoint()
+    print(torch.allclose(o_real, o_real_ref, atol=2))
 
     return (
         # input and filter
@@ -277,13 +285,13 @@ def pytorch_test(u, k, TESTNAME='all'):
         f_real, f_imag, 
         finv_real, finv_imag,
 
-        # twiddle factors stage 1
-        tw_32_1k_real, tw_32_1k_imag,
-        tw_32_1k_inv_real, tw_32_1k_inv_imag,
+        # # twiddle factors stage 1
+        # tw_32_1k_real, tw_32_1k_imag,
+        # tw_32_1k_inv_real, tw_32_1k_inv_imag,
 
-        # twiddle factors stage 2
-        tw_32_32_real, tw_32_32_imag,
-        tw_32_32_inv_real, tw_32_32_inv_imag,
+        # # twiddle factors stage 2
+        # tw_32_32_real, tw_32_32_imag,
+        # tw_32_32_inv_real, tw_32_32_inv_imag,
 
         # output
         o_real
@@ -299,13 +307,13 @@ def pytorch_test(u, k, TESTNAME='all'):
     f_real, f_imag, 
     finv_real, finv_imag, 
 
-    # twiddle factors stage 1
-    tw_32_1k_real, tw_32_1k_imag,
-    tw_32_1k_inv_real, tw_32_1k_inv_imag,
+    # # twiddle factors stage 1
+    # tw_32_1k_real, tw_32_1k_imag,
+    # tw_32_1k_inv_real, tw_32_1k_inv_imag,
 
-    # twiddle factors stage 2
-    tw_32_32_real, tw_32_32_imag,
-    tw_32_32_inv_real, tw_32_32_inv_imag,
+    # # twiddle factors stage 2
+    # tw_32_32_real, tw_32_32_imag,
+    # tw_32_32_inv_real, tw_32_32_inv_imag,
 
     # output
     o_real 
@@ -322,14 +330,14 @@ print(f"{f_real.shape=}")
 print(f"{f_imag.shape=}")
 print(f"{finv_real.shape=}")
 print(f"{finv_imag.shape=}")
-print(f"{tw_32_1k_real.shape=}")
-print(f"{tw_32_1k_imag.shape=}")
-print(f"{tw_32_1k_inv_real.shape=}")
-print(f"{tw_32_1k_inv_imag.shape=}")
-print(f"{tw_32_32_real.shape=}")
-print(f"{tw_32_32_imag.shape=}")
-print(f"{tw_32_32_inv_real.shape=}")
-print(f"{tw_32_32_inv_imag.shape=}")
+# print(f"{tw_32_1k_real.shape=}")
+# print(f"{tw_32_1k_imag.shape=}")
+# print(f"{tw_32_1k_inv_real.shape=}")
+# print(f"{tw_32_1k_inv_imag.shape=}")
+# print(f"{tw_32_32_real.shape=}")
+# print(f"{tw_32_32_imag.shape=}")
+# print(f"{tw_32_32_inv_real.shape=}")
+# print(f"{tw_32_32_inv_imag.shape=}")
 print(f"{o_real.shape=}")
 
 with open(f'{TESTNAME}.txt', 'w') as f:
@@ -337,6 +345,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     # inputs and filters
     u_real_f = u_real.to(torch.float32).flatten().cpu().numpy()
     u_imag_f = u_imag.to(torch.float32).flatten().cpu().numpy()
+
     kfT_real_f = kfT_real.to(torch.float32).flatten().cpu().numpy()
     kfT_imag_f = kfT_imag.to(torch.float32).flatten().cpu().numpy()
 
@@ -346,6 +355,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     for i in trange(u_imag_f.shape[0]):
         f.write(repr(u_imag_f[i]))
         f.write(' ')
+
     for i in trange(kfT_real_f.shape[0]):
         f.write(repr(kfT_real_f[i]))
         f.write(' ')
@@ -356,6 +366,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     # fft and ifft matrices
     f_real_f = f_real.to(torch.float32).flatten().cpu().numpy()
     f_imag_f = f_imag.to(torch.float32).flatten().cpu().numpy()
+
     finv_real_f = finv_real.to(torch.float32).flatten().cpu().numpy()
     finv_imag_f = finv_imag.to(torch.float32).flatten().cpu().numpy()
 
@@ -365,6 +376,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     for i in trange(f_imag_f.shape[0]):
         f.write(repr(f_imag_f[i]))
         f.write(' ')
+
     for i in trange(finv_real_f.shape[0]):
         f.write(repr(finv_real_f[i]))
         f.write(' ')
@@ -372,43 +384,47 @@ with open(f'{TESTNAME}.txt', 'w') as f:
         f.write(repr(finv_imag_f[i]))
         f.write(' ')
 
-    # twiddle factors stage 1
-    tw_32_1k_real_f = tw_32_1k_real.to(torch.float32).flatten().cpu().numpy()
-    tw_32_1k_imag_f = tw_32_1k_imag.to(torch.float32).flatten().cpu().numpy()
-    tw_32_1k_inv_real_f = tw_32_1k_inv_real.to(torch.float32).flatten().cpu().numpy()
-    tw_32_1k_inv_imag_f = tw_32_1k_inv_imag.to(torch.float32).flatten().cpu().numpy()
+    # # twiddle factors stage 1
+    # tw_32_1k_real_f = tw_32_1k_real.to(torch.float32).flatten().cpu().numpy()
+    # tw_32_1k_imag_f = tw_32_1k_imag.to(torch.float32).flatten().cpu().numpy()
 
-    for i in trange(tw_32_1k_real_f.shape[0]):
-        f.write(repr(tw_32_1k_real_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_1k_imag_f.shape[0]):
-        f.write(repr(tw_32_1k_imag_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_1k_inv_real_f.shape[0]):
-        f.write(repr(tw_32_1k_inv_real_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_1k_inv_imag_f.shape[0]):
-        f.write(repr(tw_32_1k_inv_imag_f[i]))
-        f.write(' ')
+    # tw_32_1k_inv_real_f = tw_32_1k_inv_real.to(torch.float32).flatten().cpu().numpy()
+    # tw_32_1k_inv_imag_f = tw_32_1k_inv_imag.to(torch.float32).flatten().cpu().numpy()
 
-    # twiddle factors stage 2
-    tw_32_32_real_f = tw_32_32_real.to(torch.float32).flatten().cpu().numpy()
-    tw_32_32_imag_f = tw_32_32_imag.to(torch.float32).flatten().cpu().numpy()
-    tw_32_32_inv_real_f = tw_32_32_inv_real.to(torch.float32).flatten().cpu().numpy()
-    tw_32_32_inv_imag_f = tw_32_32_inv_imag.to(torch.float32).flatten().cpu().numpy()
+    # for i in trange(tw_32_1k_real_f.shape[0]):
+    #     f.write(repr(tw_32_1k_real_f[i]))
+    #     f.write(' ')
+    # for i in trange(tw_32_1k_imag_f.shape[0]):
+    #     f.write(repr(tw_32_1k_imag_f[i]))
+    #     f.write(' ')
 
-    for i in trange(tw_32_32_real_f.shape[0]):
-        f.write(repr(tw_32_32_real_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_32_imag_f.shape[0]):
-        f.write(repr(tw_32_32_imag_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_32_inv_real_f.shape[0]):
-        f.write(repr(tw_32_32_inv_real_f[i]))
-        f.write(' ')
-    for i in trange(tw_32_32_inv_imag_f.shape[0]):
-        f.write(repr(tw_32_32_inv_imag_f[i]))
-        f.write(' ')
+    # for i in trange(tw_32_1k_inv_real_f.shape[0]):
+    #     f.write(repr(tw_32_1k_inv_real_f[i]))
+    #     f.write(' ')
+    # for i in trange(tw_32_1k_inv_imag_f.shape[0]):
+    #     f.write(repr(tw_32_1k_inv_imag_f[i]))
+    #     f.write(' ')
+
+    # # twiddle factors stage 2
+    # tw_32_32_real_f = tw_32_32_real.to(torch.float32).flatten().cpu().numpy()
+    # tw_32_32_imag_f = tw_32_32_imag.to(torch.float32).flatten().cpu().numpy()
+
+    # tw_32_32_inv_real_f = tw_32_32_inv_real.to(torch.float32).flatten().cpu().numpy()
+    # tw_32_32_inv_imag_f = tw_32_32_inv_imag.to(torch.float32).flatten().cpu().numpy()
+
+    # for i in trange(tw_32_32_real_f.shape[0]):
+    #     f.write(repr(tw_32_32_real_f[i]))
+    #     f.write(' ')
+    # for i in trange(tw_32_32_imag_f.shape[0]):
+    #     f.write(repr(tw_32_32_imag_f[i]))
+    #     f.write(' ')
+        
+    # for i in trange(tw_32_32_inv_real_f.shape[0]):
+    #     f.write(repr(tw_32_32_inv_real_f[i]))
+    #     f.write(' ')
+    # for i in trange(tw_32_32_inv_imag_f.shape[0]):
+    #     f.write(repr(tw_32_32_inv_imag_f[i]))
+    #     f.write(' ')
 
     # outputs
     o_real_f = o_real.to(torch.float32).flatten().cpu().numpy()
