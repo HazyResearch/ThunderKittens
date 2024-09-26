@@ -1,8 +1,25 @@
-// #define RUN_MAIN
+#ifdef TORCH_COMPILE
 #define TORCH_COMPILE_GELU
+#else
+#define RUN_MAIN
+#endif
 
 #include "kittens.cuh"
 #include "prototype.cuh"
+
+__device__ static inline float fast_tanh(float x) {
+  #if defined(__CUDA_ARCH__)
+    #if (__CUDACC_VER_MAJOR__ >= 11) && (__CUDA_ARCH__ >= 750)
+      float y;
+      asm volatile ( "tanh.approx.f32 %0, %1; " : "=f"(y) : "f"(x));
+      return y;
+    #else
+      return ::tanhf(x);
+    #endif
+  #else
+  return std::tanh(x);
+  #endif
+}
 
 using namespace kittens;
 template<kittens::ducks::sv::all SV> __device__ static inline void init_bias(rt_fl<16,SV::length> &acc, const SV &bias) {
@@ -38,13 +55,13 @@ struct flux_matmul_gelu_layout {
         rhs_tile rhs;
     };
     struct scratch_block  { bias_vec bias; };
-    struct consumer_state { rt_fl<16, BLOCK_N> acc;   };
+    struct consumer_state { rt_fl<16, BLOCK_N> acc; int iters;  };
     struct finish_block   { acc_tile           acc[BLOCK_M/64]; };
 };
-template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs=0, int transpose_rhs=0>
+template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs, int transpose_rhs>
 struct flux_matmul_gelu_template {
     using layout = flux_matmul_gelu_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
-    static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4;
+    static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS/4;
     __device__ static inline int iters(const typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
@@ -70,7 +87,8 @@ struct flux_matmul_gelu_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
             warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.bias, args.globals.bias, {blockIdx.y});
+            group<NUM_CONSUMER_WARPS>::load(args.scratch.bias, args.globals.bias, {(int)blockIdx.y});
+            args.state.iters = iters(args.globals);
             group<NUM_CONSUMER_WARPS>::sync();
             init_bias(args.state.acc, args.scratch.bias); // <std::remove_reference_t<decltype(args.scratch.bias)>>
         }
@@ -87,20 +105,21 @@ struct flux_matmul_gelu_template {
             arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
+            warpgroup::mma_async_wait();
             #pragma unroll
             for(int i = 0; i < args.state.acc.width; i++) {
                 #pragma unroll
                 for(int j = 0; j < 4; j++) {
                     float f = args.state.acc.tiles[0][i].data[j].x, g = args.state.acc.tiles[0][i].data[j].y;
-                    args.state.acc.tiles[0][i].data[j].x = f * 0.5f * (1.0f + tanh(f * 0.79788456f * (1 + f * f *0.044715f)));  
-                    args.state.acc.tiles[0][i].data[j].y = g * 0.5f * (1.0f + tanh(g * 0.79788456f * (1 + g * g *0.044715f)));  
+                    args.state.acc.tiles[0][i].data[j].x = f * 0.5f * (1.0f + fast_tanh(f * 0.79788456f * (1.f + f * f *0.044715f)));  
+                    args.state.acc.tiles[0][i].data[j].y = g * 0.5f * (1.0f + fast_tanh(g * 0.79788456f * (1.f + g * g *0.044715f)));  
                 } 
             }
             warpgroup::store(args.finish.acc[warpgroup::groupid()], args.state.acc);
             warpgroup::sync();
             if(warpgroup::warpid() == 0)
                 tma::store_async(args.globals.acc, args.finish.acc[warpgroup::groupid()],
-                {blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), blockIdx.y});
+                {(int)blockIdx.x*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), (int)blockIdx.y});
         }
     };
 };
@@ -137,15 +156,9 @@ void cpu_gemm(float* a, float* b, float *bias, float* c, int M, int N, int K) {
     }
 }
 
-int main() {
-    constexpr int transpose_lhs = 0, transpose_rhs = 1;
-    // const int M = 3072, N = 12288, K = 3072; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 760 TFLOPs
-    // const int M = 3072, N = 3072, K = 12288; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 813.5 TFLOPs
-    // const int M = 256, N = 12288, K = 3072; using fmt = flux_matmul_gelu_template<128, 192, 64>; // 574.5 TFLOPs
-    // const int M = 256, N = 3072, K = 12288; using fmt = flux_matmul_gelu_template<128, 64, 128>; // 433 TFLOPs
-    // const int M = 3072, N = 3072, K = 3072; using fmt = flux_matmul_gelu_template<192, 192, 64>; // 740 TFLOPs
-    const int M = 3072, N = 3072, K = 6144; using fmt = flux_matmul_gelu_template<192, 192, 64, transpose_lhs, transpose_rhs>; // 813.5 TFLOPs
-
+constexpr int transpose_lhs = 0, transpose_rhs = 1;
+template<typename fmt>
+void runbenchmark(size_t M, size_t N, size_t K) {
     using lhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().lhs[0])>::type;
     using rhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().rhs)>::type;
     using acc_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::finish_block>().acc[0])>::type;
@@ -155,7 +168,8 @@ int main() {
     using acc_global = typename std::remove_reference<decltype(std::declval<typename fmt::layout::globals>().acc)>::type;
     using globals  = typename fmt::layout::globals;
 
-    std::cout << "Has store: "  << (bool)kittens::prototype::detail::has_store<fmt>  << '\n';
+    std::cout <<  "  --------------------------- M=" << M << " N=" << N << " K=" << K << " --------------------------- " << std::endl;
+
     std::cout << "Has finish: " << (bool)kittens::prototype::detail::has_finish<fmt> << '\n';
     std::cout << "Transpose LHS: " << (bool)transpose_lhs << '\n';
     std::cout << "Transpose RHS: " << (bool)transpose_rhs << '\n';
@@ -226,13 +240,20 @@ int main() {
     dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
     dim3 block(prototype::num_threads<fmt>);
 
+    std::cout << "warmup\n";
+    constexpr int WARMUP_ITERS = 5;
+    for(int i = 0; i < WARMUP_ITERS; i++) {
+        prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+    }
+    cudaDeviceSynchronize();
+
     // Start timing
     cudaDeviceSynchronize();
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/lhs_tile::cols << " reduction block dimension\n";
     std::cout << "Kernel has " << kittens::prototype::input_pipe_stages<fmt> << " input pipeline stages and " << kittens::prototype::output_pipe_stages<fmt> << " output pipeline stages\n";
     auto start = std::chrono::high_resolution_clock::now();
 
-    constexpr int ITERS = 100;
+    constexpr int ITERS = 10;
     for(int i = 0; i < ITERS; i++) {
         prototype::pc<fmt><<<grid, block, mem_size>>>(G);
     }
@@ -257,7 +278,7 @@ int main() {
     if (cudaStatus != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
         // Optionally, you might want to exit the program or handle the error in some way
-        return -1;
+        exit(-1);
     }
 
     // Copy result back to host
@@ -298,7 +319,18 @@ int main() {
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
-
+}
+int main() {
+    size_t M, N, K;
+    M = 3072; N = 12288; K = 3072;
+    runbenchmark<flux_matmul_gelu_template<192, 192, 64, transpose_lhs, transpose_rhs>>(M, N, K); // 644 TFLOPs
+    std::cout << "####################################################################################\n";
+    M = 512; N = 12288; K = 3072;
+    // runbenchmark<flux_matmul_gelu_template< 64, 192, 64, 8, transpose_lhs, transpose_rhs>>(M, N, K);
+    runbenchmark<flux_matmul_gelu_template<128, 192, 64, transpose_lhs, transpose_rhs>>(M, N, K); // 509 TFLOPs
+    std::cout << "####################################################################################\n";
+    M = 256; N = 12288; K = 3072;
+    runbenchmark<flux_matmul_gelu_template<128, 192, 64, transpose_lhs, transpose_rhs>>(M, N, K); // 445 TFLOPs
     return 0;
 }
 #endif
