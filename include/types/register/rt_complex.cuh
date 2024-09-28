@@ -60,7 +60,7 @@ namespace rt {
 */
 template <typename T> concept complex = requires {
     typename T::identifier;
-} && std::is_same_v<typename T::identifier, cmplx_identifier> &&  ducks::rt::all<typename T::dtype>;
+} && std::is_same_v<typename T::identifier, cmplx_identifier> && ducks::rt::all<typename T::dtype>;
 
 }
 }
