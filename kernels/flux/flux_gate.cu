@@ -3,6 +3,7 @@
 
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "static_switch.h"
 
 using namespace kittens;
 template<typename op, kittens::ducks::sv::all SV> __device__ static inline void rt_sv_op(rt_fl<16,SV::length> &acc, const SV &bias) {
@@ -377,7 +378,7 @@ torch::Tensor fused_flux_linear_gate(
     const torch::Tensor y
 ) {
     CHECK_INPUT(x);
-    CHECK_INPUT(weight);
+    CHECK_CUDA(weight);
     CHECK_INPUT(bias);
     CHECK_INPUT(gate);
     CHECK_INPUT(y);
@@ -391,16 +392,6 @@ torch::Tensor fused_flux_linear_gate(
     TORCH_CHECK(gate.size(0) == N, "gate has incompatible shape");
     TORCH_CHECK(y.size(0) == M, "y has incompatible shape");
     TORCH_CHECK(y.size(1) == N, "y has incompatible shape");
-
-    TORCH_CHECK(y.is_contiguous(), "y must be contiguous");
-
-    TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
-    TORCH_CHECK(weight.is_contiguous(), "weight must be in N x K format");
-
-    // // x contiguous means x is M x K format, so transpose_lhs = false
-    // const bool transpose_lhs = !x.is_contiguous();
-    // // weight contiguous means weight is in N x K format, so transpose_rhs = true!
-    // const bool transpose_rhs = weight.is_contiguous();
 
     torch::Tensor out = torch::empty({M, N}, y.options());
 
@@ -419,31 +410,38 @@ torch::Tensor fused_flux_linear_gate(
     bf16 *d_y = reinterpret_cast<bf16*>(y_bf16);
     bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
 
-    if (M > 512) {
-        const int M_tile = 192;
-        const int K_tile = 192;
-        const int N_tile = 64;
+    bool x_trans = !x.is_contiguous();
+    bool w_trans = weight.is_contiguous();
 
-        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    } else if (M > 256 && K > 3072) {
-        const int M_tile = 128;
-        const int K_tile = 96;
-        const int N_tile = 128;
-        
-        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    } else if (K > 3072) {
-        const int M_tile = 64;
-        const int K_tile = 96;
-        const int N_tile = 128;
-        
-        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    } else {
-        const int M_tile = 128;
-        const int K_tile = 192;
-        const int N_tile = 64;
-        
-        dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
-    }
+    BOOL_SWITCH(x_trans, LEFT_TRANSPOSE, [&] {
+        BOOL_SWITCH(w_trans, RIGHT_TRANSPOSE, [&] {
+            if (M > 512) {
+                const int M_tile = 192;
+                const int K_tile = 192;
+                const int N_tile = 64;
+
+                dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, false>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+            } else if (M > 256 && K > 3072) {
+                const int M_tile = 128;
+                const int K_tile = 96;
+                const int N_tile = 128;
+                
+                dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+            } else if (K > 3072) {
+                const int M_tile = 64;
+                const int K_tile = 96;
+                const int N_tile = 128;
+                
+                dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+            } else {
+                const int M_tile = 128;
+                const int K_tile = 192;
+                const int N_tile = 64;
+                
+                dispatch_fused_flux_linear_gate<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_gate, d_y, d_out, M, K, N);
+            }
+        });
+    });
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 

@@ -3,6 +3,7 @@
 
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "static_switch.h"
 
 using namespace kittens;
 template<kittens::ducks::sv::all SV> __device__ static inline void init_bias(rt_fl<16,SV::length> &acc, const SV &bias) {
@@ -349,7 +350,7 @@ torch::Tensor fused_flux_linear_gelu(
     const torch::Tensor bias
 ) {
     CHECK_INPUT(x);
-    CHECK_INPUT(weight);
+    CHECK_CUDA(weight);
     CHECK_INPUT(bias);
 
     const uint M = x.size(0);
@@ -358,14 +359,6 @@ torch::Tensor fused_flux_linear_gelu(
     
     TORCH_CHECK(weight.size(1) == K, "weight has incompatible shape");
     TORCH_CHECK(bias.size(0) == N, "bias has incompatible shape");
-
-    TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
-    TORCH_CHECK(weight.is_contiguous(), "weight must be in N x K format");
-
-    // // x contiguous means x is M x K format, so transpose_lhs = false
-    // const bool transpose_lhs = !x.is_contiguous();
-    // // weight contiguous means weight is in N x K format, so transpose_rhs = true!
-    // const bool transpose_rhs = weight.is_contiguous();
 
     torch::Tensor out = torch::empty({M, N}, x.options());
 
@@ -380,25 +373,33 @@ torch::Tensor fused_flux_linear_gelu(
     bf16 *d_bias = reinterpret_cast<bf16*>(bias_bf16);
     bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
 
-    if (M > 512) {
-        const int M_tile = 192;
-        const int K_tile = 192;
-        const int N_tile = 64;
+    bool x_trans = !x.is_contiguous();
+    bool w_trans = weight.is_contiguous();
 
-        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
-    } else if (K > 3072) {
-        const int M_tile = 128;
-        const int K_tile = 64;
-        const int N_tile = 128;
+    BOOL_SWITCH(x_trans, LEFT_TRANSPOSE, [&] {
+        BOOL_SWITCH(w_trans, RIGHT_TRANSPOSE, [&] {
+            if (M > 512) {
+                const int M_tile = 192;
+                const int K_tile = 192;
+                const int N_tile = 64;
         
-        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
-    } else {
-        const int M_tile = 128;
-        const int K_tile = 192;
-        const int N_tile = 64;
-        
-        dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, false, true>(d_x, d_weight, d_bias, d_out, M, K, N);
-    }
+                dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, LEFT_TRANSPOSE, RIGHT_TRANSPOSE>(d_x, d_weight, d_bias, d_out, M, K, N);
+            } else if (K > 3072) {
+                const int M_tile = 128;
+                const int K_tile = 64;
+                const int N_tile = 128;
+                
+                dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, LEFT_TRANSPOSE, RIGHT_TRANSPOSE>(d_x, d_weight, d_bias, d_out, M, K, N);
+            } else {
+                const int M_tile = 128;
+                const int K_tile = 192;
+                const int N_tile = 64;
+                
+                dispatch_fused_flux_linear_gelu<M_tile, K_tile, N_tile, LEFT_TRANSPOSE, RIGHT_TRANSPOSE>(d_x, d_weight, d_bias, d_out, M, K, N);
+            }
+        });
+    });
+    
 
     CHECK_CUDA_ERROR(cudaGetLastError());
 

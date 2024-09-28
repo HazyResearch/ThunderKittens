@@ -13,11 +13,19 @@ def ref_gate(x, linear, gate, y):
 def tk_gate(x, linear, gate, y):
     return tk_flux_linear_gate(x, linear.weight, linear.bias, gate, y)
 
+def tk_gate_transposed(
+    x, linear_transposed_weight, bias, gate, y
+):
+    return tk_flux_linear_gate(x, linear_transposed_weight, bias, gate, y)
+
 def ref_gelu(x, linear):
     return torch.nn.functional.gelu(linear(x), approximate='tanh')
 
 def tk_gelu(x, linear):
     return tk_flux_linear_gelu(x, linear.weight, linear.bias)
+
+def tk_gelu_transposed(x, linear_transposed_weight, bias):
+    return tk_flux_linear_gelu(x, linear_transposed_weight, bias)
 
 def benchmark_gated(M, N, K):
     with torch.device('cuda'):
@@ -36,6 +44,17 @@ def benchmark_gated(M, N, K):
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
+        linear_transposed_weight = torch.as_strided(
+            torch.clone(linear.weight),
+            linear.weight.shape,
+            (1, linear.weight.shape[0])
+        )
+        bias = linear.bias
+
+        timing = do_bench(lambda: tk_gate_transposed(x, linear_transposed_weight, bias, gate, y), warmup=warmups, rep=repeats) * 1e-3
+        tflops = (2 * M * K * N) / 1e12 / (timing)
+        print(f"ThunderKittens transposed weight: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
+
 def benchmark_gelu(M, N, K):
     with torch.device('cuda'):
         x = torch.randn(M, K, dtype=torch.bfloat16)
@@ -50,6 +69,17 @@ def benchmark_gelu(M, N, K):
         timing = do_bench(lambda: tk_gelu(x, linear), warmup=warmups, rep=repeats) * 1e-3
         tflops = (2 * M * K * N) / 1e12 / (timing)
         print(f"ThunderKittens: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
+
+        linear_transposed_weight = torch.as_strided(
+            torch.clone(linear.weight),
+            linear.weight.shape,
+            (1, linear.weight.shape[0])
+        )
+        bias = linear.bias
+
+        timing = do_bench(lambda: tk_gelu_transposed(x, linear_transposed_weight, bias), warmup=warmups, rep=repeats) * 1e-3
+        tflops = (2 * M * K * N) / 1e12 / (timing)
+        print(f"ThunderKittens transposed weight: {timing * 1e3:.3f}ms, {tflops:.2f}TFLOPS")
 
 gelu_sizes = [
     (3072, 12288, 3072),
