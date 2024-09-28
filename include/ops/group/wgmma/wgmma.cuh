@@ -93,6 +93,13 @@ __device__ static inline void mma_async_wait() {
     asm volatile ("wgmma.wait_group.sync.aligned %0;" : : "n"(N) : "memory");
 }
 
+
+//  --------------------------------------------------------------------------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+//  ------------------------------------------------------ NORMAL ------------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+
 /*
  ### OPTIONS:
 
@@ -647,7 +654,7 @@ __device__ static inline void mma_AB(D &d,
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
-            d,
+            d.real,
             a_desc_real.chunk_descriptor(k),
             b_desc_real.chunk_descriptor(k),
             1
@@ -656,7 +663,7 @@ __device__ static inline void mma_AB(D &d,
     #pragma unroll
     for(int k = 0; k < K; k++) {
         base::st_st(
-            d,
+            d.real,
             a_desc_imag.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
             1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
@@ -671,7 +678,7 @@ __device__ static inline void mma_AB(D &d,
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
-            d,
+            d.imag,
             a_desc_real.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
             1
@@ -680,7 +687,7 @@ __device__ static inline void mma_AB(D &d,
     #pragma unroll
     for(int k = 0; k < K; k++) {
         base::st_st(
-            d,
+            d.imag,
             a_desc_imag.chunk_descriptor(k),
             b_desc_real.chunk_descriptor(k),
             1
@@ -710,7 +717,7 @@ __device__ static inline void mm_AB(D &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -727,33 +734,71 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_DIM*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
     // Do it
     #pragma unroll
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_DIM, TILE_DIM*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_DIM>(d, m);
+        rt<T_D, TILE_DIM, TILE_DIM*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_DIM>(d.real, m);
         base::rt_st(
             d_ref,
-            a.tiles[m][0],
-            b_desc.chunk_descriptor(0),
+            a.real.tiles[m][0],
+            b_desc_real.chunk_descriptor(0),
             accumulate
         );
         #pragma unroll
         for(int k = 1; k < K; k++) {
             base::rt_st(
                 d_ref,
-                a.tiles[m][k],
-                b_desc.chunk_descriptor(k),
+                a.real.tiles[m][k],
+                b_desc_real.chunk_descriptor(k),
+                1
+            );
+        }
+        #pragma unroll
+        for(int k = 0; k < K; k++) {
+            base::rt_st(
+                d_ref,
+                a.imag.tiles[m][k],
+                b_desc_imag.chunk_descriptor(k),
+                1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+            );
+        }
+    }
+    #pragma unroll
+    for(int m = 0; m < M_DIV_4; m++) {
+        rt<T_D, TILE_DIM, TILE_DIM*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_DIM>(d.imag, m);
+        base::rt_st(
+            d_ref,
+            a.real.tiles[m][0],
+            b_desc_imag.chunk_descriptor(0),
+            accumulate
+        );
+        #pragma unroll
+        for(int k = 1; k < K; k++) {
+            base::rt_st(
+                d_ref,
+                a.real.tiles[m][k],
+                b_desc_imag.chunk_descriptor(k),
+                1
+            );
+        }
+        #pragma unroll
+        for(int k = 0; k < K; k++) {
+            base::rt_st(
+                d_ref,
+                a.imag.tiles[m][k],
+                b_desc_real.chunk_descriptor(k),
                 1
             );
         }
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -775,7 +820,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -793,30 +838,65 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_DIM*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
     // Do it
     base::st_st(
-        d,
-        a_desc.chunk_descriptor(0),
-        b_desc.chunk_descriptor(0),
+        d.real,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_real.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
-            d,
-            a_desc.chunk_descriptor(k),
-            b_desc.chunk_descriptor(k),
+            d.real,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.real,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+        );
+    }
+    base::st_st(
+        d.imag,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_imag.chunk_descriptor(0),
+        accumulate
+    );
+    #pragma unroll
+    for(int k = 1; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
             1
         );
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -838,7 +918,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b) {
@@ -856,30 +936,65 @@ __device__ static inline void mma_AtB(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_DIM*N, 1, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
     // Do it
     base::st_st(
-        d,
-        a_desc.chunk_descriptor(0),
-        b_desc.chunk_descriptor(0),
+        d.real,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_real.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
-            d,
-            a_desc.chunk_descriptor(k),
-            b_desc.chunk_descriptor(k),
+            d.real,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.real,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+        );
+    }
+    base::st_st(
+        d.imag,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_imag.chunk_descriptor(0),
+        accumulate
+    );
+    #pragma unroll
+    for(int k = 1; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
             1
         );
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
 __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
@@ -897,7 +1012,7 @@ __device__ static inline void mm_AtB(D &d,
  * @tparam B The source shared tile type.
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b) {
@@ -915,30 +1030,65 @@ __device__ static inline void mma_AtBt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_DIM*N, 1, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
     // Do it
     base::st_st(
-        d,
-        a_desc.chunk_descriptor(0),
-        b_desc.chunk_descriptor(0),
+        d.real,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_real.chunk_descriptor(0),
         accumulate
     );
     #pragma unroll
     for(int k = 1; k < K; k++) {
         base::st_st(
-            d,
-            a_desc.chunk_descriptor(k),
-            b_desc.chunk_descriptor(k),
+            d.real,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.real,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+        );
+    }
+    base::st_st(
+        d.imag,
+        a_desc_real.chunk_descriptor(0),
+        b_desc_imag.chunk_descriptor(0),
+        accumulate
+    );
+    #pragma unroll
+    for(int k = 1; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_real.chunk_descriptor(k),
+            b_desc_imag.chunk_descriptor(k),
+            1
+        );
+    }
+    #pragma unroll
+    for(int k = 0; k < K; k++) {
+        base::st_st(
+            d.imag,
+            a_desc_imag.chunk_descriptor(k),
+            b_desc_real.chunk_descriptor(k),
             1
         );
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
 __device__ static inline void mm_AtBt(D &d,
                                 const A &a,
                                 const B &b) {
