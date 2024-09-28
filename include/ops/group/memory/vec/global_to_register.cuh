@@ -12,7 +12,7 @@
  * @param[in] src The source array in global memory to load data from.
  */
 template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void load(RV &dst, const GL &src, const index &idx) {
+__device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
     // Call warp level load
     ::kittens::load(dst, src, {idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()});
 }
@@ -25,7 +25,7 @@ __device__ inline static void load(RV &dst, const GL &src, const index &idx) {
  * @param[in] src The source register vector to store data from.
  */
 template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RV &src, const index &idx) {
+__device__ inline static void store(GL &dst, const RV &src, const coord &idx) {
     // Call warp level store
     ::kittens::store(dst, src, {idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()});
 }

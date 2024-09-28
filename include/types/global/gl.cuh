@@ -30,7 +30,6 @@ struct descriptor_dict {
         );
     }
 #endif
-    __host__ void cleanup() {}
 };
 
 #ifdef KITTENS_HOPPER
@@ -93,28 +92,25 @@ struct gl {
     }
     __host__ __device__ inline gl(const gl &other) :
             raw_ptr(other.raw_ptr), batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), tma_descs(other.tma_descs) {}
-    __host__ inline void cleanup() {
-        tma_descs.cleanup();
-    }
     template<typename U> __device__ inline const CUtensorMap* get_tma() const {
         return tma_descs.template get<U>();
     }
-    __device__ inline T& operator[](const index &idx) {
+    __device__ inline T& operator[](const coord &idx) {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    __device__ inline const T& operator[](const index &idx) const {
+    __device__ inline const T& operator[](const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    template<detail::tile TILE>__device__ inline T& get(const index &idx) {
+    template<detail::tile TILE>__device__ inline T& get(const coord &idx) {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
     }
-    template<detail::tile TILE> __device__ inline const T& get(const index &idx) const {
+    template<detail::tile TILE> __device__ inline const T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
     }
-    template<detail::vec VEC>__device__ inline T& get(const index &idx) {
+    template<detail::vec VEC>__device__ inline T& get(const coord &idx) {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
-    template<detail::vec VEC>__device__ inline const T& get(const index &idx) const {
+    template<detail::vec VEC>__device__ inline const T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
     __device__ inline size_t row_stride() const { return cols; }

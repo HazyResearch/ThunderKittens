@@ -18,7 +18,7 @@ struct test_load_multicast { // load with TMA, write out normally
         }
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -46,7 +46,7 @@ struct test_load_multicast { // load with TMA, write out normally
 };
 
 template<typename Ker, typename T, int S, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_1d(GL input, GL output) {
+static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_1d(const __grid_constant__ GL input, const __grid_constant__ GL output) {
     Ker::template device_func<S, NW, GL, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
@@ -77,8 +77,6 @@ struct tmamulti_wrapper_1d {
             test::template host_func<S, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
-            input.cleanup();
-            output.cleanup();
         }
         else {
             this_result.result = test_result::INVALID;

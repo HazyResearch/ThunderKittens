@@ -20,7 +20,7 @@ namespace kittens {
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<ducks::rt::row_layout RT, ducks::gl::all GL>
-__device__ inline static void load(RT &dst, const GL &src, const index &idx) {
+__device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
     U *src_ptr = (U*)&src.template get<RT>(idx);
@@ -64,7 +64,7 @@ __device__ inline static void load(RT &dst, const GL &src, const index &idx) {
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<ducks::rt::col_layout RT, ducks::gl::all GL>
-__device__ inline static void load(RT &dst, const GL &src, const index &idx) {
+__device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
     U *src_ptr = (U*)&src.template get<RT>(idx);
@@ -110,7 +110,7 @@ __device__ inline static void load(RT &dst, const GL &src, const index &idx) {
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<ducks::rt::row_layout RT, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RT &src, const index &idx) {
+__device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
     U *dst_ptr = (U*)&dst.template get<RT>(idx);
@@ -155,7 +155,7 @@ __device__ inline static void store(GL &dst, const RT &src, const index &idx) {
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<ducks::rt::col_layout RT, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RT &src, const index &idx) {
+__device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
     U *dst_ptr = (U*)&dst.template get<RT>(idx);

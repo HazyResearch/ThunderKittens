@@ -4,7 +4,7 @@
  */
 
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load(ST &dst, const GL &src, const index &idx) {
+__device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
     
@@ -35,7 +35,7 @@ __device__ static inline void load(ST &dst, const GL &src, const index &idx) {
     }
 }
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void store(GL &dst, const ST &src, const index &idx) {
+__device__ static inline void store(GL &dst, const ST &src, const coord &idx) {
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
     const int row_stride = dst.row_stride();
 
@@ -63,7 +63,7 @@ __device__ static inline void store(GL &dst, const ST &src, const index &idx) {
 }
 
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, const GL &src, const index &idx) {
+__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
 

@@ -184,50 +184,38 @@ void cpu_strassen_matmul_internal(Ar3D &a, Ar3D &b, Ar2D &c) {
 }
 void gpu_strassen_matmul_internal(int M, int N, int K, half **a_d, half **b_d, half **c_d) {
     cudaMalloc(c_d, sizeof(half*)*M*N);
-    using mmt = matmul_template<2, 1>;
-    dim3 grid = mmt::grid(M, N, K);
+    dim3 grid = get_grid(M, N, K);
     std::cout << "Grid size: (" << grid.x << ", " << grid.y << ", " << grid.z << ")" << std::endl;
-    // Allocate host memory for the first 20 elements
-    half* h_a_sample = new half[20];
-    // Copy the first 20 elements from device to host
-    cudaMemcpy(h_a_sample, *a_d, 20 * sizeof(half), cudaMemcpyDeviceToHost);
-    std::cout << "[from GPU] First 20 elements of a_d:" << std::endl;
-    for (int i = 0; i < 20; ++i) {
-        float value = __half2float(h_a_sample[i]);
-        std::cout << value << " ";
-        if ((i + 1) % 5 == 0) std::cout << std::endl;
-    }
-    std::cout << std::endl;
-    // Allocate host memory for the first 20 elements of b_d
-    half* h_b_sample = new half[20];
-    // Copy the first 20 elements from device to host
-    cudaMemcpy(h_b_sample, *b_d, 20 * sizeof(half), cudaMemcpyDeviceToHost);
-    std::cout << "[from GPU] First 20 elements of b_d:" << std::endl;
-    for (int i = 0; i < 20; ++i) {
-        float value = __half2float(h_b_sample[i]);
-        std::cout << value << " ";
-        if ((i + 1) % 5 == 0) std::cout << std::endl;
-    }
-    std::cout << std::endl;
-    // Free the host memory
-    delete[] h_a_sample;
-    // Free the host memory
-    delete[] h_b_sample;
-    
-    dim3 block(prototype::num_threads<mmt>);
-    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
-    cudaFuncSetAttribute(prototype::pc<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-    mmt::layout::input_layout Ag(*a_d, nullptr, nullptr, M/2, K/2);
-    mmt::layout::input_layout Bg(*b_d, nullptr, nullptr, K/2, N/2);
-    mmt::layout::output_layout Cg(*c_d, nullptr, nullptr, M, N);
-    mmt::layout::globals G{Ag, Bg, Cg};
+    dim3 block(NUM_THREADS);
+    unsigned long mem_size = MAX_SHARED_MEMORY-8192; // need to launch two blocks if possible.
+    cudaFuncSetAttribute(mini_matmul, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    input_layout Ag(*a_d, nullptr, nullptr, M/2, K/2);
+    input_layout Bg(*b_d, nullptr, nullptr, K/2, N/2);
+    output_layout Cg(*c_d, nullptr, nullptr, M, N);
+    globals G{Ag, Bg, Cg};
+    cudaError_t cudaStatus;
 
-    prototype::pc<mmt><<<grid, block, mem_size>>>(G); // warmup
+    mini_matmul<<<grid, block, mem_size>>>(G); // warmup
     cudaDeviceSynchronize();
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "CUDA error (warmup): " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Optionally, you might want to exit the program or handle the error in some way
+        exit(-1);
+    }
+
     auto start = std::chrono::high_resolution_clock::now();
     
-    prototype::pc<mmt><<<grid, block, mem_size>>>(G);
+    mini_matmul<<<grid, block, mem_size>>>(G);
+    std::cout << "Running Strassen matmul internal" << std::endl;
     cudaDeviceSynchronize();
+    std::cout << "Ran Strassen matmul internal" << std::endl;
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Optionally, you might want to exit the program or handle the error in some way
+        exit(-1);
+    }
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::micro> elapsed = end - start;
@@ -250,13 +238,6 @@ struct gpu_runner {
         gpu_strassen_generate(a, b, &a_d, &b_d);
         std::cout << "Ran Strassen generate" << std::endl;
         gpu_strassen_matmul_internal(M, N, K, &a_d, &b_d, &c_d);
-        cudaDeviceSynchronize();
-        cudaError_t cudaStatus = cudaGetLastError();
-        if (cudaStatus != cudaSuccess) {
-            std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
-            // Optionally, you might want to exit the program or handle the error in some way
-            exit(-1);
-        }
         std::cout << "Ran Strassen matmul internal" << std::endl;
         half *h_c = new half[M*N];
         cudaMemcpy(h_c, c_d, sizeof(half)*M*N, cudaMemcpyDeviceToHost);
@@ -326,5 +307,5 @@ void test_strassen(int M, int N, int K) {
 int main() {
     test_strassen<cpu_runner>(256, 256, 256);
     test_strassen<gpu_runner>(256, 256, 256);
-    test_strassen<gpu_runner>(2816, 1536, 4096);
+    test_strassen<gpu_runner>(2816, 1536, 8192);
 }

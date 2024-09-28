@@ -15,7 +15,7 @@
  * @param src Pointer to the global memory location from where the data will be loaded.
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load(SV &dst, const GL &src, const index &idx) {
+__device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
@@ -41,7 +41,7 @@ __device__ static inline void load(SV &dst, const GL &src, const index &idx) {
  * @param src Reference to the shared vector from where the data will be stored.
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void store(GL &dst, const SV &src, const index &idx) {
+__device__ static inline void store(GL &dst, const SV &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
@@ -56,7 +56,7 @@ __device__ static inline void store(GL &dst, const SV &src, const index &idx) {
 }
 
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load_async(SV &dst, const GL &src, const index &idx) {
+__device__ static inline void load_async(SV &dst, const GL &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);

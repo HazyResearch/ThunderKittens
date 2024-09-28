@@ -13,7 +13,7 @@ struct test_load { // load with TMA, write out normally
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -44,7 +44,7 @@ struct test_store { // load normally, store with TMA
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -74,7 +74,7 @@ struct test_store_add_reduce {
         }
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -105,7 +105,7 @@ struct test_store_min_reduce {
         }
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -134,7 +134,7 @@ struct test_store_max_reduce {
         }
     }
     template<int S, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
@@ -150,7 +150,7 @@ struct test_store_max_reduce {
 };
 
 template<typename Ker, typename T, int S, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ void tma_global_wrapper_1d(GL input, GL output) {
+static __global__ void tma_global_wrapper_1d(const __grid_constant__ GL input, const __grid_constant__ GL output) {
     Ker::template device_func<S, NW, GL, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>
@@ -182,8 +182,6 @@ struct tma_wrapper_1d {
             test::template host_func<S, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
-            input.cleanup();
-            output.cleanup();
         }
         else {
             this_result.result = test_result::INVALID;
@@ -207,9 +205,9 @@ template<template<typename> typename test, int MAX_S=8, typename... args> using 
 void warp::memory::vec::tma::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/vec/tma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
-                         INTENSITY_2 ? 4  : 
-                         INTENSITY_3 ? 8  :
-                         INTENSITY_4 ? 16 : -1;
+                         INTENSITY_2 ? 8  : 
+                         INTENSITY_3 ? 16  :
+                         INTENSITY_4 ? 32 : -1;
 
     tma_sweep_gmem_type_1d_warp<test_load,             SIZE>::run(results);
     tma_sweep_gmem_type_1d_warp<test_store,            SIZE>::run(results);

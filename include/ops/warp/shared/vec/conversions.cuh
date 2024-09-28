@@ -42,7 +42,7 @@ __device__ static inline void copy(SV1 &dst, const SV2 &src) {
 * @tparam subvec_length The length, in elements, of the subvec.
 * @tparam SV The type of the input vector, which must satisfy the ducks::sv::all concept.
 * @param src The input tile.
-* @param vec_idx The index of the subvec, in units of subvec_length elements.
+* @param vec_idx The coord of the subvec, in units of subvec_length elements.
 * @return A reference to the subvec.
 *
 * @note The subvec length must evenly divide the vector length.

@@ -4,7 +4,8 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
         rt<T_D, 16, 48, ducks::rt_layout::row> &dst,
         const rt_base<T_AB, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
-        int scale_d = 1
+        int scale_d = 1,
+        int scale_b = 1
     ) {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
@@ -22,7 +23,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
                 "{%24, %25, %26, %27}, " \
                 "%28, " \
-                "p, 1, 1, %30;\n" \
+                "p, 1, %31, %30;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -42,7 +43,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP32 ----- //
@@ -55,7 +56,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
                 "{%24, %25, %26, %27}, " \
                 "%28, " \
-                "p, 1, 1, %30;\n" \
+                "p, 1, %31, %30;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -75,7 +76,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP16 ----- //
@@ -88,7 +89,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11}, " \
                 "{%12, %13, %14, %15}, " \
                 "%16, " \
-                "p, 1, 1, %18;\n" \
+                "p, 1, %19, %18;\n" \
                 "}\n"
                 // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
 
@@ -108,7 +109,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
             );
         }
     }
@@ -116,7 +117,8 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
         rt<T_D, 16, 48, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
-        int scale_d = 1
+        int scale_d = 1,
+        int scale_b = 1
     ) {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
@@ -134,7 +136,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
                 "%24, " \
                 "%25, " \
-                "p, 1, 1, %27, %28;\n" \
+                "p, 1, %29, %27, %28;\n" \
                 "}\n"
                 // a_mat descriptor, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a, imm-trans-b
 
@@ -156,7 +158,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b)
+                "n"(trans_b), "r"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP32 ----- //
@@ -169,7 +171,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23}, " \
                 "%24, " \
                 "%25, " \
-                "p, 1, 1, %27, %28;\n" \
+                "p, 1, %29, %27, %28;\n" \
                 "}\n"
                 // a_mat descriptor, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a, imm-trans-b
 
@@ -191,7 +193,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b)
+                "n"(trans_b), "r"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP16 ----- //
@@ -204,7 +206,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
                 "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11}, " \
                 "%12, " \
                 "%13, " \
-                "p, 1, 1, %15, %16;\n" \
+                "p, 1, %17, %15, %16;\n" \
                 "}\n"
                 // a_mat descriptor, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a, imm-trans-b
 
@@ -226,7 +228,7 @@ struct base<T_D, T_AB, 48, trans_a, trans_b> {
             
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b)
+                "n"(trans_b), "r"(scale_b)
             );
         }
     }
