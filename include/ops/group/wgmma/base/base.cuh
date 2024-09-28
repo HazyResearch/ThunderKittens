@@ -130,6 +130,7 @@ namespace ducks {
 namespace wgmma {
 // input refers to either an ST directly or to a pre-generated descriptor, which can save cycles in certain situations.
 template<typename T> concept input = ducks::st::all<T> || (requires {typename T::identifier;} && std::is_same_v<typename T::identifier, descriptor::identifier>);
+template<input A, input B> struct complex_input{ A a; B b; };
 namespace detail {
 template<typename T> struct st_getter { using type = typename T::ST; };
 template<ducks::st::all T> struct st_getter<T> { using type = T; };
