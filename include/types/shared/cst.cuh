@@ -37,21 +37,25 @@ struct identifier {};
 template<typename _T, int _rows, int _cols>
 struct cst {
     using identifier = ducks::cst::identifier;
-    using component = st<_T, _rows, _cols>; /// Data type of each internal tile.
-    using T = base_types::packing<_T>::unpacked_type;
-    using T2 = base_types::packing<_T>::packed_type;
-    using dtype = T; ///< Data type of the elements in the tile.
+    using component  = st<_T, _rows, _cols>; /// Data type of each internal tile.
+    using T          = component::T;
+    using T2         = component::T2;
+    using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using rows   = component::rows;
-    using cols   = component::cols;
-    using height = component::height;
-    using width  = component::width;
+    using rows       = component::rows;
+    using cols       = component::cols;
+    using height     = component::height;
+    using width      = component::width;
 
     // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 
     // Real/imag tiles have same internal layout and size
     component real;
     component imag;
+
+    // vector types
+    using col_vec = csv<dtype, rows>;
+    using row_vec = csv<dtype, cols>;
 };
 
 /* ----------  CONCEPTS  ---------- */

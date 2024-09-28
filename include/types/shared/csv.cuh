@@ -36,14 +36,14 @@ struct identifier {};
  */
 template<typename _T, int _length>
 struct csv {
-    using identifier = ducks::cst::identifier;
-    using component = sv<_T, _length>; /// Data type of each internal tile.
-    using T = base_types::packing<_T>::unpacked_type;
-    using T2 = base_types::packing<_T>::packed_type;
-    using dtype = T; ///< Data type of the elements in the tile.
+    using identifier = ducks::csv::identifier;
+    using component  = sv<_T, _length>; /// Data type of each internal tile.
+    using T          = component::T;
+    using T2         = component::T2;
+    using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using length = component::length;
-    using tiles  = component::tiles;
+    using length     = component::length;
+    using tiles      = component::tiles;
 
     // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 
@@ -78,7 +78,5 @@ template <typename T> concept all = requires {
 template<int _length> using csv_bf = csv<bf16,  _length>;
 template<int _length> using csv_hf = csv<half,  _length>;
 template<int _length> using csv_fl = csv<float, _length>;
-
-
 
 }

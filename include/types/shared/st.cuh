@@ -203,8 +203,8 @@ struct st_subtile {
     // can of course be end-run by just accessing .data directly.
 
     // vector types
-    using col_vec = sv<dtype, height>;
-    using row_vec = sv<dtype, width>;
+    using col_vec = sv<dtype, rows>;
+    using row_vec = sv<dtype, cols>;
 };
 
 /* ----------  CONCEPTS  ---------- */
