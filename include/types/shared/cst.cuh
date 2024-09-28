@@ -10,14 +10,14 @@
 namespace kittens {
 
 namespace ducks {
-namespace st {
+namespace cst {
 /**
  * @brief A dummy type used to identify complex register tiles.
  * 
  * For a type to quack like an st_cmplx, it should define its identifier as ducks::st::cmplx_identifier.
  * If a type quacks like ducks::st::cmplx_identifier, it will be treated as an st_cmplx by compiler checks.
  */
-struct cmplx_identifier {};
+struct identifier {};
 } // namespace st
 } // namespace ducks
 
@@ -25,8 +25,8 @@ struct cmplx_identifier {};
  * @brief Complex tile structure
  *
  * @tparam T2 The packed data type used for the matrix elements.
- * @tparam _height The height of the tile in terms of the number of subtiles.
- * @tparam _width The width of the tile in terms of the number of subtiles.
+ * @tparam _rows The height of the tile in terms of the number of subtiles.
+ * @tparam _cols The width of the tile in terms of the number of subtiles.
  * @tparam _layout The layout of the internal register tiles
  *
  * This structure is designed to abstract complex number operations internally to the real and imaginary
@@ -34,20 +34,30 @@ struct cmplx_identifier {};
  * 
  *
  */
-template<typename _T, int _height, int _width>
-struct st_cmplx {
-    using identifier = ducks::st::cmplx_identifier;
-    using dtype = st<_T, _height, _width>; /// Data type of each internal tile.
+template<typename _T, int _rows, int _cols>
+struct cst {
+    using identifier = ducks::cst::identifier;
+    using component = st<_T, _rows, _cols>; /// Data type of each internal tile.
+    using T = base_types::packing<_T>::unpacked_type;
+    using T2 = base_types::packing<_T>::packed_type;
+    using dtype = T; ///< Data type of the elements in the tile.
+
+    using rows   = component::rows;
+    using cols   = component::cols;
+    using height = component::height;
+    using width  = component::width;
+
+    // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 
     // Real/imag tiles have same internal layout and size
-    dtype real;
-    dtype imag;
+    component real;
+    component imag;
 };
 
 /* ----------  CONCEPTS  ---------- */
 
 namespace ducks {
-namespace st {
+namespace cst {
 
 /**
 * @brief Concept for shared tiles that are complex.
@@ -57,9 +67,9 @@ namespace st {
 * - T is a shared tile.
 * - T has a complex tile identifier.
 */
-template <typename T> concept complex = requires {
+template <typename T> concept all = requires {
     typename T::identifier;
-} && std::is_same_v<typename T::identifier, cmplx_identifier> && ducks::st::all<typename T::dtype>;
+} && std::is_same_v<typename T::identifier, identifier> && ducks::st::all<typename T::component>;
 
 } // namespace st
 } // namespace ducks
@@ -67,7 +77,9 @@ template <typename T> concept complex = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width> using st_cmplx_bf = st_cmplx<bf16, _height, _width>;
+template<int _rows, int _cols> using cst_bf = cst<bf16,  _rows, _cols>;
+template<int _rows, int _cols> using cst_hf = cst<half,  _rows, _cols>;
+template<int _rows, int _cols> using cst_fl = cst<float, _rows, _cols>;
 
 
 
