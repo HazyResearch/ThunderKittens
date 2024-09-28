@@ -45,8 +45,8 @@ struct test_mul {
         const kittens::bf16 *input_re, const kittens::bf16 *input_im,
         kittens::bf16 *output_re, kittens::bf16 *output_im
     ) {
-        kittens::rt_cmplx_bf<H, W> a;
-        kittens::rt_cmplx_bf<H, W> c;
+        kittens::crt_bf<H, W> a;
+        kittens::crt_bf<H, W> c;
         kittens::load(a, input_re, input_im, W*16, W*16);
         kittens::mul(c, a, a);
         kittens::store(output_re, c.real, W*16);

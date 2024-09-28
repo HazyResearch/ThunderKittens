@@ -6,6 +6,7 @@
 #pragma once
 
 #include "rt.cuh"
+#include "crv.cuh"
 
 namespace kittens {
 
@@ -37,16 +38,16 @@ struct identifier {};
 template<typename _T, int _rows, int _cols, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct crt {
     using identifier = ducks::crt::identifier;
-    using component  = rt<_T, _rows, _cols, layout>; /// Data type of each internal tile.
+    using component  = rt<_T, _rows, _cols, _layout>; /// Data type of each internal tile.
     using layout     = component::layout; ///< Layout of the matrix tile, ensures compatibility with the rt concepts
     using T          = component::T;
     using T2         = component::T2;
     using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using rows       = component::rows;
-    using cols       = component::cols;
-    using height     = component::height;
-    using width      = component::width;
+    static constexpr int rows       = component::rows;
+    static constexpr int cols       = component::cols;
+    static constexpr int height     = component::height;
+    static constexpr int width      = component::width;
 
     // Real/imag tiles have same internal layout and size
     component real;
@@ -69,7 +70,7 @@ namespace crt {
 * - T is a register tile.
 * - T has a complex tile identifier.
 */
-template <typename T> concept complex = requires {
+template <typename T> concept all = requires {
     typename T::identifier;
 } && std::is_same_v<typename T::identifier, identifier> && ducks::rt::all<typename T::component>;
 

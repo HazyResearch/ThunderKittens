@@ -9,6 +9,10 @@
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
 
+#include "complex/complex_shared_to_register.cuh"
+#include "complex/complex_global_to_register.cuh"
+#include "complex/complex_global_to_shared.cuh"
+
 #ifdef KITTENS_HOPPER
 #include "tma.cuh"
 #endif

@@ -42,8 +42,8 @@ struct csv {
     using T2         = component::T2;
     using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using length     = component::length;
-    using tiles      = component::tiles;
+    static constexpr int length     = component::length;
+    static constexpr int tiles      = component::tiles;
 
     // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 

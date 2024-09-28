@@ -10,3 +10,4 @@
 #endif
 #include "util.cuh"
 #include "gl.cuh"
+#include "cgl.cuh"

@@ -28,7 +28,7 @@ namespace kittens {
  * @param src[in] Reference to the source register tile to be swapped.
  */
 template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void swap_layout(rt_cmplx<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const rt_cmplx<T2, _height, _width, layout> &src) {
+__device__ static inline void swap_layout(crt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type> &dst, const crt<T2, _height, _width, layout> &src) {
     swap_layout(dst.real, src.real);
     swap_layout(dst.real, src.real);
 }
@@ -43,7 +43,7 @@ __device__ static inline void swap_layout(rt_cmplx<T2, _height, _width, typename
  * @return A reference to the swapped register tile.
  */
 template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt_cmplx<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
+__device__ static inline crt<T2, _height, _width, typename ducks::rt_layout::transpose<layout>::type>& swap_layout_inplace(crt<T2, _height, _width, layout> &tile) {
     tile.real = swap_layout_inplace(tile.real);
     tile.imag = swap_layout_inplace(tile.imag);
     return tile;
@@ -65,7 +65,7 @@ __device__ static inline rt_cmplx<T2, _height, _width, typename ducks::rt_layout
  * @param src[in] Reference to the register tile to be transposed.
  */
 template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void transpose_sep(rt_cmplx<T2, _width, _height, layout> &dst, const rt_cmplx<T2, _height, _width, layout> &src) {
+__device__ static inline void transpose_sep(crt<T2, _width, _height, layout> &dst, const crt<T2, _height, _width, layout> &src) {
     transpose_sep(dst.real, src.real);
     transpose_sep(dst.imag, src.imag);
 }
@@ -80,7 +80,7 @@ __device__ static inline void transpose_sep(rt_cmplx<T2, _width, _height, layout
  * @return A reference to the transposed register tile.
  */
 template<typename T2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplace(rt_cmplx<T2, _height, _width, layout> &tile) {
+__device__ static inline crt<T2, _height, _width, layout>& transpose_inplace(crt<T2, _height, _width, layout> &tile) {
     tile.real = transpose_inplace(tile.real);
     tile.imag = transpose_inplace(tile.imag);
 
@@ -101,7 +101,7 @@ __device__ static inline rt_cmplx<T2, _height, _width, layout>& transpose_inplac
  * @param[in] src A reference to the source register tile.
  */
 template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
-__device__ static inline void copy(rt_cmplx<T2, _height, _width, layout> &dst, const rt_cmplx<U2, _height, _width, layout> &src) {
+__device__ static inline void copy(crt<T2, _height, _width, layout> &dst, const crt<U2, _height, _width, layout> &src) {
     copy(dst.real, src.real);
     copy(dst.imag, src.imag);
 }
