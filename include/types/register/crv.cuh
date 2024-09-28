@@ -45,17 +45,19 @@ struct identifier {};
  * the register layouts used by the tensor cores. ThunderKittens wants you working with tiles
  * where possible!
  */
+
 template<typename _T, size_t _length, ducks::rv_layout::all _layout=ducks::rv_layout::naive>
 struct crv {
-    using identifier = ducks::crt::identifier;
-    using component  = rv<_T, _length, layout>; /// Data type of each internal tile.
+    using identifier = ducks::crv::identifier;
+    using component  = rv<_T, _length, _layout>; /// Data type of each internal tile.
     using layout     = component::layout; ///< Layout of the matrix tile, ensures compatibility with the rv concepts
+    
     using T          = component::T;
     using T2         = component::T2;
     using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using length     = component::length;
-    using tiles      = component::tiles;
+    static constexpr int length     = component::length;
+    static constexpr int tiles      = component::tiles;
 
     // Real/imag tiles have same internal layout and size
     component real;

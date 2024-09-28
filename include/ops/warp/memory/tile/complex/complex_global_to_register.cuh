@@ -23,11 +23,11 @@ namespace kittens {
  * @param re_row_stride[in] The stride in elements between rows in the real component source array.
  * @param im_row_stride[in] The stride in elements between rows in the imaginary component source array.
  */
- template<ducks::rt::complex CRT, typename U>
-__device__ inline static void load(CRT &dst, const U *resrc, const U *imsrc, const int re_row_stride, const int im_row_stride) {
+ template<ducks::crt::all CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord &idx) {
     // Internally will use the correct load() method for row and column types
-    load(dst.real, resrc, re_row_stride);
-    load(dst.imag, imsrc, im_row_stride);
+    load(dst.real, src.real, idx);
+    load(dst.imag, src.imag, idx);
 }
 
 /**
@@ -41,12 +41,10 @@ __device__ inline static void load(CRT &dst, const U *resrc, const U *imsrc, con
  * @param re_row_stride[in] The stride in elements between rows in the real component destination array.
  * @param im_row_stride[in] The stride in elements between rows in the imaginary component destination array.
  */
-template<ducks::rt::complex CRT, typename U>
-__device__ inline static void store(U *redst, U *imdst, const CRT &src, const int re_row_stride, const int im_row_stride) {
+template<ducks::crt::all CRT, ducks::cgl::all CGL>
+__device__ inline static void store(CGL &dst, const CRT &src, const coord &idx) {
     // Internally will use the correct load() method for row and column types
-    store(redst, src.real, re_row_stride);
-    store(imdst, src.imag, im_row_stride);
+    store(dst.real, src.real, idx);
+    store(dst.imag, src.imag, idx);
 }
-
-
 }

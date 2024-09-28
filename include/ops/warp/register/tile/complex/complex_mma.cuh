@@ -27,10 +27,10 @@ namespace kittens {
  * @param[in] c The input rt_cmplx_hf<N, M, row_layout> accumulator matrix.
  */
 template<int N, int K, int M>
-__device__ static inline void mma_AB(rt_cmplx_hf<N, M, ducks::rt_layout::row> &d,
-                               const rt_cmplx_hf<N, K, ducks::rt_layout::row> &a,
-                               const rt_cmplx_hf<K, M, ducks::rt_layout::col> &b,
-                               const rt_cmplx_hf<N, M, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB(crt_hf<N, M, ducks::rt_layout::row> &d,
+                               const crt_hf<N, K, ducks::rt_layout::row> &a,
+                               const crt_hf<K, M, ducks::rt_layout::col> &b,
+                               const crt_hf<N, M, ducks::rt_layout::row> &c) {
     
     // Copy data from input accumulate register into output
     copy(d.real, c.real);
@@ -62,10 +62,10 @@ __device__ static inline void mma_AB(rt_cmplx_hf<N, M, ducks::rt_layout::row> &d
  */
 
 template<int N, int K, int M>
-__device__ static inline void mma_AB(rt_cmplx_fl<N, M, ducks::rt_layout::row> &d,
-                               const rt_cmplx_bf<N, K, ducks::rt_layout::row> &a,
-                               const rt_cmplx_bf<K, M, ducks::rt_layout::col> &b,
-                               const rt_cmplx_fl<N, M, ducks::rt_layout::row> &c) {
+__device__ static inline void mma_AB(crt_fl<N, M, ducks::rt_layout::row> &d,
+                               const crt_bf<N, K, ducks::rt_layout::row> &a,
+                               const crt_bf<K, M, ducks::rt_layout::col> &b,
+                               const crt_fl<N, M, ducks::rt_layout::row> &c) {
     
     // Copy data from input accumulate register into output
     copy(d.real, c.real);

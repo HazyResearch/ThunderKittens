@@ -42,10 +42,10 @@ struct cst {
     using T2         = component::T2;
     using dtype      = component::dtype; ///< Data type of the elements in the tile.
 
-    using rows       = component::rows;
-    using cols       = component::cols;
-    using height     = component::height;
-    using width      = component::width;
+    static constexpr int rows       = component::rows;
+    static constexpr int cols       = component::cols;
+    static constexpr int height     = component::height;
+    static constexpr int width      = component::width;
 
     // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 

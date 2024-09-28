@@ -24,10 +24,10 @@ namespace kittens {
  * @param re_row_stride[in] The stride between rows in the source real component array.
  * @param im_row_stride[in] The stride between rows in the source imaginary component array.
  */
-template<ducks::st::complex CST>
-__device__ static inline void load(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride) {
-    load(dst.real, resrc, re_row_stride);
-    load(dst.imag, imsrc, im_row_stride);
+template<ducks::cst::all CST, ducks::cgl::all CGL>
+__device__ static inline void load(CST &dst, const CGL &src, const coord &idx) {
+    load(dst.real, src.real, idx);
+    load(dst.imag, src.imag, idx);
 }
 
 /**
@@ -40,10 +40,10 @@ __device__ static inline void load(CST &dst, const typename CST::dtype::dtype *r
  * @param re_row_stride[in] The stride between rows in the destination real component array.
  * @param im_row_stride[in] The stride between rows in the destination imaginary component array.
  */
-template<ducks::st::complex CST>
-__device__ static inline void store(const typename CST::dtype::dtype *redst, const typename CST::dtype::dtype *imdst, CST &src, const int re_row_stride, const int im_row_stride) {
-    store(redst, src.real, re_row_stride);
-    store(imdst, src.imag, im_row_stride);
+template<ducks::cst::all CST, ducks::cgl::all CGL>
+__device__ static inline void store(const CGL &dst, CST &src, const coord &idx) {
+    store(dst.real, src.real, idx);
+    store(dst.imag, src.imag, idx);
 }
 
 /**
@@ -59,10 +59,10 @@ __device__ static inline void store(const typename CST::dtype::dtype *redst, con
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::complex CST>
-__device__ static inline void load_async(CST &dst, const typename CST::dtype::dtype *resrc, const typename CST::dtype::dtype *imsrc, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    load_async(dst.real, resrc, re_row_stride, barrier);
-    load_async(dst.imag, imsrc, im_row_stride, barrier);
+template<ducks::cst::all CST, ducks::cgl::all CGL>
+__device__ static inline void load_async(CST &dst, CGL &src, const coord &idx, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    load_async(dst.real, src.real, idx, barrier);
+    load_async(dst.imag, src.imag, idx, barrier);
 }
 
 /**
@@ -78,10 +78,10 @@ __device__ static inline void load_async(CST &dst, const typename CST::dtype::dt
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::complex CST>
-__device__ static inline void store_async(typename CST::dtype::dtype *redst, typename CST::dtype::dtype *imdst, const CST &src, const int re_row_stride, const int im_row_stride, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    store_async(redst, src.real, re_row_stride, barrier);
-    store_async(imdst, src.imag, im_row_stride, barrier);
+template<ducks::cst::all CST, ducks::cgl::all CGL>
+__device__ static inline void store_async(CGL &dst, const CST &src, const coord &idx, cuda::barrier<cuda::thread_scope_block> &barrier) {
+    store_async(dst.real, src.real, idx, barrier);
+    store_async(dst.imag, src.imag, idx, barrier);
 }
 
 }

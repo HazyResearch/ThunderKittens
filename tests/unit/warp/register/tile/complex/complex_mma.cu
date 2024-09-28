@@ -64,9 +64,9 @@ struct test_cmplx_mma_AB {
     template<int H, int W, int NW, typename _K> __device__ static void device_func(const kittens::bf16 *re_input, const kittens::bf16 *im_input, 
                                                                                     kittens::bf16 *re_output, kittens::bf16 *im_output) {
         constexpr int K = _K::value;
-        kittens::rt_cmplx_bf<H, K> a;
-        kittens::rt_cmplx_bf<K, W, kittens::ducks::rt_layout::col> b;
-        kittens::rt_cmplx_fl<H, W> c;
+        kittens::crt_bf<H, K> a;
+        kittens::crt_bf<K, W, kittens::ducks::rt_layout::col> b;
+        kittens::crt_fl<H, W> c;
         kittens::load(a, re_input, im_input, K*16, K*16);
         kittens::load(b, re_input+a.real.num_elements, im_input+a.imag.num_elements, W*16, W*16);
         kittens::zero(c);

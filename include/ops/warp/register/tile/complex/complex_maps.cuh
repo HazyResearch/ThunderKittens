@@ -17,7 +17,7 @@ namespace kittens {
  * @tparam T Complex tile type.
  * @param dst[out] Destination tile where the result is stored.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void zero(T &dst) {
     zero(dst.real);
     zero(dst.imag);
@@ -29,7 +29,7 @@ __device__ static inline void zero(T &dst) {
  * @param dst[out] Destination tile where the result is stored.
  * @param src[in] Source tile to apply the exponential function on.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     using dtype = T::dtype;
     dtype tmp;
@@ -57,7 +57,7 @@ __device__ static inline void exp(T &dst, const T &src) {
  * @param lhs[in] Left-hand side source tile for the addition.
  * @param rhs[in] Right-hand side source tile for the addition.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void add(T &dst, const T &lhs, const T &rhs) {
     add(dst.real, lhs.real, rhs.real);
     add(dst.imag, lhs.imag, rhs.imag);
@@ -71,7 +71,7 @@ __device__ static inline void add(T &dst, const T &lhs, const T &rhs) {
  * @param lhs[in] Left-hand side source tile for the subtraction.
  * @param rhs[in] Right-hand side source tile for the subtraction.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void sub(T &dst, const T &lhs, const T &rhs) {
     sub(dst.real, lhs.real, rhs.real);
     sub(dst.imag, lhs.imag, rhs.imag);
@@ -84,7 +84,7 @@ __device__ static inline void sub(T &dst, const T &lhs, const T &rhs) {
  * @param lhs[in] Left-hand side source tile for the multiplication.
  * @param rhs[in] Right-hand side source tile for the multiplication.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void mul(T &dst, const T &lhs, const T &rhs) {
     using dtype = T::dtype;
     dtype tmp;
@@ -114,7 +114,7 @@ __device__ static inline void mul(T &dst, const T &lhs, const T &rhs) {
  * @param lhs[in] Left-hand side source tile for the division.
  * @param rhs[in] Right-hand side source tile or scalar for the division.
  */
-template<ducks::rt::complex T>
+template<ducks::crt::all T>
 __device__ static inline void div(T &dst, const T &lhs, const T &rhs) {
     using dtype = T::dtype;
     dtype tmp;
