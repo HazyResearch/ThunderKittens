@@ -86,7 +86,7 @@ __device__ static inline void sub(T &dst, const T &lhs, const T &rhs) {
  */
 template<ducks::crt::all T>
 __device__ static inline void mul(T &dst, const T &lhs, const T &rhs) {
-    using dtype = T::dtype;
+    using dtype = T::component;
     dtype tmp;
     // out of place storage regs
     dtype rdst;
