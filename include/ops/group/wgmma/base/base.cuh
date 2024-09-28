@@ -89,21 +89,19 @@ struct descriptor {
 };
 
 // templated wrapper for PTX
-template<typename T_D, typename T_AB, int cols, int trans_a, int trans_b>
+template<typename T_D, typename T_AB, int cols, int trans_a, int trans_b, int inv=1>
 struct base {
-    __device__ static inline void rt_st(
+    template<int scale_b=1> __device__ static inline void rt_st(
         rt<T_D, 16, cols, ducks::rt_layout::row> &dst,
         const rt<T_AB, 16, cols, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
-        int scale_d = 1,
-        int scale_b = 1
+        int scale_d = 1
     );
-    __device__ static inline void st_st(
+    template<int scale_b=1> __device__ static inline void st_st(
         rt<T_D, 16, cols, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
-        int scale_d = 1,
-        int scale_b = 1
+        int scale_d = 1
     );
 };
 

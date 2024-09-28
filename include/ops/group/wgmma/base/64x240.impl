@@ -1,11 +1,10 @@
 template<typename T_D, typename T_AB, int trans_a, int trans_b>
 struct base<T_D, T_AB, 240, trans_a, trans_b> {
-    __device__ static inline void rt_st(
+    template<int scale_b=1> __device__ static inline void rt_st(
         rt<T_D, 16, 240, ducks::rt_layout::row> &dst,
         const rt_base<T_AB, ducks::rt_layout::row> & a_rt,
         const uint64_t b_st_desc,
-        int scale_d = 1,
-        int scale_b = 1
+        int scale_d = 1
     ) {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
@@ -13,6 +12,7 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
             (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>),
             "Invalid type combination for WGMMA."
         );
+        static_assert(scale_b==1 || scale_b==-1, "Invalid scale B (invert) option");
         // ----- BF16,BF16 -> FP32 ----- //
         if constexpr (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) {
             asm volatile (
@@ -91,7 +91,7 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP32 ----- //
@@ -172,7 +172,7 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP16 ----- //
@@ -253,16 +253,15 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
                 
-                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "r"(scale_b)
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
             );
         }
     }
-    __device__ static inline void st_st(
+    template<int scale_b=1> __device__ static inline void st_st(
         rt<T_D, 16, 240, ducks::rt_layout::row> &dst,
         const uint64_t a_st_desc,
         const uint64_t b_st_desc,
-        int scale_d = 1,
-        int scale_b = 1
+        int scale_d = 1
     ) {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
@@ -270,6 +269,7 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
             (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>),
             "Invalid type combination for WGMMA."
         );
+        static_assert(scale_b==1 || scale_b==-1, "Invalid scale B (invert) option");
         // ----- BF16,BF16 -> FP32 ----- //
         if constexpr (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) {
             asm volatile (
@@ -350,7 +350,8 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
                 
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b), "r"(scale_b)
+                "n"(trans_b),
+                "n"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP32 ----- //
@@ -433,7 +434,8 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
                 
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b), "r"(scale_b)
+                "n"(trans_b),
+                "n"(scale_b)
             );
         }
         // ----- FP16,FP16 -> FP16 ----- //
@@ -516,7 +518,8 @@ struct base<T_D, T_AB, 240, trans_a, trans_b> {
                 
                 "r"(scale_d),
                 "n"(trans_a),
-                "n"(trans_b), "r"(scale_b)
+                "n"(trans_b),
+                "n"(scale_b)
             );
         }
     }

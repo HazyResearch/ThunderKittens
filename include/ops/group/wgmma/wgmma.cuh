@@ -574,11 +574,11 @@ __device__ static inline void mma_AB(D &d,
         }
         #pragma unroll
         for(int k = 0; k < K; k++) {
-            base::rt_st(
+            base::rt_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
                 d_ref,
                 a.imag.tiles[m][k],
                 b_desc_imag.chunk_descriptor(k),
-                1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+                1
             );
         }
     }
@@ -662,11 +662,11 @@ __device__ static inline void mma_AB(D &d,
     }
     #pragma unroll
     for(int k = 0; k < K; k++) {
-        base::st_st(
+        base::st_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
             d.real,
             a_desc_imag.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
-            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+            1
         );
     }
     base::st_st(
@@ -760,11 +760,11 @@ __device__ static inline void mma_ABt(D &d,
         }
         #pragma unroll
         for(int k = 0; k < K; k++) {
-            base::rt_st(
+            base::rt_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
                 d_ref,
                 a.imag.tiles[m][k],
                 b_desc_imag.chunk_descriptor(k),
-                1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+                1
             );
         }
     }
@@ -863,11 +863,11 @@ __device__ static inline void mma_ABt(D &d,
     }
     #pragma unroll
     for(int k = 0; k < K; k++) {
-        base::st_st(
+        base::st_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
             d.real,
             a_desc_imag.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
-            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+            1
         );
     }
     base::st_st(
@@ -961,11 +961,11 @@ __device__ static inline void mma_AtB(D &d,
     }
     #pragma unroll
     for(int k = 0; k < K; k++) {
-        base::st_st(
+        base::st_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
             d.real,
             a_desc_imag.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
-            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+            1
         );
     }
     base::st_st(
@@ -1055,11 +1055,11 @@ __device__ static inline void mma_AtBt(D &d,
     }
     #pragma unroll
     for(int k = 0; k < K; k++) {
-        base::st_st(
+        base::st_st<-1>( // INVERT THE SIGN OF THE IMAGINARY PART
             d.real,
             a_desc_imag.chunk_descriptor(k),
             b_desc_imag.chunk_descriptor(k),
-            1, -1 // INVERT THE SIGN OF THE IMAGINARY PART
+            1
         );
     }
     base::st_st(
