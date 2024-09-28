@@ -7,3 +7,4 @@
 
 #include "sv.cuh"
 #include "st.cuh"
+#include "cst.cuh"
