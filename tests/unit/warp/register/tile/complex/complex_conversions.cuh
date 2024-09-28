@@ -7,10 +7,12 @@
 namespace warp {
 namespace reg {
 namespace tile {
+namespace complex {
 namespace conversions {
 
 void tests(test_data &results);
 
+}
 }
 }
 }

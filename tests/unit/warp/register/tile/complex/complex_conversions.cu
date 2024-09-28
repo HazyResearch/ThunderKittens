@@ -81,7 +81,7 @@ struct test_make_causal {
     }
 };
 
-void warp::reg::tile::conversions::tests(test_data &results) {
+void warp::reg::tile::complex::conversions::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/register/tile/conversions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 

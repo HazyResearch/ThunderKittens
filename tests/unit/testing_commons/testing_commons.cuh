@@ -180,9 +180,9 @@ template<template<typename> typename test, int MAX_S=8, typename... args> using 
 
 // ----- 2D Wrappers -----
 
-template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ void global_wrapper_2d(const GL input, GL output) {
-    Ker::template device_func<H, W, NW, GL, args...>(input, output);
+template<typename Ker, typename T, int H, int W, int NW, typename G, typename... args>
+static __global__ void global_wrapper_2d(const __grid_constant__ G input, const __grid_constant__ G output) {
+    Ker::template device_func<H, W, NW, G, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
 struct wrapper_2d {

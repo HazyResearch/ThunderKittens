@@ -21,17 +21,17 @@ void warp::reg::tile::tests(test_data &results) {
 
 #ifdef TEST_WARP_REGISTER_TILE_COMPLEX
     std::cout << "\n --------------- Starting ops/warp/register/tile/complex tests! ---------------\n" << std::endl;
-// #ifdef TEST_WARP_REGISTER_TILE_CONVERSIONS_COMPLEX
-//     warp::reg::tile::conversions::tests(results);
-// #endif
-// #ifdef TEST_WARP_REGISTER_TILE_MAPS_COMPLEX
-//     warp::reg::tile::maps::tests(results);
-// #endif
-// #ifdef TEST_WARP_REGISTER_TILE_MMA_COMPLEX
-//     warp::reg::tile::mma::tests(results);
-// #endif
+#ifdef TEST_WARP_REGISTER_TILE_CONVERSIONS_COMPLEX
+    warp::reg::tile::complex::conversions::tests(results);
+#endif
+#ifdef TEST_WARP_REGISTER_TILE_MAPS_COMPLEX
+    warp::reg::tile::complex::maps::tests(results);
+#endif
+#ifdef TEST_WARP_REGISTER_TILE_MMA_COMPLEX
+    warp::reg::tile::complex::mma::tests(results);
+#endif
 #ifdef TEST_WARP_REGISTER_TILE_MUL_COMPLEX
-    warp::reg::tile::mul::tests(results);
+    warp::reg::tile::complex::mul::tests(results);
 #endif
 #endif
 
