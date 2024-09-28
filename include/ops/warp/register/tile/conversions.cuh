@@ -310,7 +310,7 @@ __device__ static inline void make_causal(RT &dst, const RT &src, const typename
 * @tparam subtile_height The height of the subtile.
 * @tparam RT The type of the input tile, which must satisfy the ducks::rt::all concept.
 * @param src The input tile.
-* @param idx The index of the subtile.
+* @param idx The coord of the subtile.
 * @return A reference to the subtile.
 *
 * @note The subtile height must evenly divide the tile height.

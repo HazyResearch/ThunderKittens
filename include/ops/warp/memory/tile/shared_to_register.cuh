@@ -41,8 +41,8 @@ __device__ inline static void load(RT &dst, const ST &src) {
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
-                // handle the row-major layout
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
+                // handle the row-major layout for 16-bit types
                 int row = i*dst.tile_size + (laneid / 4);
                 int col = j*dst.tile_size + 2*(laneid % 4);
                 U2 tmp[4];
@@ -55,27 +55,48 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+                // handle the row-major layout for 32-bit types
+                int row = i*dst.tile_size + (laneid / 4);
+                int col = j*dst.tile_size + 2*(laneid % 4);
+                int blit = (laneid%4)/2;
+                U2 tmp[4];
+                move<U>::lds(tmp[0].x, &src[{row+0, (col+0)^blit}]);
+                move<U>::lds(tmp[0].y, &src[{row+0, (col+1)^blit}]);
+                move<U>::lds(tmp[1].x, &src[{row+8, (col+0)^blit}]);
+                move<U>::lds(tmp[1].y, &src[{row+8, (col+1)^blit}]);
+                move<U>::lds(tmp[2].x, &src[{row+0, (col+8)^blit}]);
+                move<U>::lds(tmp[2].y, &src[{row+0, (col+9)^blit}]);
+                move<U>::lds(tmp[3].x, &src[{row+8, (col+8)^blit}]);
+                move<U>::lds(tmp[3].y, &src[{row+8, (col+9)^blit}]);
+                dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+                dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+                dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+                dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+                if(blit) {
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++) {
+                        dst.tiles[i][j].data[k] = {dst.tiles[i][j].data[k].y, dst.tiles[i][j].data[k].x};
+                    }
+                }
+            }
             else {
                 // handle the column-major layout
                 int row = i*dst.tile_size + 2*(laneid % 4);
                 int col = j*dst.tile_size + (laneid / 4);
-                U tmp[8];
-                move<U>::lds(tmp[0], &src[{row+0, col+0}]);
-                move<U>::lds(tmp[1], &src[{row+1, col+0}]);
-                move<U>::lds(tmp[2], &src[{row+0, col+8}]);
-                move<U>::lds(tmp[3], &src[{row+1, col+8}]);
-                move<U>::lds(tmp[4], &src[{row+8, col+0}]);
-                move<U>::lds(tmp[5], &src[{row+9, col+0}]);
-                move<U>::lds(tmp[6], &src[{row+8, col+8}]);
-                move<U>::lds(tmp[7], &src[{row+9, col+8}]);
-                dst.tiles[i][j].data[0].x = base_types::convertor<T, U>::convert(tmp[0]);
-                dst.tiles[i][j].data[0].y = base_types::convertor<T, U>::convert(tmp[1]);
-                dst.tiles[i][j].data[1].x = base_types::convertor<T, U>::convert(tmp[2]);
-                dst.tiles[i][j].data[1].y = base_types::convertor<T, U>::convert(tmp[3]);
-                dst.tiles[i][j].data[2].x = base_types::convertor<T, U>::convert(tmp[4]);
-                dst.tiles[i][j].data[2].y = base_types::convertor<T, U>::convert(tmp[5]);
-                dst.tiles[i][j].data[3].x = base_types::convertor<T, U>::convert(tmp[6]);
-                dst.tiles[i][j].data[3].y = base_types::convertor<T, U>::convert(tmp[7]);
+                U2 tmp[4];
+                move<U>::lds(tmp[0].x, &src[{row+0, col+0}]);
+                move<U>::lds(tmp[0].y, &src[{row+1, col+0}]);
+                move<U>::lds(tmp[1].x, &src[{row+0, col+8}]);
+                move<U>::lds(tmp[1].y, &src[{row+1, col+8}]);
+                move<U>::lds(tmp[2].x, &src[{row+8, col+0}]);
+                move<U>::lds(tmp[2].y, &src[{row+9, col+0}]);
+                move<U>::lds(tmp[3].x, &src[{row+8, col+8}]);
+                move<U>::lds(tmp[3].y, &src[{row+9, col+8}]);
+                dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+                dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+                dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+                dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
         }
     }
@@ -106,7 +127,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);
@@ -119,6 +140,38 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 move<U2>::sts(&dst[{row+8, col+0}], tmp[1]);
                 move<U2>::sts(&dst[{row+0, col+8}], tmp[2]);
                 move<U2>::sts(&dst[{row+8, col+8}], tmp[3]);
+            }
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+                // handle the row-major layout for 32-bit types
+                int row = i*src.tile_size + (laneid / 4);
+                int col = j*src.tile_size + 2*(laneid % 4);
+                int blit = (laneid%4) / 2;
+                T2 reg_tmp[4];
+                if(blit) {
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++) {
+                        reg_tmp[k] = T2{src.tiles[i][j].data[k].y, src.tiles[i][j].data[k].x};
+                    }
+                }
+                else {
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++) {
+                        reg_tmp[k] = src.tiles[i][j].data[k];
+                    }
+                }
+                U2 tmp[4];
+                tmp[0] = base_types::convertor<U2, T2>::convert(reg_tmp[0]);
+                tmp[1] = base_types::convertor<U2, T2>::convert(reg_tmp[1]);
+                tmp[2] = base_types::convertor<U2, T2>::convert(reg_tmp[2]);
+                tmp[3] = base_types::convertor<U2, T2>::convert(reg_tmp[3]);
+                move<U>::sts(&dst[{row+0, (col+0)^blit}], tmp[0].x);
+                move<U>::sts(&dst[{row+0, (col+1)^blit}], tmp[0].y);
+                move<U>::sts(&dst[{row+8, (col+0)^blit}], tmp[1].x);
+                move<U>::sts(&dst[{row+8, (col+1)^blit}], tmp[1].y);
+                move<U>::sts(&dst[{row+0, (col+8)^blit}], tmp[2].x);
+                move<U>::sts(&dst[{row+0, (col+9)^blit}], tmp[2].y);
+                move<U>::sts(&dst[{row+8, (col+8)^blit}], tmp[3].x);
+                move<U>::sts(&dst[{row+8, (col+9)^blit}], tmp[3].y);
             }
             else {
                 // handle the column-major layout

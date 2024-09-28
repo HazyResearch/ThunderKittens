@@ -42,8 +42,8 @@ __device__ static inline void copy(st<T, _height, _width> &dst, const st<U, _hei
 * @tparam subtile_width The width of the subtile.
 * @tparam ST The type of the input tile, which must satisfy the ducks::st::all concept.
 * @param src The input tile.
-* @param row_idx The row index of the subtile, in units of subtile_height*16 elements.
-* @param col_idx The col index of the subtile, in units of subtile_width*16 elements.
+* @param row_idx The row coord of the subtile, in units of subtile_height*16 elements.
+* @param col_idx The col coord of the subtile, in units of subtile_width*16 elements.
 * @return A reference to the subtile.
 *
 * @note The subtile {height, width} must evenly divide the tile {height, width}.

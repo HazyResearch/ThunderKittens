@@ -46,7 +46,7 @@ struct test_load_multicast { // load with TMA, write out normally
 };
 
 template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_2d(GL input, GL output) {
+static __global__ __cluster_dims__(4, 1, 1) void tmamulti_global_wrapper_2d(const __grid_constant__ GL input, const __grid_constant__ GL output) {
     Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
@@ -77,8 +77,6 @@ struct tmamulti_wrapper_2d {
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*kittens::TILE_DIM);
-            input.cleanup();
-            output.cleanup();
         }
         else {
             this_result.result = test_result::INVALID;

@@ -18,10 +18,10 @@ namespace kittens {
  * @tparam ST The shared memory vector type.
  * @param[out] dst The destination shared memory vector.
  * @param[in] src The source global memory array.
- * @param[in] idx The index of the global memory array.
+ * @param[in] idx The coord of the global memory array.
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load(SV &dst, const GL &src, const index &idx) {
+__device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (dst.length + WARP_THREADS*elem_per_transfer - 1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
@@ -40,10 +40,10 @@ __device__ static inline void load(SV &dst, const GL &src, const index &idx) {
  * @tparam ST The shared memory vector type.
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory vector.
- * @param[in] idx The index of the global memory array.
+ * @param[in] idx The coord of the global memory array.
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void store(GL &dst, const SV &src, const index &idx) {
+__device__ static inline void store(GL &dst, const SV &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (src.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
@@ -63,10 +63,10 @@ __device__ static inline void store(GL &dst, const SV &src, const index &idx) {
  * @tparam SV The shared memory vector type.
  * @param[out] dst The destination shared memory vector.
  * @param[in] src The source global memory array.
- * @param[in] idx The index of the global memory array.
+ * @param[in] idx The coord of the global memory array.
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load_async(SV &dst, const GL &src, const index &idx) {
+__device__ static inline void load_async(SV &dst, const GL &src, const coord &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr int total_calls = (dst.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);

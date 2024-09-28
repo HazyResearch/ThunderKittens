@@ -84,7 +84,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
 
-    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major index default
+    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major coord default
         static constexpr int swizzle_repeat = swizzle_bytes * 8;
         static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
         const int outer_idx = c/subtile_cols;
@@ -178,7 +178,7 @@ struct st_subtile {
         col_offset = _col_offset;
     }
 
-    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major index default
+    __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major coord default
         static constexpr int swizzle_repeat = swizzle_bytes * 8;
         static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
         const int outer_idx = c/subtile_cols;
@@ -199,7 +199,7 @@ struct st_subtile {
         return *(const dtype*)idx((dtype*)data, rowcol.x+row_offset, rowcol.y+col_offset);
     }
 
-    // single-index operator[] is left undefined as it would likely be an improper use of st_subtile type.
+    // single-coord operator[] is left undefined as it would likely be an improper use of st_subtile type.
     // can of course be end-run by just accessing .data directly.
 
     // vector types
