@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include <cuda/pipeline>
-
 #include "../../../../../common/common.cuh"
 #include "../../../../../types/types.cuh"
 
@@ -60,28 +58,8 @@ __device__ static inline void store(const CGL &dst, CST &src, const coord &idx) 
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::cst::all CST, ducks::cgl::all CGL>
-__device__ static inline void load_async(CST &dst, CGL &src, const coord &idx, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    load_async(dst.real, src.real, idx, barrier);
-    load_async(dst.imag, src.imag, idx, barrier);
+__device__ static inline void load_async(CST &dst, const CGL &src, const coord &idx) {
+    load_async(dst.real, src.real, idx);
+    load_async(dst.imag, src.imag, idx);
 }
-
-/**
- * @brief Asynchronously stores data from a complex shared memory tile with a row layout into global memory using CUDA barriers.
- *
- * @tparam ST The type of the shared tile
- * @param[out] redst The destination real component global memory array.
- * @param[out] imdst The destination imaginary component global memory array.
- * @param[in] src The source shared memory tile.
- * @param re_row_stride[in] The stride between rows in the real component destination array.
- * @param im_row_stride[in] The stride between rows in the imaginary component destination array.
- * @param barrier[in,out] The CUDA barrier used for synchronization.
- *
- * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
- */
-template<ducks::cst::all CST, ducks::cgl::all CGL>
-__device__ static inline void store_async(CGL &dst, const CST &src, const coord &idx, cuda::barrier<cuda::thread_scope_block> &barrier) {
-    store_async(dst.real, src.real, idx, barrier);
-    store_async(dst.imag, src.imag, idx, barrier);
-}
-
 }

@@ -50,7 +50,7 @@ __device__ static inline void mma_fence(D &dst) {
         #pragma unroll
         for(int j = 0; j < D::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
+            for(int k = 0; k < dst.real.packed_per_tile; k++) {
                 if constexpr(std::is_same_v<typename D::T, float>) {
                     asm volatile("" : "+f"(dst.real.tiles[i][j].data[k].x) :: "memory");
                     asm volatile("" : "+f"(dst.real.tiles[i][j].data[k].y) :: "memory");
@@ -619,7 +619,7 @@ __device__ static inline void mm_AB(D &d,
     mma_AB<D, A, B, 1, 0>(d, a, b);
 }
 
-template<ducks::rt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {

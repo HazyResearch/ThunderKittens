@@ -132,6 +132,7 @@ template<typename T> concept complex_input = ducks::cst::all<T>;
 namespace detail {
 template<typename T> struct st_getter { using type = typename T::ST; };
 template<ducks::st::all T> struct st_getter<T> { using type = T; };
+template<ducks::cst::all T> struct st_getter<T> { using type = T::component; };
 template<typename T> using get_st = typename st_getter<T>::type;
 }
 }

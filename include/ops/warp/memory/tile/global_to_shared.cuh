@@ -95,7 +95,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, GL &src, const coord &idx) {
+__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     const int row_stride = src.row_stride();
 
