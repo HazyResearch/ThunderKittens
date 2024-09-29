@@ -4,17 +4,15 @@
 
 #include "testing_commons.cuh"
 
-#include "mma_fp32_bf16.cuh"
-#include "mma_fp32_fp16.cuh"
-#include "mma_fp16_fp16.cuh"
-// #include "mma_fp32_fp32.cuh" TODO
-#include "complex/complex_wgmma.cuh"
+// #include "complex_mma_fp32_bf16.cuh"
+// #include "complex_mma_fp32_fp16.cuh"
+#include "complex_mma_fp16_fp16.cuh"
 
 namespace group {
 namespace wgmma {
-
+namespace complex {
 void tests(test_data &results);
-
+}
 }
 }
 

@@ -14,6 +14,7 @@
 template<ducks::crt::all RT, ducks::cst::all ST>
 __device__ inline static void load(RT &dst, const ST &src) {
     load(dst.real, src.real);
+    load(dst.imag, src.imag);
 }
 
 
@@ -28,5 +29,6 @@ __device__ inline static void load(RT &dst, const ST &src) {
 template<ducks::cst::all ST, ducks::crt::all RT>
 __device__ inline static void store(ST &dst, const RT &src) {
     store(dst.real, src.real);
+    store(dst.imag, src.imag);
 }
 
