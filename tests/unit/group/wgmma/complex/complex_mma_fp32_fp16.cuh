@@ -1,17 +1,15 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_GROUP_WGMMA
+#ifdef TEST_GROUP_WGMMA_MMA_FP32_FP16
 
 #include "testing_commons.cuh"
-
-#include "complex_mma_fp32_bf16.cuh"
-#include "complex_mma_fp32_fp16.cuh"
-#include "complex_mma_fp16_fp16.cuh"
 
 namespace group {
 namespace wgmma {
 namespace complex {
+namespace complex_mma_fp32_fp16 {
 void tests(test_data &results);
+}
 }
 }
 }
