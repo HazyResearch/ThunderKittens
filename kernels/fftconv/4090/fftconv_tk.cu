@@ -144,14 +144,12 @@ __global__ void fftconv_tk(
 
                 // x = x @ f_32_fft 
                 zero(mma_reg);
-                // mma_AB(mma_reg, fft_mat_reg, a_reg_col,  mma_reg);
-                transpose_inplace(fft_mat_reg);
-                swap_layout(a_reg_col, fft_mat_reg);
-                kittens::mma_AB(mma_reg, a_reg, a_reg_col,  mma_reg);
+                kittens::mma_AB(mma_reg, a_reg, fft_mat_reg,  mma_reg);
                 copy(a_reg, mma_reg);
 
                 // transpose
                 // transpose_inplace(a_reg);
+                
                 // twiddle
                 // int tw_start = (i * chunk_size);
                 // load(b_reg, tw_32_1k_real + tw_start, tw_32_1k_imag + tw_start, 1024, 1024);
