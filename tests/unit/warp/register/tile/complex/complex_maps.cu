@@ -16,7 +16,7 @@ struct test_exp {
     }
 };
 
-void warp::reg::tile::maps::tests(test_data &results) {
+void warp::reg::tile::complex::maps::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/register/tile/maps tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
