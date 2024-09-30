@@ -53,6 +53,7 @@ template<pc_layout T> struct producer_load_args {
     using producer_state_type = typename detail::producer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
+    coord & task_coord;
     input_block_type & input;
     producer_state_type & state;
     scratch_block_type & scratch;
@@ -63,14 +64,15 @@ template<pc_layout T> struct producer_load_args {
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ producer_load_args(input_block_type& _input, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
-        : input(_input), state(_state), scratch(_scratch), globals(_globals), inputs_arrived(_inputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
+    __device__ producer_load_args(coord & _task_coord, input_block_type& _input, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+        : task_coord(_task_coord), input(_input), state(_state), scratch(_scratch), globals(_globals), inputs_arrived(_inputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct producer_store_args {
     using output_block_type = typename detail::output_block_getter<T>::type;
     using producer_state_type = typename detail::producer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
+    coord & task_coord;
     output_block_type & output;
     producer_state_type & state;
     scratch_block_type & scratch;
@@ -81,8 +83,8 @@ template<pc_layout T> struct producer_store_args {
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ producer_store_args(output_block_type& _output, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _outputs_finished, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
-        : output(_output), state(_state), scratch(_scratch), globals(_globals), outputs_finished(_outputs_finished), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
+    __device__ producer_store_args(coord & _task_coord, output_block_type& _output, producer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _outputs_finished, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+        : task_coord(_task_coord), output(_output), state(_state), scratch(_scratch), globals(_globals), outputs_finished(_outputs_finished), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct consumer_setup_args {
     using globals_type = typename T::globals;
@@ -104,6 +106,7 @@ template<pc_layout T> struct consumer_work_args {
     using consumer_state_type = typename detail::consumer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
+    coord & task_coord;
     input_block_type & input;
     output_block_type & output;
     consumer_state_type & state;
@@ -116,25 +119,27 @@ template<pc_layout T> struct consumer_work_args {
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ consumer_work_args(input_block_type& _input, output_block_type& _output, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_finished, barrier& _outputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
-        : input(_input), output(_output), state(_state), scratch(_scratch), globals(_globals), inputs_finished(_inputs_finished), outputs_arrived(_outputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
+    __device__ consumer_work_args(coord & _task_coord, input_block_type& _input, output_block_type& _output, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier& _inputs_finished, barrier& _outputs_arrived, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+        : task_coord(_task_coord), input(_input), output(_output), state(_state), scratch(_scratch), globals(_globals), inputs_finished(_inputs_finished), outputs_arrived(_outputs_arrived), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<pc_layout T> struct consumer_finish_args {
     using finish_block_type = typename detail::finish_block_getter<T>::type;
     using consumer_state_type = typename detail::consumer_state_getter<T>::type;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using globals_type = typename T::globals;
+    coord & task_coord;
     finish_block_type & finish;
     consumer_state_type & state;
     scratch_block_type & scratch;
     const globals_type & globals;
+    barrier & finish_finished;
     barrier * all_inputs_arrived;
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
     int & iter;
-    __device__ consumer_finish_args(finish_block_type& _finish, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
-        : finish(_finish), state(_state), scratch(_scratch), globals(_globals), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
+    __device__ consumer_finish_args(coord & _task_coord, finish_block_type& _finish, consumer_state_type& _state, scratch_block_type& _scratch, const globals_type& _globals, barrier & _finish_finished, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished, int & _iter)
+        : task_coord(_task_coord), finish(_finish), state(_state), scratch(_scratch), globals(_globals), finish_finished(_finish_finished), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished), iter(_iter) {}
 };
 template<typename pct> concept pc_template = requires {
     typename pct::layout;
@@ -183,6 +188,12 @@ template<pc_template T> constexpr int num_consumer_warpgroups = num_consumer_war
 template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
 template<int N> __device__ static inline int ring_retreat(int ring) { return (ring + N-1) % N; }
 
+template<int half> __device__ static inline bool get_phasebit(uint32_t bitfield, int ring_id) {
+    return (bitfield & (1 << (half*16 + ring_id))) != 0;
+}
+template<int half> __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
+    bitfield ^= (1 << (half*16 + ring_id));
+}
 template<typename pct>
 __global__ __launch_bounds__(num_threads<pct>, num_blocks<pct>)
 void pc(const __grid_constant__ typename pct::layout::globals g) {
@@ -196,19 +207,24 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
     using scratch_block  = typename layout::scratch_block_type;
     using finish_block   = typename layout::finish_block_type;
     constexpr int OUTPUT_PIPE_STAGES = output_pipe_stages<pct> < 1 ? 1 : output_pipe_stages<pct>; // Even if the producer doesn't have a store, we need to allocate the empty struct
-    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 32, "Invalid number of output pipe stages");
-    constexpr int NUM_BLOCKS = num_blocks<pct>;
+    static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 16, "Invalid number of output pipe stages");
     constexpr int INPUT_PIPE_STAGES = input_pipe_stages<pct>;
-    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 32, "Invalid number of input pipe stages");
+    static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 16, "Invalid number of input pipe stages");
     constexpr int NUM_CONSUMER_WARPS = num_consumer_warps<pct>;
     constexpr int NUM_PRODUCER_WARPS = num_producer_warps<pct>;
+    
 
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
     input_block   (&input_smem)  [INPUT_PIPE_STAGES]  = alloc.allocate<input_block,  INPUT_PIPE_STAGES >();
     output_block  (&output_smem) [OUTPUT_PIPE_STAGES] = alloc.allocate<output_block, OUTPUT_PIPE_STAGES>();
     scratch_block (&scratch_smem)                     = alloc.allocate<scratch_block>();
-    finish_block  (&finish_smem)                      = reinterpret_cast<finish_block&>(input_smem);
+    
+    // figure out where we're going to put the finish block
+    constexpr int FINISH_BLOCK_OFFSET = (MAX_SHARED_MEMORY-2048)/num_blocks<pct> - sizeof(finish_block);
+    constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024; // including the losses from alignment
+    constexpr int SAFE_STAGES_BETWEEN_BLOCKS = NON_FINISH_BLOCK_SPACE/sizeof(input_block)<INPUT_PIPE_STAGES?NON_FINISH_BLOCK_SPACE/sizeof(input_block):INPUT_PIPE_STAGES;
+    finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)&__shm[0] + FINISH_BLOCK_OFFSET)/1024)*1024); // alignment
 
     if constexpr (debug_status<pct>) {
         if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
@@ -231,6 +247,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
             printf("    PIPELINE INFORMATION\n");
             printf("        input_pipe_stages:                %d\n", INPUT_PIPE_STAGES);
             printf("        output_pipe_stages:               %d\n", OUTPUT_PIPE_STAGES);
+            printf("        safe_stages_between_blocks:       %d\n", SAFE_STAGES_BETWEEN_BLOCKS);
             printf("    SHARED MEMORY INFORMATION\n");
             printf("        input_smem block size:            %llu\n", sizeof(input_block));
             printf("        input_smem:                       %p\n", (void*)&input_smem);
@@ -240,7 +257,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
             printf("        output_smem size:                 %llu\n", OUTPUT_PIPE_STAGES*sizeof(output_block));
             printf("        scratch_smem:                     %p\n", (void*)&scratch_smem);
             printf("        scratch_smem size:                %llu\n", sizeof(scratch_block));
-            printf("        finish_smem:                      %p\n", (void*)&finish_smem);
+            printf("        finish_smem:                      %p\n", (void*)finish_smem);
             printf("        finish_smem size:                 %llu\n", sizeof(finish_block));
             printf("        dynamic shared memory usage:      %llu\n", sizeof(scratch_block) + uint64_t(&scratch_smem) - uint64_t(&__shm[0]));
         }
@@ -250,25 +267,26 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
     // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
     __shared__ kittens::barrier inputs_arrived[INPUT_PIPE_STAGES],   inputs_finished[INPUT_PIPE_STAGES];
     __shared__ kittens::barrier outputs_arrived[OUTPUT_PIPE_STAGES], outputs_finished[OUTPUT_PIPE_STAGES];
-    if (warpid() == 0) { // a single warp (in fact a single thread) does these.
-        for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
-            init_barrier(inputs_arrived[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
-            init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-        }
-        if constexpr (detail::has_store<pct>) {
-            for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
-                init_barrier(outputs_arrived[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
-                init_barrier(outputs_finished[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
-            }
-        }
-    }
-    int iters = pct::iters(g);
-    int input_ring  = 0; // tracking which input block is being loaded
-    int output_ring = 0; // tracking which output block is being written
-
-    __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
+    __shared__ kittens::barrier finish_finished;
+    int task_iter = 0;
+    coord task_coord;
 
     if(warpid() >= NUM_CONSUMER_WARPS) { // last warpgroup is a producer
+        uint32_t barrier_bitfield = 0xFFFF0000; // inputs_finished phase bits start as 1s, outputs_arrived phase bits start as 0s
+        if (warpid() == NUM_CONSUMER_WARPS) { // a single warp (in fact a single thread) does these.
+            for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
+                init_barrier(inputs_arrived[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
+                init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+            }
+            if constexpr (detail::has_store<pct>) {
+                for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
+                    init_barrier(outputs_arrived[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+                    init_barrier(outputs_finished[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
+                }
+            }
+            init_barrier(finish_finished, NUM_CONSUMER_WARPS, 0); // consumer warps must say they are done with the finish block
+        }
+        __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         producer_state s;
         pct::producer::setup({
             g,
@@ -279,68 +297,17 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
             &outputs_arrived[0],
             &outputs_finished[0]
         });
-        int load_iter = 0, store_iter = 0;
-        #pragma unroll
-        for(int i = 0; i < INPUT_PIPE_STAGES && load_iter<iters; i++) { // fill the pipeline
-            pct::producer::load({
-                input_smem[input_ring],
-                s,
-                scratch_smem,
-                g,
-                inputs_arrived[input_ring],
-                &inputs_arrived[0],
-                &inputs_finished[0],
-                &outputs_arrived[0],
-                &outputs_finished[0],
-                load_iter
-            });
-            input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-            load_iter++;
-        }
-        if constexpr (detail::has_store<pct>) {
-            while(load_iter<iters || store_iter<load_iter) {
-                if(store_iter<load_iter && (enable_explicit_barriers<pct> || test_wait(outputs_arrived[output_ring], (store_iter/OUTPUT_PIPE_STAGES)%2))) {
-                    pct::producer::store({
-                        output_smem[output_ring],
-                        s,
-                        scratch_smem,
-                        g,
-                        outputs_finished[output_ring],
-                        &inputs_arrived[0],
-                        &inputs_finished[0],
-                        &outputs_arrived[0],
-                        &outputs_finished[0],
-                        store_iter
-                    });
-                    output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
-                    store_iter++;
-                }
-                // need to wait for the next stage to be available to write to.
-                if(load_iter<iters && (enable_explicit_barriers<pct> || test_wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1))) {
-                    pct::producer::load({
-                        input_smem[input_ring],
-                        s,
-                        scratch_smem,
-                        g,
-                        inputs_arrived[input_ring],
-                        &inputs_arrived[0],
-                        &inputs_finished[0],
-                        &outputs_arrived[0],
-                        &outputs_finished[0],
-                        load_iter
-                    });
-                    input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-                    load_iter++;
-                }
-                __nanosleep(5);
-            }
-        }
-        else { // just do the load
-            while(load_iter<iters) {
-                if constexpr (!enable_explicit_barriers<pct>) {
-                    wait(inputs_finished[input_ring], ((load_iter/INPUT_PIPE_STAGES)%2)^1);
-                }
+        for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
+            int iters = pct::iters(g, task_coord);
+            int input_ring  = 0; // tracking which input block is being loaded
+            int output_ring = 0; // tracking which output block is being written
+            int load_iter = 0, store_iter = 0;
+            #pragma unroll
+            for(int i = 0; i < SAFE_STAGES_BETWEEN_BLOCKS && load_iter<iters; i++) { // fill the pipeline
+                wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
+                update_phasebit<1>(barrier_bitfield, input_ring);
                 pct::producer::load({
+                    task_coord,
                     input_smem[input_ring],
                     s,
                     scratch_smem,
@@ -355,9 +322,99 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
                 load_iter++;
             }
-        }
-    }
+            if constexpr (detail::has_finish<pct>) wait(finish_finished, (task_iter%2)^1); // wait for consumer to finish their finish stage before we can do the rest.
+            #pragma unroll
+            for(int i = SAFE_STAGES_BETWEEN_BLOCKS; i < INPUT_PIPE_STAGES && load_iter<iters; i++) { // fill the pipeline
+                wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
+                update_phasebit<1>(barrier_bitfield, input_ring);
+                pct::producer::load({
+                    task_coord,
+                    input_smem[input_ring],
+                    s,
+                    scratch_smem,
+                    g,
+                    inputs_arrived[input_ring],
+                    &inputs_arrived[0],
+                    &inputs_finished[0],
+                    &outputs_arrived[0],
+                    &outputs_finished[0],
+                    load_iter
+                });
+                input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                load_iter++;
+            }
+            if constexpr (detail::has_store<pct>) {
+                while(load_iter<iters || store_iter<load_iter) {
+                    if(store_iter<load_iter && (enable_explicit_barriers<pct> || test_wait(outputs_arrived[output_ring], get_phasebit<0>(barrier_bitfield, output_ring)))) {
+                        update_phasebit<0>(barrier_bitfield, output_ring); // second half
+                        pct::producer::store({
+                            task_coord,
+                            output_smem[output_ring],
+                            s,
+                            scratch_smem,
+                            g,
+                            outputs_finished[output_ring],
+                            &inputs_arrived[0],
+                            &inputs_finished[0],
+                            &outputs_arrived[0],
+                            &outputs_finished[0],
+                            store_iter
+                        });
+                        output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+                        store_iter++;
+                    } // poll store, do store
+                    // need to wait for the next stage to be available to write to.
+                    if(load_iter<iters && (enable_explicit_barriers<pct> || test_wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring)))) {
+                        update_phasebit<1>(barrier_bitfield, input_ring);
+                        pct::producer::load({
+                            task_coord,
+                            input_smem[input_ring],
+                            s,
+                            scratch_smem,
+                            g,
+                            inputs_arrived[input_ring],
+                            &inputs_arrived[0],
+                            &inputs_finished[0],
+                            &outputs_arrived[0],
+                            &outputs_finished[0],
+                            load_iter
+                        });
+                        input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                        load_iter++;
+                    } // poll load, do load
+                    __nanosleep(5); // relinquish for a little while
+                } // load and store loop
+            } // full load and store kernel
+            else { // just do the load
+                while(load_iter<iters) {
+                    if constexpr (!enable_explicit_barriers<pct>) {
+                        wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
+                        update_phasebit<1>(barrier_bitfield, input_ring);
+                    }
+                    pct::producer::load({
+                        task_coord,
+                        input_smem[input_ring],
+                        s,
+                        scratch_smem,
+                        g,
+                        inputs_arrived[input_ring],
+                        &inputs_arrived[0],
+                        &inputs_finished[0],
+                        &outputs_arrived[0],
+                        &outputs_finished[0],
+                        load_iter
+                    });
+                    input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                    load_iter++;
+                } // load loop
+            } // just a load kernel
+            warpgroup::sync(15);
+            task_iter++;
+        } // task iter loop
+    } // producer warpgroup
     else { // other warpgroups are consumers
+        uint32_t barrier_bitfield = 0xFFFF0000; // outputs_finished phase bits start as 1s, inputs_arrived phase bits start as 0s
+        __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         consumer_state s;
         pct::consumer::setup({
             g,
@@ -368,47 +425,63 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
             &outputs_arrived[0],
             &outputs_finished[0]
         });
-        for(int it = 0; it < iters; it++) {
-            if constexpr(!enable_explicit_barriers<pct>) {
-                if constexpr (detail::has_store<pct>) {
-                    wait(outputs_finished[output_ring], ((it/OUTPUT_PIPE_STAGES)%2)^1); // wait for output to free up
+        for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
+            int iters = pct::iters(g, task_coord);
+            int input_ring  = 0; // tracking which input block is being loaded
+            int output_ring = 0; // tracking which output block is being written
+            for(int it = 0; it < iters; it++) {
+                if constexpr(!enable_explicit_barriers<pct>) {
+                    if constexpr (detail::has_store<pct>) {
+                        wait(outputs_finished[output_ring], get_phasebit<1>(barrier_bitfield, output_ring)); // wait for output to free up
+                        update_phasebit<1>(barrier_bitfield, output_ring);
+                    }
+                    wait(inputs_arrived[input_ring], get_phasebit<0>(barrier_bitfield, input_ring)); // wait for memory to arrive, phase changes at half the rate of the ring
+                    update_phasebit<0>(barrier_bitfield, input_ring);
                 }
-                wait(inputs_arrived[input_ring], (it/INPUT_PIPE_STAGES)%2); // wait for memory to arrive, phase changes at half the rate of the ring
+                pct::consumer::work({
+                    task_coord,
+                    input_smem[input_ring],
+                    output_smem[output_ring],
+                    s,
+                    scratch_smem,
+                    g,
+                    inputs_finished[input_ring],
+                    outputs_arrived[output_ring],
+                    &inputs_arrived[0],
+                    &inputs_finished[0],
+                    &outputs_arrived[0],
+                    &outputs_finished[0],
+                    it
+                });
+                input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
+                if constexpr (detail::has_store<pct>) {
+                    output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
+                }
+            } // work loop
+            if constexpr (detail::has_store<pct>) { // ensure the output is written before overwriting that memory
+                wait(outputs_finished[output_ring], get_phasebit<1>(barrier_bitfield, output_ring));
+                // no need to update phase bit, as nothing is actually changing before the next wait starts.
             }
-            pct::consumer::work({
-                input_smem[input_ring],
-                output_smem[output_ring],
-                s,
-                scratch_smem,
-                g,
-                inputs_finished[input_ring],
-                outputs_arrived[output_ring],
-                &inputs_arrived[0],
-                &inputs_finished[0],
-                &outputs_arrived[0],
-                &outputs_finished[0],
-                it
-            });
-            input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-            if constexpr (detail::has_store<pct>) {
-                output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
-            }
-        }
-        if constexpr (detail::has_finish<pct>) {
-            group<NUM_CONSUMER_WARPS>::sync(0); // cannot overwrite finish block until all consumer warps are done.
-            pct::consumer::finish({
-                finish_smem,
-                s,
-                scratch_smem,
-                g,
-                &inputs_arrived[0],
-                &inputs_finished[0],
-                &outputs_arrived[0],
-                &outputs_finished[0],
-                iters
-            });
-        }
-    }
+            if constexpr (detail::has_finish<pct>) {
+                group<NUM_CONSUMER_WARPS>::sync(1); // cannot overwrite finish block until all consumer warps are done.
+                pct::consumer::finish({
+                    task_coord,
+                    *finish_smem,
+                    s,
+                    scratch_smem,
+                    g,
+                    finish_finished,
+                    &inputs_arrived[0],
+                    &inputs_finished[0],
+                    &outputs_arrived[0],
+                    &outputs_finished[0],
+                    iters
+                });
+                group<NUM_CONSUMER_WARPS>::sync(1); // cannot overwrite finish block until all consumer warps are done.
+            } // finish
+            task_iter++;
+        } // task iter loop
+    } // consumer warpgroup
 }
 
 }
