@@ -19,49 +19,50 @@ struct matmul_template {
   static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
 	using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
 	using wide_tile = st_bf<64, 64*N_BLOCK>;
-	static constexpr int NUM_CONSUMER_WARPS = M_BLOCK*4;
+	static constexpr int NUM_CONSUMER_WARPS = M_BLOCK*4, INPUT_PIPE_STAGES = 4, DEBUG=0;
   	// Helper functions
 	__host__ static inline dim3 grid(int M, int N, int K) {
 		return dim3(M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
+		// return dim3(132);
 	}
-	__device__ static inline void get_coords(kittens::coord &coords, const typename layout::globals &g, int id) {
+  	// ThunderKittens template functions
+	__device__ static inline bool task_coord(kittens::coord &coords, const typename layout::globals &g, int task_id) {
 		int Rblocks = g.C.rows / (M_BLOCK*64), Cblocks = g.C.cols / (N_BLOCK*64);
 		int super_rows = (Rblocks/SUPER_M)*SUPER_M,
 		final_rows = Rblocks - super_rows,
 		super_repeat = SUPER_M*Cblocks;
-		if (blockIdx.x < super_rows * Cblocks)
-			coords = { SUPER_M*(blockIdx.x/super_repeat) + blockIdx.x%SUPER_M,
-						   (blockIdx.x%super_repeat)/SUPER_M };
+		if (task_id < super_rows * Cblocks)
+			coords = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M,
+						   (task_id%super_repeat)/SUPER_M };
 		else {
-			int remainder_id = blockIdx.x - super_rows*Cblocks;
+			int remainder_id = task_id - super_rows*Cblocks;
 			coords = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
 		}
-		coords = { iters(g), coords.r*M_BLOCK + id, coords.c*N_BLOCK };
+		int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
+		coords = { coords.r*M_BLOCK + id, coords.c*N_BLOCK };
+		return task_id < Rblocks*Cblocks;
 	}
-  // ThunderKittens template functions
-	__device__ static inline int iters(const typename layout::globals &g) { return g.A.cols/64; }
+  	__device__ static inline int iters(const typename layout::globals &g, const kittens::coord &task_coord) { return g.A.cols/64; }
 	struct producer {
 		__device__ static void setup(producer_setup_args<layout> args) {
 			warpgroup::producer_registers(); // decrease registers for producers
-			get_coords(args.state.coords, args.globals, 0);
 		}
 		__device__ static void load(producer_load_args<layout> args) {
 			if(warpgroup::warpid() == 0) {
 				tma::expect(args.inputs_arrived, args.input);
 				for(int i = 0; i < M_BLOCK; i++)
 					tma::load_async(args.input.a[i], args.globals.A,
-						              {args.state.coords.r+i, args.iter}, args.inputs_arrived);
+						              {args.task_coord.r+i, args.iter}, args.inputs_arrived);
 				for(int i = 0; i < N_BLOCK; i++)
 					tma::load_async(args.input.b[i], args.globals.B,
-											    {args.iter, args.state.coords.c+i}, args.inputs_arrived);
-				arrive(args.inputs_arrived, 3);
+											    {args.iter, args.task_coord.c+i}, args.inputs_arrived);
 			}
+			else arrive(args.inputs_arrived);
 		}
 	};
 	struct consumer {
 		__device__ static void setup(consumer_setup_args<layout> args) {
 			warpgroup::consumer_registers<NUM_CONSUMER_WARPS/4>(); // increase registers for consumers
-			get_coords(args.state.coords, args.globals, warpgroup::groupid());
 			zero(args.state.accum);
 		}
 		__device__ static void work(consumer_work_args<layout> args) {
@@ -70,15 +71,22 @@ struct matmul_template {
 				args.input.a[warpgroup::groupid()], // A matrix
 				reinterpret_cast<wide_tile&>(args.input.b) // B matrix
 			);
+			// warpgroup::mma_async_wait<1>();
+			// if(warpgroup::laneid() == 0 && args.iter>0) arrive(args.all_inputs_finished[(args.iter+INPUT_PIPE_STAGES-1)%INPUT_PIPE_STAGES], 4);
 			warpgroup::mma_async_wait();
-			if(warpgroup::laneid() == 0) arrive(args.inputs_finished, 4);
+			arrive(args.inputs_finished);
 		}
 		__device__ static void finish(consumer_finish_args<layout> args) {
+			warpgroup::mma_async_wait();
 			warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
 			warpgroup::sync();
-			if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++)
+			if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
 				tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-										     {args.state.coords.r, args.state.coords.c+i});
+										     {args.task_coord.r, args.task_coord.c+i});
+				tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
+			}
+			zero(args.state.accum);
+			arrive(args.finish_finished);
 		}
 	};
 };
@@ -141,7 +149,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 	std::cout << "Initialized matrices" << std::endl;
 
 	// Perform CPU matrix multiplication for reference
-	if(M < 8192) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+	if(false) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
 
 	std::cout << "Performed CPU matrix multiplication" << std::endl;
 
@@ -285,9 +293,13 @@ int main() {
 	// run_benchmark<matmul_template<2,4,12>>(N, N, N);
 	// run_benchmark<matmul_template<3,3,12>>(192*12, 192*11, 8192);
 	// run_benchmark<matmul_template<2,4,11>>(128*22, 256* 6, 8192);
-	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 4096);
-	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 8192);
-	run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 16384);
+	// run_benchmark<matmul_template<2,4,1>>(128 * 132, 256, 256);
+	// run_benchmark<matmul_template<2,4,1>>(128 * 133, 256, 256);
+	run_benchmark<matmul_template<2,4,8>>(2816*4, 1536*4, 8192);
+	run_benchmark<matmul_template<2,4,8>>(2816*4, 3072*4, 8192);
+	run_benchmark<matmul_template<2,4,8>>(5632*4, 3072*4, 8192);
+	// run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 8192);
+	// run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 16384);
 	// run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192);
 	// run_benchmark<matmul_template<3,3,12>>(192*12*2, 192*11*2, 8192*2);
 	// run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192*2);

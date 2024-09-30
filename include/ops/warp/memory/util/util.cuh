@@ -142,6 +142,22 @@ __device__ static inline void init_barrier(barrier& bar, int thread_count, int t
         );
     }
 }
+/**
+ * @brief Invalidate an mbarrier
+ *
+ * @param[out] barrier The barrier variable to initialize.
+ * @param[in] tc The thread counter for the barrier.
+ */
+__device__ static inline void invalidate_barrier(barrier& bar) {
+    if (::kittens::laneid() == 0) {
+        void const* const ptr = &bar;
+        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+        asm volatile (
+            "mbarrier.inval.shared::cta.b64 [%0];\n"
+            :: "r"(bar_ptr)
+        );
+    }
+}
 
 /**
 * @brief Arrives at a barrier.
