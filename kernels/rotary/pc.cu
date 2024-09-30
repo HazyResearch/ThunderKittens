@@ -1,3 +1,9 @@
+// #ifdef TORCH_COMPILE
+// #define TORCH_COMPILE_FFTCONV
+// #else
+// #include "harness_async.impl"
+// #endif
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
@@ -97,204 +103,85 @@ template<int _headdim> struct rotary_template {
     };
 };
 
+// #ifdef TORCH_COMPILE_ROTARY
+#include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
-#include <string>
-#include <fstream>
+template<int ATTN_D>
+void dispatch_fused_rotary(
+    bf16 * d_o,
+    bf16 * d_x,
+    bf16 * d_sin_in,
+    bf16 * d_cos_in,
+    const int ATTN_B, const int ATTN_H, const int ATTN_N
+) {
 
-#define ATTN_B 32
-#define ATTN_N 2048
-#define ATTN_H 16 // launches
-#define ATTN_D 128 // make sure to change in the kernel rotary.cu as well
-using rope_t = rotary_template<ATTN_D>;
+    using rope_t = rotary_template<ATTN_D>;
+    constexpr int BATCHES_PER_BLOCK = 4;
 
-const int ATTN_D_2 = ATTN_D / 2;
+    using seq_globals   = typename rope_t::layout::seq_global;
+    using rope_globals  = typename rope_t::layout::rope_global;
+    using globals = typename rope_t::layout::globals;
 
-#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
-inline void __cudaCheckError( const char *file, const int line ) {
-    cudaError err = cudaGetLastError();
-    if ( cudaSuccess != err )
-    {
-        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
-                file, line, cudaGetErrorString( err ) );
-        exit( -1 );
-    }
-    // More careful checking. However, this will affect performance.
-    // Comment away if needed.
-    err = cudaDeviceSynchronize();
-    if( cudaSuccess != err )
-    {
-        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
-                file, line, cudaGetErrorString( err ) );
-        exit( -1 );
-    }
-}
-
-// Function to calculate the number of floating-point operations
-long long flops(int batch, int seqlen, int headdim, int nheads) {
-    // feature map
-    long long f = batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
-    f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
-    f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
-    return f*2; // for q and k
-}
-
-// Function to calculate the efficiency in teraflops
-double efficiency(long long flop, double time) {
-    // Convert flop to teraflops and time to milliseconds
-    double tflops = flop / 1e12;
-    double time_ms = time / 1e6;
-    return tflops / time_ms;
-}
-
-int main(int argc, char **argv) {
-    std::cout << "Entered main!" << std::endl;
-
-    // create dummy variables that are the right size
-    constexpr int TOTAL_ELEMENTS_X = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_ELEMENTS_O = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_X = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_O = ATTN_N*ATTN_D;
-
-    float *x = new float[TOTAL_UNIQUE_ELEMENTS_X];
-    bf16 *x_bf = new bf16[TOTAL_ELEMENTS_X];
-
-    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS_O];
-    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_O];
-    float *o = new float[TOTAL_ELEMENTS_O];
-
-    constexpr int TOTAL_ELEMENTS_COS_IN = ATTN_N*ATTN_D_2;
-    float *cos_in = new float[TOTAL_ELEMENTS_COS_IN];
-    bf16  *cos_in_bf = new bf16[TOTAL_ELEMENTS_COS_IN];
-    float *sin_in = new float[TOTAL_ELEMENTS_COS_IN];
-    bf16  *sin_in_bf = new bf16[TOTAL_ELEMENTS_COS_IN];
-
-    // set the inputs
-    if(argc > 1) {
-        std::ifstream infile(argv[1]);
-        printf("Loading from %s\n", argv[1]);
-        std::cout << "Starting to enter!" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  
-            infile >> x[i];   
-            // if (i < 5)  { std::cout << x[i] << std::endl; } 
-        }
-        std::cout << "Finished loading X" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {  
-            infile >> o_ref[i];  
-            // o_ref[i] = x[i];
-            // if (i < 5)  { std::cout << o_ref[i] << std::endl; } 
-        }
-        std::cout << "Finished loading O_REF" << std::endl;
-
-        for(int i = 0; i < TOTAL_ELEMENTS_COS_IN; i++) { 
-            infile >> cos_in[i];   
-            // if (i < 5)  { std::cout << cos_in[i] << std::endl; } 
-        }
-        std::cout << "Finished loading COS_IN" << std::endl;
-        for(int i = 0; i < TOTAL_ELEMENTS_COS_IN; i++) {  
-            infile >> sin_in[i];   
-            // if (i < 50)  { std::cout << sin_in[i] << std::endl; } 
-        }
-        std::cout << "Finished loading SIN_IN" << std::endl;
-
-        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
-    }
-
-    // set the inputs
-    for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {
-        x_bf[i] = __float2bfloat16(x[i % TOTAL_UNIQUE_ELEMENTS_X]);
-        // if (i < 5) { std::cout << x[i % TOTAL_UNIQUE_ELEMENTS_X] << std::endl; } 
-    }
-    for(int i = 0; i < TOTAL_ELEMENTS_COS_IN; i++) {
-        cos_in_bf[i] = __float2bfloat16(cos_in[i % TOTAL_ELEMENTS_COS_IN]);
-        // if (i < 5) { std::cout << __bf/loat162float(cos_in_bf[i]) << std::endl; } 
-        sin_in_bf[i] = __float2bfloat16(sin_in[i % TOTAL_ELEMENTS_COS_IN]);
-    }
-
-    bf16 *d_x, *d_o;
-    cudaMalloc(&d_x, TOTAL_ELEMENTS_X * sizeof(bf16));
-    cudaMalloc(&d_o, TOTAL_ELEMENTS_O * sizeof(bf16));
-    cudaMemcpy(d_x, x_bf, TOTAL_ELEMENTS_X * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_o, o_bf, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyHostToDevice);
-
-    bf16 *d_cos_in, *d_sin_in;
-    cudaMalloc(&d_cos_in, TOTAL_ELEMENTS_COS_IN * sizeof(bf16));
-    cudaMalloc(&d_sin_in, TOTAL_ELEMENTS_COS_IN * sizeof(bf16));
-    cudaMemcpy(d_cos_in, cos_in_bf, TOTAL_ELEMENTS_COS_IN * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_sin_in, sin_in_bf, TOTAL_ELEMENTS_COS_IN * sizeof(bf16), cudaMemcpyHostToDevice);
-
-    cudaDeviceSynchronize();
-    CudaCheckError();
+    seq_globals Og{d_o, ATTN_B, ATTN_H, ATTN_N, nullptr};
+    seq_globals Xg{d_x, ATTN_B, ATTN_H, ATTN_N, nullptr};
+    rope_globals SINg{d_sin_in, nullptr, nullptr, ATTN_N, nullptr};
+    rope_globals COSg{d_cos_in, nullptr, nullptr, ATTN_N, nullptr};
+    globals g{Og, Xg, SINg, COSg, BATCHES_PER_BLOCK};
 
     unsigned long mem_size = (MAX_SHARED_MEMORY-2048);
-    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
-    using T = kittens::bf16;
-    using H = kittens::bf16;
-    cudaFuncSetAttribute(
-        pc<rope_t>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    );
-
-    constexpr int BATCHES_PER_BLOCK = 4;
-    rope_t::layout::seq_global Og{d_o, ATTN_B, ATTN_H, ATTN_N, nullptr};
-    rope_t::layout::seq_global Xg{d_x, ATTN_B, ATTN_H, ATTN_N, nullptr};
-    rope_t::layout::rope_global SINg{d_sin_in, nullptr, nullptr, ATTN_N, nullptr};
-    rope_t::layout::rope_global COSg{d_cos_in, nullptr, nullptr, ATTN_N, nullptr};
-    rope_t::layout::globals g{Og, Xg, SINg, COSg, BATCHES_PER_BLOCK};
-
     constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
+    cudaFuncSetAttribute(prototype::pc<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, (ATTN_B+BATCHES_PER_BLOCK-1)/BATCHES_PER_BLOCK);
     dim3 block(num_threads<rope_t>);
-
-    const int ITER = 1;
-    cudaDeviceSynchronize();
-    CudaCheckError();
-    std::cout << "Starting kernel with grid of size " << grid.x << ", " << grid.y << "\n";
-    const auto start = std::chrono::high_resolution_clock::now();
-    for(int i = 0; i < ITER; i++) {  
-        pc<rope_t><<<grid, block, mem_size>>>(g);  
-    }
-    cudaDeviceSynchronize();
-    const auto finish = std::chrono::high_resolution_clock::now();
-    CudaCheckError();
-    std::cout << "Finished kernel\n";
-    
-    // check correctness
-    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o[i] = __bfloat162float(o_bf[i]); }
-    bool good = true;
-    std::ofstream o_ref_file("printouts/o_ref.txt");
-    std::ofstream o_file("printouts/o.txt");
-    std::ofstream diff_file("printouts/diff.txt");
-    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
-    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
-            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
-            o_file << o[i] << ' ';
-            diff_file << diff << ' ';
-        }
-        if(abs(diff) > 0.1 || isnan(diff)) {
-            good = false;
-        }
-    }
-    if(good) std::cout << "Correct out :)\n";
-    else std::cout << "Incorrect out :(\n";
-    std::cout << "Average execution time for " << ITER << " ITERS (Q and K): " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us" << std::endl;
-
-    // calculate efficiency
-    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H);
-    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count());
-    std::cout << "FLOPS: " << f << std::endl;
-    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
-
-    cudaFree(d_x);
-    cudaFree(d_sin_in);
-    cudaFree(d_cos_in);
-    cudaFree(d_o);
-
-    delete[] x, o, o_ref, x_bf, o_bf;
-    delete[] sin_in, sin_in_bf, cos_in, cos_in_bf;
-    return 0;
+    pc<rope_t><<<grid, block, mem_size>>>(g); 
 }
+
+torch::Tensor fused_rotary(
+    const torch::Tensor &x,
+    const torch::Tensor &cos_in,
+    const torch::Tensor &sin_in
+) {
+    CHECK_INPUT(x);
+    CHECK_INPUT(sin_in);
+    CHECK_INPUT(cos_in);
+
+    const int B = x.size(0);
+    const int H = x.size(1);
+    const int N = x.size(2);
+    constexpr int D = 128;
+    
+    TORCH_CHECK(B == x.size(0), "Batch size mismatch");
+    TORCH_CHECK(H == x.size(1), "Head size mismatch");
+    TORCH_CHECK(N == x.size(2), "Sequence length mismatch");
+    TORCH_CHECK(D == x.size(3), "Hidden size mismatch");
+
+    TORCH_CHECK(x.size(2) % 16 == 0, "Sequence length must be multiple of 16");
+    TORCH_CHECK(cos_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
+    TORCH_CHECK(sin_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
+
+    torch::Tensor out = torch::empty({B, H, N, D}, x.options());
+
+    // convert to bf16
+    c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *sin_in_bf16 = sin_in.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *cos_in_bf16 = cos_in.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *out_bf16 = out.data_ptr<c10::BFloat16>();
+
+    bf16 *d_x = reinterpret_cast<bf16*>(x_bf16);
+    bf16 *d_sin_in = reinterpret_cast<bf16*>(sin_in_bf16);
+    bf16 *d_cos_in = reinterpret_cast<bf16*>(cos_in_bf16);
+    bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
+
+    dispatch_fused_rotary<D>(
+        d_out,
+        d_x,
+        d_sin_in,
+        d_cos_in, 
+        B, H, N
+    );
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return out;
+}
+
+// #endif

@@ -28,9 +28,10 @@ struct identifier {};
 // template<typename T> concept vec  = ducks::csv::all<T> || ducks::crv::all<T>;
 // }
 
-template<kittens::ducks::gl::all GL>
+template<kittens::ducks::gl::all _GL>
 struct cgl {
     using identifier = ducks::cgl::identifier;
+    using GL    = _GL;
     using T     = GL::T;
     using T2    = GL::T2;
     using dtype = GL::dtype;

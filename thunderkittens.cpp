@@ -90,6 +90,37 @@ extern torch::Tensor fused_flux_linear_gelu(
 );
 #endif
 
+#ifdef TK_COMPILE_FFTCONV
+extern torch::Tensor fftconv(
+    const torch::Tensor u_real,
+    const torch::Tensor kf_real,
+    const torch::Tensor kf_imag,
+    const torch::Tensor f_real,
+    const torch::Tensor f_imag,
+    const torch::Tensor finv_real,
+    const torch::Tensor finv_imag,
+    const torch::Tensor tw_real,
+    const torch::Tensor tw_imag,
+    const torch::Tensor twinv_real,
+    const torch::Tensor twinv_imag,
+    int B,
+    int H,
+    int N,
+    int N1,
+    int B_TILE,
+    int H_TILE
+);
+#endif
+
+#ifdef TK_COMPILE_FUSED_ROTARY
+extern torch::Tensor fused_rotary(
+    const torch::Tensor x,
+    const torch::Tensor cos_in, 
+    const torch::Tensor sin_in
+);
+#endif
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -130,4 +161,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("tk_flux_linear_gate", fused_flux_linear_gate, "Flux linear gate. Takes tensors (x, weight, bias, gate, y).  x is (B, H1), weight is (H2, H1), bias and gate are (H2), y is (B, H2). x, weight, bias, gate, y are bf16. Returns (B, H2) in bf16.");
     m.def("tk_flux_linear_gelu", fused_flux_linear_gelu, "Flux linear gelu. Takes tensors (x, weight, bias).  x is (B, H1), weight is (H2, H1), bias is (H2). x, weight, bias are bf16. Returns (B, H2) in bf16.");
 #endif
+
+#ifdef TK_COMPILE_FFTCONV
+    m.def("fftconv", fftconv, "FFTConv TK. Takes tensors (u_real, kf_real, kf_imag, f_real, f_imag, finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, B, H, N, N1). All tensors are bf16 except B, H, N, N1 which are ints. Returns (B, H, N, N1) in bf16.");
+#endif
+
+#ifdef TK_COMPILE_FUSED_ROTARY
+    m.def("fused_rotary", fused_rotary, "Rotary TK. Takes tensors (x, cos_in, sin_in). All tensors are bf16. Returns (B, H, N, 128) in bf16.");
+#endif
+
 }
