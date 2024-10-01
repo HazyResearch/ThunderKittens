@@ -3,7 +3,7 @@ import math
 import sys
 
 sys.path.append("../kernel")
-import fftconv_tk as mod
+import fftconv_tk as fftconv_tk_16_32_32
 
 def fft_matrix(N):
     n = torch.arange(N)
@@ -94,6 +94,7 @@ class TKFFTConv(torch.nn.Module):
         self.register_buffer('twiddle_factors_ifft_16_1K', twiddle_factors_ifft_16_1K)
     
     def forward(self, u, k):
+        return FlashFFTConvFunc.apply(u, k, self)
         
 
 # Later will turn this into torch.autograd.Function
@@ -102,44 +103,44 @@ class FlashFFTConvFunc():
     @staticmethod
     def forward(u, k, fftconv_data):
     
-    if fftconv_data.seqlen == 1024:
-        B, H, L = u.shape
+        if fftconv_data.seqlen == 1024:
+            B, H, L = u.shape
 
-        # Right now only working with N = 1024
-        assert L == self.N
+            # Right now only working with N = 1024
+            assert L == self.N
 
-        k_f = torch.fft.fft(k.float(), n=self.N)
-        u_real = u.real.reshape(B, H, self.N1, self.N1).to(self.dtype).contiguous()
-        u_imag = torch.zeros_like(u_real, dtype=self.dtype)
-        k_f_permuted = torch.view_as_real(k_f.reshape(H, sqrt_N, sqrt_N).transpose(-1, -2).reshape(H, N)).to(fftconv_data.dtype).contiguous()
-        k_fT = k_f.reshape(H, self.N1, self.N1).transpose(-1, -2).contiguous()
-        kfT_real = k_fT.real.to(self.dtype).contiguous()
-        kfT_imag = k_fT.imag.to(self.dtype).contiguous()
+            k_f = torch.fft.fft(k.float(), n=self.N)
+            u_real = u.real.reshape(B, H, self.N1, self.N1).to(self.dtype).contiguous()
+            u_imag = torch.zeros_like(u_real, dtype=self.dtype)
+            k_f_permuted = torch.view_as_real(k_f.reshape(H, sqrt_N, sqrt_N).transpose(-1, -2).reshape(H, N)).to(fftconv_data.dtype).contiguous()
+            k_fT = k_f.reshape(H, self.N1, self.N1).transpose(-1, -2).contiguous()
+            kfT_real = k_fT.real.to(self.dtype).contiguous()
+            kfT_imag = k_fT.imag.to(self.dtype).contiguous()
 
-        out = mod.fftconv_tk(
-            u_real, u_imag, kfT_real, kfT_imag, 
-            self.f_real, self.f_imag, self.finv_real, self.finv_imag,
-            self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
-            B, H, self.N, self.N1, self.N2
-        )
+            out = mod.fftconv_tk(
+                u_real, u_imag, kfT_real, kfT_imag, 
+                self.f_real, self.f_imag, self.finv_real, self.finv_imag,
+                self.tw_real, self.tw_imag, self.twinv_real, self.twinv_imag,
+                B, H, self.N, self.N1, self.N2
+            )
 
-        return out.reshape(B, H, self.N).contiguous()
+            return out.reshape(B, H, self.N).contiguous()
 
-    else if fftconv_data.seqlen == 16384:
-        N = fftconv_data.N
+        else if fftconv_data.seqlen == 16384:
+            N = fftconv_data.N
 
-        # assert(L == N)
-        k_f_permuted = torch.view_as_real(k_f.reshape(H, 1024, 16).transpose(-1, -2).reshape(H, 16, 32, 32).transpose(-1, -2).reshape(H, N)).to(fftconv_data.dtype).contiguous()
+            # assert(L == N)
+            k_f_permuted = torch.view_as_real(k_f.reshape(H, 1024, 16).transpose(-1, -2).reshape(H, 16, 32, 32).transpose(-1, -2).reshape(H, N)).to(fftconv_data.dtype).contiguous()
 
-        if fftconv_data.training:
-            ctx.save_for_backward(u, k_f_permuted)
+            if fftconv_data.training:
+                ctx.save_for_backward(u, k_f_permuted)
 
-        return monarch_conv_forward_16_32_32(
-            u, k_f_permuted,
-            fftconv_data.f_16_fft, fftconv_data.f_32_fft,
-            fftconv_data.twiddle_factors_fft_16_1K, fftconv_data.twiddle_factors_fft_32_32,
-            fftconv_data.f_16_ifft, fftconv_data.f_32_ifft,
-            fftconv_data.twiddle_factors_ifft_16_1K, fftconv_data.twiddle_factors_ifft_32_32,
-            None, None,
-            N, L
-        )
+            return fftconv_tk_16_32_32(
+                u, k_f_permuted,
+                fftconv_data.f_16_fft, fftconv_data.f_32_fft,
+                fftconv_data.twiddle_factors_fft_16_1K, fftconv_data.twiddle_factors_fft_32_32,
+                fftconv_data.f_16_ifft, fftconv_data.f_32_ifft,
+                fftconv_data.twiddle_factors_ifft_16_1K, fftconv_data.twiddle_factors_ifft_32_32,
+                None, None,
+                N, L
+            )
