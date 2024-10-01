@@ -38,6 +38,7 @@ template<pc_layout T> struct producer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using producer_state_type = typename detail::producer_state_getter<T>::type;
+    coord & task_coord;
     const globals_type & globals;
     producer_state_type & state;
     scratch_block_type & scratch;
@@ -45,8 +46,8 @@ template<pc_layout T> struct producer_setup_args {
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
-    __device__ producer_setup_args(const globals_type& _globals, producer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
-        : globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
+    __device__ producer_setup_args(coord & _task_coord, const globals_type& _globals, producer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
+        : task_coord(_task_coord), globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
 };
 template<pc_layout T> struct producer_load_args {
     using input_block_type = typename T::input_block;
@@ -90,6 +91,7 @@ template<pc_layout T> struct consumer_setup_args {
     using globals_type = typename T::globals;
     using scratch_block_type = typename detail::scratch_block_getter<T>::type;
     using consumer_state_type = typename detail::consumer_state_getter<T>::type;
+    coord & task_coord;
     const globals_type & globals;
     consumer_state_type & state;
     scratch_block_type & scratch;
@@ -97,8 +99,8 @@ template<pc_layout T> struct consumer_setup_args {
     barrier * all_inputs_finished;
     barrier * all_outputs_arrived;
     barrier * all_outputs_finished;
-    __device__ consumer_setup_args(const globals_type& _globals, consumer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
-        : globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
+    __device__ consumer_setup_args(coord & _task_coord, const globals_type& _globals, consumer_state_type& _state, scratch_block_type& _scratch, barrier * _all_inputs_arrived, barrier * _all_inputs_finished, barrier * _all_outputs_arrived, barrier * _all_outputs_finished)
+        : task_coord(_task_coord), globals(_globals), state(_state), scratch(_scratch), all_inputs_arrived(_all_inputs_arrived), all_inputs_finished(_all_inputs_finished), all_outputs_arrived(_all_outputs_arrived), all_outputs_finished(_all_outputs_finished) {}
 };
 template<pc_layout T> struct consumer_work_args {
     using input_block_type = typename T::input_block;
@@ -288,20 +290,21 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
         }
         __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         producer_state s;
-        pct::producer::setup({
-            g,
-            s,
-            scratch_smem,
-            &inputs_arrived[0],
-            &inputs_finished[0],
-            &outputs_arrived[0],
-            &outputs_finished[0]
-        });
         for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
             int iters = pct::iters(g, task_coord);
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             int load_iter = 0, store_iter = 0;
+            pct::producer::setup({
+                task_coord,
+                g,
+                s,
+                scratch_smem,
+                &inputs_arrived[0],
+                &inputs_finished[0],
+                &outputs_arrived[0],
+                &outputs_finished[0]
+            });
             #pragma unroll
             for(int i = 0; i < SAFE_STAGES_BETWEEN_BLOCKS && load_iter<iters; i++) { // fill the pipeline
                 wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
@@ -416,19 +419,23 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
         uint32_t barrier_bitfield = 0xFFFF0000; // outputs_finished phase bits start as 1s, inputs_arrived phase bits start as 0s
         __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         consumer_state s;
-        pct::consumer::setup({
-            g,
-            s,
-            scratch_smem,
-            &inputs_arrived[0],
-            &inputs_finished[0],
-            &outputs_arrived[0],
-            &outputs_finished[0]
-        });
         for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
             int iters = pct::iters(g, task_coord);
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
+            pct::consumer::setup({
+                task_coord,
+                g,
+                s,
+                scratch_smem,
+                &inputs_arrived[0],
+                &inputs_finished[0],
+                &outputs_arrived[0],
+                &outputs_finished[0]
+            });
+#ifdef PC_CONSUMER_UNROLL
+            #pragma unroll PC_CONSUMER_UNROLL
+#endif
             for(int it = 0; it < iters; it++) {
                 if constexpr(!enable_explicit_barriers<pct>) {
                     if constexpr (detail::has_store<pct>) {
