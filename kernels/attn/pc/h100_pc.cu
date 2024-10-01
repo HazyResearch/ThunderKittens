@@ -54,7 +54,7 @@ struct attn_fwd_template {
 	struct consumer {
 		__device__ static void setup(consumer_setup_args<layout> args) {
 			warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
-			if((blockIdx.x*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid())*layout::qo_tile::rows < args.globals.Q.rows)
+			if((args.task_coord.r*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid())*layout::qo_tile::rows < args.globals.Q.rows)
 				warpgroup::load(args.scratch.q[warpgroup::groupid()], args.globals.Q,
 								        {args.task_coord.b, args.task_coord.d, args.task_coord.r*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), 0});
 			zero(args.state.o_reg);
@@ -90,7 +90,7 @@ struct attn_fwd_template {
 		}
 		__device__ static void finish(consumer_finish_args<layout> args) {
 			arrive(args.finish_finished); // safe for producers to start loading next tiles, without question
-			if((blockIdx.x*NUM_CONSUMER_WARPGROUPS+warpgroup::groupid())*64 < args.globals.Q.rows) { // OOB
+			if((args.task_coord.r*NUM_CONSUMER_WARPGROUPS+warpgroup::groupid())*64 < args.globals.Q.rows) { // OOB
 				auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
 				warpgroup::store(o_smem, args.state.o_reg);
 				warpgroup::sync();
