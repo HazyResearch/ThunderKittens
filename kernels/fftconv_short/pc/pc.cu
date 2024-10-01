@@ -1,3 +1,9 @@
+// #ifdef TORCH_COMPILE
+// #define TORCH_COMPILE_FFTCONV
+// #else
+// #include "harness_async.impl"
+// #endif
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
@@ -251,5 +257,162 @@ struct fft_4096_template {
     };
 };
 
+// #ifdef TORCH_COMPILE_FFTCONV
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_fft_conv( 
+    bf16 *u, 
+    bf16 *kf, bf16 *kf_imag, 
+    bf16 *f, bf16 *f_imag, 
+    bf16 *finv, bf16 *finv_imag, 
+    bf16 *tw, bf16 *tw_imag, 
+    bf16 *twinv, bf16 *twinv_imag, 
+    bf16 *o, uint B, uint H, uint N, uint N1
+){
+    // if (N == 1024) {
+        // using fftst = fft_1024_template;
+    // } else {
+    using fftst = fft_4096_template;
+    // }
+    using globals       = typename fftst::layout::globals;
+    using fft_layout    = typename fftst::layout::fft_layout;
+    using filter_layout = typename fftst::layout::filter_layout;
+    using seq_layout    = typename fftst::layout::seq_layout;
 
-#include "harness_async.impl"
+    // input and output
+    seq_layout u_gl{u, B, H, nullptr, nullptr};
+    seq_layout o_gl{o, B, H, nullptr, nullptr};
+    // filters
+    filter_layout kf_gl{
+        typename filter_layout::GL{kf, nullptr, H, nullptr, nullptr}, 
+        typename filter_layout::GL{kf_imag, nullptr, H, nullptr, nullptr}
+    };
+    // factors
+    fft_layout f_gl{
+        typename fft_layout::GL{f, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{f_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout tw_gl{
+        typename fft_layout::GL{tw, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{tw_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout finv_gl{
+        typename fft_layout::GL{finv, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{finv_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout twinv_t_gl{
+        typename fft_layout::GL{twinv, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{twinv_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    globals G{u_gl, o_gl, kf_gl, f_gl, finv_gl, tw_gl, twinv_t_gl};
+
+    // launch setup
+    unsigned long mem_size = (MAX_SHARED_MEMORY-1024);
+    cudaFuncSetAttribute(
+        pc<fftst>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    dim3 grid(132);
+    dim3 block(num_threads<fftst>);
+    pc<fftst><<<grid, block, mem_size>>>(G);
+}
+
+
+torch::Tensor fftconv(
+    const torch::Tensor u_real,
+    const torch::Tensor kf_real,
+    const torch::Tensor kf_imag,
+    const torch::Tensor f_real,
+    const torch::Tensor f_imag,
+    const torch::Tensor finv_real,
+    const torch::Tensor finv_imag,
+    const torch::Tensor tw_real,
+    const torch::Tensor tw_imag,
+    const torch::Tensor twinv_real,
+    const torch::Tensor twinv_imag,
+    int B,
+    int H,
+    int N,
+    int N1,
+    int B_TILE,
+    int H_TILE
+) {
+    CHECK_INPUT(u_real);
+    CHECK_INPUT(kf_real);
+    CHECK_INPUT(kf_imag);
+    CHECK_INPUT(f_real);
+    CHECK_INPUT(f_imag);
+    CHECK_INPUT(finv_real);
+    CHECK_INPUT(finv_imag);
+    CHECK_INPUT(tw_real);
+    CHECK_INPUT(tw_imag);
+    CHECK_INPUT(twinv_real);
+    CHECK_INPUT(twinv_imag);
+
+    // printf("B: %d, H: %d, N: %d, N1: %d, B_TILE: %d, H_TILE: %d\n", B, H, N, N1, B_TILE, H_TILE);
+    // printf("u_real: %d, %d, %d\n", u_real.size(0), u_real.size(1), u_real.size(2));
+    
+    // checks
+    TORCH_CHECK(u_real.size(0) == B, "u_real has incompatible batch shape");
+    TORCH_CHECK(u_real.size(1) == H, "u_real has incompatible head shape");
+    TORCH_CHECK(u_real.size(2) == N1, "u_real has incompatible sequence shape");
+
+    TORCH_CHECK(f_real.size(0) == N1, "f_real has incompatible dim");
+    TORCH_CHECK(f_real.size(1) == N1, "f_real has incompatible dim");
+
+    TORCH_CHECK(f_imag.size(0) == N1, "f_imag has incompatible dim");
+    TORCH_CHECK(f_imag.size(1) == N1, "f_imag has incompatible dim");
+
+    TORCH_CHECK(finv_real.size(0) == N1, "finv_real has incompatible dim");
+    TORCH_CHECK(finv_real.size(1) == N1, "finv_real has incompatible dim");
+
+    TORCH_CHECK(finv_imag.size(0) == N1, "finv_imag has incompatible dim");
+    TORCH_CHECK(finv_imag.size(1) == N1, "finv_imag has incompatible dim");
+
+    TORCH_CHECK(tw_real.size(0) == N1, "tw_real has incompatible dim");
+    TORCH_CHECK(tw_real.size(1) == N1, "tw_real has incompatible dim");
+
+    TORCH_CHECK(tw_imag.size(0) == N1, "tw_imag has incompatible dim");
+    TORCH_CHECK(tw_imag.size(1) == N1, "tw_imag has incompatible dim");
+
+    torch::Tensor out = torch::empty({B, H, N1, N1}, u_real.options());
+
+    // convert to bf16
+    c10::BFloat16 *u_real_bf16 = u_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kf_real_bf16 = kf_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *kf_imag_bf16 = kf_imag.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *f_real_bf16 = f_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *f_imag_bf16 = f_imag.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *finv_real_bf16 = finv_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *finv_imag_bf16 = finv_imag.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *tw_real_bf16 = tw_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *tw_imag_bf16 = tw_imag.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *twinv_real_bf16 = twinv_real.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *twinv_imag_bf16 = twinv_imag.data_ptr<c10::BFloat16>();
+
+    bf16 *d_u_real = reinterpret_cast<bf16*>(u_real_bf16);
+    bf16 *d_kf_real = reinterpret_cast<bf16*>(kf_real_bf16);
+    bf16 *d_kf_imag = reinterpret_cast<bf16*>(kf_imag_bf16);
+    bf16 *d_f_real = reinterpret_cast<bf16*>(f_real_bf16);
+    bf16 *d_f_imag = reinterpret_cast<bf16*>(f_imag_bf16);
+    bf16 *d_finv_real = reinterpret_cast<bf16*>(finv_real_bf16);
+    bf16 *d_finv_imag = reinterpret_cast<bf16*>(finv_imag_bf16);
+    bf16 *d_tw_real = reinterpret_cast<bf16*>(tw_real_bf16);
+    bf16 *d_tw_imag = reinterpret_cast<bf16*>(tw_imag_bf16);
+    bf16 *d_twinv_real = reinterpret_cast<bf16*>(twinv_real_bf16);
+    bf16 *d_twinv_imag = reinterpret_cast<bf16*>(twinv_imag_bf16);
+    bf16 *d_out = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+
+    dispatch_fft_conv(
+        d_u_real, 
+        d_kf_real, d_kf_imag, 
+        d_f_real, d_f_imag, d_finv_real, d_finv_imag, 
+        d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, 
+        d_out, B, H, N, N1
+    );
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return out;
+}
+// #endif
