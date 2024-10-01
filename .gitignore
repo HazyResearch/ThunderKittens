@@ -18,3 +18,5 @@
 *.txt
 *.pyc
 venv
+/kernels/fftconv/fftconv_tk
+/tests/unit/unit_tests
