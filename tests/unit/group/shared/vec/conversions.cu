@@ -8,7 +8,7 @@ struct vec_copy {
     template<int S, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec1;
         __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec2;

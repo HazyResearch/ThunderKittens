@@ -12,7 +12,7 @@ struct vec_load_store {
     template<int S, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
@@ -32,7 +32,7 @@ struct vec_async_load_store {
     template<int S, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int S, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 

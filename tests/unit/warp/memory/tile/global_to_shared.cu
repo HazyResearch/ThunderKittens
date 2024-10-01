@@ -3,7 +3,7 @@
 #ifdef TEST_WARP_MEMORY_TILE_GLOBAL_TO_SHARED
 
 template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ void g2s_global_wrapper_2d(const GL input, GL output) {
+static __global__ void g2s_global_wrapper_2d(const __grid_constant__ GL input, const __grid_constant__ GL output) {
     Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
@@ -25,6 +25,7 @@ struct g2s_wrapper_2d {
             GL input(d_i, B, nullptr, 16*R, nullptr);
             GL output(d_o, B, nullptr, 16*R, nullptr);
             // run kernel
+            std::cout << "MAX_SHARED_MEMORY: " << kittens::MAX_SHARED_MEMORY << std::endl;
             cudaFuncSetAttribute(
                 global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -56,9 +57,9 @@ struct st_load_store {
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::shared_allocator<16> al((int*)&__shm[0]); 
+        kittens::shared_allocator<1024> al((int*)&__shm[0]); 
         kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
         for(int i = 0; i < input.batch; i++) for(int j = 0; j < input.depth; j++) for(int k = 0; k < input.rows/shared_tile.rows; k++) for(int l = 0; l < input.cols/shared_tile.cols; l++) {
             kittens::load(shared_tile, input, {i, j, k, l});
@@ -77,7 +78,7 @@ struct st_load_store_async {
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL input, const GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();

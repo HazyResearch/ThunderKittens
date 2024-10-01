@@ -8,7 +8,7 @@ struct test_shared_copy {
     template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 

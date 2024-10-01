@@ -12,7 +12,7 @@ struct vec_load_store {
     template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         for(int i = 0; i < i_ref.size(); i++) o_ref[i] = i_ref[i] + 1.f; // just a dummy op to prevent optimization away
     }
-    template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, GL &output) {
+    template<int S, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 

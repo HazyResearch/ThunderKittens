@@ -19,7 +19,7 @@ struct group_normalize_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -51,7 +51,7 @@ struct group_normalize_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -83,7 +83,7 @@ struct group_broadcast_row {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int N, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<N>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
@@ -115,7 +115,7 @@ struct group_broadcast_col {
         }
         for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __bfloat162float(o_ref[i]);
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 

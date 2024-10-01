@@ -34,7 +34,7 @@ struct vec_norm {
         }
     }
     template<int S, int NW, gl_t GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &vec    = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();

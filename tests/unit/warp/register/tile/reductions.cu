@@ -15,7 +15,7 @@ struct normalize_row {
             for(int j = 0; j < W*16; j++) o_ref[i*W*16+j] /= row_sum;
         }
     }
-    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, const GLT &output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<16*H, 16*W, L>::col_vec accum;
@@ -37,7 +37,7 @@ struct normalize_col {
             for(int j = 0; j < H*16; j++) o_ref[i+j*W*16] /= col_sum;
         }
     }
-    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, const GLT &output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<16*H, 16*W, L>::row_vec accum;
@@ -59,7 +59,7 @@ struct broadcast_row {
             for(int j = 0; j < W*16; j++) o_ref[i*W*16+j] = row_sum;
         }
     }
-    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, const GLT &output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<16*H, 16*W, L>::col_vec accum;
@@ -81,7 +81,7 @@ struct broadcast_col {
             for(int j = 0; j < H*16; j++) o_ref[i+j*W*16] = col_sum;
         }
     }
-    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, GLT &output) {
+    template<int H, int W, int NW, gl_t GLT, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GLT &input, const GLT &output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         typename kittens::rt_fl<16*H, 16*W, L>::row_vec accum;

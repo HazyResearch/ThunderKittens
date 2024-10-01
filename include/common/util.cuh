@@ -179,7 +179,7 @@ struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
 #ifdef KITTENS_HOPPER
 template<int default_alignment=1024> // 
 #else
-template<int default_alignment=-1> // 
+template<int default_alignment=16> // 
 #endif
 struct shared_allocator {
     int *ptr;
