@@ -189,7 +189,7 @@ __device__ static inline void arrive(barrier& bar) {
 * @param barrier Reference to the barrier variable.
 * @param kPhaseBit The phase bit used for the barrier.
 */
-__device__ static inline void arrive(barrier& bar, uint32_t count=1) {
+__device__ static inline void arrive(barrier& bar, uint32_t count) {
     if(::kittens::laneid() == 0) {
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         asm volatile (
