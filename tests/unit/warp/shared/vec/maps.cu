@@ -15,7 +15,7 @@ struct vec_add1 {
         for(int i = 0; i < o_ref.size(); i++) o_ref[i] = i_ref[i]+1.; // overwrite the whole thing
     }
     template<int S, int NW, gl_t GL>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         __shared__ kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> vec;
         kittens::load(vec, input, {});
         kittens::add(vec, vec, kittens::base_types::constants<dtype>::one());

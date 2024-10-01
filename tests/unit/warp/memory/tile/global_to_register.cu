@@ -55,7 +55,7 @@ struct load_store {
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_bf<16*H, 16*W, L> reg_tile;
         for(int i = 0; i < input.batch; i++) for(int j = 0; j < input.depth; j++) for(int k = 0; k < input.rows/reg_tile.rows; k++) for(int l = 0; l < input.cols/reg_tile.cols; l++) {
             kittens::load(reg_tile, input, {i, j, k, l});

@@ -122,7 +122,7 @@ template<typename T> using gmem_dtype = typename gmem_wrapper<T>::dtype;
 // ----- 1D Wrappers -----
 
 template<typename Ker, typename T, int S, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ void global_wrapper_1d(GL input, GL output) {
+static __global__ void global_wrapper_1d(GL input, const GL output) {
     Ker::template device_func<S, NW, GL, args...>(input, output);
 }
 template<typename test, int S, int NUM_WORKERS, typename... args>

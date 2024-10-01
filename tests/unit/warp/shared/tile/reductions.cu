@@ -56,7 +56,7 @@ struct normalize_row {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
@@ -123,7 +123,7 @@ struct normalize_col {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
@@ -187,7 +187,7 @@ struct broadcast_row {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
@@ -251,7 +251,7 @@ struct broadcast_col {
             for(int i = 0; i < o_ref.size(); i++) o_ref_f[i] = __half2float(o_ref[i]);
         }
     }
-    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[];
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();

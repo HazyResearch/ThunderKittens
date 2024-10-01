@@ -11,7 +11,7 @@ struct vec_copy_convert {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L1, kittens::ducks::rv_layout::all L2>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         kittens::rv_bf<16*S, L1> vec1;
         kittens::rv_bf<16*S, L2> vec2;
         kittens::load(vec1, input, {});

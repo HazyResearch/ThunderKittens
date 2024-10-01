@@ -52,7 +52,7 @@ struct test_swap_layout {
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_bf<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         auto reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
@@ -81,7 +81,7 @@ struct test_type_convert {
         template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt<U2, 16*H, 16*W> reg_tile_U2;
         kittens::rt<T2, 16*H, 16*W> reg_tile_T2;
         kittens::load(reg_tile_U2, input, {});
@@ -97,7 +97,7 @@ struct test_subtile {
             for(int j = 0; j < W*16; j++)
                 o_ref[i*W*16 + j] = i_ref[i*W*16 + j] + float(i/(ST_H::value*16));
     }
-    template<int H, int W, int NW, gl_t GL, typename _ST_H> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, gl_t GL, typename _ST_H> __device__ static void device_func(const GL input, const GL output) {
         constexpr int ST_H = _ST_H::value;
         kittens::rt_fl<16*H, 16*W> reg_tile;
         kittens::load(reg_tile, input, {});
@@ -117,7 +117,7 @@ struct test_make_causal {
             for(int j = 0; j < W*16; j++)
                 o_ref[i*W*16 + j] = j<=i ? i_ref[i*W*16 + j] : 0;
     }
-    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, GL output) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
         kittens::make_causal(reg_tile, reg_tile);

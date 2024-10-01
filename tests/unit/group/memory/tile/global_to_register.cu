@@ -12,7 +12,7 @@ struct group_load_store {
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, GL &output) {
+    template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL &input, const GL &output) {
         using G = kittens::group<NW>;
         kittens::rt<dtype, 16*H/NW, 16*W, L> reg_tile;
         G::load(reg_tile, input, {});

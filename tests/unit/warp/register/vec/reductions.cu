@@ -13,7 +13,7 @@ struct vec_norm {
         for(int i = 0; i < o_ref.size(); i++) o_ref[i] = i_ref[i] / f;
     }
     template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L>
-    __device__ static void device_func(const GL &input, GL &output) {
+    __device__ static void device_func(const GL &input, const GL &output) {
         kittens::rv_fl<16*S, L> vec;
         kittens::load(vec, input, {});
         float f = 1.f;

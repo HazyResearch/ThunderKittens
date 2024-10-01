@@ -18,7 +18,7 @@ struct test_dsmem { // load with dsmem, write out normally
         }
     }
     template<int H, int W, int NW, kittens::ducks::gl::all GL>
-    __device__ static void device_func(const GL input, GL output) {
+    __device__ static void device_func(const GL input, const GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> (&src_tile) = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
@@ -38,7 +38,7 @@ struct test_dsmem { // load with dsmem, write out normally
 };
 
 template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const GL input, GL output) {
+static __global__ __cluster_dims__(4, 1, 1) void dsmem_global_wrapper_2d(const GL input, const GL output) {
     Ker::template device_func<H, W, NW, GL, args...>(input, output);
 }
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
