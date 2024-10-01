@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     attn_fwd_template::layout::qo_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
     attn_fwd_template::layout::globals globals = {Og, Qg, Kg, Vg};
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 50000; // have the flag tell us
     
     cudaFuncSetAttribute(
         prototype::pc<attn_fwd_template>,

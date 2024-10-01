@@ -1,4 +1,6 @@
 #include "kittens.cuh"
+
+// Override max available memory
 #include "prototype.cuh"
 
 using namespace kittens;
@@ -24,7 +26,7 @@ struct attn_fwd_layout {
 	};
 };
 struct attn_fwd_template {
-	static constexpr int NUM_CONSUMER_WARPS = 8;
+	static constexpr int NUM_CONSUMER_WARPS = 8, DEBUG=1;
 	using layout = attn_fwd_layout;
 	__device__ static inline bool task_coord(coord &coords, const typename layout::globals &g, int task_id) {
 		constexpr int ROWS_PER_TASK = 16*NUM_CONSUMER_WARPS;
