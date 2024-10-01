@@ -92,9 +92,11 @@ struct gl {
     }
     __host__ __device__ inline gl(const gl &other) :
             raw_ptr(other.raw_ptr), batch(other.batch), depth(other.depth), rows(other.rows), cols(other.cols), tma_descs(other.tma_descs) {}
+#ifdef KITTENS_HOPPER
     template<typename U> __device__ inline const CUtensorMap* get_tma() const {
         return tma_descs.template get<U>();
     }
+#endif
     __device__ inline T& operator[](const coord &idx) {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
