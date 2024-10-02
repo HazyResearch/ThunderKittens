@@ -14,9 +14,9 @@ template<int VEC_LENGTH> struct prep_layout {
         y_layout y;
     };
 };
-template<int VEC_LENGTH=2112> struct prep_ker {
+template<int VEC_LENGTH=1024> struct prep_ker {
     using layout = prep_layout<VEC_LENGTH>;
-    static constexpr int NUM_CONSUMER_WARPS=4, OUTPUT_PIPE_STAGES=4, NUM_BLOCKS=2, INPUT_PIPE_STAGES=4;
+    static constexpr int NUM_CONSUMER_WARPS=4, OUTPUT_PIPE_STAGES=4, NUM_BLOCKS=1, INPUT_PIPE_STAGES=4, DEBUG=0;
     __device__ static inline bool task_coord(kittens::coord &coords, const typename layout::globals &g, int iter) { return iter < gridDim.x*gridDim.y*gridDim.z; } // go away
     __device__ static inline int iters(const typename layout::globals &g, const kittens::coord &tc) {
         int iters = ((g.y.cols / layout::vec::length)*(g.y.rows / ((1))) - (blockIdx.x+1) + gridDim.x) / gridDim.x;
@@ -72,8 +72,6 @@ template<int VEC_LENGTH=2112> struct prep_ker {
             warpgroup::store(args.output.y[3], y[3]);
             warpgroup::store(args.output.y[4], y[4]);
             warpgroup::sync();
-            // warpgroup::one(args.output.y[0]); // DBG
-            // warpgroup::sync();
             arrive(args.outputs_arrived);
         }
     };
@@ -140,13 +138,13 @@ void verify_prep_kernel(int M, int N) {
     cudaMemcpy(d_A, h_A_gpu, M * N * sizeof(T), cudaMemcpyHostToDevice);
 
     // Call the GPU kernel (assuming it's implemented elsewhere)
-    using pk = prep_ker<256>;
+    using pk = prep_ker<1024>;
     pk::layout::x_layout Xg(d_A, nullptr, nullptr, M, N);
     pk::layout::y_layout Yg(d_C, nullptr, nullptr, M/2, N/2);
     pk::layout::globals prep_G{Xg, Yg};
-    unsigned long prep_mem_size = 113000; // Adjust if needed
+    unsigned long prep_mem_size = 100000; // Adjust if needed
     cudaFuncSetAttribute(prototype::pc<pk>, cudaFuncAttributeMaxDynamicSharedMemorySize, prep_mem_size);
-    dim3 prep_grid(264); // Adjust if needed
+    dim3 prep_grid(132); // Adjust if needed
     dim3 prep_block(256);
 
     prototype::pc<pk><<<prep_grid, prep_block, prep_mem_size>>>(prep_G);
@@ -157,6 +155,34 @@ void verify_prep_kernel(int M, int N) {
     // Cast back to float for comparison
     for (int i = 0; i < 5 * (M/2) * (N/2); ++i) {
         h_C_gpu_out[i] = __half2float(h_C_gpu[i]);
+    }
+
+    // Check for CUDA errors after kernel execution
+    cudaError_t cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "Prep kernel launch failed: " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Clean up and return or exit
+        delete[] h_A_cpu;
+        delete[] h_A_gpu;
+        delete[] h_C_gpu;
+        delete[] h_C_gpu_out;
+        cudaFree(d_A);
+        cudaFree(d_C);
+        return; // or exit(1);
+    }
+
+    // Check for any errors during kernel execution
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "cudaDeviceSynchronize returned error code " << cudaStatus << " after launching prep kernel: " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Clean up and return or exit
+        delete[] h_A_cpu;
+        delete[] h_A_gpu;
+        delete[] h_C_gpu;
+        delete[] h_C_gpu_out;
+        cudaFree(d_A);
+        cudaFree(d_C);
+        return; // or exit(1);
     }
 
     // Call the CPU version
@@ -191,7 +217,6 @@ void verify_prep_kernel(int M, int N) {
     cudaFree(d_C);
 }
 
-
-int main() {
-    verify_prep_kernel<half>(256, 512);
-}
+// int main() {
+//     verify_prep_kernel<half>(16384, 16384);
+// }
