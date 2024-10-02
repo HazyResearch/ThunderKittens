@@ -163,6 +163,7 @@ template<typename pct> concept has_input_pipe_stages = requires { pct::INPUT_PIP
 template<typename pct> concept has_output_pipe_stages = requires { pct::producer::store; };
 template<typename pct> concept has_num_blocks = requires { pct::NUM_BLOCKS; };
 template<typename pct> concept has_debug = requires { pct::DEBUG; };
+template<typename pct> concept has_one_iter = requires { pct::ONE_ITER; };
 }
 template<typename pct> constexpr bool enable_explicit_barriers = false;
 template<detail::has_enable_explicit_barriers pct> constexpr bool enable_explicit_barriers<pct> = pct::ENABLE_EXPLICIT_BARRIERS;
@@ -182,6 +183,8 @@ template<typename pct> constexpr int input_pipe_stages = (
 template<detail::has_input_pipe_stages pct> constexpr int input_pipe_stages<pct> = pct::INPUT_PIPE_STAGES;
 template<typename pct> constexpr bool debug_status = false;
 template<detail::has_debug pct> constexpr int debug_status<pct> = pct::DEBUG;
+template<typename pct> constexpr bool one_iter = false;
+template<detail::has_one_iter pct> constexpr bool one_iter<pct> = pct::ONE_ITER;
 
 template<pc_template T> constexpr int num_threads = (num_consumer_warps<T> + num_producer_warps<T>) * 32;
 template<pc_template T> constexpr int num_warps = num_consumer_warps<T> + num_producer_warps<T>;
@@ -219,8 +222,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
     static_assert(
         INPUT_PIPE_STAGES*sizeof(input_block) +
         OUTPUT_PIPE_STAGES*sizeof(output_block) +
-        sizeof(scratch_block) +
-        sizeof(finish_block)
+        sizeof(scratch_block)
         <= MAX_SHARED_MEMORY-1024, "Shared memory usage exceeds limits"
     );
     constexpr int NUM_CONSUMER_WARPS = num_consumer_warps<pct>;
@@ -421,6 +423,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
                     input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
                     load_iter++;
                 } // load loop
+                if constexpr (one_iter<pct>) return;
             } // just a load kernel
             warpgroup::sync(15);
             task_iter++;
@@ -495,6 +498,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
                     &outputs_finished[0],
                     iters
                 });
+                if constexpr (one_iter<pct>) return;
                 group<NUM_CONSUMER_WARPS>::sync(1); // cannot overwrite finish block until all consumer warps are done.
             } // finish
             task_iter++;
