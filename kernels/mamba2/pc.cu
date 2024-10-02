@@ -1,8 +1,5 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
-
-// I am doing it with attention notation because that is what I understand.
-
 using namespace kittens;
 using namespace kittens::prototype;
 struct mamba2_fwd_layout {
@@ -16,13 +13,7 @@ struct mamba2_fwd_layout {
 	using v_global = kittens::gl<bf16, -1, -1, -1, 64, v_tile>;
 	using o_global = kittens::gl<bf16, -1, -1, -1, 64, o_tile>;
     using a_global = kittens::gl<float, -1, -1,  1, -1, a_vec>;
-	struct globals {
-        q_global Q;
-        k_global K;
-        v_global V;
-        o_global O;
-        a_global A;
-	};
+	struct globals { q_global Q; k_global K; v_global V; o_global O; a_global A; };
 	struct input_block    { 
         q_tile q;
         k_tile k;
@@ -48,11 +39,10 @@ struct mamba2_fwd_layout {
 	};
 };
 struct mamba2_fwd_template {
-	static constexpr int NUM_CONSUMER_WARPS = 4, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS/4, OUTPUT_PIPE_STAGES=1, INPUT_PIPE_STAGES=1, DEBUG=0;
+	static constexpr int NUM_CONSUMER_WARPS = 4, NUM_BLOCKS=2,
+        OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
 	using layout = mamba2_fwd_layout;
 	__device__ static inline bool task_coord(coord &coords, const typename layout::globals &g, int task_id) {
-		constexpr int ROWS_PER_TASK = 16*NUM_CONSUMER_WARPS;
-		int TASKS_PER_HEAD = (g.Q.rows + ROWS_PER_TASK - 1) / ROWS_PER_TASK;
 		coords.b = task_id/g.Q.depth; // batch = id / heads.
 		task_id -= coords.b*g.Q.depth;
 		coords.d = task_id;
@@ -97,23 +87,13 @@ struct mamba2_fwd_template {
             if(warpid() <= 1) {
                 // Perform the prefix sum (Hillis-Steele scan)
                 for (int offset = 1; offset < 64; offset *= 2) {
-                    // Store the value from the previous iteration
                     float temp = (threadIdx.x >= offset) ? args.scratch.a_cumsum[threadIdx.x - offset] : 0.0f;
                     group<2>::sync(14);
-                    // Update the shared memory with the new cumulative sum
                     args.scratch.a_cumsum[threadIdx.x] += temp;
                     group<2>::sync(14);
                 }
             }
             warpgroup::sync(); // cumulative sum done
-            // if(threadIdx.x == 0) {
-            //     printf("\n\ncumsum, iter %d: \n\n", args.iter);
-            //     for(int i = 0; i < 64; i++) {
-            //         printf("%f ", args.scratch.a_cumsum[i]);
-            //     }
-            //     printf("\n");
-            // }
-            // warpgroup::sync();
             // Calculate decays
             #pragma unroll
             for(int i = 0; i < 4; i++) {
@@ -144,7 +124,6 @@ struct mamba2_fwd_template {
             copy(args.state.att_block_mma, args.state.att_block);
             warpgroup::mm_AB(args.state.o_reg, args.state.att_block_mma, args.input.v);
             warpgroup::mma_async_wait();
-
             // // multiply q by decays
             {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
@@ -162,18 +141,12 @@ struct mamba2_fwd_template {
                     args.state.q_reg.tiles[0][i].data[3].y *= bottom;
                 }
             }
-
             warpgroup::store(args.scratch.kv, args.state.kv);
             warpgroup::sync();
-
             warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv);
             warpgroup::mma_async_wait();
-
             warpgroup::store(args.output.o, args.state.o_reg);
             warpgroup::sync();
-            arrive(args.outputs_arrived);
-
-
             float last_decay = args.scratch.a_cumsum[args.scratch.a_cumsum.length-1]; // last element
             float total_decay = expf(last_decay);
             mul(args.state.kv, args.state.kv, total_decay); // decay kv
@@ -196,12 +169,10 @@ struct mamba2_fwd_template {
             }
             warpgroup::store(args.scratch.k, args.state.k_reg); // using as dummy memory
             warpgroup::sync();
-
             warpgroup::mma_AtB(args.state.kv, args.scratch.k, args.input.v);
             warpgroup::mma_async_wait();
-
+            arrive(args.outputs_arrived);
             arrive(args.inputs_finished);
-
 		}
 	};
 };
