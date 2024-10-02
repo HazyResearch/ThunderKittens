@@ -1,0 +1,395 @@
+#include <iostream>
+#include <string>
+#include <stdlib.h>
+#include <bitset>
+
+#include <fstream>
+
+#define N 256
+#define N1 16
+#define B 32
+#define H 128
+#define TOTAL_INPUT_ELEMENTS (B*H*N)
+#define FILTER_ELEMENTS (N1*N1)
+static_assert(N1*N1 == N, "N1*N1 != N");
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_elements) {
+    int diff_counter = 0;
+    std::ofstream o_ref_file("./printouts/o_ref.txt");
+    std::ofstream o_file("./printouts/o.txt");
+    std::ofstream diff_file("./printouts/diff.txt");
+    bool good = true;
+
+    int num_nans = 0;
+    int num_infs = 0;
+    
+    for (size_t i = 0; i < num_elements; i++) {
+        float pred = o[i];
+        float actual = o_ref[i];
+        float diff = abs(pred - actual);
+        bool has_nan = isnan(diff);
+        bool has_inf = isinf(pred);
+        if (has_nan) {
+            num_nans += 1;
+            good = false;
+        }
+        if (has_inf) {
+            num_infs += 1;
+            good = false;
+        }
+        if (1 ) { //i < 100000 ) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+            if (i % 64 == 63) {
+                o_ref_file << '\n';
+                o_file << '\n';
+                diff_file << '\n';
+            }
+        }
+        if (diff > max(abs_tol, actual * rel_tol)) {
+            diff_counter += 1;
+            good = false;
+        }
+    }
+    std::cout << diff_counter << " elements out of " << num_elements << " violate threshold" << std::endl;
+    std::cout << num_nans << " elements out of " << num_elements << " have nans" << std::endl;
+    std::cout << num_infs << " elements out of " << num_elements << " have infs" << std::endl;
+    return good;
+}
+
+void loads(
+    char *file,  
+    bf16* &d_kf_real, bf16* &d_kf_imag, 
+    bf16* &d_f_real, bf16* &d_f_imag, 
+    bf16* &d_finv_real, bf16* &d_finv_imag,
+    bf16* &d_tw_real, bf16* &d_tw_imag, 
+    bf16* &d_twinv_real, bf16* &d_twinv_imag,
+    bf16* &d_u_real1, bf16* &d_u_imag1, 
+    bf16* &d_u_real2, bf16* &d_u_imag2,
+    bf16* &d_u_real3, bf16* &d_u_imag3,
+    bf16* &d_u_real4, bf16* &d_u_imag4,
+    float* &o_ref1, float* &o_ref2, float* &o_ref3, float* &o_ref4
+) {
+    
+    float *u_real1 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_imag1 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_real2 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_imag2 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_real3 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_imag3 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_real4 = new float[TOTAL_INPUT_ELEMENTS];
+    float *u_imag4 = new float[TOTAL_INPUT_ELEMENTS];
+
+    float *kf_real = new float[H*FILTER_ELEMENTS];
+    float *kf_imag = new float[H*FILTER_ELEMENTS];
+    float *f_real = new float[FILTER_ELEMENTS];
+    float *f_imag = new float[FILTER_ELEMENTS];
+    float *finv_real = new float[FILTER_ELEMENTS];
+    float *finv_imag = new float[FILTER_ELEMENTS];
+    float *tw_real = new float[FILTER_ELEMENTS];
+    float *tw_imag = new float[FILTER_ELEMENTS];
+    float *twinv_real = new float[FILTER_ELEMENTS];
+    float *twinv_imag = new float[FILTER_ELEMENTS];
+    
+    bf16 *u_real_bf1 = new bf16[TOTAL_INPUT_ELEMENTS];
+    bf16 *u_imag_bf1 = new bf16[TOTAL_INPUT_ELEMENTS];
+    bf16 *u_real_bf2 = new bf16[TOTAL_INPUT_ELEMENTS];
+    bf16 *u_imag_bf2 = new bf16[TOTAL_INPUT_ELEMENTS];
+    bf16 *u_real_bf3 = new bf16[TOTAL_INPUT_ELEMENTS];
+    bf16 *u_imag_bf3 = new bf16[TOTAL_INPUT_ELEMENTS];
+
+    bf16 *kf_real_bf = new bf16[H*FILTER_ELEMENTS];
+    bf16 *kf_imag_bf = new bf16[H*FILTER_ELEMENTS];
+    bf16 *f_real_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *f_imag_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *finv_real_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *finv_imag_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *tw_real_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *tw_imag_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *twinv_real_bf = new bf16[FILTER_ELEMENTS];
+    bf16 *twinv_imag_bf = new bf16[FILTER_ELEMENTS];
+    
+    std::ifstream infile(file);
+    std::cout << "Starting to enter!" << std::endl;
+
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_real1[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_imag1[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_real2[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_imag2[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_real3[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_imag3[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_real4[i];
+    for (int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_imag4[i];
+    std::cout << "Finished loading U" << std::endl;
+    for(int i = 0; i < H*FILTER_ELEMENTS; i++) infile >> kf_real[i];
+    for(int i = 0; i < H*FILTER_ELEMENTS; i++) infile >> kf_imag[i];
+    std::cout << "Finished loading Kf" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> f_real[i];
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> f_imag[i];
+    std::cout << "Finished loading F" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> finv_real[i];
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> finv_imag[i];
+    std::cout << "Finished loading Finv" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> tw_real[i];
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> tw_imag[i];
+    std::cout << "Finished loading tw" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> twinv_real[i];
+    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> twinv_imag[i];
+    std::cout << "Finished loading tw inv" << std::endl;
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> o_ref1[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> o_ref2[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> o_ref3[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> o_ref4[i];
+    std::cout << "Finished loading O_REF" << std::endl;
+    
+    std::cout << "Starting to convert to bf16" << std::endl;
+
+    // Convert to bf16
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_real_bf1[i] = __float2bfloat16(u_real1[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf1[i] = __float2bfloat16(u_imag1[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_real_bf2[i] = __float2bfloat16(u_real2[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf2[i] = __float2bfloat16(u_imag2[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_real_bf3[i] = __float2bfloat16(u_real3[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf3[i] = __float2bfloat16(u_imag3[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_real_bf4[i] = __float2bfloat16(u_real4[i]);}
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf4[i] = __float2bfloat16(u_imag4[i]);}
+
+    std::cout << "Finished converting u to bf16" << std::endl;
+    for(int i = 0; i < H*FILTER_ELEMENTS; i++) { kf_real_bf[i] = __float2bfloat16(kf_real[i]);}
+    for(int i = 0; i < H*FILTER_ELEMENTS; i++) { kf_imag_bf[i] = __float2bfloat16(kf_imag[i]);}
+    std::cout << "Finished converting kf to bf16" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { 
+        f_real_bf[i] = __float2bfloat16(f_real[i]);
+    }
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { f_imag_bf[i] = __float2bfloat16(f_imag[i]);}
+    std::cout << "Finished converting f to bf16" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { finv_real_bf[i] = __float2bfloat16(finv_real[i]);}
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { finv_imag_bf[i] = __float2bfloat16(finv_imag[i]);}
+    std::cout << "Finished converting finv to bf16" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { tw_real_bf[i] = __float2bfloat16(tw_real[i]);}
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { tw_imag_bf[i] = __float2bfloat16(tw_imag[i]);}
+    std::cout << "Finished converting tw to bf16" << std::endl;
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { twinv_real_bf[i] = __float2bfloat16(twinv_real[i]);}
+    for(int i = 0; i < FILTER_ELEMENTS; i++) { twinv_imag_bf[i] = __float2bfloat16(twinv_imag[i]);}
+    std::cout << "Finished converting twinv to bf16" << std::endl;
+
+    std::cout << "Starting to malloc on device" << std::endl;
+
+    cudaMalloc(&d_u_real1, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_imag1, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_real2, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_imag2, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_real3, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_imag3, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_real4, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_u_imag4, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+
+    cudaMalloc(&d_kf_real, H * FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_kf_imag, H * FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_f_real, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_f_imag, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_finv_real, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_finv_imag, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_tw_real, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_tw_imag, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_twinv_real, FILTER_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_twinv_imag, FILTER_ELEMENTS * sizeof(bf16));
+
+    std::cout << "Finished malloc on device, copying to device" << std::endl;
+
+    cudaMemcpy(d_u_real1, u_real_bf1, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_imag1, u_imag_bf1, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_real2, u_real_bf2, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_imag2, u_imag_bf2, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_real3, u_real_bf3, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_imag3, u_imag_bf3, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_real4, u_real_bf4, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_u_imag4, u_imag_bf4, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+
+    cudaMemcpy(d_kf_real, kf_real_bf, H * FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kf_imag, kf_imag_bf, H * FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_f_real, f_real_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_f_imag, f_imag_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_finv_real, finv_real_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_finv_imag, finv_imag_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_tw_real, tw_real_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_tw_imag, tw_imag_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_twinv_real, twinv_real_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_twinv_imag, twinv_imag_bf, FILTER_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    std::cout << "Finished copying to device" << std::endl;
+
+    delete[] u_real1, u_imag1, kf_real, kf_imag, f_real, f_imag, 
+            finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, 
+            u_real_bf1, u_imag_bf1, u_real_bf2, u_imag_bf2, u_real_bf3, u_imag_bf3, u_real_bf4, u_imag_bf4, u_real2, u_imag2, u_real3, u_imag3, u_real4, u_imag4;
+    delete[] u_real_bf, u_imag_bf, kf_real_bf, kf_imag_bf, f_real_bf, f_imag_bf, 
+            finv_real_bf, finv_imag_bf, tw_real_bf, tw_imag_bf, twinv_real_bf, twinv_imag_bf;
+}
+
+int main(int argc, char **argv) {
+    printf("Starting\n");
+    //int TOTAL_INPUT_ELEMENTS = B * H * N;
+
+    float *o_ref1 = new float[TOTAL_INPUT_ELEMENTS];
+    float *o_ref2 = new float[TOTAL_INPUT_ELEMENTS];
+    float *o_ref3 = new float[TOTAL_INPUT_ELEMENTS];
+    float *o_ref4 = new float[TOTAL_INPUT_ELEMENTS];
+    float *o1 = new float[TOTAL_INPUT_ELEMENTS]; // On host after kernel
+    bf16 *o_bf1 = new bf16[TOTAL_INPUT_ELEMENTS];
+
+    bf16 *d_u_real1, *d_u_imag1, *d_u_real2, *d_u_imag2, *d_u_real3, *d_u_imag3, *d_u_real4, *d_u_imag4;
+    bf16 *d_kf_real, *d_kf_imag, 
+    *d_f_real, *d_f_imag, *d_finv_real, *d_finv_imag, 
+    *d_tw_real, *d_tw_imag, *d_twinv_real, *d_twinv_imag; 
+    bf16 *d_o1, *d_o2, *d_o3, *d_o4;
+    
+    if(argc == 2) {
+        cudaMalloc(&d_o1, TOTAL_INPUT_ELEMENTS * sizeof(bf16));
+        loads(
+            argv[1],  
+            d_kf_real, d_kf_imag, 
+            d_f_real, d_f_imag, d_finv_real, d_finv_imag,
+            d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag,
+            d_u_real1, d_u_imag1, d_u_real2, d_u_imag2, d_u_real3, d_u_imag3, d_u_real4, d_u_imag4,
+            o_ref1, o_ref2, o_ref3, o_ref4
+        );
+    } else {
+        exit(1);
+    }
+
+    // tk 2 changes
+    using fftst = fft_256_template;
+    using globals       = typename fftst::layout::globals;
+    using fft_layout    = typename fftst::layout::fft_layout;
+    using filter_layout = typename fftst::layout::filter_layout;
+    using seq_layout    = typename fftst::layout::seq_layout;
+
+    // input and output
+    seq_layout u_gl{d_u_real1, B, H, nullptr, nullptr};
+
+    seq_layout o_gl{d_o1, B, H, nullptr, nullptr};
+
+    // filters
+    filter_layout kf_gl{
+        typename filter_layout::GL{d_kf_real, nullptr, H, nullptr, nullptr}, 
+        typename filter_layout::GL{d_kf_imag, nullptr, H, nullptr, nullptr}
+    };
+    
+    // factors
+    fft_layout f_gl{
+        typename fft_layout::GL{d_f_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_f_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout tw_gl{
+        typename fft_layout::GL{d_tw_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_tw_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout finv_gl{
+        typename fft_layout::GL{d_finv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_finv_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+    fft_layout twinv_t_gl{
+        typename fft_layout::GL{d_twinv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_twinv_imag, nullptr, nullptr, nullptr, nullptr}
+    };
+
+    globals G{
+        o_gl, // O comes first
+        u_gl,
+        kf_gl,
+        f_gl,
+        finv_gl,
+        tw_gl,
+        twinv_t_gl
+    };
+
+
+    unsigned long mem_size = (MAX_SHARED_MEMORY-1024);
+    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
+    cudaFuncSetAttribute(
+        pc<fftst>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    for (int i = 0; i < 10; i ++) {
+        std::cout << "Starting kernel\n";
+        dim3 grid(132);
+        dim3 block(num_threads<fftst>);
+        cudaDeviceSynchronize();
+        const auto start = std::chrono::high_resolution_clock::now();
+        pc<fftst><<<grid, block, mem_size>>>(G);
+        cudaDeviceSynchronize();
+        const auto finish = std::chrono::high_resolution_clock::now();
+        CudaCheckError();
+        std::cout << "Finished kernel\n\n";
+        std::cout << "Execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us\n" << std::endl;
+    }
+    
+    cudaMemcpy(o_bf1, d_o1, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {  o1[i] = __bfloat162float(o_bf1[i]);  }
+
+    // Reduce criteria from 0.5 to 1 abs difference (we had 50 elements out of 262144 violate threshold,
+    // all diffs were between 0.5 and 1)
+    constexpr float abs_tol = 1.0e-1f;
+    constexpr float rel_tol = 1.0e-1f;
+
+    std::cout << "Total output elements: " << TOTAL_INPUT_ELEMENTS << std::endl;
+    if (check_value(abs_tol, rel_tol, o1, o_ref1, TOTAL_INPUT_ELEMENTS)) {
+        std::cout << "Correctness Test PASSED" << std::endl;
+    } else {
+        std::cout << "Correctness Test FAILED" << std::endl;
+    }
+
+    delete[] o_ref1, o1;
+    delete[] o_bf1;
+
+    cudaFree(d_u_real1);
+    cudaFree(d_u_imag1);
+    cudaFree(d_u_real2);
+    cudaFree(d_u_imag2);
+    cudaFree(d_u_real3);
+    cudaFree(d_u_imag3);
+    cudaFree(d_u_real4);
+    cudaFree(d_u_imag4);
+
+    cudaFree(d_kf_real);
+    cudaFree(d_kf_imag);
+    cudaFree(d_f_real);
+    cudaFree(d_f_imag);
+    cudaFree(d_finv_real);
+    cudaFree(d_finv_imag);
+    cudaFree(d_tw_real);
+    cudaFree(d_tw_imag);
+    cudaFree(d_twinv_real);
+    cudaFree(d_twinv_imag);
+
+    cudaFree(d_o1);
+    cudaFree(d_o2);
+    cudaFree(d_o3);
+    cudaFree(d_o4);
+
+    return 0;
+}
