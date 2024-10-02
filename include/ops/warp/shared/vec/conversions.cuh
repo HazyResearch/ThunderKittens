@@ -49,7 +49,7 @@ __device__ static inline void copy(SV1 &dst, const SV2 &src) {
 */
 template<int subvec_length, ducks::sv::all SV>
 __device__ inline typename SV::subvec<subvec_length> &subvec_inplace(SV &src, int vec_idx) {
-    return *(typename SV::subvec<subvec_length>*)(&src[vec_idx*kittens::TILE_DIM*subvec_length]);
+    return *(typename SV::subvec<subvec_length>*)(&src[vec_idx*subvec_length]);
 }
 
 }

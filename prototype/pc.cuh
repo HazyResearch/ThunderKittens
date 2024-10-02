@@ -196,6 +196,10 @@ template<int half> __device__ static inline bool get_phasebit(uint32_t bitfield,
 template<int half> __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
     bitfield ^= (1 << (half*16 + ring_id));
 }
+
+__device__ static inline int get_task_iter(int ti) {
+    return ti*gridDim.x*gridDim.y*gridDim.z + blockIdx.z*gridDim.y*gridDim.x + blockIdx.y*gridDim.x+blockIdx.x;
+}
 template<typename pct>
 __global__ __launch_bounds__(num_threads<pct>, num_blocks<pct>)
 void pc(const __grid_constant__ typename pct::layout::globals g) {
@@ -212,6 +216,13 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
     static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 16, "Invalid number of output pipe stages");
     constexpr int INPUT_PIPE_STAGES = input_pipe_stages<pct>;
     static_assert(INPUT_PIPE_STAGES >= 1 && INPUT_PIPE_STAGES <= 16, "Invalid number of input pipe stages");
+    static_assert(
+        INPUT_PIPE_STAGES*sizeof(input_block) +
+        OUTPUT_PIPE_STAGES*sizeof(output_block) +
+        sizeof(scratch_block) +
+        sizeof(finish_block)
+        <= MAX_SHARED_MEMORY-1024, "Shared memory usage exceeds limits"
+    );
     constexpr int NUM_CONSUMER_WARPS = num_consumer_warps<pct>;
     constexpr int NUM_PRODUCER_WARPS = num_producer_warps<pct>;
     
@@ -290,7 +301,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
         }
         __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         producer_state s;
-        for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
+        for(bool active_task = pct::task_coord(task_coord, g, get_task_iter(task_iter)); active_task; active_task=pct::task_coord(task_coord, g, get_task_iter(task_iter))) {
             int iters = pct::iters(g, task_coord);
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
@@ -419,7 +430,7 @@ void pc(const __grid_constant__ typename pct::layout::globals g) {
         uint32_t barrier_bitfield = 0xFFFF0000; // outputs_finished phase bits start as 1s, inputs_arrived phase bits start as 0s
         __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         consumer_state s;
-        for(bool active_task = pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x); active_task; active_task=pct::task_coord(task_coord, g, task_iter*gridDim.x+blockIdx.x)) {
+        for(bool active_task = pct::task_coord(task_coord, g, get_task_iter(task_iter)); active_task; active_task=pct::task_coord(task_coord, g, get_task_iter(task_iter))) {
             int iters = pct::iters(g, task_coord);
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
