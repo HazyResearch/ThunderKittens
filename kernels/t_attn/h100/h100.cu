@@ -24,6 +24,13 @@ template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int stages     = (2); 
 };
 
+// Reshapes the input to treat each row of the pairwise representation 
+// as a separate "batch" item (to compute attention over the second sequence
+// dimension for each position in the first sequence dimension)
+
+// Main modification wrt to mha kernel: addition of attention bias (b_tile)
+// (pairwise information incorporated into the attention mechanism)
+
 template<int D>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void triangle_attention(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_k, const CUtensorMap* tma_v, CUtensorMap* tma_b, CUtensorMap* tma_o) {
@@ -45,7 +52,7 @@ void triangle_attention(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     k_tile    (&k_smem)[K::stages]                       = al.allocate<k_tile, K::stages          >();
     v_tile    (&v_smem)[K::stages]                       = al.allocate<v_tile, K::stages          >();
     o_tile    (&b_smem)[K::stages][CONSUMER_WARPGROUPS]  = al.allocate<o_tile, K::stages, CONSUMER_WARPGROUPS>();
-    auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
+    auto      (*o_smem)                                  = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
     
     int kv_blocks = N / (K::kv_height*TILE_DIM);
 
@@ -124,8 +131,12 @@ void triangle_attention(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
     
         rt_fl<1, K::kv_height>  att_block; 
         rt_fl<1, K::kv_height>  att_block_scaled;
+
         rt_bf<1, K::kv_height>  att_block_mma;
+        rt_bf<1, K::kv_height>  att_bias; 
+
         rt_fl<1, K::tile_width> o_reg;
+
         col_vec<rt_fl<1, K::kv_height>> max_vec_last,        max_vec;
         col_vec<rt_fl<1, K::kv_height>> max_vec_last_scaled, max_vec_scaled;
         col_vec<rt_fl<1, K::kv_height>> norm_vec_last,       norm_vec;
@@ -152,6 +163,11 @@ void triangle_attention(int N, const CUtensorMap* tma_q, const CUtensorMap* tma_
             copy(max_vec_last,  max_vec);
             
             warpgroup::mma_async_wait();
+
+            wait(b_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); // wait on b memory
+
+            warpgroup::load(att_bias, b_smem[(kv_idx)%K::stages][warpgroupid]);
+            add(att_block, att_block, att_bias);
 
             row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
             
