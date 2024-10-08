@@ -1,5 +1,5 @@
 import torch
-import h100 as tk_train
+import thunderkittens as tk
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from statistics import median
@@ -20,14 +20,14 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal):
     o = torch.zeros_like(Q)
     l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
     
-    tk_train.attention_forward(Q, K, V, o, l_vec, causal)
+    tk.mha_forward(Q, K, V, o, l_vec, causal)
 
     d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
     qg = torch.zeros_like(Q, dtype=torch.float)
     kg = torch.zeros_like(K, dtype=torch.float)
     vg = torch.zeros_like(V, dtype=torch.float)
 
-    tk_train.attention_backward(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg, causal)
+    tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, qg, kg, vg, causal)
 
     return o, qg, kg, vg
 
