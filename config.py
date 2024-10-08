@@ -1,13 +1,8 @@
 ### ADD TO THIS TO REGISTER NEW KERNELS
 sources = {
-    'attn_inference': {
+    'attn': {
         'source_files': {
             'h100': 'kernels/attn/h100/h100.cu' # define these source files for each GPU target desired. (they can be the same.)
-        }
-    },
-    'attn_training': {
-        'source_files': {
-            'h100': 'kernels/attn/h100/h100.cu'
         }
     },
     'hedgehog': {
@@ -40,8 +35,8 @@ sources = {
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
-# kernels = ['attn_inference', 'attn_training', 'hedgehog', 'fused_rotary']
-kernels = ['attn_inference']
+# kernels = ['attn', 'attn', 'hedgehog', 'fused_rotary']
+kernels = ['attn']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'

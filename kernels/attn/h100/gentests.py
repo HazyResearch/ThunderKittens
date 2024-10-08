@@ -16,7 +16,7 @@ D = int(sys.argv[2])
 H_QO = int(sys.argv[3])
 H_KV = int(sys.argv[4])
 
-causal = False
+causal = True
 
 torch.random.manual_seed(42)
 q = (torch.randn((B, H_QO, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
