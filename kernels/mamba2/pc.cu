@@ -1,5 +1,10 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_MAMBA2
+#endif
+
 using namespace kittens;
 using namespace kittens::prototype;
 struct mamba2_fwd_layout {
@@ -177,4 +182,88 @@ struct mamba2_fwd_template {
 	};
 };
 
+#ifdef TK_COMPILE_MAMBA2
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_mamba2(
+    bf16 *d_q, bf16 *d_k, bf16 *d_v, 
+    bf16 *d_o, float *d_a,
+    int B, int H, int N
+){
+
+    mamba2_fwd_template::layout::q_global Qg(d_q, B, H, N, nullptr);
+    mamba2_fwd_template::layout::a_global Ag(d_a, B, H, nullptr, N);
+    mamba2_fwd_template::layout::k_global Kg(d_k, B, H, N, nullptr);
+    mamba2_fwd_template::layout::v_global Vg(d_v, B, H, N, nullptr);
+    mamba2_fwd_template::layout::o_global Og(d_o, B, H, N, nullptr);
+    mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
+    
+    // launch setup
+    unsigned long mem_size = MAX_SHARED_MEMORY;
+    cudaFuncSetAttribute(
+        prototype::pc<mamba2_fwd_template>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    dim3 grid(132, 1, 1);
+    constexpr int BLOCK_SIZE = prototype::num_threads<mamba2_fwd_template>;
+    prototype::pc<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+}
+
+
+torch::Tensor mamba2(
+    const torch::Tensor q,
+    const torch::Tensor k,
+    const torch::Tensor v,
+    const torch::Tensor a
+) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(a);
+
+    int B = v.size(0);
+    int H = v.size(1);
+    int N = v.size(2);
+    int D = v.size(3);
+    
+    // checks
+    TORCH_CHECK(q.size(0) == B, "q has incompatible batch");
+    // TORCH_CHECK(q.size(1) == H, "q has incompatible heads");
+    TORCH_CHECK(q.size(2) == N, "q has incompatible sequence shape");
+
+    TORCH_CHECK(k.size(0) == B, "k has incompatible batch");
+    // TORCH_CHECK(k.size(1) == H, "k has incompatible heads");
+    TORCH_CHECK(k.size(2) == N, "k has incompatible sequence");
+
+    TORCH_CHECK(v.size(0) == B, "v has incompatible dim");
+    // TORCH_CHECK(v.size(1) == H, "v has incompatible heads");
+    TORCH_CHECK(v.size(2) == N, "v has incompatible sequence");
+
+    torch::Tensor out = torch::empty({B, H, N, D}, q.options());
+
+    // convert to bf16
+    c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_bf16 = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_bf16 = v.data_ptr<c10::BFloat16>();
+    // float for a
+    float *a_bf16 = a.data_ptr<float>();
+
+    bf16 *d_q = reinterpret_cast<bf16*>(q_bf16);
+    bf16 *d_k = reinterpret_cast<bf16*>(k_bf16);
+    bf16 *d_v = reinterpret_cast<bf16*>(v_bf16);
+    float *d_a = reinterpret_cast<float*>(a_bf16);
+    bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+    
+    dispatch_mamba2(
+        d_q, d_k, d_v, d_o, d_a,
+        B, H, N
+    );
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return out;
+}
+#else
 #include "harness.impl"
+#endif
+

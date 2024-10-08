@@ -106,9 +106,7 @@ extern torch::Tensor fftconv(
     int B,
     int H,
     int N,
-    int N1,
-    int B_TILE,
-    int H_TILE
+    int N1
 );
 #endif
 
@@ -117,6 +115,15 @@ extern torch::Tensor fused_rotary(
     const torch::Tensor x,
     const torch::Tensor cos_in, 
     const torch::Tensor sin_in
+);
+#endif
+
+#ifdef TK_COMPILE_MAMBA2
+extern torch::Tensor mamba2(
+    const torch::Tensor q, 
+    const torch::Tensor k,
+    const torch::Tensor v,
+    const torch::Tensor a
 );
 #endif
 
@@ -168,6 +175,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_FUSED_ROTARY
     m.def("fused_rotary", fused_rotary, "Rotary TK. Takes tensors (x, cos_in, sin_in). All tensors are bf16. Returns (B, H, N, 128) in bf16.");
+#endif
+
+#ifdef TK_COMPILE_MAMBA2
+    m.def("mamba2", mamba2, "Mamba2 TK. Takes tensors (q, k, v, a). q, k, v tensors are bf16 and a is float.");
 #endif
 
 }

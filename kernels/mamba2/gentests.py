@@ -72,7 +72,7 @@ torch.manual_seed(0)
 batch   = 1
 headdim = 64
 
-length     = int(sys.argv[1])
+length     = 2048 #int(sys.argv[1])
 chunk_size = 64
 num_chunks = length // chunk_size
 
