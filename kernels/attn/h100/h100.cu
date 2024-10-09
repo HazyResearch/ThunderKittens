@@ -756,7 +756,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 dp_block_t.tiles[0][i].data[2] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[2], *(float2*)&d_smem[tic][base_col + 8]);
                 dp_block_t.tiles[0][i].data[3] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[3], *(float2*)&d_smem[tic][base_col + 8]);
             }
-            
+
             mul(ds_block_t, p_block_t, dp_block_t);
 
             if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
@@ -816,360 +816,467 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     }
 }
 
-#include "harness.impl"
-
-// #include "common/pyutils/torch_helpers.cuh"
-// #include <iostream>
-// void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal)
-// {
-//     CHECK_INPUT(q);
-//     CHECK_INPUT(k);
-//     CHECK_INPUT(v);
-//     CHECK_INPUT(l);
-//     CHECK_INPUT(o);
-
-//     auto batch    = q.size(0);
-//     auto seq_len  = q.size(2); 
-//     auto head_dim = q.size(3); 
-
-//     // check to see that these dimensions match for all inputs
-//     TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(l.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(o.size(0) == batch, "O batch dimension - idx 0 - must match for all inputs");
-
-//     TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(l.size(2) == seq_len, "L sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(o.size(2) == seq_len, "O sequence length dimension - idx 2 - must match for all inputs");
-
-//     TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(o.size(3) == head_dim, "O head dimension - idx 3 - must match for all non-vector inputs");
-
-//     auto is_causal = causal; 
-
-//     auto qo_heads = q.size(1);
-//     auto kv_heads = k.size(1);
-
-//     TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
-//     TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
-
-//     TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(l.size(1) == qo_heads, "L head dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(o.size(1) == qo_heads, "O head dimension - idx 1 - must match for all inputs");
-
-//     auto hr = qo_heads / kv_heads;
-
-//     c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
-//     float         *l_ptr = l.data_ptr<float>();
-
-//     bf16* d_q  = reinterpret_cast<bf16*>(q_ptr);
-//     bf16* d_k  = reinterpret_cast<bf16*>(k_ptr);
-//     bf16* d_v  = reinterpret_cast<bf16*>(v_ptr);
-//     bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
-//     float* d_l = reinterpret_cast<float*>(l_ptr);
-
-//     CUtensorMap* tma_q_d; 
-//     CUtensorMap* tma_k_d; 
-//     CUtensorMap* tma_v_d; 
-//     CUtensorMap* tma_o_d; 
-//     CUtensorMap* tma_l_d; 
-
-//     if (head_dim == 64) {
-//         tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
-//         tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_height * kittens::TILE_DIM));
-//         tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<64>::kv_height * kittens::TILE_DIM));
-//         tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
-//         tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<64>::qo_height * kittens::TILE_DIM));
-//     }
-
-//     if (head_dim == 128) {
-//         tma_q_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_q, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
-//         tma_k_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_k, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_height * kittens::TILE_DIM));
-//         tma_v_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_v, batch*kv_heads*seq_len/(fwd_attend_ker_tile_dims<128>::kv_height * kittens::TILE_DIM));
-//         tma_o_d = tma::allocate_and_create_tensor_map<        st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width> >(d_o, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
-//         tma_l_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>>(d_l, batch*qo_heads*seq_len/(fwd_attend_ker_tile_dims<128>::qo_height * kittens::TILE_DIM));
-//     }
-
-//     auto mem_size = kittens::MAX_SHARED_MEMORY;
-//     auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
-
-//     TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
-//     dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), batch*qo_heads, 1);
-
-//     if (is_causal && head_dim == 64) {
-//         cudaFuncSetAttribute(
-//             fwd_attend_ker<64, true>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         fwd_attend_ker<64, true><<<grid, threads, mem_size>>>(seq_len, hr, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-//     }
-
-//     if (is_causal && head_dim == 128) {
-//         cudaFuncSetAttribute(
-//             fwd_attend_ker<128, true>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         fwd_attend_ker<128, true><<<grid, threads, mem_size>>>(seq_len, hr, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-//     }
-
-//     if (!is_causal && head_dim == 64) {
-//         cudaFuncSetAttribute(
-//             fwd_attend_ker<64, false>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         fwd_attend_ker<64, false><<<grid, threads, mem_size>>>(seq_len, hr, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-//     }
-
-//     if (!is_causal && head_dim == 128) {
-//         cudaFuncSetAttribute(
-//             fwd_attend_ker<128, false>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         fwd_attend_ker<128, false><<<grid, threads, mem_size>>>(seq_len, hr, tma_q_d, tma_k_d, tma_v_d, tma_o_d, tma_l_d);
-//     }
-
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-//     cudaDeviceSynchronize();
-// }
-
-// void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg, bool causal)
-// {
-//     CHECK_INPUT(q);
-//     CHECK_INPUT(k);
-//     CHECK_INPUT(v);
-//     CHECK_INPUT(l_vec);
-//     CHECK_INPUT(d_vec);
-//     CHECK_INPUT(o);
-//     CHECK_INPUT(og);
-//     CHECK_INPUT(qg);
-//     CHECK_INPUT(kg);
-//     CHECK_INPUT(vg);
-
-//     auto batch    = q.size(0);
-//     auto seq_len  = q.size(2);
-//     auto head_dim = q.size(3);
-
-//     // check to see that these dimensions match for all inputs
-//     TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(l_vec.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(d_vec.size(0) == batch, "D batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(o.size(0) == batch, "O batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(og.size(0) == batch, "OG batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(qg.size(0) == batch, "QG batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(kg.size(0) == batch, "KG batch dimension - idx 0 - must match for all inputs");
-//     TORCH_CHECK(vg.size(0) == batch, "VG batch dimension - idx 0 - must match for all inputs");
-
-//     TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(l_vec.size(2) == seq_len, "L sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(d_vec.size(2) == seq_len, "D sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(o.size(2) == seq_len, "O sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(og.size(2) == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(qg.size(2) == seq_len, "QG sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(kg.size(2) == seq_len, "KG sequence length dimension - idx 2 - must match for all inputs");
-//     TORCH_CHECK(vg.size(2) == seq_len, "VG sequence length dimension - idx 2 - must match for all inputs");
-
-//     TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(o.size(3) == head_dim, "O head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(og.size(3) == head_dim, "OG head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(qg.size(3) == head_dim, "QG head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(kg.size(3) == head_dim, "KG head dimension - idx 3 - must match for all non-vector inputs");
-//     TORCH_CHECK(vg.size(3) == head_dim, "VG head dimension - idx 3 - must match for all non-vector inputs");
-
-//     // check if causal
-//     auto is_causal = causal;
-
-//     auto qo_heads = q.size(1);
-//     auto kv_heads = k.size(1);
-
-//     TORCH_CHECK(qo_heads >= kv_heads, "Q heads must be greater than or equal to K and V heads");
-//     TORCH_CHECK(qo_heads % kv_heads == 0, "Q heads must be divisible by KV heads");
-
-//     TORCH_CHECK(q.size(1) == qo_heads, "Q heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(l_vec.size(1) == qo_heads, "L heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(d_vec.size(1) == qo_heads, "D heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(o.size(1) == qo_heads, "O heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(og.size(1) == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(qg.size(1) == qo_heads, "QG heads dimension - idx 1 - must match for all inputs");
-
-//     TORCH_CHECK(k.size(1) == kv_heads, "K heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(v.size(1) == kv_heads, "V heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(kg.size(1) == kv_heads, "KG heads dimension - idx 1 - must match for all inputs");
-//     TORCH_CHECK(vg.size(1) == kv_heads, "VG heads dimension - idx 1 - must match for all inputs");
-
-//     auto hr = qo_heads / kv_heads;
-
-//     c10::BFloat16* q_ptr  = q.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* k_ptr  = k.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* v_ptr  = v.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* o_ptr  = o.data_ptr<c10::BFloat16>();
-//     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
-//     float*         l_ptr  = l_vec.data_ptr<float>();
-//     float*         d_ptr  = d_vec.data_ptr<float>();
-//     float*         qg_ptr = qg.data_ptr<float>();
-//     float*         kg_ptr = kg.data_ptr<float>();
-//     float*         vg_ptr = vg.data_ptr<float>();
-
-//     bf16*  d_q  = reinterpret_cast<bf16*>(q_ptr);
-//     bf16*  d_k  = reinterpret_cast<bf16*>(k_ptr);
-//     bf16*  d_v  = reinterpret_cast<bf16*>(v_ptr);
-//     bf16*  d_o  = reinterpret_cast<bf16*>(o_ptr);
-//     bf16*  d_og = reinterpret_cast<bf16*>(og_ptr);
-//     float* d_l  = reinterpret_cast<float*>(l_ptr);
-//     float* d_d  = reinterpret_cast<float*>(d_ptr);
-//     float* d_qg = reinterpret_cast<float*>(qg_ptr);
-//     float* d_kg = reinterpret_cast<float*>(kg_ptr);
-//     float* d_vg = reinterpret_cast<float*>(vg_ptr);
-
-//     CUtensorMap* tma_q_b_d;
-//     CUtensorMap* tma_k_b_d;
-//     CUtensorMap* tma_v_b_d;
-//     CUtensorMap* tma_o_d;
-//     CUtensorMap* tma_og_d;
-//     CUtensorMap* tma_l_b_d;
-//     CUtensorMap* tma_d_b_d;
-//     CUtensorMap* tma_qg_d;
-//     CUtensorMap* tma_kg_d;
-//     CUtensorMap* tma_vg_d;
-
-//     CUtensorMap* tma_prep_o_d; 
-//     CUtensorMap* tma_prep_d_d;
-//     CUtensorMap* tma_prep_og_d;
-
-//     auto mem_size = kittens::MAX_SHARED_MEMORY; 
-//     auto threads  = 4 * kittens::WARP_THREADS;
-
-//     TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
-//     dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), batch*qo_heads, 1);
-
-//     if (head_dim == 64) {
-//         tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<4, 64/kittens::TILE_DIM> >(d_o,  (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-//         tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<4, 64/kittens::TILE_DIM> >(d_og, (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-//         tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<4, 64/kittens::TILE_DIM>>>(d_d,  (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_prep_ker<64>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size>>>(tma_prep_o_d, tma_prep_d_d, tma_prep_og_d); 
-
-//         tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM)); 
-//         tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-//         tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-//         tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-//         tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-//         tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h    * kittens::TILE_DIM));
-//         tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-//         tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-//         tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<64>::tile_h_qo * kittens::TILE_DIM));
-//     }
-
-//     if (head_dim == 128) {
-//         tma_prep_o_d  = tma::allocate_and_create_tensor_map<        st_bf<4, 128/kittens::TILE_DIM> >(d_o,  (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-//         tma_prep_og_d = tma::allocate_and_create_tensor_map<        st_bf<4, 128/kittens::TILE_DIM> >(d_og, (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-//         tma_prep_d_d  = tma::allocate_and_create_tensor_map<col_vec<st_fl<4, 128/kittens::TILE_DIM>>>(d_d,  (batch * qo_heads * seq_len)/(4 * kittens::TILE_DIM));
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_prep_ker<128>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size>>>(tma_prep_o_d, tma_prep_d_d, tma_prep_og_d);
-
-//         tma_q_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_q,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM)); 
-//         tma_k_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_k,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-//         tma_v_b_d = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_v,  (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-//         tma_qg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_qg, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-//         tma_kg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_kg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-//         tma_vg_d  = tma::allocate_and_create_tensor_map<        st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>> (d_vg, (batch * kv_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h    * kittens::TILE_DIM));
-//         tma_og_d  = tma::allocate_and_create_tensor_map<        st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>> (d_og, (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-//         tma_l_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>>>(d_l,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-//         tma_d_b_d = tma::allocate_and_create_tensor_map<col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>>>(d_d,  (batch * qo_heads * seq_len)/(bwd_attend_ker_tile_dims<128>::tile_h_qo * kittens::TILE_DIM));
-//     }
-
-//     TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
-//     dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), batch*qo_heads, 1);
-
-//     threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
-
-//     if (is_causal && head_dim == 64) {
-
-//         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<64>::blocks_sm;
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_ker<64, true>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_ker<64, true><<<grid_bwd_2, threads, mem_size>>>(seq_len, hr, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
-//     }
-
-//     if (is_causal && head_dim == 128) {
-
-//         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<128>::blocks_sm;
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_ker<128, true>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_ker<128, true><<<grid_bwd_2, threads, mem_size>>>(seq_len, hr, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
-//     }
-
-//     if (!is_causal && head_dim == 64) {
-
-//         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<64>::blocks_sm;
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_ker<64, false>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_ker<64, false><<<grid_bwd_2, threads, mem_size>>>(seq_len, hr, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
-//     }
-
-//     if (!is_causal && head_dim == 128) {
-
-//         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<128>::blocks_sm;
-
-//         cudaFuncSetAttribute(
-//             bwd_attend_ker<128, false>,
-//             cudaFuncAttributeMaxDynamicSharedMemorySize,
-//             mem_size
-//         );
-
-//         bwd_attend_ker<128, false><<<grid_bwd_2, threads, mem_size>>>(seq_len, hr, tma_q_b_d, tma_k_b_d, tma_v_b_d, tma_l_b_d, tma_d_b_d, tma_og_d, tma_qg_d, tma_kg_d, tma_vg_d);
-//     }
-
-//     CHECK_CUDA_ERROR(cudaGetLastError());
-//     cudaDeviceSynchronize();
-// }
+// #include "harness.impl"
+
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal)
+{
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(l);
+    CHECK_INPUT(o);
+
+    auto batch    = q.size(0);
+    auto seq_len  = q.size(2); 
+    auto head_dim = q.size(3); 
+
+    // check to see that these dimensions match for all inputs
+    TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(l.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(o.size(0) == batch, "O batch dimension - idx 0 - must match for all inputs");
+
+    TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(l.size(2) == seq_len, "L sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(o.size(2) == seq_len, "O sequence length dimension - idx 2 - must match for all inputs");
+
+    TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(o.size(3) == head_dim, "O head dimension - idx 3 - must match for all non-vector inputs");
+
+    auto is_causal = causal; 
+
+    auto qo_heads = q.size(1);
+    auto kv_heads = k.size(1);
+
+    TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
+    TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
+
+    TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(l.size(1) == qo_heads, "L head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(o.size(1) == qo_heads, "O head dimension - idx 1 - must match for all inputs");
+
+    auto hr = qo_heads / kv_heads;
+
+    c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
+    float         *l_ptr = l.data_ptr<float>();
+
+    bf16* d_q  = reinterpret_cast<bf16*>(q_ptr);
+    bf16* d_k  = reinterpret_cast<bf16*>(k_ptr);
+    bf16* d_v  = reinterpret_cast<bf16*>(v_ptr);
+    bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
+    float* d_l = reinterpret_cast<float*>(l_ptr);
+
+    if (head_dim == 64) {
+        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
+        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
+        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
+        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>;
+        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
+
+        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
+        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
+        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
+        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
+        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+
+        using globals      = fwd_globals<64>;
+
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
+        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+
+        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
+
+        auto mem_size = kittens::MAX_SHARED_MEMORY;
+        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+
+        TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
+        dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), batch*qo_heads, 1);
+
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<64, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+
+            fwd_attend_ker<64, true><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+        }
+        else {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<64, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+
+            fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+        }
+    }
+
+    if (head_dim == 128) {
+        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
+        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+
+        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
+        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
+        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
+        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
+        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+
+        using globals      = fwd_globals<128>;
+
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+
+        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
+
+        auto mem_size = kittens::MAX_SHARED_MEMORY;
+        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+
+        TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
+        dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), batch*qo_heads, 1);
+
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+
+            fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+        }
+        else {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+
+            fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+        }
+    }
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
+}
+
+void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg, bool causal)
+{
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(l_vec);
+    CHECK_INPUT(d_vec);
+    CHECK_INPUT(o);
+    CHECK_INPUT(og);
+    CHECK_INPUT(qg);
+    CHECK_INPUT(kg);
+    CHECK_INPUT(vg);
+
+    auto batch    = q.size(0);
+    auto seq_len  = q.size(2);
+    auto head_dim = q.size(3);
+
+    // check to see that these dimensions match for all inputs
+    TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(0) == batch, "D batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(o.size(0) == batch, "O batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(og.size(0) == batch, "OG batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(qg.size(0) == batch, "QG batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(kg.size(0) == batch, "KG batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(vg.size(0) == batch, "VG batch dimension - idx 0 - must match for all inputs");
+
+    TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(2) == seq_len, "L sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(2) == seq_len, "D sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(o.size(2) == seq_len, "O sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(og.size(2) == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(qg.size(2) == seq_len, "QG sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(kg.size(2) == seq_len, "KG sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(vg.size(2) == seq_len, "VG sequence length dimension - idx 2 - must match for all inputs");
+
+    TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(o.size(3) == head_dim, "O head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(og.size(3) == head_dim, "OG head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(qg.size(3) == head_dim, "QG head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(kg.size(3) == head_dim, "KG head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(vg.size(3) == head_dim, "VG head dimension - idx 3 - must match for all non-vector inputs");
+
+    // check if causal
+    auto is_causal = causal;
+
+    auto qo_heads = q.size(1);
+    auto kv_heads = k.size(1);
+
+    TORCH_CHECK(qo_heads >= kv_heads, "Q heads must be greater than or equal to K and V heads");
+    TORCH_CHECK(qo_heads % kv_heads == 0, "Q heads must be divisible by KV heads");
+
+    TORCH_CHECK(q.size(1) == qo_heads, "Q heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(1) == qo_heads, "L heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(1) == qo_heads, "D heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(o.size(1) == qo_heads, "O heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(og.size(1) == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(qg.size(1) == qo_heads, "QG heads dimension - idx 1 - must match for all inputs");
+
+    TORCH_CHECK(k.size(1) == kv_heads, "K heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(1) == kv_heads, "V heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(kg.size(1) == kv_heads, "KG heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(vg.size(1) == kv_heads, "VG heads dimension - idx 1 - must match for all inputs");
+
+    auto hr = qo_heads / kv_heads;
+
+    c10::BFloat16* q_ptr  = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16* k_ptr  = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16* v_ptr  = v.data_ptr<c10::BFloat16>();
+    c10::BFloat16* o_ptr  = o.data_ptr<c10::BFloat16>();
+    c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
+    float*         l_ptr  = l_vec.data_ptr<float>();
+    float*         d_ptr  = d_vec.data_ptr<float>();
+    float*         qg_ptr = qg.data_ptr<float>();
+    float*         kg_ptr = kg.data_ptr<float>();
+    float*         vg_ptr = vg.data_ptr<float>();
+
+    bf16*  d_q  = reinterpret_cast<bf16*>(q_ptr);
+    bf16*  d_k  = reinterpret_cast<bf16*>(k_ptr);
+    bf16*  d_v  = reinterpret_cast<bf16*>(v_ptr);
+    bf16*  d_o  = reinterpret_cast<bf16*>(o_ptr);
+    bf16*  d_og = reinterpret_cast<bf16*>(og_ptr);
+    float* d_l  = reinterpret_cast<float*>(l_ptr);
+    float* d_d  = reinterpret_cast<float*>(d_ptr);
+    float* d_qg = reinterpret_cast<float*>(qg_ptr);
+    float* d_kg = reinterpret_cast<float*>(kg_ptr);
+    float* d_vg = reinterpret_cast<float*>(vg_ptr);
+
+    auto mem_size = kittens::MAX_SHARED_MEMORY; 
+    auto threads  = 4 * kittens::WARP_THREADS;
+
+    TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
+    dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), batch*qo_heads, 1);
+
+    if (head_dim == 64)  {
+        using og_tile = st_bf<4*16, 64>;
+        using o_tile  = st_bf<4*16, 64>;
+        using d_tile  = col_vec<st_fl<4*16, 64>>;
+
+        using og_global = gl<bf16,  -1, -1, -1, -1, og_tile>;
+        using o_global  = gl<bf16,  -1, -1, -1, -1, o_tile>;
+        using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
+
+        using bwd_prep_globals = bwd_prep_globals<64>;
+
+        og_global prep_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        o_global  prep_o_arg {d_o,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        d_global  prep_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
+
+        bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
+
+        cudaFuncSetAttribute(
+            bwd_attend_prep_ker<64>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+
+        bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size>>>(bwd_g); 
+
+        using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_qg_tile   =         st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_l_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
+        using bwd_d_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
+
+        using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, bwd_q_tile>;
+        using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, bwd_k_tile>;
+        using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, bwd_v_tile>;
+
+        using bwd_og_global = gl<bf16,  -1, -1, -1, -1, bwd_og_tile>;
+
+        using bwd_qg_global = gl<float, -1, -1, -1, -1, bwd_qg_tile>;
+        using bwd_kg_global = gl<float, -1, -1, -1, -1, bwd_kg_tile>;
+        using bwd_vg_global = gl<float, -1, -1, -1, -1, bwd_vg_tile>;
+
+        using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
+        using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
+
+        using bwd_global_args = bwd_globals<64>;
+
+        bwd_q_global  bwd_q_arg {d_q,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_k_global  bwd_k_arg {d_k,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_v_global  bwd_v_arg {d_v,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_og_global bwd_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_qg_global bwd_qg_arg{d_qg, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_kg_global bwd_kg_arg{d_kg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_vg_global bwd_vg_arg{d_vg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
+        bwd_l_global  bwd_l_arg {d_l,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
+        bwd_d_global  bwd_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
+
+        bwd_global_args bwd_global{bwd_q_arg, 
+                        bwd_k_arg, 
+                        bwd_v_arg, 
+                        bwd_og_arg, 
+                        bwd_qg_arg, 
+                        bwd_kg_arg, 
+                        bwd_vg_arg, 
+                        bwd_l_arg, 
+                        bwd_d_arg, 
+                        static_cast<int>(seq_len), 
+                        static_cast<int>(hr)};
+
+        TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
+        dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), batch*qo_heads, 1);
+        threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
+
+        mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<64>::blocks_sm;
+
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                bwd_attend_ker<64, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            
+            bwd_attend_ker<64, true><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+        }
+        else {
+            cudaFuncSetAttribute(
+                bwd_attend_ker<64, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            
+            bwd_attend_ker<64, false><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+        }
+    }
+
+    if (head_dim == 128) {
+        using og_tile = st_bf<4*16, 128>;
+        using o_tile  = st_bf<4*16, 128>;
+        using d_tile  = col_vec<st_fl<4*16, 128>>;
+
+        using og_global = gl<bf16,  -1, -1, -1, -1, og_tile>;
+        using o_global  = gl<bf16,  -1, -1, -1, -1, o_tile>;
+        using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
+
+        using bwd_prep_globals = bwd_prep_globals<128>;
+
+        og_global prep_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        o_global  prep_o_arg {d_o,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        d_global  prep_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+
+        bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
+
+        cudaFuncSetAttribute(
+            bwd_attend_prep_ker<128>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+
+        bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size>>>(bwd_g); 
+
+        using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_qg_tile   =         st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_l_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
+        using bwd_d_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
+
+        using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, bwd_q_tile>;
+        using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, bwd_k_tile>;
+        using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, bwd_v_tile>;
+
+        using bwd_og_global = gl<bf16,  -1, -1, -1, -1, bwd_og_tile>;
+
+        using bwd_qg_global = gl<float, -1, -1, -1, -1, bwd_qg_tile>;
+        using bwd_kg_global = gl<float, -1, -1, -1, -1, bwd_kg_tile>;
+        using bwd_vg_global = gl<float, -1, -1, -1, -1, bwd_vg_tile>;
+
+        using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
+        using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
+
+        using bwd_global_args = bwd_globals<128>;
+
+        bwd_q_global  bwd_q_arg {d_q,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_k_global  bwd_k_arg {d_k,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_v_global  bwd_v_arg {d_v,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_og_global bwd_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_qg_global bwd_qg_arg{d_qg, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_kg_global bwd_kg_arg{d_kg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_vg_global bwd_vg_arg{d_vg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        bwd_l_global  bwd_l_arg {d_l,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+        bwd_d_global  bwd_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+
+        bwd_global_args bwd_global{
+                        bwd_q_arg, 
+                        bwd_k_arg, 
+                        bwd_v_arg, 
+                        bwd_og_arg, 
+                        bwd_qg_arg, 
+                        bwd_kg_arg, 
+                        bwd_vg_arg, 
+                        bwd_l_arg, 
+                        bwd_d_arg, 
+                        static_cast<int>(seq_len), 
+                        static_cast<int>(hr)};
+        
+        TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
+        dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), batch*qo_heads, 1);
+        threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
+
+        mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<128>::blocks_sm;
+
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                bwd_attend_ker<128, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            
+            bwd_attend_ker<128, true><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+        }
+        else {
+            cudaFuncSetAttribute(
+                bwd_attend_ker<128, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
+            
+            bwd_attend_ker<128, false><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+        }
+    }
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
+}
