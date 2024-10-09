@@ -271,7 +271,6 @@ struct bwd_prep_globals {
 
 template<int D>
 __global__  __launch_bounds__(4*kittens::WARP_THREADS, (D == 64) ? 2 : 1)
-// void bwd_attend_prep_ker(CUtensorMap* tma_o, CUtensorMap* tma_d, CUtensorMap* tma_o_grad) {
 void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     extern __shared__ int __shm[]; // this is the CUDA shared memory
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -684,19 +683,17 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         warpgroup::increase_registers<224>();
 
         // initialize registers
-        rt_fl<1*16, G::tile_width> kg_reg;
-        rt_fl<1*16, G::tile_width> vg_reg;
+        rt_fl<16, G::tile_width> kg_reg;
+        rt_fl<16, G::tile_width> vg_reg;
 
-        row_vec<rt_fl<1*16, 4*16>> row_reg; 
+        row_vec<rt_fl<16, 64>> row_reg; 
 
-        rt_fl<1*16, 4*16> s_block_t; 
-        rt_fl<1*16, 4*16> dp_block_t;
-
-        rt_fl<1*16, 4*16> p_block_t;
-        rt_fl<1*16, 4*16> ds_block_t;
-
-        rt_bf<1*16, 4*16> p_block_t_mma;
-        rt_bf<1*16, 4*16> ds_block_t_mma;
+        rt_fl<16, 64> s_block_t; 
+        rt_fl<16, 64> dp_block_t;
+        rt_fl<16, 64> p_block_t;
+        rt_fl<16, 64> ds_block_t;
+        rt_bf<16, 64> p_block_t_mma;
+        rt_bf<16, 64> ds_block_t_mma;
         //////////////////////
 
         zero(kg_reg);
@@ -759,6 +756,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 dp_block_t.tiles[0][i].data[2] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[2], *(float2*)&d_smem[tic][base_col + 8]);
                 dp_block_t.tiles[0][i].data[3] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[3], *(float2*)&d_smem[tic][base_col + 8]);
             }
+            
             mul(ds_block_t, p_block_t, dp_block_t);
 
             if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
