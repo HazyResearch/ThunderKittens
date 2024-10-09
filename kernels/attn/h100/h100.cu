@@ -515,16 +515,16 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         rt_fl<16, G::tile_width> vg_reg;
         rt_fl<16, G::tile_width> qg_reg;
 
-        row_vec<rt_fl<16, 4*16>> row_reg; 
+        row_vec<rt_fl<16, G::tile_h_qo>> row_reg; 
 
-        rt_fl<16, 4*16> s_block_t; 
-        rt_fl<16, 4*16> dp_block_t;
+        rt_fl<16, G::tile_h_qo> s_block_t; 
+        rt_fl<16, G::tile_h_qo> dp_block_t;
 
-        rt_fl<16, 4*16> p_block_t;
-        rt_fl<16, 4*16> ds_block_t;
+        rt_fl<16, G::tile_h_qo> p_block_t;
+        rt_fl<16, G::tile_h_qo> ds_block_t;
 
-        rt_bf<16, 4*16> p_block_t_mma;
-        rt_bf<16, 4*16> ds_block_t_mma;
+        rt_bf<16, G::tile_h_qo> p_block_t_mma;
+        rt_bf<16, G::tile_h_qo> ds_block_t_mma;
 
         zero(kg_reg);
         zero(vg_reg);
