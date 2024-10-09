@@ -20,10 +20,10 @@ template<int _headdim, int _warps> struct rotary_layout {
     struct consumer_state { rt_fl<16, headdim/2> sin, cos; }; // long-resident tiles
 };
 template<int _headdim> struct rotary_template {
-    static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3, DEBUG=1;
+    static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
     __device__ static inline void task_init(task_init_args<layout> args) {
-        args.num_iters = (args.task_iter == 0) ? min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth : 0; // batches*heads handled by block
+        args.num_iters = (args.task_iter == 0) ? min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth : -1; // batches*heads handled by block
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {

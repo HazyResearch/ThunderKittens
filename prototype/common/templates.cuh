@@ -26,9 +26,9 @@ template<typename T> concept kittens_layout = requires {
 namespace detail {
 
 // Get an int parameter from the layout
-#define FLAG_GETTER(flag_name, default_value)                                                  \
+#define FLAG_GETTER(flag_name, default_value)                                         \
 template<typename T> concept has_##flag_name##_flag = requires { T::flag_name; };     \
-template<typename T> constexpr int flag_name##_v = default_value;                              \
+template<typename T> constexpr int flag_name##_v = default_value;                     \
 template<has_##flag_name##_flag T> constexpr int flag_name##_v<T> = T::flag_name;
 
 // How to pad structs to force alignment (set to 1024 by default)

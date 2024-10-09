@@ -112,7 +112,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             int num_iters = 0;
             uniform_args<lcft> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
             lcft::init(unif);
-            if(num_iters == 0) return; // no work to do
+            if(num_iters <= 0) return; // no work to do
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             int load_iter;
@@ -144,7 +144,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             int num_iters = 0;
             uniform_args<lcft> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
             lcft::init(unif);
-            if(num_iters == 0) return; // no work to do
+            if(num_iters <= 0) return; // no work to do
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             lcft::consumer::init({c_state, unif});

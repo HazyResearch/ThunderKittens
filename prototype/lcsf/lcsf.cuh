@@ -130,24 +130,23 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             int num_iters = 0;
             task_init_args<L> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
             lcsft::task_init(unif);
-            if(num_iters == 0) return; // no work to do
+            if(num_iters <= 0) return; // no work to do
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             int load_iter, store_iter = 0;
             lcsft::producer::setup({p_state, unif});
-            for(load_iter = 0; load_iter < SAFE_STAGES_BETWEEN_BLOCKS && load_iter<num_iters; load_iter++) { // fill the pipeline
+            for(load_iter = 0; load_iter<SAFE_STAGES_BETWEEN_BLOCKS && load_iter<num_iters; load_iter++) { // fill the pipeline
                 wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
                 update_phasebit<1>(barrier_bitfield, input_ring);
                 lcsft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             }
             wait(finish_finished, (task_iter%2)^1); // wait for consumer to finish their finish stage before we can do the rest.
-            for(int i = SAFE_STAGES_BETWEEN_BLOCKS; i < INPUT_PIPE_STAGES && load_iter<num_iters; i++) { // fill the pipeline
+            for(; load_iter<INPUT_PIPE_STAGES && load_iter<num_iters; load_iter++) { // fill the pipeline
                 wait(inputs_finished[input_ring], get_phasebit<1>(barrier_bitfield, input_ring));
                 update_phasebit<1>(barrier_bitfield, input_ring);
                 lcsft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-                load_iter++;
             }
             while(load_iter<num_iters || store_iter<load_iter) {
                 if(store_iter<load_iter && test_wait(outputs_arrived[output_ring], get_phasebit<0>(barrier_bitfield, output_ring))) {
@@ -178,7 +177,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             int num_iters = 0;
             task_init_args<L> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
             lcsft::task_init(unif);
-            if(num_iters == 0) return; // no work to do
+            if(num_iters <= 0) return; // no work to do
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             lcsft::consumer::setup({c_state, unif});
@@ -195,7 +194,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
                 output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
             } // compute loop
             // ensure the outputs are all written before overwriting that memory
-            if(threadIdx.x == 0) {
+            if(warpid() == 0) {
                 #pragma unroll
                 for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
                     wait(outputs_finished[i], get_phasebit<1>(barrier_bitfield, i));
