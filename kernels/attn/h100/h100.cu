@@ -50,7 +50,7 @@ template<int D> struct fwd_globals {
 template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
-    extern __shared__ int __shm[]; // this is the CUDA shared memory
+    extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
     int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
@@ -66,26 +66,26 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     k_tile    (&k_smem)[K::stages]           = al.allocate<k_tile, K::stages          >();
     v_tile    (&v_smem)[K::stages]           = al.allocate<v_tile, K::stages          >();
     l_col_vec (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
-    auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem); // reuse q memory
+    auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem);
     
     int kv_blocks = g.N / (K::kv_height);
 
     __shared__ kittens::barrier qsmem_barrier, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
-    if (threadIdx.x == 0) { // initialize barriers and initial loads
-        init_barrier(qsmem_barrier, 0, 1); // no threads, one transaction
+    if (threadIdx.x == 0) { 
+        init_barrier(qsmem_barrier, 0, 1); 
         for(int j = 0; j < K::stages; j++) {
-            init_barrier(k_smem_arrived[j], 0, 1); // no threads, one transaction
-            init_barrier(v_smem_arrived[j], 0, 1); // no threads, one transaction
-            init_barrier(compute_done[j], CONSUMER_WARPGROUPS, 0); // all the consumer threads across both blocks, no transactions
+            init_barrier(k_smem_arrived[j], 0, 1); 
+            init_barrier(v_smem_arrived[j], 0, 1); 
+            init_barrier(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
         
         tma::expect_bytes(qsmem_barrier, sizeof(q_smem));
-        for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) { // issue async loads for Q chunks
+        for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
             int4 q_tile_idx = {blockIdx.y / g.q.depth, blockIdx.y % g.q.depth, (blockIdx.x * CONSUMER_WARPGROUPS) + wg, 0};
             tma::load_async(q_smem[wg], g.q, q_tile_idx, qsmem_barrier);
         }
 
-        for (int j = 0; j < K::stages - 1; j++) { // issue async loads for K and V chunks
+        for (int j = 0; j < K::stages - 1; j++) {
             int4 kv_tile_idx = {blockIdx.y / (g.q.depth), (blockIdx.y % g.q.depth)/(g.hr), j, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
@@ -99,7 +99,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
     int pipe_idx = K::stages - 1; 
     
-    if(warpgroupid == NUM_WARPGROUPS-1) { // producer warpgroup
+    if(warpgroupid == NUM_WARPGROUPS-1) {
         warpgroup::decrease_registers<32>();      
         
         int kv_iters; 
@@ -124,7 +124,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             }
         }
     }
-    else { // consumer warpgroup
+    else {
         warpgroup::increase_registers<160>();
 
         wait(qsmem_barrier, 0);
@@ -157,7 +157,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
         
-            wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); // wait on k memory
+            wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             
             warpgroup::mma_fence(att_block);
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
