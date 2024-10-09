@@ -56,7 +56,6 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     constexpr int SAFE_STAGES_BETWEEN_BLOCKS = NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block)<INPUT_PIPE_STAGES?NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block):INPUT_PIPE_STAGES;
     finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)&__shm[0] + FINISH_BLOCK_OFFSET)/1024)*1024); // alignment
 
-    printf("debug v: %d\n", detail::DEBUG_v<lcft>);
     if constexpr (detail::DEBUG_v<lcft>) {
         if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
             printf("DEBUG REPORT FOR PRODUCER TEMPLATE KERNEL:\n");
