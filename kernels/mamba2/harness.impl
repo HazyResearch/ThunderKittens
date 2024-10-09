@@ -3,10 +3,10 @@
 #include <fstream>
 
 constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
+constexpr int ATTN_H = 32;
 constexpr int ATTN_N = 2048; // 768*2; // 4096;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 1;
+constexpr int ITER   = 10;
 
 constexpr int BLOCK_SIZE = prototype::num_threads<mamba2_fwd_template>;
 
@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
     mamba2_fwd_template::layout::o_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
     mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY/2-2048; // have the flag tell us
     
     cudaFuncSetAttribute(
         prototype::pc<mamba2_fwd_template>,
@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel\n";
     constexpr int NUM_WORKERS = prototype::num_consumer_warpgroups<mamba2_fwd_template>;
     // dim3 grid((ATTN_N + mamba2_fwd_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (attn_fwd_templamamba2_fwd_templatete::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
-    dim3 grid(132, 1, 1);
+    dim3 grid(264, 1, 1);
     // dim3 bad_grid(grid.z, grid.y, grid.x);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
     // warmup
@@ -152,7 +152,8 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     
     const auto start = std::chrono::high_resolution_clock::now();
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < ITER; i++) {
+        std::cout << "Launching kernel " << i+1 << " of " << ITER << std::endl;
         prototype::pc<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
     }
     cudaDeviceSynchronize();

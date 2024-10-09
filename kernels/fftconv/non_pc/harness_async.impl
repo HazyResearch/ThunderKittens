@@ -1,13 +1,15 @@
 #include <iostream>
 #include <string>
 #include <stdlib.h>
+#include <bitset>
 
 #include <fstream>
+using namespace kittens;
 
 #define N 1024
 #define N1 32
-#define B 64
-#define H 64
+#define B 16
+#define H 16
 #define TOTAL_INPUT_ELEMENTS B*H*N
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -36,22 +38,14 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
     std::ofstream o_file("./printouts/o.txt");
     std::ofstream diff_file("./printouts/diff.txt");
     bool good = true;
+
     int num_nans = 0;
-    int num_infs = 0; 
+    int num_infs = 0;
+    
     for (size_t i = 0; i < num_elements; i++) {
         float pred = o[i];
         float actual = o_ref[i];
         float diff = abs(pred - actual);
-        o_ref_file << o_ref[i] << ' ';
-        o_file << o[i] << ' ';
-        diff_file << diff << ' ';
-        if (diff > max(abs_tol, actual * rel_tol)) {
-            std::cout << "Pred[" << i << "] = " << pred
-            << "  Actual[" << i << "] = " << actual
-            << "  Abs Diff: " << diff << std::endl;
-            diff_counter += 1;
-            good = false;
-        }
         bool has_nan = isnan(diff);
         bool has_inf = isinf(pred);
         if (has_nan) {
@@ -62,13 +56,26 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
             num_infs += 1;
             good = false;
         }
+        if (1 ) { //i < 100000 ) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+            if ( i % 8 == 0) {
+                o_ref_file << o_ref[i] << '\n';
+                o_file << o[i] << '\n';
+                diff_file << diff << '\n';
+            }
+        }
+        if (diff > max(abs_tol, actual * rel_tol)) {
+            diff_counter += 1;
+            good = false;
+        }
     }
     std::cout << diff_counter << " elements out of " << num_elements << " violate threshold" << std::endl;
     std::cout << num_nans << " elements out of " << num_elements << " have nans" << std::endl;
     std::cout << num_infs << " elements out of " << num_elements << " have infs" << std::endl;
     return good;
 }
-
 
 void loads(char *file, float* &o_ref, bf16* &d_u_real, bf16* &d_u_imag, bf16* &d_kf_real, bf16* &d_kf_imag, 
         bf16* &d_f_real, bf16* &d_f_imag, bf16* &d_finv_real, bf16* &d_finv_imag,
@@ -131,7 +138,9 @@ void loads(char *file, float* &o_ref, bf16* &d_u_real, bf16* &d_u_imag, bf16* &d
     for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { u_imag_bf[i] = __float2bfloat16(u_imag[i]);}
     for(int i = 0; i < H*N; i++) { kf_real_bf[i] = __float2bfloat16(kf_real[i]);}
     for(int i = 0; i < H*N; i++) { kf_imag_bf[i] = __float2bfloat16(kf_imag[i]);}
-    for(int i = 0; i < N1*N1; i++) { f_real_bf[i] = __float2bfloat16(f_real[i]);}
+    for(int i = 0; i < N1*N1; i++) { 
+        f_real_bf[i] = __float2bfloat16(f_real[i]);
+    }
     for(int i = 0; i < N1*N1; i++) { f_imag_bf[i] = __float2bfloat16(f_imag[i]);}
     for(int i = 0; i < N1*N1; i++) { finv_real_bf[i] = __float2bfloat16(finv_real[i]);}
     for(int i = 0; i < N1*N1; i++) { finv_imag_bf[i] = __float2bfloat16(finv_imag[i]);}
@@ -174,11 +183,11 @@ void loads(char *file, float* &o_ref, bf16* &d_u_real, bf16* &d_u_imag, bf16* &d
 }
 
 int main(int argc, char **argv) {
+    printf("Starting\n");
     //int TOTAL_INPUT_ELEMENTS = B * H * N;
 
     float *o_ref = new float[TOTAL_INPUT_ELEMENTS];
-    // On host after kernel
-    float *o = new float[TOTAL_INPUT_ELEMENTS];
+    float *o = new float[TOTAL_INPUT_ELEMENTS]; // On host after kernel
     bf16 *o_bf = new bf16[TOTAL_INPUT_ELEMENTS];
 
     bf16 *d_u_real, *d_u_imag, *d_kf_real, *d_kf_imag, 
@@ -194,29 +203,81 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    // tk 2 changes
+    constexpr int B_TILE = 8;
+    constexpr int H_TILE = 8;
+    using fft_t  = fftconv_template<B_TILE, H_TILE, H, N, N1>;
+    using globals = typename fft_t::layout::globals;
+    using fft_layout = typename fft_t::layout::fft_layout;
+    using filt_layout = typename fft_t::layout::filter_layout;
+    using input_layout = typename fft_t::layout::input_layout;
+    
+    using complex_input_layout = kittens::cgl<input_layout>;
+    using complex_filter_layout = kittens::cgl<filt_layout>;
+    using complex_fft_layout = kittens::cgl<fft_layout>;
+
+    // input and output
+    input_layout u_real_gl{d_u_real, B_TILE, nullptr, nullptr, nullptr};
+    input_layout u_imag_gl{d_u_imag, B_TILE, nullptr, nullptr, nullptr};
+    complex_input_layout u_gl{u_real_gl, u_imag_gl};
+
+    input_layout o_gl{d_o, B_TILE, nullptr, nullptr, nullptr};
+
+    // filters
+    filt_layout kf_real_gl{d_kf_real, nullptr, nullptr, nullptr, nullptr};
+    filt_layout kf_imag_gl{d_kf_imag, nullptr, nullptr, nullptr, nullptr};
+    complex_filter_layout kf_gl{kf_real_gl, kf_imag_gl};
+    
+    // factors
+    fft_layout f_real_gl{d_f_real, nullptr, nullptr, nullptr, nullptr};
+    fft_layout f_imag_gl{d_f_imag, nullptr, nullptr, nullptr, nullptr};
+    complex_fft_layout f_gl{f_real_gl, f_imag_gl};
+
+    fft_layout tw_real_gl{d_tw_real, nullptr, nullptr, nullptr, nullptr};
+    fft_layout tw_imag_gl{d_tw_imag, nullptr, nullptr, nullptr, nullptr};
+    complex_fft_layout tw_gl{tw_real_gl, tw_imag_gl};
+
+    fft_layout finv_real_gl{d_finv_real, nullptr, nullptr, nullptr, nullptr};
+    fft_layout finv_imag_gl{d_finv_imag, nullptr, nullptr, nullptr, nullptr};
+    complex_fft_layout finv_gl{finv_real_gl, finv_imag_gl};
+
+    fft_layout twinv_real_gl{d_twinv_real, nullptr, nullptr, nullptr, nullptr};
+    fft_layout twinv_imag_gl{d_twinv_imag, nullptr, nullptr, nullptr, nullptr};
+    complex_fft_layout twinv_gl{twinv_real_gl, twinv_imag_gl};
+
+    // b_global Bg{d_B, batch, ngroups, M, K};
+    // c_global Cg{d_C, batch, ngroups*num_chunks, chunk_size, chunk_size};
+    globals G{
+        u_gl,
+        o_gl,
+        kf_gl,
+        f_gl,
+        finv_gl,
+        tw_gl,
+        twinv_gl
+    };
+
+
     cudaStream_t stream;
     cudaStreamCreate(&stream);
-    std::cout << "Starting kernel\n";
-    cudaDeviceSynchronize();
-    const auto start = std::chrono::high_resolution_clock::now();
-    launch_fftconv_tk(
-        d_u_real, d_u_imag, d_kf_real, d_kf_imag, 
-        d_f_real, d_f_imag, d_finv_real, d_finv_imag,
-        d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
-        B, H, N, N1
-    );
-    cudaDeviceSynchronize();
-    const auto finish = std::chrono::high_resolution_clock::now();
-    CudaCheckError();
-    std::cout << "Finished kernel\n\n";
-    std::cout << "Execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us\n" << std::endl;
+    for (int i = 0; i < 1; i ++) {
+        std::cout << "Starting kernel\n";
+        cudaDeviceSynchronize();
+        const auto start = std::chrono::high_resolution_clock::now();
+        launch_fftconv_tk<fft_t>(G, B, H);
+        cudaDeviceSynchronize();
+        const auto finish = std::chrono::high_resolution_clock::now();
+        CudaCheckError();
+        std::cout << "Finished kernel\n\n";
+        std::cout << "Execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us\n" << std::endl;
+    }
     
     cudaMemcpy(o_bf, d_o, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {  o[i] = __bfloat162float(o_bf[i]);  }
 
     // Reduce criteria from 0.5 to 1 abs difference (we had 50 elements out of 262144 violate threshold,
     // all diffs were between 0.5 and 1)
-    constexpr float abs_tol = 1.0e-0f;
+    constexpr float abs_tol = 1.0e-1f;
     constexpr float rel_tol = 1.0e-1f;
 
     std::cout << "Total output elements: " << TOTAL_INPUT_ELEMENTS << std::endl;
@@ -228,6 +289,7 @@ int main(int argc, char **argv) {
 
     delete[] o_ref, o;
     delete[] o_bf;
+
     cudaFree(d_u_real);
     cudaFree(d_u_imag);
     cudaFree(d_kf_real);

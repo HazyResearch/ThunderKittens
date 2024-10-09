@@ -5,8 +5,8 @@ import sys
 torch.set_grad_enabled(False)
 
 N = 1024
-B = 1
-H = 1
+B = 16
+H = 16
 N1 = int(np.sqrt(N))
 N_64 = 64
 
@@ -129,7 +129,7 @@ def pytorch_test(u, k, TESTNAME='all'):
     u_reals.append(u_real)
     u_imags.append(u_imag)
     for i in range(3):
-        u_new = torch.randn_like(u)*(i+2)
+        u_new = torch.randn_like(u)
         u_real = u_new.to(torch.bfloat16)
         u_imag = torch.zeros_like(u, dtype=torch.bfloat16)
         u_reals.append(u_real)
@@ -245,14 +245,13 @@ check_our_outputs(our_outputs, o_reals)
 with open(f'{TESTNAME}.txt', 'w') as f:
     # u reals 
     for i in range(len(u_reals_reshaped)):
-        u_real_f = u_reals_reshaped[i].to(torch.float32).flatten().cpu().numpy()
-        for j in trange(u_real_f.shape[0]):
-            f.write(repr(u_real_f[j]))
+        u_real_f = u_reals_reshaped[0].to(torch.float32).flatten().cpu().numpy()
+        u_imag_f = u_imags_reshaped[0].to(torch.float32).flatten().cpu().numpy()
+        for i in trange(u_real_f.shape[0]):
+            f.write(repr(u_real_f[i]))
             f.write(' ')
-    for i in range(len(u_reals_reshaped)):
-        u_imag_f = u_imags_reshaped[i].to(torch.float32).flatten().cpu().numpy()
-        for j in trange(u_imag_f.shape[0]):
-            f.write(repr(u_imag_f[j]))
+        for i in trange(u_imag_f.shape[0]):
+            f.write(repr(u_imag_f[i]))
             f.write(' ')
 
     kfT_real_f = k_fT_64x64_real.to(torch.float32).flatten().cpu().numpy()
@@ -304,7 +303,7 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     for i in range(len(o_reals)):
         o_real = o_reals[i]
         o_real_f = o_real.to(torch.float32).flatten().cpu().numpy()
-        for j in trange(o_real_f.shape[0]):
-            f.write(repr(o_real_f[j]))
+        for i in trange(o_real_f.shape[0]):
+            f.write(repr(o_real_f[i]))
             f.write(' ')
     

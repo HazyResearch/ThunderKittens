@@ -2,17 +2,19 @@
 #include <string>
 #include <stdlib.h>
 #include <bitset>
-
+#include <variant>
+#include <optional>
 #include <fstream>
 
-#define N (1024)
-#define N1 (32)
-#define B (4)
-#define H (1)
-#define TOTAL_INPUT_ELEMENTS (B*H*N)
-#define FILTER_ELEMENTS (64*64)
+constexpr int N = (1024);
+constexpr int N1 = (32);
+constexpr int B = (16);
+constexpr int H = (128);
+constexpr int TOTAL_INPUT_ELEMENTS = (B*H*N);
+constexpr int FILTER_ELEMENTS = (64*64); // should be this shape regardless of the 1024 vs. 4096 seqlen.
 
 static_assert(N1*N1 == N, "N1*N1 != N");
+// static_assert(FILTER_ELEMENTS == N1*N1, "FILTER_ELEMENTS != N1*N1");
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -113,7 +115,10 @@ void loads(char *file, float* &o_ref, bf16* &d_u_real, bf16* &d_u_imag, bf16* &d
     std::ifstream infile(file);
     std::cout << "Starting to enter!" << std::endl;
 
-    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_real[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {
+        infile >> u_real[i];
+        if (i < 10) { printf("%f\n", u_real[i]); } 
+    }
     for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> u_imag[i];
     std::cout << "Finished loading U" << std::endl;
     for(int i = 0; i < H*FILTER_ELEMENTS; i++) infile >> kf_real[i];
@@ -129,9 +134,16 @@ void loads(char *file, float* &o_ref, bf16* &d_u_real, bf16* &d_u_imag, bf16* &d
     for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> tw_imag[i];
     std::cout << "Finished loading tw" << std::endl;
     for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> twinv_real[i];
-    for(int i = 0; i < FILTER_ELEMENTS; i++) infile >> twinv_imag[i];
+    for(int i = 0; i < FILTER_ELEMENTS; i++) {
+        infile >> twinv_imag[i];
+        if (i < 10) { printf("%f\n", twinv_imag[i]);  }
+    }
+
     std::cout << "Finished loading tw inv" << std::endl;
-    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) infile >> o_ref[i];
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {
+        infile >> o_ref[i];
+        if (i < 10) { printf("%f\n", o_ref[i]); }
+    }
     std::cout << "Finished loading O_REF" << std::endl;
 
     // for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) { o_ref[i] = u_real[i]; }
@@ -220,78 +232,51 @@ int main(int argc, char **argv) {
     }
 
     // tk 2 changes
-    using fftst = fft_1024_template;
-    using globals       = typename fftst::layout::globals;
-    using fft_layout    = typename fftst::layout::fft_layout;
-    using filter_layout = typename fftst::layout::filter_layout;
-    using seq_layout    = typename fftst::layout::seq_layout;
-
-    // input and output
-    seq_layout u_gl{d_u_real, B, H, nullptr, nullptr};
-
-    seq_layout o_gl{d_o, B, H, nullptr, nullptr};
-
-    // filters
-    filter_layout kf_gl{
-        typename filter_layout::GL{d_kf_real, nullptr, H, nullptr, nullptr}, 
-        typename filter_layout::GL{d_kf_imag, nullptr, H, nullptr, nullptr}
-    };
-    
-    // factors
-    fft_layout f_gl{
-        typename fft_layout::GL{d_f_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_f_imag, nullptr, nullptr, nullptr, nullptr}
-    };
-    fft_layout tw_gl{
-        typename fft_layout::GL{d_tw_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_tw_imag, nullptr, nullptr, nullptr, nullptr}
-    };
-    fft_layout finv_gl{
-        typename fft_layout::GL{d_finv_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_finv_imag, nullptr, nullptr, nullptr, nullptr}
-    };
-    fft_layout twinv_t_gl{
-        typename fft_layout::GL{d_twinv_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_twinv_imag, nullptr, nullptr, nullptr, nullptr}
-    };
-
-    globals G{
-        o_gl, // O comes first
-        u_gl,
-        kf_gl,
-        f_gl,
-        finv_gl,
-        tw_gl,
-        twinv_t_gl
-    };
-
-
-    unsigned long mem_size = (MAX_SHARED_MEMORY-1024);
-    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
-    cudaFuncSetAttribute(
-        pc<fftst>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    );
-
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    for (int i = 0; i < 10; i ++) {
-        std::cout << "Starting kernel\n";
-        dim3 grid(132);
-        dim3 block(num_threads<fftst>);
+    if (N == 4096) {
+        using GType = typename fft_template<4096>::layout::globals;
+        GType G = setup_templates<4096>(
+            d_u_real, d_kf_real, d_kf_imag, 
+            d_f_real, d_f_imag, d_finv_real, d_finv_imag,
+            d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
+            B, H, N, N1
+        );
         cudaDeviceSynchronize();
         const auto start = std::chrono::high_resolution_clock::now();
-        pc<fftst><<<grid, block, mem_size>>>(G);
+        launch<4096>(G);
         cudaDeviceSynchronize();
         const auto finish = std::chrono::high_resolution_clock::now();
         CudaCheckError();
+        std::cout << "Using 4096" << std::endl;
         std::cout << "Finished kernel\n\n";
         std::cout << "Execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us\n" << std::endl;
-    }
+    } else if (N == 1024) {
+        using GType = typename fft_template<1024>::layout::globals;
+        GType G = setup_templates<1024>(
+            d_u_real, d_kf_real, d_kf_imag, 
+            d_f_real, d_f_imag, d_finv_real, d_finv_imag,
+            d_tw_real, d_tw_imag, d_twinv_real, d_twinv_imag, d_o,
+            B, H, N, N1
+        );
+        cudaDeviceSynchronize();
+        const auto start = std::chrono::high_resolution_clock::now();
+        launch<1024>(G);
+        cudaDeviceSynchronize();
+        const auto finish = std::chrono::high_resolution_clock::now();
+        CudaCheckError();
+        std::cout << "Using 1024" << std::endl;
+        std::cout << "Finished kernel\n\n";
+        std::cout << "Execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us\n" << std::endl;
+    } else {
+        std::cout << "Invalid N" << std::endl;
+        exit(1);
+    }    
+    
     
     cudaMemcpy(o_bf, d_o, TOTAL_INPUT_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {  o[i] = __bfloat162float(o_bf[i]);  }
+    for(int i = 0; i < TOTAL_INPUT_ELEMENTS; i++) {  
+        o[i] = __bfloat162float(o_bf[i]);  
+        if (i < 10) { printf("%f\n", o[i]); } 
+    }
 
     // Reduce criteria from 0.5 to 1 abs difference (we had 50 elements out of 262144 violate threshold,
     // all diffs were between 0.5 and 1)
@@ -321,7 +306,5 @@ int main(int argc, char **argv) {
     cudaFree(d_twinv_real);
     cudaFree(d_twinv_imag);
     cudaFree(d_o);
-    cudaStreamDestroy(stream);
-
     return 0;
 }

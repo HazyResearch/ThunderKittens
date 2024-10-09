@@ -1,11 +1,9 @@
-// #ifdef TORCH_COMPILE
-// #define TORCH_COMPILE_FFTCONV
-// #else
-// #include "harness_async.impl"
-// #endif
-
 #include "kittens.cuh"
 #include "prototype.cuh"
+
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_FFTCONV
+#endif
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -257,56 +255,69 @@ struct fft_4096_template {
     };
 };
 
-// #ifdef TORCH_COMPILE_FFTCONV
-#include "common/pyutils/torch_helpers.cuh"
-#include <iostream>
-void dispatch_fft_conv( 
-    bf16 *u, 
-    bf16 *kf, bf16 *kf_imag, 
-    bf16 *f, bf16 *f_imag, 
-    bf16 *finv, bf16 *finv_imag, 
-    bf16 *tw, bf16 *tw_imag, 
-    bf16 *twinv, bf16 *twinv_imag, 
-    bf16 *o, uint B, uint H, uint N, uint N1
-){
-    // if (N == 1024) {
-        // using fftst = fft_1024_template;
-    // } else {
-    using fftst = fft_4096_template;
-    // }
-    using globals       = typename fftst::layout::globals;
-    using fft_layout    = typename fftst::layout::fft_layout;
-    using filter_layout = typename fftst::layout::filter_layout;
-    using seq_layout    = typename fftst::layout::seq_layout;
+// templates for dynamic launch 
+template<int N> struct fft_template_internal  { using type = fft_1024_template; };
+template<> struct fft_template_internal<4096> { using type = fft_4096_template; };
+template<int N> using fft_template = fft_template_internal<N>::type;
+
+
+template<int SEQ> typename fft_template<SEQ>::layout::globals setup_templates(
+    bf16 *d_u_real, bf16 *d_kf_real, bf16 *d_kf_imag, 
+    bf16 *d_f_real, bf16 *d_f_imag, bf16 *d_finv_real, bf16 *d_finv_imag,
+    bf16 *d_tw_real, bf16 *d_tw_imag, bf16 *d_twinv_real, bf16 *d_twinv_imag, 
+    bf16 *d_o, 
+    int B, int H, int N, int N1
+) {
+    // Select the fft_template based on the value of N
+    using fftst = fft_template<SEQ>;
+    using globals       = fftst::layout::globals;
+    using fft_layout    = fftst::layout::fft_layout;
+    using filter_layout = fftst::layout::filter_layout;
+    using seq_layout    = fftst::layout::seq_layout;
 
     // input and output
-    seq_layout u_gl{u, B, H, nullptr, nullptr};
-    seq_layout o_gl{o, B, H, nullptr, nullptr};
+    seq_layout u_gl{d_u_real, B, H, nullptr, nullptr};
+    seq_layout o_gl{d_o, B, H, nullptr, nullptr};
+
     // filters
     filter_layout kf_gl{
-        typename filter_layout::GL{kf, nullptr, H, nullptr, nullptr}, 
-        typename filter_layout::GL{kf_imag, nullptr, H, nullptr, nullptr}
+        typename filter_layout::GL{d_kf_real, nullptr, H, nullptr, nullptr},
+        typename filter_layout::GL{d_kf_imag, nullptr, H, nullptr, nullptr}
     };
+    
     // factors
     fft_layout f_gl{
-        typename fft_layout::GL{f, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{f_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::GL{d_f_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_f_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout tw_gl{
-        typename fft_layout::GL{tw, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{tw_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::GL{d_tw_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_tw_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout finv_gl{
-        typename fft_layout::GL{finv, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{finv_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::GL{d_finv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_finv_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout twinv_t_gl{
-        typename fft_layout::GL{twinv, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{twinv_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::GL{d_twinv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::GL{d_twinv_imag, nullptr, nullptr, nullptr, nullptr}
     };
-    globals G{u_gl, o_gl, kf_gl, f_gl, finv_gl, tw_gl, twinv_t_gl};
 
-    // launch setup
+    globals G{
+        o_gl, // O comes first
+        u_gl,
+        kf_gl,
+        f_gl,
+        finv_gl,
+        tw_gl,
+        twinv_t_gl
+    };
+    return G;
+}
+
+template<int SEQ>
+void launch(typename fft_template<SEQ>::layout::globals G) {
+    using fftst = fft_template<SEQ>;
     unsigned long mem_size = (MAX_SHARED_MEMORY-1024);
     cudaFuncSetAttribute(
         pc<fftst>,
@@ -316,6 +327,47 @@ void dispatch_fft_conv(
     dim3 grid(132);
     dim3 block(num_threads<fftst>);
     pc<fftst><<<grid, block, mem_size>>>(G);
+}
+
+#ifdef TK_COMPILE_FFTCONV
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_fft_conv( 
+    bf16 *u, 
+    bf16 *kf, bf16 *kf_imag, 
+    bf16 *f, bf16 *f_imag, 
+    bf16 *finv, bf16 *finv_imag, 
+    bf16 *tw, bf16 *tw_imag, 
+    bf16 *twinv, bf16 *twinv_imag, 
+    bf16 *o, int B, const int H, const int N, int N1
+){
+    if (N == 4096) {
+        auto G = setup_templates<4096>(
+            u, 
+            kf, kf_imag, 
+            f, f_imag, 
+            finv, finv_imag, 
+            tw, tw_imag, 
+            twinv, twinv_imag, 
+            o, 
+            B, H, N, N1
+        );
+        launch<4096>(G);
+    } else {
+        auto G = setup_templates<1024>(
+            u, 
+            kf, kf_imag, 
+            f, f_imag, 
+            finv, finv_imag, 
+            tw, tw_imag, 
+            twinv, twinv_imag, 
+            o, 
+            B, H, N, N1
+        );
+        launch<1024>(G);
+    }
+    
+    CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
 
@@ -334,9 +386,7 @@ torch::Tensor fftconv(
     int B,
     int H,
     int N,
-    int N1,
-    int B_TILE,
-    int H_TILE
+    int N1
 ) {
     CHECK_INPUT(u_real);
     CHECK_INPUT(kf_real);
@@ -350,31 +400,28 @@ torch::Tensor fftconv(
     CHECK_INPUT(twinv_real);
     CHECK_INPUT(twinv_imag);
 
-    // printf("B: %d, H: %d, N: %d, N1: %d, B_TILE: %d, H_TILE: %d\n", B, H, N, N1, B_TILE, H_TILE);
-    // printf("u_real: %d, %d, %d\n", u_real.size(0), u_real.size(1), u_real.size(2));
-    
     // checks
     TORCH_CHECK(u_real.size(0) == B, "u_real has incompatible batch shape");
     TORCH_CHECK(u_real.size(1) == H, "u_real has incompatible head shape");
     TORCH_CHECK(u_real.size(2) == N1, "u_real has incompatible sequence shape");
 
-    TORCH_CHECK(f_real.size(0) == N1, "f_real has incompatible dim");
-    TORCH_CHECK(f_real.size(1) == N1, "f_real has incompatible dim");
+    TORCH_CHECK(f_real.size(0) == 64, "f_real has incompatible dim");
+    TORCH_CHECK(f_real.size(1) == 64, "f_real has incompatible dim");
 
-    TORCH_CHECK(f_imag.size(0) == N1, "f_imag has incompatible dim");
-    TORCH_CHECK(f_imag.size(1) == N1, "f_imag has incompatible dim");
+    TORCH_CHECK(f_imag.size(0) == 64, "f_imag has incompatible dim");
+    TORCH_CHECK(f_imag.size(1) == 64, "f_imag has incompatible dim");
 
-    TORCH_CHECK(finv_real.size(0) == N1, "finv_real has incompatible dim");
-    TORCH_CHECK(finv_real.size(1) == N1, "finv_real has incompatible dim");
+    TORCH_CHECK(finv_real.size(0) == 64, "finv_real has incompatible dim");
+    TORCH_CHECK(finv_real.size(1) == 64, "finv_real has incompatible dim");
 
-    TORCH_CHECK(finv_imag.size(0) == N1, "finv_imag has incompatible dim");
-    TORCH_CHECK(finv_imag.size(1) == N1, "finv_imag has incompatible dim");
+    TORCH_CHECK(finv_imag.size(0) == 64, "finv_imag has incompatible dim");
+    TORCH_CHECK(finv_imag.size(1) == 64, "finv_imag has incompatible dim");
 
-    TORCH_CHECK(tw_real.size(0) == N1, "tw_real has incompatible dim");
-    TORCH_CHECK(tw_real.size(1) == N1, "tw_real has incompatible dim");
+    TORCH_CHECK(tw_real.size(0) == 64, "tw_real has incompatible dim");
+    TORCH_CHECK(tw_real.size(1) == 64, "tw_real has incompatible dim");
 
-    TORCH_CHECK(tw_imag.size(0) == N1, "tw_imag has incompatible dim");
-    TORCH_CHECK(tw_imag.size(1) == N1, "tw_imag has incompatible dim");
+    TORCH_CHECK(tw_imag.size(0) == 64, "tw_imag has incompatible dim");
+    TORCH_CHECK(tw_imag.size(1) == 64, "tw_imag has incompatible dim");
 
     torch::Tensor out = torch::empty({B, H, N1, N1}, u_real.options());
 
@@ -415,4 +462,6 @@ torch::Tensor fftconv(
     CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
 }
-// #endif
+#else
+#include "harness_async.impl"
+#endif

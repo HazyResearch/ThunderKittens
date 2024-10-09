@@ -5,9 +5,10 @@ import sys
 torch.set_grad_enabled(False)
 
 N = 1024
-B = 16
-H = 16
+B = 4
+H = 128
 N1 = int(np.sqrt(N))
+print(N, N1)
 
 TESTNAME = sys.argv[1]
 
@@ -73,10 +74,10 @@ def pytorch_test(u, k, TESTNAME='all'):
     finv_imag = finv_mat.imag.to(torch.bfloat16).contiguous()
 
     # Normalization factor to make IFFT exact inverse of FFT
-    tw = compute_twiddle_factors_fft(N1, N1) / N
+    tw = compute_twiddle_factors_fft(N1, N1)
     tw_real = tw.real.to(torch.bfloat16).contiguous()
     tw_imag = tw.imag.to(torch.bfloat16).contiguous()
-    twinv = compute_twiddle_factors_ifft(N1, N1)
+    twinv = compute_twiddle_factors_ifft(N1, N1) / N
     twinv_real = twinv.real.to(torch.bfloat16).contiguous()
     twinv_imag = twinv.imag.to(torch.bfloat16).contiguous()
 
@@ -112,9 +113,10 @@ with open(f'{TESTNAME}.txt', 'w') as f:
     finv_real_f = finv_real.to(torch.float32).flatten().cpu().numpy()
     finv_imag_f = finv_imag.to(torch.float32).flatten().cpu().numpy()
     tw_real_f = tw_real.to(torch.float32).flatten().cpu().numpy()
+    print(kfT_real_f.tolist()[:256])
     tw_imag_f = tw_imag.to(torch.float32).flatten().cpu().numpy()
-    twinv_real_f = twinv_real.to(torch.float32).flatten().cpu().numpy()
-    twinv_imag_f = twinv_imag.to(torch.float32).flatten().cpu().numpy()
+    twinv_real_f = twinv_real.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy()
+    twinv_imag_f = twinv_imag.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy()
     o_real_f = o_real.to(torch.float32).flatten().cpu().numpy()
 
     for i in trange(u_real_f.shape[0]):
