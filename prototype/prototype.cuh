@@ -7,10 +7,6 @@
 
 #include "../include/kittens.cuh"
 
-namespace kittens {
-namespace prototype {
-struct empty {};
-}
-}
-
-#include "pc.cuh"
+#include "common/common.cuh"
+#include "lcf/lcf.cuh"
+#include "lcsf/lcsf.cuh"
