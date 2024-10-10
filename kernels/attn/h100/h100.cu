@@ -1058,6 +1058,8 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
     TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
     dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), batch*qo_heads, 1);
 
+    cudaDeviceSynchronize();
+
     if (head_dim == 64)  {
         using og_tile = st_bf<4*16, 64>;
         using o_tile  = st_bf<4*16, 64>;
@@ -1135,6 +1137,8 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<64>::blocks_sm;
+
+        cudaDeviceSynchronize();
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -1235,6 +1239,8 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<128>::blocks_sm;
 
+        cudaDeviceSynchronize();
+        
         if (is_causal) {
             cudaFuncSetAttribute(
                 bwd_attend_ker<128, true>,

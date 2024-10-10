@@ -4,7 +4,7 @@
 
 constexpr int ATTN_B     = 16;
 constexpr int QO_HEADS   = 16;
-constexpr int KV_HEADS   = 8;
+constexpr int KV_HEADS   = 16;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
@@ -14,7 +14,7 @@ constexpr int ATTN_D     = 128;
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
 constexpr int ITER       = 10;  
 
-constexpr bool causal    = true; 
+constexpr bool causal    = false; 
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -224,6 +224,8 @@ int main(int argc, char **argv) {
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
+
+    float max_error = 0.0f;
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyDeviceToHost);
@@ -252,10 +254,15 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff += abs(diff);
+
+        if (abs(diff) > max_error) {
+            max_error = abs(diff);
+        }
     }
 
     // print average difference
     std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS_QO << std::endl;
+    std::cout << "Max     o difference: " << max_error << std::endl;
     if (abs(total_diff / TOTAL_ELEMENTS_QO) < 1e-3) {
         good = true;
     }
@@ -429,6 +436,10 @@ int main(int argc, char **argv) {
     float total_diff_kg = 0.0f;
     float total_diff_vg = 0.0f;
 
+    float max_diff_qg = 0.0f;
+    float max_diff_kg = 0.0f;
+    float max_diff_vg = 0.0f;
+
     good = true;
     std::ofstream qg_ref_file("printouts/qg_ref.txt");
     std::ofstream qg_file("printouts/qg.txt");
@@ -444,9 +455,14 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff_qg += abs(diff); 
+
+        if (abs(diff) > max_diff_qg) {
+            max_diff_qg = abs(diff);
+        }
     }
     // print average qg diff
     std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS_QO << std::endl;
+    std::cout << "Max     qg diff: " << max_diff_qg << std::endl;
 
     std::ofstream kg_ref_file("printouts/kg_ref.txt");
     std::ofstream kg_file("printouts/kg.txt");
@@ -462,9 +478,14 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff_kg += abs(diff); 
+
+        if (abs(diff) > max_diff_kg) {
+            max_diff_kg = abs(diff);
+        }
     }
     // print average kg diff
     std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS_KV << std::endl;
+    std::cout << "Max     kg diff: " << max_diff_kg << std::endl;
 
     std::ofstream vg_ref_file("printouts/vg_ref.txt");
     std::ofstream vg_file("printouts/vg.txt");
@@ -480,9 +501,18 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff_vg += abs(diff);
+
+        if (abs(diff) > max_diff_vg) {
+            max_diff_vg = abs(diff);
+        }
     }
     // print average vg diff
     std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS_KV << std::endl;
+    std::cout << "Max     vg diff: " << max_diff_vg << std::endl;
+
+    std::cout << "Average bwd execution time: " << (total_time) / ITER << " us" << std::endl;
+    if(good) std::cout << "BWD Correct :)\n";
+    else std::cout << "BWD Incorrect :(\n";
 
     // calculate efficiency
     f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "bwd");
