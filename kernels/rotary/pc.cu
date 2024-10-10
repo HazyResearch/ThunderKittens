@@ -1,14 +1,9 @@
-// #ifdef TORCH_COMPILE
-// #define TORCH_COMPILE_FFTCONV
-// #else
-// #include "harness_async.impl"
-// #endif
-
 #include "kittens.cuh"
 #include "prototype.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
+using namespace kittens::prototype::lcsf;
 template<int _headdim, int _warps> struct rotary_layout {
     static constexpr int headdim = _headdim, warps = _warps;
     using seq_tile    = st_bf<16, headdim>;
@@ -27,8 +22,8 @@ template<int _headdim, int _warps> struct rotary_layout {
 template<int _headdim> struct rotary_template {
     static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
-    __device__ static inline int iters(const typename layout::globals &g) {
-        return min(g.batches, (int)(g.x.batch-blockIdx.y*g.batches)) * g.x.depth; // batches*heads handled by block
+    __device__ static inline void task_init(task_init_args<layout> args) {
+        args.num_iters = (args.task_iter == 0) ? min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth : -1; // batches*heads handled by block
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -70,7 +65,7 @@ template<int _headdim> struct rotary_template {
             load(args.state.sin, args.globals.sin, idx); // could be better coalesced but doing just once
             load(args.state.cos, args.globals.cos, idx);
         }
-        __device__ static void work(consumer_work_args<layout> args) {
+        __device__ static void compute(consumer_compute_args<layout> args) {
             rt_fl<16, headdim> x;
             rt_fl<16, headdim/2> x1, x2, temp1, temp2;
             load(x, args.input.x[warpid()]);
@@ -100,10 +95,13 @@ template<int _headdim> struct rotary_template {
             __syncwarp();
             arrive(args.outputs_arrived);
         }
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            arrive(args.finish_finished); // nothing to do here
+        }
     };
 };
 
-// #ifdef TORCH_COMPILE_ROTARY
+#ifdef TORCH_COMPILE_ROTARY
 #include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
 template<int ATTN_D>
@@ -184,4 +182,6 @@ torch::Tensor fused_rotary(
     return out;
 }
 
-// #endif
+#else
+#include "harness.impl"
+#endif

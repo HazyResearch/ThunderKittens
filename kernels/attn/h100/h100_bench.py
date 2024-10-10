@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import h100 as tk_train
+import h100 as tk
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import os
@@ -26,19 +26,19 @@ def benchmark_attention(configurations):
         print("=" * 60)
         print(f"Timing forward and backward pass for B={B}, H={H}, N={N}, D={D}, causal={causal}")
 
-        q = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
-        k = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
-        v = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
+        q = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False)
+        k = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False)
+        v = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False)
 
-        o = torch.zeros_like(q)
+        o = torch.zeros_like(q, requires_grad=False)
         grad_output = torch.randn_like(q, requires_grad=False)
 
         qg = torch.zeros_like(q, requires_grad=False, dtype=torch.float32)
         kg = torch.zeros_like(k, requires_grad=False, dtype=torch.float32)
         vg = torch.zeros_like(v, requires_grad=False, dtype=torch.float32)
 
-        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32)
-        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32)
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32, requires_grad=False)
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32, requires_grad=False)
         
         # Prepare for timing forward pass
         start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(1000)]
@@ -46,7 +46,7 @@ def benchmark_attention(configurations):
         
         # Warmup for forward pass
         for _ in range(10):
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.attention_forward(q, k, v, o, l_vec, causal)
 
         # Time the forward pass
         for i in range(1000):
@@ -55,7 +55,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_fwd[i].record()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.attention_forward(q, k, v, o, l_vec, causal)
             
             torch.cuda.synchronize()
             end_events_fwd[i].record()
@@ -89,7 +89,7 @@ def benchmark_attention(configurations):
             o.zero_()
             l_vec.zero_()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.attention_forward(q, k, v, o, l_vec, causal)
             
             # zero out gradients
             qg.zero_()
@@ -97,14 +97,14 @@ def benchmark_attention(configurations):
             vg.zero_()
             d_vec.zero_()
             
-            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            tk.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
 
         # Time the backward pass
         for i in range(1000):
             o.zero_()
             l_vec.zero_()
             
-            tk_train.attention_forward(q, k, v, o, l_vec, causal)
+            tk.attention_forward(q, k, v, o, l_vec, causal)
             
             # zero out gradients
             qg.zero_()
@@ -115,7 +115,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_bwd[i].record()
             
-            tk_train.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            tk.attention_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
             
             torch.cuda.synchronize()
             end_events_bwd[i].record()
