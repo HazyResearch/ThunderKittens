@@ -856,6 +856,8 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
     float* d_l = reinterpret_cast<float*>(l_ptr);
 
+    cudaDeviceSynchronize();
+    
     if (head_dim == 64) {
         using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
         using k_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
