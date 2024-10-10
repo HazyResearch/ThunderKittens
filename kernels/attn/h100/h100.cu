@@ -371,7 +371,7 @@ struct bwd_globals {
     using vg_gl = gl<float, -1, -1, -1, -1, vg_tile>;
 
     using l_gl  = gl<float, -1, -1, -1, -1, l_tile>;
-    using d_gl  = gl<float, -1, -1, -1, -1, d_tile>;
+    using d_gl  = gl<float, -1, -1, -1, -1, d_tile>; 
 
     q_gl  q;
     k_gl  k;
@@ -416,7 +416,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     k_tile  (&k_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<k_tile, BWD_CONSUMER_WARPGROUPS>();
     v_tile  (&v_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<v_tile, BWD_CONSUMER_WARPGROUPS>();
 
-    q_tile  (&q_smem) [2] = al.allocate<q_tile , 2>(); 
+    q_tile  (&q_smem) [2] = al.allocate<q_tile,  2>(); 
     og_tile (&og_smem)[2] = al.allocate<og_tile, 2>(); 
     qg_tile (&qg_smem)    = al.allocate<qg_tile>();
 
