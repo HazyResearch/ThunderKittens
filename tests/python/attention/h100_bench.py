@@ -1,10 +1,10 @@
 import torch
 import numpy as np
-import thunderkittens as tk
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import os
 import time
+import thunderkittens as tk
 
 def flops(batch, seqlen, nheads, headdim, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
@@ -23,33 +23,34 @@ def benchmark_attention(configurations):
     }
     
     for B, H, N, D, causal in configurations:
+        
         print("=" * 60)
         print(f"Timing forward and backward pass for B={B}, H={H}, N={N}, D={D}, causal={causal}")
 
-        q = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False).contiguous()
-        k = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False).contiguous()
-        v = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda', requires_grad=False).contiguous()
+        q = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
+        k = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
+        v = torch.randn(B, H, N, D, dtype=torch.bfloat16, device='cuda')
 
-        o           = torch.zeros_like(q).contiguous()
-        grad_output = torch.randn_like(q, requires_grad=False).contiguous()
+        o = torch.zeros_like(q)
+        grad_output = torch.randn_like(q, requires_grad=False)
 
-        qg = torch.zeros_like(q, requires_grad=False, dtype=torch.float).contiguous()
-        kg = torch.zeros_like(k, requires_grad=False, dtype=torch.float).contiguous()
-        vg = torch.zeros_like(v, requires_grad=False, dtype=torch.float).contiguous()
+        qg = torch.zeros_like(q, requires_grad=False, dtype=torch.float32)
+        kg = torch.zeros_like(k, requires_grad=False, dtype=torch.float32)
+        vg = torch.zeros_like(v, requires_grad=False, dtype=torch.float32)
 
-        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float, requires_grad=False).contiguous()
-        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float, requires_grad=False).contiguous()
+        l_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32)
+        d_vec = torch.zeros(q.shape[0], q.shape[1], q.shape[2], 1, device=q.device, dtype=torch.float32)
         
         # Prepare for timing forward pass
-        start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
-        end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+        start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+        end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
         
         # Warmup for forward pass
         for _ in range(10):
             tk.mha_forward(q, k, v, o, l_vec, causal)
 
         # Time the forward pass
-        for i in range(10):
+        for i in range(100):
             o.zero_()
             
             torch.cuda.synchronize()
@@ -70,40 +71,32 @@ def benchmark_attention(configurations):
         print(f"Average time for forward pass in us: {time_us_fwd:.2f}")
         print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
         print("-" * 60)
+ 
         
         # wait for GPU to reset
         torch.cuda.synchronize()
-        
-        # clear cache
         torch.cuda.empty_cache()
-        
-        # sleep for 5 seconds
         time.sleep(5)
         
         # Prepare for timing backward pass
-        start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
-        end_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
+        start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
+        end_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(100)]
         
         # Warmup for backward pass
         for _ in range(10):
             o.zero_()
             l_vec.zero_()
-            
             tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            # zero out gradients
             qg.zero_()
             kg.zero_()
             vg.zero_()
             d_vec.zero_()
-            
             tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
 
         # Time the backward pass
-        for i in range(10):
+        for i in range(100):
             o.zero_()
             l_vec.zero_()
-            
             tk.mha_forward(q, k, v, o, l_vec, causal)
             
             # zero out gradients
@@ -111,7 +104,6 @@ def benchmark_attention(configurations):
             kg.zero_()
             vg.zero_()
             d_vec.zero_()
-            
             torch.cuda.synchronize()
             start_events_bwd[i].record()
             
@@ -133,11 +125,7 @@ def benchmark_attention(configurations):
         
         # wait for GPU to reset
         torch.cuda.synchronize()
-        
-        # clear cache
         torch.cuda.empty_cache()
-        
-        # sleep for 5 seconds
         time.sleep(5)
     
     return results
@@ -182,11 +170,11 @@ configurations = [
     (16, 32, 768*4,  64,  False),
     (16, 32, 768*8,  64,  False),
     (16, 32, 768*16, 64,  False),
-    (16, 32, 768,    64,  True),
-    (16, 32, 768*2,  64,  True),
-    (16, 32, 768*4,  64,  True),
-    (16, 32, 768*8,  64,  True),
-    (16, 32, 768*16, 64,  True),
+    # (16, 32, 768,    64,  True),
+    # (16, 32, 768*2,  64,  True),
+    # (16, 32, 768*4,  64,  True),
+    # (16, 32, 768*8,  64,  True),
+    # (16, 32, 768*16, 64,  True),
 ]
 
 results = benchmark_attention(configurations)
