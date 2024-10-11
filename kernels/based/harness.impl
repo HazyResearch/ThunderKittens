@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
     v_gl v_3_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
     o_gl o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
 
-    globals g{q_arg, k_arg, v_arg, v_3_arg, o_arg};
+    globals g{q_arg, k_arg, v_arg, v_3_arg, o_arg, ATTN_N};
 
     /********************** End of TK2 Changes ***********************/
 
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        based_linear_attention<ATTN_N>,
+        based_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -166,14 +166,14 @@ int main(int argc, char **argv) {
     std::cout << "Warmup!\n";
     dim3 grid(ATTN_H, ATTN_B);
     for(int i = 0; i < 1; i++) {
-        based_linear_attention<ATTN_N><<<grid,NUM_THREADS,mem_size>>>(g); ;
+        based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g); ;
     }
     cudaDeviceSynchronize();
     CudaCheckError();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        based_linear_attention<ATTN_N><<<grid,NUM_THREADS,mem_size>>>(g); 
+        based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

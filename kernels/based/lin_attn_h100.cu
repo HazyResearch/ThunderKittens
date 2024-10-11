@@ -2,6 +2,10 @@
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_BASED
+#endif
+
 #define NUM_WORKERS (4) // hardcoded, don't change
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 #define D_QK (16) // hardcoded, don't change
@@ -29,6 +33,7 @@ struct based_globals {
     k_gl k;
     v_gl v, v3;
     o_gl o;
+    int n;
 };
 
 
@@ -102,7 +107,6 @@ __device__ static void mul_slice_col(rt_bf<1*16,4*16> &dst, const rt_bf<1*16,4*1
     }
 }
 
-template<int n>
 __global__ __launch_bounds__(NUM_THREADS, 2)
 void based_linear_attention(const __grid_constant__ based_globals g) {
 
@@ -139,7 +143,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         zero(a2[i]); // everyone zeroes a2.
     }
 
-    int n_blocks = n / (q_s[0].rows);
+    int n_blocks = g.n / (q_s[0].rows);
 
     // initial load
     __shared__ barrier bar;
@@ -272,5 +276,91 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     tma::store_async_wait();
 }
 
+
+#ifdef TK_COMPILE_BASED
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_based( 
+    bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
+    int ATTN_B, int ATTN_H, int ATTN_N
+){
+    // global pointers
+    int ATTN_D = 64; 
+    int ATTN_D_SMALL = 16;
+
+    using q_tile = st_bf<4*16, 1*16>;
+    using k_tile = st_bf<4*16, 1*16>;
+    using v_tile = st_bf<4*16, 1*64>;
+    using o_tile = st_bf<4*16, 1*64>;
+
+    using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
+    using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
+    using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using globals = based_globals;
+
+    q_gl q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    k_gl k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    v_gl v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    v_gl v_3_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    o_gl o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    globals g{q_arg, k_arg, v_arg, v_3_arg, o_arg, ATTN_N};
+
+    // launch
+    unsigned long mem_size = 98000;
+    cudaFuncSetAttribute(
+        based_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    dim3 grid(ATTN_H, ATTN_B);
+    based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+}
+
+torch::Tensor based(
+    const torch::Tensor q, 
+    const torch::Tensor k,
+    const torch::Tensor v
+) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+
+    int B = q.size(0);
+    int H = q.size(1);
+    int DV = v.size(3);
+    int N = q.size(2);
+
+    // checks
+    TORCH_CHECK(k.size(0) == B, "k batch?");
+    TORCH_CHECK(k.size(1) == H, "k heads?");
+    TORCH_CHECK(k.size(2) == N, "k length?");
+
+    TORCH_CHECK(v.size(0) == B, "v batch?");
+    TORCH_CHECK(v.size(1) == H, "v heads?");
+    TORCH_CHECK(v.size(2) == N, "v length?");
+
+    // allocate output
+    torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
+
+    // convert to bf16
+    c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_bf16 = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_bf16 = v.data_ptr<c10::BFloat16>();
+    
+    bf16 *d_q = reinterpret_cast<bf16*>(q_bf16);
+    bf16 *d_k = reinterpret_cast<bf16*>(k_bf16);
+    bf16 *d_v = reinterpret_cast<bf16*>(v_bf16);
+    bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+
+    dispatch_based(d_q, d_k, d_v, d_o, B, H, N);
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return out;
+}
+#else
 #include "harness.impl"
+#endif
+
 

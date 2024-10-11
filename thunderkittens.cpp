@@ -37,14 +37,11 @@ extern void hedgehog_forward(
 #endif
 
 #ifdef TK_COMPILE_BASED
-extern void based_linear_prefill(
-    int add_scale, int output_state,
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
-    torch::Tensor kv_a2, torch::Tensor kv_a1, torch::Tensor kv_a0
+extern torch::Tensor based(
+    const torch::Tensor q, 
+    const torch::Tensor k, 
+    const torch::Tensor v
 );
-extern void based_step(torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-            torch::Tensor kv_state, torch::Tensor k_state, torch::Tensor out);
-extern void based_sliding_window(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o);
 #endif
 
 #ifdef TK_COMPILE_CYLON
@@ -128,9 +125,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #endif
 
 #ifdef TK_COMPILE_BASED
-    m.def("based_linear_prefill", based_linear_prefill, "Based linear prefill. Takes tensors (q, k, v, o, kv_a2, kv_a1, kv_a0). q, k, v, o are bf16 (B,H,N,128), kv_a2 is bf16 (B,H,256,64), kv_a1 is bf16 (B,H,16,64), and kv_a0 is bf16 (B,H,1,64). Finally, N must be a multiple of 64.");
-    m.def("based_step", based_step, "Based step. Takes tensors (q, k, v, kv_state, k_state, out). q, k, v, out are bf16 (B,H,N,128), kv_state is bf16 (B,H,273,64), and k_state is bf16 (B,H,64).");
-    m.def("based_sliding_window", based_sliding_window, "Based sliding window. Takes tensors (q, k, v, o). q, k, v, o are bf16 (B,H,N,64).");
+    m.def("based", based, "Based forward. Takes tensors (q, k, v). q, k, v are bf16 (B,H,N,64). Returns (B,H,N,64) in bf16.");
 #endif
 
 #ifdef TK_COMPILE_CYLON
