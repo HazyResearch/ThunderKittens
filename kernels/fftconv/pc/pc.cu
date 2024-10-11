@@ -7,6 +7,7 @@
 
 using namespace kittens;
 using namespace kittens::prototype;
+using namespace kittens::prototype::lcsf;
 template<int _wg> struct fftconv_1024_layout { // 4096
     static constexpr int wg = _wg;
     using seq_tile      = st_bf<64, 64>;
@@ -31,15 +32,15 @@ struct fft_1024_template {
     // mine
     __device__ static inline void load_head_data(typename layout::scratch_block &scratch, const layout::globals &g, int head) {
         using consumers = group<NUM_CONSUMER_WARPS>;
-        consumers::sync(1);
+        consumers::sync(3);
         consumers::load(scratch.kf, g.kf, {0, head, 0, 0}); // next chunk
-        consumers::sync(1);
+        consumers::sync(3);
     }
     // tk
-    __device__ static inline int iters(const typename layout::globals &g) {
-        int heads_handled = (g.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
-        int iters_per_head = (g.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
-        return heads_handled * iters_per_head;
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        int heads_handled = (args.globals.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
+        int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
+        args.num_iters = args.task_iter == 0 ? heads_handled * iters_per_head : -1;
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -56,7 +57,8 @@ struct fft_1024_template {
                     load_async(st, args.globals.x, { b, head, 0, 0 });
                 }
                 load_async_wait();
-                arrive(args.inputs_arrived, 4); // extra arrivals needed
+                if(laneid() == 0) arrive(args.inputs_arrived, 4); // extra arrivals needed
+                __syncwarp();
             }
         }
         __device__ static void store(producer_store_args<layout> args) {
@@ -70,7 +72,8 @@ struct fft_1024_template {
                     kittens::store(args.globals.o, st, { b, head, 0, 0 });
                 }
                 __syncwarp(); // memory must arrive before arrival
-                arrive(args.outputs_finished, 4);
+                if(laneid() == 0) arrive(args.outputs_finished, 4);
+                __syncwarp();
             }
         }
     };
@@ -79,14 +82,14 @@ struct fft_1024_template {
             warpgroup::increase_registers<232>();
             int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             args.state.current_head = (0 / iters_per_head)*132 + blockIdx.x; // start for iter 0
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.finv,    args.globals.finv,    {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.tw,      args.globals.tw,      {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.twinv_t, args.globals.twinv_t, {0, 0, 0, 0});
+            using consumers = group<NUM_CONSUMER_WARPS>;
+            consumers::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
+            consumers::load(args.scratch.finv,    args.globals.finv,    {0, 0, 0, 0});
+            consumers::load(args.scratch.tw,      args.globals.tw,      {0, 0, 0, 0});
+            consumers::load(args.scratch.twinv_t, args.globals.twinv_t, {0, 0, 0, 0});
             load_head_data(args.scratch, args.globals, args.state.current_head);
         }
-        __device__ static void work(consumer_work_args<layout> args) {
-            // warpgroup::copy(args.output.o[warpgroup::groupid()], args.input.x[warpgroup::groupid()]);
+        __device__ static void compute(consumer_compute_args<layout> args) {
             // X = F^T X
             crt_fl<16, 64> mma_reg; // 64 registers
             crt_bf<16, 64> accum, tmp; // 32 registers each
@@ -122,8 +125,8 @@ struct fft_1024_template {
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
             warpgroup::sync();
 
-            arrive(args.inputs_finished);
-            arrive(args.outputs_arrived);
+            if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
+            __syncwarp();
             int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
             if(next_head != args.state.current_head) {
@@ -131,6 +134,7 @@ struct fft_1024_template {
                 args.state.current_head = next_head;
             }
         }
+        __device__ static void finish(consumer_finish_args<layout> args) { if(laneid() == 0) arrive(args.finish_finished); }
     };
 };
 template<int _wg> struct fftconv_4096_layout { // 4096
@@ -157,15 +161,15 @@ struct fft_4096_template {
     // mine
     __device__ static inline void load_head_data(typename layout::scratch_block &scratch, const layout::globals &g, int head) {
         using consumers = group<NUM_CONSUMER_WARPS>;
-        consumers::sync(1);
+        consumers::sync(3);
         consumers::load(scratch.kf, g.kf, {0, head, 0, 0}); // next chunk
-        consumers::sync(1);
+        consumers::sync(3);
     }
     // tk
-    __device__ static inline int iters(const typename layout::globals &g) {
-        int heads_handled = (g.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
-        int iters_per_head = (g.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
-        return heads_handled * iters_per_head;
+    __device__ static void common_setup(common_setup_args<layout> args) {
+        int heads_handled = (args.globals.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
+        int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+        args.num_iters = args.task_iter == 0 ? heads_handled * iters_per_head : -1;
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -180,7 +184,8 @@ struct fft_4096_template {
                 for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch; b++) {
                     tma::load_async(args.input.x[b-batch], args.globals.x, { b, head, 0, 0 }, args.inputs_arrived);
                 }
-                arrive(args.inputs_arrived, 3); // extra arrivals needed
+                if(laneid() == 0) arrive(args.inputs_arrived, 3); // extra arrivals needed
+                __syncwarp();
             }
         }
         __device__ static void store(producer_store_args<layout> args) {
@@ -192,7 +197,8 @@ struct fft_4096_template {
                     tma::store_async(args.globals.o, args.output.o[b-batch], { b, head, 0, 0 });
                 }
                 tma::store_async_read_wait();
-                arrive(args.outputs_finished, 4);
+                if(laneid() == 0) arrive(args.outputs_finished, 4);
+                __syncwarp();
             }
         }
     };
@@ -201,13 +207,14 @@ struct fft_4096_template {
             warpgroup::consumer_registers<NUM_CONSUMER_WARPS/4>();
             int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             args.state.current_head = (0 / iters_per_head)*132 + blockIdx.x; // start for iter 0
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.finv,    args.globals.finv,    {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.tw,      args.globals.tw,      {0, 0, 0, 0});
-            group<NUM_CONSUMER_WARPS>::load(args.scratch.twinv_t, args.globals.twinv_t, {0, 0, 0, 0});
+            using consumers = group<NUM_CONSUMER_WARPS>;
+            consumers::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
+            consumers::load(args.scratch.finv,    args.globals.finv,    {0, 0, 0, 0});
+            consumers::load(args.scratch.tw,      args.globals.tw,      {0, 0, 0, 0});
+            consumers::load(args.scratch.twinv_t, args.globals.twinv_t, {0, 0, 0, 0});
             load_head_data(args.scratch, args.globals, args.state.current_head);
         }
-        __device__ static void work(consumer_work_args<layout> args) {
+        __device__ static void compute(consumer_compute_args<layout> args) {
             // X = F^T X
             crt_fl<16, 64> mma_reg; // 64 registers
             crt_bf<16, 64> accum, tmp; // 32 registers each
@@ -243,8 +250,8 @@ struct fft_4096_template {
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
             warpgroup::sync();
 
-            arrive(args.inputs_finished);
-            arrive(args.outputs_arrived);
+            if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
+            __syncwarp();
             int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
             if(next_head != args.state.current_head) {
@@ -252,6 +259,7 @@ struct fft_4096_template {
                 args.state.current_head = next_head;
             }
         }
+        __device__ static void finish(consumer_finish_args<layout> args) { if(laneid() == 0) arrive(args.finish_finished); }
     };
 };
 
@@ -320,13 +328,13 @@ void launch(typename fft_template<SEQ>::layout::globals G) {
     using fftst = fft_template<SEQ>;
     unsigned long mem_size = (MAX_SHARED_MEMORY-1024);
     cudaFuncSetAttribute(
-        pc<fftst>,
+        prototype::lcsf::kernel<fftst>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
     dim3 grid(132);
-    dim3 block(num_threads<fftst>);
-    pc<fftst><<<grid, block, mem_size>>>(G);
+    dim3 block(prototype::detail::NUM_THREADS_v<fftst>);
+    prototype::lcsf::kernel<fftst><<<grid, block, mem_size>>>(G);
 }
 
 #ifdef TK_COMPILE_FFTCONV
