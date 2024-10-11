@@ -28,9 +28,8 @@ extern void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v
 #endif
 
 #ifdef TK_COMPILE_HEDGEHOG
-extern void hedgehog_forward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o,
-    torch::Tensor k_state, torch::Tensor kv_state,
+extern std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, 
     torch::Tensor q_map, torch::Tensor k_map,
     torch::Tensor alphas, torch::Tensor betas
 );
@@ -121,7 +120,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #endif
 
 #ifdef TK_COMPILE_HEDGEHOG
-    m.def("hedgehog", hedgehog_forward, """Hedgehog forward. Takes tensors (Q, K, V, O, k_state, kv_state, q_maps, k_maps, alphas, betas). Q,K,V,O are bf16 (B,H,N,128), q_maps and k_maps are bf16 (H,128,64), k_state is fp32 (B,H,128), kv_state is fp32 (B,H,128,128), and alphas and betas are fp32 (H,). Finally, N must be a multiple of 64.""");
+    m.def("hedgehog", hedgehog, "Hedgehog forward. Takes tensors (q, k, v, q_map, k_map, alphas, betas). q, k, v are bf16 (B,H,N,64), q_map and k_map are bf16 (H,E,64,64), alphas and betas are fp32 (H,E). Returns (B,H,N,64) in bf16.");
 #endif
 
 #ifdef TK_COMPILE_BASED

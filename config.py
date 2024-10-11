@@ -49,8 +49,8 @@ sources = {
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
-# kernels = ['attn', 'mamba2', 'hedgehog', 'cylon', 'fftconv', 'fused_rotary', 'attn']
-kernels = ['based']
+# kernels = ['attn', 'mamba2', 'hedgehog', 'cylon', 'fftconv', 'fused_rotary', 'based']
+kernels = ['hedgehog']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'
