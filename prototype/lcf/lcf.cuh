@@ -12,7 +12,7 @@ template<typename lcft> concept kernel_template = requires {
     typename lcft::layout;
     typename lcft::producer;
     typename lcft::consumer;
-    lcft::task_init;
+    lcft::common_setup;
     lcft::producer::setup;
     lcft::producer::load;
     lcft::consumer::setup; 
@@ -24,10 +24,12 @@ template<typename lcft> // load-compute-store-finish template
 __global__ __launch_bounds__(detail::NUM_THREADS_v<lcft>, detail::NUM_BLOCKS_v<lcft>)
 void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     static_assert(kernel_template<lcft>, "lcf kernel template parameter does not satisfy concept requirements");
-    using CKL            = complete_kittens_layout<typename lcft::layout>; // complete the layout by filling in the optional types with empty
-    using input_block    = typename CKL::input_block_t;
+    using L              = typename lcft::layout;
+    using CKL            = complete_kittens_layout<L>; // complete the layout by filling in the optional types with empty
+    using common_state   = typename CKL::common_state_t;
     using producer_state = typename CKL::producer_state_t;
     using consumer_state = typename CKL::consumer_state_t;
+    using input_block    = typename CKL::input_block_t;
     using scratch_block  = typename CKL::scratch_block_t;
     using finish_block   = typename CKL::finish_block_t;
     using input_alloc_block   = typename CKL::input_alloc_block_t;
@@ -94,26 +96,25 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     __shared__ kittens::barrier inputs_arrived[INPUT_PIPE_STAGES], inputs_finished[INPUT_PIPE_STAGES];
     __shared__ kittens::barrier finish_finished;
     uint32_t barrier_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
+    common_state common;
 
     if(warpid() >= NUM_CONSUMER_WARPS) { // code path for producer warps
         using producers = group<NUM_PRODUCER_WARPS>;
         if (warpid() == NUM_CONSUMER_WARPS) { // a single warp (in fact a single thread) does these.
             for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
-                init_barrier(inputs_arrived[i], NUM_PRODUCER_WARPS, 0); // needs to wait on each producer warp
-                init_barrier(inputs_finished[i], NUM_CONSUMER_WARPS, 0); // needs to wait on one thread from each consumer warp
+                init_barrier(inputs_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on each producer warp
+                init_barrier(inputs_finished[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on one thread from each consumer warp
             }
-            init_barrier(finish_finished, NUM_CONSUMER_WARPS, 0); // consumer warps must say they are done with the finish block
+            init_barrier(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // consumer warps must say they are done with the finish block
         }
         everyone::sync(0); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
-            coord task_coord;
-            int num_iters = 0;
-            uniform_args<lcft> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
-            lcft::init(unif);
+            int num_iters = -1;
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
+            lcft::common_setup(unif);
             if(num_iters <= 0) return; // no work to do
-            int input_ring  = 0; // tracking which input block is being loaded
-            int output_ring = 0; // tracking which output block is being written
+            int input_ring = 0; // tracking which input block is being loaded
             int load_iter;
             lcft::producer::setup({p_state, unif});
             for(load_iter = 0; load_iter < SAFE_STAGES_BETWEEN_BLOCKS && load_iter<num_iters; load_iter++) { // fill the pipeline
@@ -128,10 +129,8 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
                 update_phasebit<1>(barrier_bitfield, input_ring);
                 lcft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
-                load_iter++;
             }
             producers::sync(2); // producer warps must finish before consumer warps can proceed
-            task_iter++;
         } // task iter loop
     } // producer warpgroup
     else { // code path for consumer warps
@@ -139,27 +138,24 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
         everyone::sync(0); // all warps must arrive here, confirming barrier initialization is visible to all threads.
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
-            coord task_coord;
-            int num_iters = 0;
-            uniform_args<lcft> unif{task_coord, task_iter, num_iters, globals, *scratch_smem};
-            lcft::init(unif);
+            int num_iters = -1;
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
+            lcft::common_setup(unif);
             if(num_iters <= 0) return; // no work to do
-            int input_ring  = 0; // tracking which input block is being loaded
-            int output_ring = 0; // tracking which output block is being written
-            lcft::consumer::init({c_state, unif});
+            int input_ring = 0; // tracking which input block is being loaded
+            lcft::consumer::setup({c_state, unif});
 #ifdef CONSUMER_UNROLL
             #pragma unroll CONSUMER_UNROLL
 #endif
             for(int it = 0; it < num_iters; it++) {
                 wait(inputs_arrived[input_ring], get_phasebit<0>(barrier_bitfield, input_ring)); // wait for memory to arrive, phase changes at half the rate of the ring
                 update_phasebit<0>(barrier_bitfield, input_ring);
-                lcft::consumer::work({c_state, *input_smem[input_ring], inputs_finished[input_ring], it, unif});
+                lcft::consumer::compute({c_state, *input_smem[input_ring], inputs_finished[input_ring], it, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             } // work loop
             consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
             lcft::consumer::finish({c_state, *finish_smem, finish_finished, unif});
             consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
-            task_iter++;
         } // task iter loop
     } // consumer warpgroup
 }

@@ -47,6 +47,10 @@ FLAG_GETTER(MAX_SHARED_MEMORY, kittens::MAX_SHARED_MEMORY)
 FLAG_GETTER(INPUT_PIPE_STAGES, 1)
 // How many output pipe stages to use, per block.
 FLAG_GETTER(OUTPUT_PIPE_STAGES, 1)
+// How many arrivals to initialize for each consumer barrier.
+FLAG_GETTER(CONSUMER_BARRIER_ARRIVALS, NUM_CONSUMER_WARPS_v<T>)
+// How many arrivals to initialize for each producer barrier.
+FLAG_GETTER(PRODUCER_BARRIER_ARRIVALS, NUM_PRODUCER_WARPS_v<T>)
 // Some handy constants
 template<typename T> constexpr int NUM_WARPS_v = NUM_CONSUMER_WARPS_v<T> + NUM_PRODUCER_WARPS_v<T>;
 template<typename T> constexpr int NUM_THREADS_v = NUM_WARPS_v<T> * 32;
@@ -59,28 +63,34 @@ template<typename T>                 struct block_name##_getter    { using type 
 template<has_##block_name##_block T> struct block_name##_getter<T> { using type = typename T::block_name; };        \
 template<typename T> using block_name##_t = typename block_name##_getter<T>::type;
 
-// Get the input block type from a pc layout
+// Get the input block type from a layout
 BLOCK_GETTER(input_block)
-// Get the output block type from a pc layout
+// Get the output block type from a layout
 BLOCK_GETTER(output_block)
-// Get the scratch block type from a pc layout
+// Get the scratch block type from a layout
 BLOCK_GETTER(scratch_block)
-// Get the finish block type from a pc layout
+// Get the finish block type from a layout
 BLOCK_GETTER(finish_block)
-// Get the producer state type from a pc layout
+// Get the common state type from a layout
+BLOCK_GETTER(common_state)
+// Get the producer state type from a layout
 BLOCK_GETTER(producer_state)
-// Get the consumer state type from a pc layout
+// Get the consumer state type from a layout
 BLOCK_GETTER(consumer_state)
 
 }
 
 // Complete the pc layout by filling in the missing types
 template<kittens_layout T> struct complete_kittens_layout : T {
+    // In global memory
     using globals_t        = T::globals;
+    // In shared memory
     using input_block_t    = typename detail::input_block_t<T>;
     using output_block_t   = typename detail::output_block_t<T>;
     using scratch_block_t  = typename detail::scratch_block_t<T>;
     using finish_block_t   = typename detail::finish_block_t<T>;
+    // In registers
+    using common_state_t   = typename detail::common_state_t<T>;
     using producer_state_t = typename detail::producer_state_t<T>;
     using consumer_state_t = typename detail::consumer_state_t<T>;
     

@@ -168,16 +168,13 @@ __device__ static inline void invalidate_barrier(barrier& bar) {
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar) {
-    if(::kittens::laneid() == 0) {
-        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
-        asm volatile (
-            "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
-            :
-            : "r"(mbar_ptr)
-            : "memory"
-        );
-    }
-    __syncwarp();
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+    asm volatile (
+        "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
+        :
+        : "r"(mbar_ptr)
+        : "memory"
+    );
 }
 
 #ifdef KITTENS_HOPPER
@@ -190,16 +187,13 @@ __device__ static inline void arrive(barrier& bar) {
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar, uint32_t count) {
-    if(::kittens::laneid() == 0) {
-        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
-        asm volatile (
-            "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
-            :
-            : "r"(mbar_ptr), "r"(count)
-            : "memory"
-        );
-    }
-    __syncwarp();
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+    asm volatile (
+        "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
+        :
+        : "r"(mbar_ptr), "r"(count)
+        : "memory"
+    );
 }
 #endif
 
@@ -213,37 +207,34 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-    if(::kittens::laneid() == 0) {
 #ifdef KITTENS_HOPPER
-        asm volatile (
-            "{\n"
-            ".reg .pred                P1;\n"
-            "LAB_WAIT:\n"
-            "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
-            "@P1                       bra.uni DONE;\n"
-            "bra.uni                   LAB_WAIT;\n"
-            "DONE:\n"
-            "}\n"
-            :: "r"(mbar_ptr),
-            "r"(kPhaseBit)
-        );
+    asm volatile (
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
 #else
-        asm volatile (
-            "{\n"
-            ".reg .pred                P1;\n"
-            "LAB_WAIT:\n"
-            "mbarrier.test_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
-            "@P1                       bra.uni DONE;\n"
-            "nanosleep.u32 5;\n" // wait a few nanoseconds on pre-Hopper architectures to save instruction issue slots
-            "bra.uni                   LAB_WAIT;\n"
-            "DONE:\n"
-            "}\n"
-            :: "r"(mbar_ptr),
-            "r"(kPhaseBit)
-        );
+    asm volatile (
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.test_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "nanosleep.u32 5;\n" // wait a few nanoseconds on pre-Hopper architectures to save instruction issue slots
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
 #endif
-    }
-    __syncwarp();
 }
 
 /**

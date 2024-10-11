@@ -165,7 +165,6 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
                 __nanosleep(10); // relinquish for a little while
             } // load and store loop
             producers::sync(2); // producer warps must finish before consumer warps can proceed
-            task_iter++;
         } // task iter loop
     } // producer warpgroup
     else { // code path for consumer warps
@@ -204,7 +203,6 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
             lcsft::consumer::finish({c_state, *finish_smem, finish_finished, unif});
             consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
-            task_iter++;
         } // task iter loop
     } // consumer warpgroup
 }
