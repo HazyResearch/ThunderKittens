@@ -38,6 +38,7 @@ template<kittens::ducks::sv::all SV> __device__ static inline void init_bias(rt_
     }
 }
 using namespace kittens::prototype;
+using namespace kittens::prototype::lcf;
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs, int transpose_rhs>
 struct flux_matmul_gelu_layout {
     using lhs_tile  = std::conditional_t<transpose_lhs, st_bf<BLOCK_K,      64>, st_bf<     64, BLOCK_K>>;
@@ -55,14 +56,19 @@ struct flux_matmul_gelu_layout {
         rhs_tile rhs;
     };
     struct scratch_block  { bias_vec bias; };
-    struct consumer_state { rt_fl<16, BLOCK_N> acc; int iters;  };
+    struct consumer_state { rt_fl<16, BLOCK_N> acc; };
     struct finish_block   { acc_tile           acc[BLOCK_M/64]; };
 };
 template<int BLOCK_M, int BLOCK_N, int BLOCK_K, int transpose_lhs, int transpose_rhs>
 struct flux_matmul_gelu_template {
     using layout = flux_matmul_gelu_layout<BLOCK_M, BLOCK_N, BLOCK_K, transpose_lhs, transpose_rhs>;
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS/4;
-    __device__ static inline int iters(const typename layout::globals &g) { return transpose_lhs ? g.lhs.rows / BLOCK_K : g.lhs.cols / BLOCK_K; }
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        if(args.task_iter == 0) {
+            args.num_iters = transpose_lhs ? args.globals.lhs.rows / BLOCK_K : args.globals.lhs.cols / BLOCK_K;
+        }
+        else args.num_iters = -1;
+    }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
@@ -80,19 +86,18 @@ struct flux_matmul_gelu_template {
                     tma::load_async(args.input.rhs, args.globals.rhs, {(int)blockIdx.y, args.iter}, args.inputs_arrived);
                 else
                     tma::load_async(args.input.rhs, args.globals.rhs, {args.iter, (int)blockIdx.y}, args.inputs_arrived);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
-            else arrive(args.inputs_arrived);
         }
     };
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
             warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
             group<NUM_CONSUMER_WARPS>::load(args.scratch.bias, args.globals.bias, {(int)blockIdx.y});
-            args.state.iters = iters(args.globals);
             group<NUM_CONSUMER_WARPS>::sync();
             init_bias(args.state.acc, args.scratch.bias); // <std::remove_reference_t<decltype(args.scratch.bias)>>
         }
-        __device__ static void work(consumer_work_args<layout> args) {
+        __device__ static void compute(consumer_compute_args<layout> args) {
             if constexpr (transpose_lhs && transpose_rhs)
                 warpgroup::mma_AtBt(args.state.acc, args.input.lhs[warpgroup::groupid()], args.input.rhs);
             else if constexpr (transpose_lhs)
@@ -102,7 +107,7 @@ struct flux_matmul_gelu_template {
             else
                 warpgroup::mma_AB  (args.state.acc, args.input.lhs[warpgroup::groupid()], args.input.rhs);
             warpgroup::mma_async_wait();
-            arrive(args.inputs_finished);
+            if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             warpgroup::mma_async_wait();
@@ -120,6 +125,7 @@ struct flux_matmul_gelu_template {
             if(warpgroup::warpid() == 0)
                 tma::store_async(args.globals.acc, args.finish.acc[warpgroup::groupid()],
                 {(int)blockIdx.x*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), (int)blockIdx.y});
+            if(laneid() == 0) arrive(args.finish_finished);
         }
     };
 };
@@ -169,11 +175,6 @@ void runbenchmark(size_t M, size_t N, size_t K) {
     using globals  = typename fmt::layout::globals;
 
     std::cout <<  "  --------------------------- M=" << M << " N=" << N << " K=" << K << " --------------------------- " << std::endl;
-
-    std::cout << "Has finish: " << (bool)kittens::prototype::detail::has_finish<fmt> << '\n';
-    std::cout << "Transpose LHS: " << (bool)transpose_lhs << '\n';
-    std::cout << "Transpose RHS: " << (bool)transpose_rhs << '\n';
-
     // Allocate host memory
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
@@ -235,27 +236,27 @@ void runbenchmark(size_t M, size_t N, size_t K) {
 
     unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
     
-    cudaFuncSetAttribute(prototype::pc<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
-    dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
-    dim3 block(prototype::num_threads<fmt>);
+    dim3 grid(M / (acc_tile::rows*prototype::detail::NUM_CONSUMER_WARPGROUPS_v<fmt>), N / acc_tile::cols); // rows, cols
+    dim3 block(prototype::detail::NUM_THREADS_v<fmt>);
 
     std::cout << "warmup\n";
     constexpr int WARMUP_ITERS = 5;
     for(int i = 0; i < WARMUP_ITERS; i++) {
-        prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+        prototype::lcf::kernel<fmt><<<grid, block, mem_size>>>(G);
     }
     cudaDeviceSynchronize();
 
     // Start timing
     cudaDeviceSynchronize();
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << "), and " << K/lhs_tile::cols << " reduction block dimension\n";
-    std::cout << "Kernel has " << kittens::prototype::input_pipe_stages<fmt> << " input pipeline stages and " << kittens::prototype::output_pipe_stages<fmt> << " output pipeline stages\n";
+    std::cout << "Kernel has " << kittens::prototype::detail::INPUT_PIPE_STAGES_v<fmt> << " input pipeline stages\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = 10;
     for(int i = 0; i < ITERS; i++) {
-        prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+        prototype::lcf::kernel<fmt><<<grid, block, mem_size>>>(G);
     }
     cudaDeviceSynchronize();
 
@@ -367,12 +368,12 @@ void dispatch_fused_flux_linear_gelu(
 
     unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
     
-    cudaFuncSetAttribute(prototype::pc<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
     dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
     dim3 block(prototype::num_threads<fmt>);
 
-    prototype::pc<fmt><<<grid, block, mem_size>>>(G);
+    prototype::lcf::kernel<fmt><<<grid, block, mem_size>>>(G);
 }
 
 torch::Tensor fused_flux_linear_gelu(
