@@ -105,6 +105,16 @@ extern torch::Tensor fused_rotary(
 );
 #endif
 
+#ifdef TK_COMPILE_FUSED_LAYERNORM
+extern std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
+    const torch::Tensor x,
+    const torch::Tensor residual,
+    const torch::Tensor norm_weight,
+    const torch::Tensor norm_bias,
+    float dropout_p
+);
+#endif
+
 #ifdef TK_COMPILE_MAMBA2
 extern torch::Tensor mamba2(
     const torch::Tensor q, 
@@ -149,6 +159,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_FUSED_ROTARY
     m.def("fused_rotary", fused_rotary, "Rotary TK. Takes tensors (x, cos_in, sin_in). All tensors are bf16. Returns (B, H, N, 128) in bf16.");
+#endif
+
+#ifdef TK_COMPILE_FUSED_LAYERNORM
+    m.def("fused_layernorm", fused_layernorm, "LayerNorm TK. Takes tensors (x, residual, norm_weight, norm_bias, dropout_p). x, residual, norm_weight, norm_bias are bf16. dropout_p is float. Returns (B, H, N, 128) in bf16.");
 #endif
 
 #ifdef TK_COMPILE_MAMBA2
