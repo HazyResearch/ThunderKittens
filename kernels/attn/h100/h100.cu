@@ -990,17 +990,15 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     }
 }
 
-void attention_backward(const at::Tensor &q, 
-                        const at::Tensor &k, 
-                        const at::Tensor &v, 
-                        const at::Tensor &o, 
-                        const at::Tensor &l_vec, 
-                        const at::Tensor &d_vec, 
-                        const at::Tensor &og, 
-                        at::Tensor &qg, 
-                        at::Tensor &kg, 
-                        at::Tensor &vg, 
-                        bool causal)
+std::vector<torch::Tensor> 
+attention_backward(torch::Tensor q, 
+                   torch::Tensor k, 
+                   torch::Tensor v, 
+                   torch::Tensor o, 
+                   torch::Tensor l_vec, 
+                   torch::Tensor d_vec, 
+                   torch::Tensor og,
+                   bool causal)
 {
     // CHECK_INPUT(q);
     // CHECK_INPUT(k);
@@ -1079,6 +1077,23 @@ void attention_backward(const at::Tensor &q,
     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
     float*         l_ptr  = l_vec.data_ptr<float>();
     float*         d_ptr  = d_vec.data_ptr<float>();
+
+    torch::Tensor qg = torch::zeros({static_cast<const uint>(batch), 
+                                     static_cast<const uint>(qo_heads), 
+                                     static_cast<const uint>(seq_len), 
+                                     static_cast<const uint>(head_dim)}, l_vec.options());
+    torch::Tensor kg = torch::zeros({static_cast<const uint>(batch), 
+                                     static_cast<const uint>(kv_heads), 
+                                     static_cast<const uint>(seq_len), 
+                                     static_cast<const uint>(head_dim)}, l_vec.options());
+    torch::Tensor vg = torch::zeros({static_cast<const uint>(batch), 
+                                     static_cast<const uint>(kv_heads), 
+                                     static_cast<const uint>(seq_len), 
+                                     static_cast<const uint>(head_dim)}, l_vec.options());
+
+    // synchronize device
+    cudaDeviceSynchronize();
+    
     float*         qg_ptr = qg.data_ptr<float>();
     float*         kg_ptr = kg.data_ptr<float>();
     float*         vg_ptr = vg.data_ptr<float>();
@@ -1335,6 +1350,8 @@ void attention_backward(const at::Tensor &q,
         const auto end = std::chrono::high_resolution_clock::now();
         std::cout << "BWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << "us" << std::endl;
     }
+
+    return {qg, kg, vg};
 }
 
 #else

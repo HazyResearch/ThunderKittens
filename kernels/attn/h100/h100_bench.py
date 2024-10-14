@@ -45,6 +45,7 @@ def benchmark_attention(configurations):
         end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
         
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()
         
         # Warmup for forward pass
         for _ in range(10):
@@ -67,7 +68,7 @@ def benchmark_attention(configurations):
         # print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
         print("-" * 60)
         
-        # wait for GPU to reset
+        torch.cuda.empty_cache()
         torch.cuda.synchronize()
         
         # Prepare for timing backward pass
@@ -76,20 +77,12 @@ def benchmark_attention(configurations):
         
         # Warmup for backward pass
         for _ in range(10):
-            qg.zero_()
-            kg.zero_()
-            vg.zero_()
-        
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
         
         # Time the backward pass
         for i in range(10):
-            qg.zero_()
-            kg.zero_()
-            vg.zero_()
-            
             start_events_bwd[i].record()
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
             end_events_bwd[i].record()
 
         torch.cuda.synchronize()
@@ -99,15 +92,12 @@ def benchmark_attention(configurations):
         tflops_bwd = efficiency(flops(B, N, H, D, causal, 'bwd'), time_us_bwd)
         results['bwd'][(D, causal)].append((N, tflops_bwd))
 
-        # print(f"Average time for backward pass in us: {time_us_bwd:.2f}")
+        print(f"Average time for backward pass in us: {time_us_bwd:.2f}")
         # print(f"Average efficiency for backward pass in TFLOPS: {tflops_bwd}")
         print("=" * 60)
         
-        # wait for GPU to reset
+        torch.cuda.empty_cache()
         torch.cuda.synchronize()
-        
-        # sleep for 5 seconds
-        # time.sleep(5)
     
     return results
 
@@ -137,7 +127,7 @@ def plot_results(results):
 # Example list of configurations to test
 configurations = [
     # (16, 16, 768,    128, False),
-    (16, 16, 768*16,    128, False),
+    (16, 1, 768*16,    128, False),
     # (16, 16, 768*2,  128, False),
     # (16, 16, 768*4,  128, False),
     # (16, 16, 768*8,  128, False),

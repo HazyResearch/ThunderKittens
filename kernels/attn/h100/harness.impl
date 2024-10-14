@@ -3,8 +3,8 @@
 #include <fstream>
 
 constexpr int ATTN_B     = 16;
-constexpr int QO_HEADS   = 16;
-constexpr int KV_HEADS   = 16;
+constexpr int QO_HEADS   = 1;
+constexpr int KV_HEADS   = 1;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
