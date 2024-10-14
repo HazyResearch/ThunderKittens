@@ -64,8 +64,8 @@ def benchmark_attention(configurations):
         tflops_fwd = efficiency(flops(B, N, H, D, causal, 'fwd'), time_us_fwd)
         results['fwd'][(D, causal)].append((N, tflops_fwd))
 
-        # print(f"Average time for forward pass in us: {time_us_fwd:.2f}")
-        # print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
+        print(f"Average time for forward pass in us: {time_us_fwd:.2f}")
+        print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
         print("-" * 60)
         
         torch.cuda.empty_cache()
@@ -93,7 +93,7 @@ def benchmark_attention(configurations):
         results['bwd'][(D, causal)].append((N, tflops_bwd))
 
         print(f"Average time for backward pass in us: {time_us_bwd:.2f}")
-        # print(f"Average efficiency for backward pass in TFLOPS: {tflops_bwd}")
+        print(f"Average efficiency for backward pass in TFLOPS: {tflops_bwd}")
         print("=" * 60)
         
         torch.cuda.empty_cache()
@@ -126,8 +126,8 @@ def plot_results(results):
 
 # Example list of configurations to test
 configurations = [
-    # (16, 16, 768,    128, False),
-    (16, 1, 768*16,    128, False),
+    (16, 16, 768,    128, False),
+    (16, 16, 768*16,  128, False),
     # (16, 16, 768*2,  128, False),
     # (16, 16, 768*4,  128, False),
     # (16, 16, 768*8,  128, False),

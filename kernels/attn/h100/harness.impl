@@ -3,8 +3,8 @@
 #include <fstream>
 
 constexpr int ATTN_B     = 16;
-constexpr int QO_HEADS   = 1;
-constexpr int KV_HEADS   = 1;
+constexpr int QO_HEADS   = 16;
+constexpr int KV_HEADS   = 16;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
@@ -397,6 +397,9 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting bwd warmup" << std::endl;
     for (int i = 0; i < ITER; i++) {
+        cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
         bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
     }
     cudaDeviceSynchronize();
