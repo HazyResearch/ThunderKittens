@@ -168,7 +168,7 @@ __device__ static inline void invalidate_barrier(barrier& bar) {
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar) {
-    if(::kittens::laneid() == 0) {
+    // if(::kittens::laneid() == 0) {
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
         asm volatile (
             "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
@@ -176,8 +176,8 @@ __device__ static inline void arrive(barrier& bar) {
             : "r"(mbar_ptr)
             : "memory"
         );
-    }
-    __syncwarp();
+    // }
+    // __syncwarp();
 }
 
 #ifdef KITTENS_HOPPER
@@ -190,7 +190,7 @@ __device__ static inline void arrive(barrier& bar) {
 * @param kPhaseBit The phase bit used for the barrier.
 */
 __device__ static inline void arrive(barrier& bar, uint32_t count) {
-    if(::kittens::laneid() == 0) {
+    // if(::kittens::laneid() == 0) {
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         asm volatile (
             "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
@@ -198,8 +198,8 @@ __device__ static inline void arrive(barrier& bar, uint32_t count) {
             : "r"(mbar_ptr), "r"(count)
             : "memory"
         );
-    }
-    __syncwarp();
+    // }
+    // __syncwarp();
 }
 #endif
 
@@ -213,7 +213,7 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-    if(::kittens::laneid() == 0) {
+    // if(::kittens::laneid() == 0) {
 #ifdef KITTENS_HOPPER
         asm volatile (
             "{\n"
@@ -242,8 +242,8 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
             "r"(kPhaseBit)
         );
 #endif
-    }
-    __syncwarp();
+    // }
+    // __syncwarp();
 }
 
 /**

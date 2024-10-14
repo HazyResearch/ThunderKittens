@@ -9,10 +9,10 @@ constexpr int KV_HEADS   = 16;
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 768; 
+constexpr int ATTN_N     = 768*16; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
-constexpr int ITER       = 10;  
+constexpr int ITER       = 10; 
 
 constexpr bool causal    = false; 
 
@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), ATTN_B*QO_HEADS, 1);
+    dim3 grid(ATTN_N/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), QO_HEADS, ATTN_B);
     static_assert(ATTN_N % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
@@ -301,7 +301,7 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_bwd(ATTN_N/(4*kittens::TILE_DIM*4), ATTN_B*QO_HEADS, 1);
+    dim3 grid_bwd(ATTN_N/(4*kittens::TILE_DIM*4), QO_HEADS, ATTN_B);
     static_assert(ATTN_N % (4*kittens::TILE_DIM*4) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting bwd prep warmup" << std::endl;
@@ -325,7 +325,7 @@ int main(int argc, char **argv) {
         d[i]  = d_fl[i];
     }
 
-    std::cout << "Average bwd prep execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER << " us" << std::endl;
+    const auto bwd_prep = std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER;
 
     // backward pass
     using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
@@ -391,7 +391,7 @@ int main(int argc, char **argv) {
         85
     ); 
 
-    dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), ATTN_B*QO_HEADS, 1);
+    dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), QO_HEADS, ATTN_B);
     static_assert(ATTN_N % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0);
 
     cudaDeviceSynchronize();
@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
     }
     cudaDeviceSynchronize();
     std::cout << "Starting bwd kernel" << std::endl;
-    auto total_time = (std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() * 1.7) / ITER;
+    auto total_time = 0; 
 
     for(int i = 0; i < ITER; i++) {
         cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
@@ -510,13 +510,16 @@ int main(int argc, char **argv) {
     std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS_KV << std::endl;
     std::cout << "Max     vg diff: " << max_diff_vg << std::endl;
 
-    std::cout << "Average bwd execution time: " << (total_time) / ITER << " us" << std::endl;
+    std::cout << "Average bwd execution time: " << ((total_time) / ITER) + (bwd_prep) << " us" << std::endl;
     if(good) std::cout << "BWD Correct :)\n";
     else std::cout << "BWD Incorrect :(\n";
 
     // calculate efficiency
     f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "bwd");
-    e = efficiency(f, total_time / ITER);
+
+    e = efficiency(f, ((total_time) / ITER) + (bwd_prep * 1.7)); 
+    // multiply by 1.7 to account for copy kernel
+
     std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
 
     cudaFree(d_q);

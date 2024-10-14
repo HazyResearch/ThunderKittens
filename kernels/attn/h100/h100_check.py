@@ -45,9 +45,9 @@ def check_correctness(b, h, n, d, causal, num_iterations=1000):
         seed = random.randint(0, 1000000)
         torch.manual_seed(seed)
         
-        Q = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
-        K = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
-        V = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
+        Q  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
+        K  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
+        V  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
         dO = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
 
         pt_o, pt_qg, pt_kg, pt_vg = pytorch_test(Q, K, V, dO, causal)
