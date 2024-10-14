@@ -987,7 +987,6 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
 
         // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
         std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
-        std::cout << "---" << std::endl;
     }
 }
 

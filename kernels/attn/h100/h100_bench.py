@@ -51,13 +51,9 @@ def benchmark_attention(configurations):
             tk.mha_forward(q, k, v, o, l_vec, causal)
             
         # Time the forward pass
-        for i in range(10):
-            o.zero_()
-            
+        for i in range(10):          
             start_events_fwd[i].record()
-            
             tk.mha_forward(q, k, v, o, l_vec, causal)
-            
             end_events_fwd[i].record()
 
         torch.cuda.synchronize()
@@ -80,36 +76,20 @@ def benchmark_attention(configurations):
         
         # Warmup for backward pass
         for _ in range(10):
-            o.zero_()
-            l_vec.zero_()
-            
-            tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            # zero out gradients
             qg.zero_()
             kg.zero_()
             vg.zero_()
-            d_vec.zero_()
         
             tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
         
         # Time the backward pass
         for i in range(10):
-            o.zero_()
-            l_vec.zero_()
-            
-            tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            # zero out gradients
             qg.zero_()
             kg.zero_()
             vg.zero_()
-            d_vec.zero_()
             
             start_events_bwd[i].record()
-            
             tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
-            
             end_events_bwd[i].record()
 
         torch.cuda.synchronize()
@@ -156,7 +136,7 @@ def plot_results(results):
 
 # Example list of configurations to test
 configurations = [
-    (16, 16, 768,    128, False),
+    # (16, 16, 768,    128, False),
     (16, 16, 768*16,    128, False),
     # (16, 16, 768*2,  128, False),
     # (16, 16, 768*4,  128, False),
