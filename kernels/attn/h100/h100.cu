@@ -797,7 +797,9 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 // #include "harness.impl"
 
 #include "common/pyutils/torch_helpers.cuh"
+#include <ATen/cuda/CUDAContext.h>
 #include <iostream>
+
 void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal)
 {
     CHECK_INPUT(q);
@@ -856,6 +858,10 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
     bf16* d_o  = reinterpret_cast<bf16*>(o_ptr);
     float* d_l = reinterpret_cast<float*>(l_ptr);
 
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+
+    cudaDeviceSynchronize();
+
     if (head_dim == 64) {
         using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
         using k_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
@@ -892,7 +898,7 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
                 mem_size
             );
 
-            fwd_attend_ker<64, true><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+            fwd_attend_ker<64, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
         else {
             cudaFuncSetAttribute(
@@ -901,7 +907,7 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
                 mem_size
             );
 
-            fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+            fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
     }
 
@@ -941,7 +947,7 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
                 mem_size
             );
 
-            fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+            fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
         else {
             cudaFuncSetAttribute(
@@ -950,7 +956,7 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
                 mem_size
             );
 
-            fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size>>>(g);
+            fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
     }
 
@@ -1058,6 +1064,10 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
     TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
     dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), batch*qo_heads, 1);
 
+    cudaDeviceSynchronize();
+
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+
     if (head_dim == 64)  {
         using og_tile = st_bf<4*16, 64>;
         using o_tile  = st_bf<4*16, 64>;
@@ -1081,7 +1091,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
             mem_size
         );
 
-        bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size>>>(bwd_g); 
+        bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size, stream>>>(bwd_g); 
 
         using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
         using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
@@ -1136,6 +1146,8 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<64>::blocks_sm;
 
+        cudaDeviceSynchronize();
+
         if (is_causal) {
             cudaFuncSetAttribute(
                 bwd_attend_ker<64, true>,
@@ -1143,7 +1155,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
                 mem_size
             );
             
-            bwd_attend_ker<64, true><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+            bwd_attend_ker<64, true><<<grid_bwd_2, threads, mem_size, stream>>>(bwd_global); 
         }
         else {
             cudaFuncSetAttribute(
@@ -1152,7 +1164,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
                 mem_size
             );
             
-            bwd_attend_ker<64, false><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+            bwd_attend_ker<64, false><<<grid_bwd_2, threads, mem_size, stream>>>(bwd_global); 
         }
     }
 
@@ -1179,7 +1191,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
             mem_size
         );
 
-        bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size>>>(bwd_g); 
+        bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size, stream>>>(bwd_g); 
 
         using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
         using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
@@ -1235,6 +1247,8 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
 
         mem_size = kittens::MAX_SHARED_MEMORY / bwd_attend_ker_tile_dims<128>::blocks_sm;
 
+        cudaDeviceSynchronize();
+        
         if (is_causal) {
             cudaFuncSetAttribute(
                 bwd_attend_ker<128, true>,
@@ -1242,7 +1256,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
                 mem_size
             );
             
-            bwd_attend_ker<128, true><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+            bwd_attend_ker<128, true><<<grid_bwd_2, threads, mem_size, stream>>>(bwd_global); 
         }
         else {
             cudaFuncSetAttribute(
@@ -1251,7 +1265,7 @@ void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch
                 mem_size
             );
             
-            bwd_attend_ker<128, false><<<grid_bwd_2, threads, mem_size>>>(bwd_global); 
+            bwd_attend_ker<128, false><<<grid_bwd_2, threads, mem_size, stream>>>(bwd_global); 
         }
     }
 

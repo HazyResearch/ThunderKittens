@@ -4,7 +4,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 4096
+#define ATTN_N 2048
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
@@ -14,10 +14,16 @@ long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) 
 
     // feature map
     long long f = 2 * batch * static_cast<long long>(seqlen) * nheads * expanded_dim;
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // (k * v)
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim; // (cumsum)
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // (q * (k * v))
-    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;  // .sum(dim=-1)
+
+    // (k * v)
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // (cumsum)
+    f +=  batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // (q * (k * v))
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // .sum(dim=-1)
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+
     return f;
 }
 
@@ -54,13 +60,6 @@ int main(int argc, char **argv) {
     // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
     // which may increase the probability of L2 cache hits on KV
 
-    using bpt = based_prefill_template;
-    using q_global = typename std::remove_reference<decltype(std::declval<typename bpt::layout::globals>().q)>::type;
-    using k_global = typename std::remove_reference<decltype(std::declval<typename bpt::layout::globals>().k)>::type;
-    using v_global = typename std::remove_reference<decltype(std::declval<typename bpt::layout::globals>().v)>::type;
-    using o_global = typename std::remove_reference<decltype(std::declval<typename bpt::layout::globals>().o)>::type;
-    using globals  = typename bpt::layout::globals;
-
     std::cout << "Entered main!" << std::endl;
 
     // create dummy variables that are the right size
@@ -69,15 +68,10 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_N*ATTN_D_SMALL;
     constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_N*ATTN_D;
 
-    // kv state
-    constexpr int TOTAL_ELEMENTS_KV_A2 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D_SMALL*ATTN_D;
-    constexpr int TOTAL_ELEMENTS_KV_A1 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D;
-    constexpr int TOTAL_ELEMENTS_KV_A0 = ATTN_B*ATTN_H*1*ATTN_D;
-    
-    float *q = new float[TOTAL_UNIQUE_ELEMENTS_QK];
-    float *k = new float[TOTAL_UNIQUE_ELEMENTS_QK];
-    float *v = new float[TOTAL_UNIQUE_ELEMENTS_VO];
-    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS_VO];
+    float *q = new float[TOTAL_ELEMENTS_QK];
+    float *k = new float[TOTAL_ELEMENTS_QK];
+    float *v = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref = new float[TOTAL_ELEMENTS_VO];
 
     bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
@@ -90,16 +84,13 @@ int main(int argc, char **argv) {
 
         std::cout << "Starting to enter!" << std::endl;
 
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK; i++) infile >> q[i];
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> q[i];
         std::cout << "Finished loading Q" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_QK; i++) infile >> k[i];
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> k[i];
         std::cout << "Finished loading K" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) infile >> v[i];
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) infile >> v[i];
         std::cout << "Finished loading V" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_VO; i++) {
-            infile >> o_ref[i];
-            // if(i < 300) std::cout << o_ref[i] << std::endl;
-        }
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) { infile >> o_ref[i]; }
         std::cout << "Finished loading O_REF" << std::endl;
 
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
@@ -114,66 +105,88 @@ int main(int argc, char **argv) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
     }
 
-    bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_a2, *d_kv_a1, *d_kv_a0;
+    bf16 *d_q, *d_k, *d_v, *d_o;
     cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
-    cudaMalloc(&d_kv_a2, TOTAL_ELEMENTS_KV_A2 * sizeof(bf16));
-    cudaMalloc(&d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16));
-    cudaMalloc(&d_kv_a0, TOTAL_ELEMENTS_KV_A0 * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    q_global Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    k_global Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    v_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    o_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    globals G(Qg, Kg, Vg, Og);
+     /********************** Start of TK2 Changes ***********************/
+
+    // CUtensorMap* tma_q_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_swizzle_l>>(d_q, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+    // CUtensorMap* tma_k_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x1<wgmma_interleave_l>>(d_k, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+    // CUtensorMap* tma_v_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<wgmma_interleave_l>>(d_v, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+    // CUtensorMap* tma_v_3_d = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(d_v, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+    // CUtensorMap* tma_o_d   = tma::allocate_and_create_tensor_map<kittens::st_bf_4x4<swizzle_l>>(d_o, (ATTN_B*ATTN_H*ATTN_N)/(4 * 16)); 
+
+    using q_tile = st_bf<4*16, 1*16>;
+    using k_tile = st_bf<4*16, 1*16>;
+    using v_tile = st_bf<4*16, 1*64>;
+    using o_tile = st_bf<4*16, 1*64>;
+
+    // global layouts
+    using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
+    using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
+    using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
+
+    // pointers
+    using globals = based_globals;
+    q_gl q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    k_gl k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    v_gl v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    v_gl v_3_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    o_gl o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+
+    globals g{q_arg, k_arg, v_arg, v_3_arg, o_arg, ATTN_N};
+
+    /********************** End of TK2 Changes ***********************/
 
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = 110000; // have the flag tell us
+    unsigned long mem_size = 98000; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
     
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        kittens::prototype::pc<bpt>,
+        based_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
-    const int ITER = 1;
-    dim3 grid(ATTN_H, ATTN_B);
-    dim3 block(kittens::prototype::num_threads<bpt>);
+    const int ITER = 10;
     cudaDeviceSynchronize();
     CudaCheckError();
     std::cout << "Warmup!\n";
-    for(int i = 0; i < 0; i++) {
-        kittens::prototype::pc<bpt><<<grid, block, mem_size>>>(G); 
+    dim3 grid(ATTN_H, ATTN_B);
+    for(int i = 0; i < 1; i++) {
+        based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g); ;
     }
     cudaDeviceSynchronize();
     CudaCheckError();
-    cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        kittens::prototype::pc<bpt><<<grid, block, mem_size>>>(G); 
+        based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
+
+
+    /*************************** Correctness Checks **************************** */
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o[i] = __bfloat162float(o_bf[i]);
-        // if(i < 10) std::cout << o[i] << std::endl;
     }
 
     bool good = true;
@@ -183,7 +196,7 @@ int main(int argc, char **argv) {
 
     std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
-    for(int i = 0; i < 8192; i++) { 
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i % TOTAL_UNIQUE_ELEMENTS_VO] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
         // if (i < 10) std::cout << o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO] << std::endl;
         if(i < TOTAL_UNIQUE_ELEMENTS_VO) {
@@ -192,15 +205,15 @@ int main(int argc, char **argv) {
             diff_file << diff << ' ';
         }
         if(abs(diff) > 0.05 || isnan(diff)) {
+            // printf("Error at %d: %f %f %f\n", i, o[i], o_ref[i], diff);
             good = false;
         }
     }
-    printf("Checked 8192 of %d total elements\n", TOTAL_ELEMENTS_VO);
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
 
     if(good) std::cout << "Correct :)\n";
-    else std::cout     << "Incorrect :(\n";
+    else std::cout << "Incorrect :(\n";
 
     // calculate efficiency
     long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, ATTN_D_SMALL);
@@ -211,12 +224,10 @@ int main(int argc, char **argv) {
     cudaFree(d_k);
     cudaFree(d_v);
     cudaFree(d_o);
-    Qg.cleanup();
-    Kg.cleanup();
-    Vg.cleanup();
-    Og.cleanup();
+
     delete[] q, k, v, o, o_ref;
     delete[] q_bf, k_bf, v_bf, o_bf;
 
     return 0;
 }
+
