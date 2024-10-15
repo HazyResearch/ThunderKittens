@@ -16,7 +16,7 @@ def pytorch_test(Q, K, V, dO, causal):
     QK = torch.matmul(q_, k_.transpose(-2, -1))
     QK /= (q_.size(-1) ** 0.5)
     if causal:
-        mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool)
+        mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool).to(QK.device)
         QK.masked_fill_(mask, float('-inf'))
     QK = torch.nn.functional.softmax(QK, dim=-1)
     output = torch.matmul(QK, v_)
@@ -186,43 +186,9 @@ def generate_error_graphs(b, h, n, d, causal, std, mean_range):
     plt.savefig(f'max_error_graph_b{b}_h{h}_n{n}_d{d}_causal{causal}_std{std}.png')
     plt.close()
 
-# def generate_error_graph(b, h, n, d, causal, std, mean_range):
-#     means = np.logspace(np.log10(mean_range[0]), np.log10(mean_range[1]))
-
-#     tk_avg_errors, tk_max_errors = [], []
-#     fa2_avg_errors, fa2_max_errors = [], []
-#     fa3_avg_errors, fa3_max_errors = [], []
-
-#     for mean in tqdm(means, desc="Generating error data"):
-#         results = check_correctness(b, h, n, d, causal, mean, std)
-        
-#         tk_avg_errors.append(results['TK vs PT']['avg_diff'])
-#         tk_max_errors.append(results['TK vs PT']['max_diff'])
-#         fa2_avg_errors.append(results['FA2 vs PT']['avg_diff'])
-#         fa2_max_errors.append(results['FA2 vs PT']['max_diff'])
-#         fa3_avg_errors.append(results['FA3 vs PT']['avg_diff'])
-#         fa3_max_errors.append(results['FA3 vs PT']['max_diff'])
-
-#     plt.figure(figsize=(12, 8))
-#     plt.plot(means, tk_avg_errors, label='TK Avg Error', marker='o')
-#     plt.plot(means, fa2_avg_errors, label='FA2 Avg Error', marker='s')
-#     plt.plot(means, fa3_avg_errors, label='FA3 Avg Error', marker='^')
-#     plt.plot(means, tk_max_errors, label='TK Max Error', linestyle='--', marker='o')
-#     plt.plot(means, fa2_max_errors, label='FA2 Max Error', linestyle='--', marker='s')
-#     plt.plot(means, fa3_max_errors, label='FA3 Max Error', linestyle='--', marker='^')
-
-#     plt.xlabel('Input Tensor Mean')
-#     plt.ylabel('Error')
-#     plt.title(f'Error vs Input Tensor Mean (b={b}, h={h}, n={n}, d={d}, causal={causal}, std={std})')
-#     plt.legend()
-#     plt.yscale('log')
-#     plt.grid(True)
-#     plt.savefig(f'error_graph_b{b}_h{h}_n{n}_d{d}_causal{causal}_std{std}.png')
-#     plt.close()
-
 # Example usage
-b, h, n, d = 16, 16, 768*2, 128
-causal = False
+b, h, n, d = 16, 16, 768*2, 64
+causal = True
 std = 0.75
 mean_range = (1e-3, 10)
 
