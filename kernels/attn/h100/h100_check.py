@@ -3,6 +3,8 @@ from flash_attn_interface import flash_attn_func
 import thunderkittens as tk
 import random
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import numpy as np
 
 def pytorch_test(Q, K, V, dO, causal):
     q_ = Q.to(torch.float64).requires_grad_()
@@ -82,117 +84,148 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal):
 
     return o, qg, kg, vg
 
-def check_correctness(b, h, n, d, causal, num_iterations=1000):
-    print(f"Testing with b={b}, h={h}, n={n}, d={d}, causal={causal}")
+def generate_tensor(shape, mean, std, dtype, device):
+    tensor = torch.randn(shape, dtype=dtype, device=device)
+
+    magnitude = torch.norm(tensor, dim=-1, keepdim=True)
+    scaled_tensor = tensor * (torch.randn(magnitude.shape, dtype=dtype, device=device) * std + mean) / magnitude
     
+    return scaled_tensor.contiguous()
+
+def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100):
     results = {
-        'TK vs PT': {
-            'Output': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'Q grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'K grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'V grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
-        },
-        'FA2 vs PT': {
-            'Output': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'Q grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'K grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'V grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
-        },
-        'FA3 vs PT': {
-            'Output': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'Q grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'K grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-            'V grad': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
-        }
+        'TK vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
+        'FA2 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
+        'FA3 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
     }
 
-    for _ in tqdm(range(num_iterations), desc="Iterations"):
-        seed = random.randint(0, 1000000)
-        torch.manual_seed(seed)
+    for _ in range(num_iterations):
+        torch.manual_seed(0)
         
-        Q  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
-        K  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
-        V  = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
-        dO = torch.randn(b, h, n, d, dtype=torch.bfloat16, device='cuda').contiguous()
+        Q  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
+        K  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
+        V  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
+        dO = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
 
-        pt_o, pt_qg, pt_kg, pt_vg     = pytorch_test(Q, K, V, dO, causal)
+        pt_o, pt_qg, pt_kg, pt_vg = pytorch_test(Q, K, V, dO, causal)
         fa2_o, fa2_qg, fa2_kg, fa2_vg = fa2_test(Q, K, V, dO, causal)
         fa3_o, fa3_qg, fa3_kg, fa3_vg = fa3_test(Q, K, V, dO, causal)
-        tk_o, tk_qg, tk_kg, tk_vg     = h100_fwd_kernel_test(Q, K, V, dO, causal)
+        tk_o, tk_qg, tk_kg, tk_vg = h100_fwd_kernel_test(Q, K, V, dO, causal)
 
         tensors = [
-            ('Output', pt_o, tk_o, fa2_o, fa3_o),
-            ('Q grad', pt_qg, tk_qg, fa2_qg, fa3_qg),
-            ('K grad', pt_kg, tk_kg, fa2_kg, fa3_kg),
-            ('V grad', pt_vg, tk_vg, fa2_vg, fa3_vg)
+            (pt_o, tk_o, fa2_o, fa3_o),
+            (pt_qg, tk_qg, fa2_qg, fa3_qg),
+            (pt_kg, tk_kg, fa2_kg, fa3_kg),
+            (pt_vg, tk_vg, fa2_vg, fa3_vg)
         ]
 
-        for name, pt, tk, fa2, fa3 in tensors:
-            # TK vs PT
-            diff_tk = pt - tk
-            abs_diff_tk = torch.abs(diff_tk)
-            results['TK vs PT'][name]['sum_diff'] += torch.sum(abs_diff_tk).item()
-            results['TK vs PT'][name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
-            results['TK vs PT'][name]['max_diff'] = max(results['TK vs PT'][name]['max_diff'], torch.max(abs_diff_tk).item())
+        for pt, tk, fa2, fa3 in tensors:
+            for name, impl in [('TK vs PT', tk), ('FA2 vs PT', fa2), ('FA3 vs PT', fa3)]:
+                diff = pt - impl
+                abs_diff = torch.abs(diff)
+                results[name]['sum_diff'] += torch.sum(abs_diff).item()
+                results[name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
+                results[name]['max_diff'] = max(results[name]['max_diff'], torch.max(abs_diff).item())
 
-            # FA2 vs PT
-            diff_fa2 = pt - fa2
-            abs_diff_fa2 = torch.abs(diff_fa2)
-            results['FA2 vs PT'][name]['sum_diff'] += torch.sum(abs_diff_fa2).item()
-            results['FA2 vs PT'][name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
-            results['FA2 vs PT'][name]['max_diff'] = max(results['FA2 vs PT'][name]['max_diff'], torch.max(abs_diff_fa2).item())
-            
-            # FA3 vs PT
-            diff_fa3 = pt - fa3
-            abs_diff_fa3 = torch.abs(diff_fa3)
-            results['FA3 vs PT'][name]['sum_diff'] += torch.sum(abs_diff_fa3).item()
-            results['FA3 vs PT'][name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
-            results['FA3 vs PT'][name]['max_diff'] = max(results['FA3 vs PT'][name]['max_diff'], torch.max(abs_diff_fa3).item())
-
-        # Clear CUDA cache to free up memory
         torch.cuda.empty_cache()
 
-    for comparison, data in results.items():
-        print(f"\n{comparison}:")
-        for key, values in data.items():
-            tol = (values['sum_abs'] / (b * h * n * d * num_iterations)) * 0.01
-            avg_diff = values['sum_diff'] / (b * h * n * d * num_iterations)
-            max_diff = values['max_diff']
-            
-            print(f"{key}:")
-            print(f"  Max acceptable avg magnitude of diff: {tol:.10f}")
-            print(f"  Avg magnitude of diff: {avg_diff:.10f}")
-            print(f"  Max magnitude of diff: {max_diff:.10f}")
-            print(f"  Pass: {avg_diff < tol}")
-            print("-" * 40)
+    total_elements = b * h * n * d * num_iterations * 4 
+    for name, data in results.items():
+        avg_diff = data['sum_diff'] / total_elements
+        max_diff = data['max_diff']
+        results[name] = {'avg_diff': avg_diff, 'max_diff': max_diff}
 
-            # assert avg_diff < tol, f"Average difference ({avg_diff}) exceeds tolerance ({tol}) for {key} in {comparison}"
+    return results
 
-print("Deep Correctness Tests:")
-configurations = [
-    (4, 16, 768,    128, False),
-    # (4, 16, 768*2,  128, False),
-    # (4, 16, 768*4,  128, False),
-    # (4, 16, 768*8,  128, False),
-    # (4, 16, 768*16, 128, False),
-    # (4, 16, 768,    128, True),
-    # (4, 16, 768*2,  128, True),
-    # (4, 16, 768*4,  128, True),
-    # (4, 16, 768*8,  128, True),
-    # (4, 16, 768*16, 128, True),
-    # (4, 32, 768,    64,  False),
-    # (4, 32, 768*2,  64,  False),
-    # (4, 32, 768*4,  64,  False),
-    # (4, 32, 768*8,  64,  False),
-    # (4, 32, 768*16, 64,  False),
-    # (4, 32, 768,    64,  True),
-    # (4, 32, 768*2,  64,  True),
-    # (4, 32, 768*4,  64,  True),
-    # (4, 32, 768*8,  64,  True),
-    # (4, 32, 768*16, 64,  True),
-]
+def generate_error_graphs(b, h, n, d, causal, std, mean_range):
+    means = np.logspace(np.log10(mean_range[0]), np.log10(mean_range[1]))
 
-for b, h, n, d, causal in configurations:
-    check_correctness(b, h, n, d, causal)
+    tk_avg_errors, tk_max_errors = [], []
+    fa2_avg_errors, fa2_max_errors = [], []
+    fa3_avg_errors, fa3_max_errors = [], []
 
-print("All tests passed successfully!")
+    for mean in tqdm(means, desc="Generating error data"):
+        results = check_correctness(b, h, n, d, causal, mean, std)
+        
+        tk_avg_errors.append(results['TK vs PT']['avg_diff'])
+        tk_max_errors.append(results['TK vs PT']['max_diff'])
+        fa2_avg_errors.append(results['FA2 vs PT']['avg_diff'])
+        fa2_max_errors.append(results['FA2 vs PT']['max_diff'])
+        fa3_avg_errors.append(results['FA3 vs PT']['avg_diff'])
+        fa3_max_errors.append(results['FA3 vs PT']['max_diff'])
+
+    # Generate average error graph
+    plt.figure(figsize=(12, 8))
+    plt.plot(means, tk_avg_errors, label='TK', marker='o')
+    plt.plot(means, fa2_avg_errors, label='FA2', marker='s')
+    plt.plot(means, fa3_avg_errors, label='FA3', marker='^')
+
+    plt.xlabel('Input Tensor Mean')
+    plt.ylabel('Average Error')
+    plt.title(f'Average Error vs Input Tensor Mean (b={b}, h={h}, n={n}, d={d}, causal={causal}, std={std})')
+    plt.legend()
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.grid(True)
+    plt.savefig(f'avg_error_graph_b{b}_h{h}_n{n}_d{d}_causal{causal}_std{std}.png')
+    plt.close()
+
+    # Generate max error graph
+    plt.figure(figsize=(12, 8))
+    plt.plot(means, tk_max_errors, label='TK', marker='o')
+    plt.plot(means, fa2_max_errors, label='FA2', marker='s')
+    plt.plot(means, fa3_max_errors, label='FA3', marker='^')
+
+    plt.xlabel('Input Tensor Mean')
+    plt.ylabel('Maximum Error')
+    plt.title(f'Maximum Error vs Input Tensor Mean (b={b}, h={h}, n={n}, d={d}, causal={causal}, std={std})')
+    plt.legend()
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.grid(True)
+    plt.savefig(f'max_error_graph_b{b}_h{h}_n{n}_d{d}_causal{causal}_std{std}.png')
+    plt.close()
+
+# def generate_error_graph(b, h, n, d, causal, std, mean_range):
+#     means = np.logspace(np.log10(mean_range[0]), np.log10(mean_range[1]))
+
+#     tk_avg_errors, tk_max_errors = [], []
+#     fa2_avg_errors, fa2_max_errors = [], []
+#     fa3_avg_errors, fa3_max_errors = [], []
+
+#     for mean in tqdm(means, desc="Generating error data"):
+#         results = check_correctness(b, h, n, d, causal, mean, std)
+        
+#         tk_avg_errors.append(results['TK vs PT']['avg_diff'])
+#         tk_max_errors.append(results['TK vs PT']['max_diff'])
+#         fa2_avg_errors.append(results['FA2 vs PT']['avg_diff'])
+#         fa2_max_errors.append(results['FA2 vs PT']['max_diff'])
+#         fa3_avg_errors.append(results['FA3 vs PT']['avg_diff'])
+#         fa3_max_errors.append(results['FA3 vs PT']['max_diff'])
+
+#     plt.figure(figsize=(12, 8))
+#     plt.plot(means, tk_avg_errors, label='TK Avg Error', marker='o')
+#     plt.plot(means, fa2_avg_errors, label='FA2 Avg Error', marker='s')
+#     plt.plot(means, fa3_avg_errors, label='FA3 Avg Error', marker='^')
+#     plt.plot(means, tk_max_errors, label='TK Max Error', linestyle='--', marker='o')
+#     plt.plot(means, fa2_max_errors, label='FA2 Max Error', linestyle='--', marker='s')
+#     plt.plot(means, fa3_max_errors, label='FA3 Max Error', linestyle='--', marker='^')
+
+#     plt.xlabel('Input Tensor Mean')
+#     plt.ylabel('Error')
+#     plt.title(f'Error vs Input Tensor Mean (b={b}, h={h}, n={n}, d={d}, causal={causal}, std={std})')
+#     plt.legend()
+#     plt.yscale('log')
+#     plt.grid(True)
+#     plt.savefig(f'error_graph_b{b}_h{h}_n{n}_d{d}_causal{causal}_std{std}.png')
+#     plt.close()
+
+# Example usage
+b, h, n, d = 16, 16, 768*2, 128
+causal = False
+std = 0.75
+mean_range = (1e-3, 10)
+
+generate_error_graphs(b, h, n, d, causal, std, mean_range)
+
+print("Error graph generated and saved.")

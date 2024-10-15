@@ -134,10 +134,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     else {
         warpgroup::increase_registers<160>();
 
-        wait(qsmem_barrier, 0);
-        if constexpr (D == 64) { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.125f)); }
-        else                   { warpgroup::mul(q_smem[warpgroupid], q_smem[warpgroupid], __float2bfloat16(0.08838834764f)); }
-    
         rt_fl<16, K::kv_height>  att_block; 
         rt_fl<16, K::kv_height>  att_block_scaled;
         rt_bf<16, K::kv_height>  att_block_mma;
@@ -161,6 +157,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
         
         const int kv_do = (seq_idx)/(K::kv_height/K::qo_height);
+
+        wait(qsmem_barrier, 0);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
         
@@ -192,12 +190,21 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             row_max(max_vec, att_block, max_vec);
             
-            mul(att_block_scaled, att_block, 1.44269504089f);
-            mul(max_vec_scaled,   max_vec,   1.44269504089f);     
+            if constexpr (D == 64) { 
+                mul(att_block_scaled, att_block, 1.44269504089f*0.125f); 
+                mul(max_vec_scaled,   max_vec,   1.44269504089f*0.125f);
+            }
+            else                   { 
+                mul(att_block_scaled, att_block, 1.44269504089f*0.08838834764f); 
+                mul(max_vec_scaled,   max_vec,   1.44269504089f*0.08838834764f);
+            }
+
             sub_row(att_block_scaled, att_block_scaled, max_vec_scaled);
             exp2(att_block, att_block_scaled);
 
-            mul(max_vec_last_scaled, max_vec_last, 1.44269504089f);
+            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last, 1.44269504089f*0.125f); }
+            else                   { mul(max_vec_last_scaled, max_vec_last, 1.44269504089f*0.08838834764f); }
+            
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last,       max_vec_last_scaled);
             mul(norm_vec,            norm_vec,     max_vec_last);
@@ -232,6 +239,10 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
 
         log(norm_vec, norm_vec);
+        
+        if constexpr (D == 64) { mul(max_vec, max_vec, 0.125f); }
+        else                   { mul(max_vec, max_vec, 0.08838834764f); }
+        
         add(norm_vec, norm_vec, max_vec);
 
         if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
@@ -461,13 +472,11 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             tma::load_async(v_smem[w], g.v, tile_idx, kv_b);
         }
 
-        
         int4 tile_idx = {blockIdx.z, blockIdx.y, q_start, 0};
         tma::expect_bytes(q_b[tic],   sizeof(q_smem[0]));
         tma::load_async(q_smem[tic],  g.q,  tile_idx, q_b[tic]);
         tma::expect_bytes(o_b[tic],   sizeof(og_smem[0]));
         tma::load_async(og_smem[tic], g.og, tile_idx, o_b[tic]);
-
 
         int4 vec_idx = {blockIdx.z, blockIdx.y, 0, q_start};
         tma::expect_bytes(vec_b[tic], sizeof(l_smem[0]) + sizeof(d_smem[0]));
@@ -505,7 +514,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 
                 int4 tile_idx = {blockIdx.z, blockIdx.y, qo_idx, 0};
                 tma::store_add_async(g.qg, qg_smem, tile_idx);
-                
                 tma::store_commit_group();
                 tma::store_async_wait();
                 
@@ -551,13 +559,11 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
             wait(q_b[tic], ((qo_idx - q_start)/2)%2);
 
-            warpgroup::mma_fence(s_block_t);
             warpgroup::mma_ABt(s_block_t, k_smem[warpgroupid], q_smem[tic]);
             warpgroup::mma_commit_group();
 
             wait(o_b[tic], ((qo_idx - q_start)/2)%2);
 
-            warpgroup::mma_fence(dp_block_t);
             warpgroup::mm_ABt(dp_block_t, v_smem[warpgroupid], og_smem[tic]);
             warpgroup::mma_commit_group();
 
@@ -591,12 +597,12 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 dp_block_t.tiles[0][i].data[2] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[2], *(float2*)&d_smem[tic][base_col + 8]);
                 dp_block_t.tiles[0][i].data[3] = base_ops::sub::template op<float2>(dp_block_t.tiles[0][i].data[3], *(float2*)&d_smem[tic][base_col + 8]);
             }
+
             mul(ds_block_t, p_block_t, dp_block_t);
 
             if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
             else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
 
-            warpgroup::mma_fence(vg_reg);
             warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
             warpgroup::mma_commit_group();
 
@@ -604,14 +610,12 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             
             warpgroup::store(ds_smem[warpgroupid], ds_block_t);
 
-            warpgroup::mma_fence(kg_reg);
             warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
             warpgroup::mma_commit_group();
             
             warpgroup::mma_async_wait();
             asm volatile("bar.sync 10, 256;\n");
 
-            warpgroup::mma_fence(qg_reg);
             warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
             warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
             warpgroup::mma_commit_group(); 
@@ -699,13 +703,11 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
             wait(q_b[tic], ((qo_idx - q_start)/2)%2);
 
-            warpgroup::mma_fence(s_block_t);
             warpgroup::mma_ABt(s_block_t, k_smem[warpgroupid], q_smem[tic]);
             warpgroup::mma_commit_group();
 
             wait(o_b[tic], ((qo_idx - q_start)/2)%2);
 
-            warpgroup::mma_fence(dp_block_t);
             warpgroup::mm_ABt(dp_block_t, v_smem[warpgroupid], og_smem[tic]);
             warpgroup::mma_commit_group();
 
@@ -745,7 +747,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
             else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
 
-            warpgroup::mma_fence(vg_reg);
             warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
             warpgroup::mma_commit_group();
 
@@ -753,7 +754,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             
             warpgroup::store(ds_smem[warpgroupid], ds_block_t);
 
-            warpgroup::mma_fence(kg_reg);
             warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
