@@ -134,14 +134,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     else {
         warpgroup::increase_registers<160>();
 
-        rt_fl<16, K::kv_height>  att_block; 
-        rt_fl<16, K::kv_height>  att_block_scaled;
+        rt_fl<16, K::kv_height>  att_block;
         rt_bf<16, K::kv_height>  att_block_mma;
         rt_fl<16, K::tile_width> o_reg;
         
-        col_vec<rt_fl<16, K::kv_height>> max_vec_last,        max_vec;
-        col_vec<rt_fl<16, K::kv_height>> max_vec_last_scaled, max_vec_scaled;
-        col_vec<rt_fl<16, K::kv_height>> norm_vec_last,       norm_vec;
+        col_vec<rt_fl<16, K::kv_height>> max_vec_last, max_vec;
+        col_vec<rt_fl<16, K::kv_height>>               norm_vec;
         
         neg_infty(max_vec);
         zero(norm_vec);
@@ -166,7 +164,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
             
-            copy(norm_vec_last, norm_vec);
             copy(max_vec_last,  max_vec);
             
             warpgroup::mma_async_wait();
@@ -191,32 +188,26 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             row_max(max_vec, att_block, max_vec);
             
             if constexpr (D == 64) { 
-                mul(att_block_scaled, att_block, 1.44269504089f*0.125f); 
-                mul(max_vec_scaled,   max_vec,   1.44269504089f*0.125f);
+                mul(att_block, att_block, 1.44269504089f*0.125f); 
+                mul(max_vec,   max_vec,   1.44269504089f*0.125f);
             }
             else                   { 
-                mul(att_block_scaled, att_block, 1.44269504089f*0.08838834764f); 
-                mul(max_vec_scaled,   max_vec,   1.44269504089f*0.08838834764f);
+                mul(att_block, att_block, 1.44269504089f*0.08838834764f); 
+                mul(max_vec,   max_vec,   1.44269504089f*0.08838834764f);
             }
 
-            sub_row(att_block_scaled, att_block_scaled, max_vec_scaled);
-            exp2(att_block, att_block_scaled);
+            sub_row(att_block, att_block, max_vec);
+            exp2(att_block, att_block);
 
-            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last, 1.44269504089f*0.125f); }
-            else                   { mul(max_vec_last_scaled, max_vec_last, 1.44269504089f*0.08838834764f); }
-            
-            sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-            exp2(max_vec_last,       max_vec_last_scaled);
+            sub(max_vec_last, max_vec_last, max_vec);
+            exp2(max_vec_last,       max_vec_last);
             mul(norm_vec,            norm_vec,     max_vec_last);
 
             row_sum(norm_vec,  att_block, norm_vec);
-            div_row(att_block, att_block, norm_vec);
-            
-            mul(norm_vec_last, norm_vec_last, max_vec_last);
-            div(norm_vec_last, norm_vec_last, norm_vec);
+            add(att_block, att_block, 0.f);
             
             copy(att_block_mma, att_block); 
-            mul_row(o_reg, o_reg, norm_vec_last); 
+            mul_row(o_reg, o_reg, max_vec_last); 
 
             wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); 
 
@@ -229,6 +220,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             }
         }
 
+        div_row(o_reg, o_reg, norm_vec);
+
         warpgroup::store(o_smem[warpgroupid], o_reg); 
         warpgroup::sync();
 
@@ -238,15 +231,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             tma::store_commit_group();
         }
 
+        mul(max_vec,   max_vec, 0.69314718056f);
         log(norm_vec, norm_vec);
-        
-        if constexpr (D == 64) { mul(max_vec, max_vec, 0.125f); }
-        else                   { mul(max_vec, max_vec, 0.08838834764f); }
-        
         add(norm_vec, norm_vec, max_vec);
 
         if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
-        else                   { mul(norm_vec, norm_vec, -11.3137085f); }
+        else                   { mul(norm_vec, norm_vec, -11.313708499f); }
 
         warpgroup::sync(); 
     
