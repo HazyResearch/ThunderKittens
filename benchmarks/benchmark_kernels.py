@@ -78,14 +78,13 @@ except:
     FlashFFTConv = None
     print("Could not import FlashFFTConv. Please clone and install.")
 
-# try:
-if 1:
+try:
     from baselines.tk_fftconv import TKFFTConv
     from baselines.tk_fftconv import ref_fftconv
     print(f"Successfully imported TKFFTConv")
-# except:
-#     TKFFTConv = None
-#     print("Could not import TKFFTConv. Please install from TK.")
+except:
+    TKFFTConv = None
+    print("Could not import TKFFTConv. Please install from TK.")
 
 try:
     from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
@@ -238,21 +237,13 @@ def based_kernel_test(dt, b, h, n, dv, verbose=True, device='4090'):
     kv_state_a2 = torch.empty((b, h, d*d, dv), dtype=torch.bfloat16, device='cuda')
     kv_state_a1 = torch.empty((b, h, dv, d), dtype=torch.bfloat16, device='cuda')
     kv_state_a0 = torch.empty((b, h, d), dtype=torch.bfloat16, device='cuda')
-    add_scale, output_state = int(0), int(0)
 
     try:
         torch.cuda.synchronize()
         t0 = time.time()
-
-        tk.based_linear_prefill(
-            add_scale,output_state,
-            Q, K, V, o, 
-            kv_state_a2,kv_state_a1,kv_state_a0
-        )
-
+        o = tk.based( Q, K, V )
         torch.cuda.synchronize()
         t1 = time.time()
-        o += torch.zeros_like(o) # trigger an error if one exists
         tot = t1-t0
     except Exception as e:
         tot = -1
@@ -431,9 +422,7 @@ def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
     try:
         torch.cuda.synchronize()
         t0 = time.time()
-        tk.hedgehog(
-            q, k, v, o, k_state, kv_state, qmap, kmap, alphas, betas
-        )
+        o, kv_state, k_state = tk.hedgehog(q, k, v, qmap.unsqueeze(0), kmap.unsqueeze(0), alphas, betas)
         torch.cuda.synchronize()
         t1 = time.time()
         o += torch.zeros_like(o) # trigger an error if one exists
@@ -865,13 +854,13 @@ if __name__ == "__main__":
 
         # hedgehog
         # "hedgehog_fla": profile_hedgehog_fla,
-        # "hedgehog_tk": profile_tk_hedgehog,
+        "hedgehog_tk": profile_tk_hedgehog,
         # "hedgehog_pytorch": hedgehog_pytorch_test,        # In TK-1
         
         # fft convolution 
-        'fftconv_pytorch': fftconv_pytorch_test,
-        'fftconv_cutlass': fftconv_cutlass_test,
-        'fftconv_tk': fftconv_tk_test,                    # In TK-2
+        # 'fftconv_pytorch': fftconv_pytorch_test,
+        # 'fftconv_cutlass': fftconv_cutlass_test,
+        # 'fftconv_tk': fftconv_tk_test,                    # In TK-2
 
         # layernorm 
         # 'layernorm torch': pytorch_layernorm_test,
