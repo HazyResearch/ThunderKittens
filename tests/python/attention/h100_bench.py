@@ -91,7 +91,7 @@ def benchmark_attention(configurations):
             kg.zero_()
             vg.zero_()
             d_vec.zero_()
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
 
         # Time the backward pass
         for i in range(100):
@@ -107,7 +107,7 @@ def benchmark_attention(configurations):
             torch.cuda.synchronize()
             start_events_bwd[i].record()
             
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
             
             torch.cuda.synchronize()
             end_events_bwd[i].record()

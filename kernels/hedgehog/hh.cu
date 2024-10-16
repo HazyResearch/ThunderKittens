@@ -437,12 +437,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     TORCH_CHECK(v.size(2) == N, "v length?");
 
     TORCH_CHECK(qmap.size(0) == 1, "qmap batch?");
-    TORCH_CHECK(qmap.size(1) == FD, "qmap heads?");
+    TORCH_CHECK(qmap.size(1) == H, "qmap heads?");
     TORCH_CHECK(qmap.size(2) == FD, "qmap length?");
     TORCH_CHECK(qmap.size(3) == 64, "qmap length?");
 
     TORCH_CHECK(kmap.size(0) == 1, "kmap batch?");
-    TORCH_CHECK(kmap.size(1) == FD, "kmap heads?");
+    TORCH_CHECK(kmap.size(1) == H, "kmap heads?");
     TORCH_CHECK(kmap.size(2) == FD, "kmap length?");
     TORCH_CHECK(kmap.size(3) == 64, "kmap length?");
 
