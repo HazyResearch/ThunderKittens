@@ -102,11 +102,17 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
             l_vec = l_vec * -8.0
         if (q_.size(-1) == 128):
             l_vec = l_vec * -11.313708499
-    
         l_vec = l_vec.to(torch.float)
-        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
         
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        _, l_vec_fa3 = flash_attn_func(Q.permute(0, 2, 1, 3), K.permute(0, 2, 1, 3), V.permute(0, 2, 1, 3), causal=causal)
+        if (q_.size(-1) == 64):
+            l_vec_fa3 = l_vec_fa3 * -8.0
+        if (q_.size(-1) == 128):
+            l_vec_fa3 = l_vec_fa3 * -11.313708499
+        l_vec_fa3 = l_vec_fa3.to(torch.float)
+        
+        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec_fa3, d_vec, dO, causal)
         
         return o, qg, kg, vg
     else:
@@ -234,13 +240,13 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
     plt.close()
 
 # Example usage
-b, h, d = 1, 8, 128
+b, h, d = 1, 16, 128
 causal = True
 mean = 1e-1
 std = 1
 
-generate_error_graphs(b, h, d, causal, mean, std, error_mode='backward')
-# for mode in ['output', 'backward', 'all']:
-#     generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
+# generate_error_graphs(b, h, d, causal, mean, std, error_mode='backward')
+for mode in ['output', 'backward', 'all']:
+    generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
 
 print("Error graphs generated and saved for all modes.")

@@ -75,23 +75,44 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
         q_ = Q.to(torch.float64)
         k_ = K.to(torch.float64)
         
-        QK = torch.matmul(q_, k_.transpose(-2, -1))
-        QK /= (q_.size(-1) ** 0.5)
+        QK = torch.einsum('bhnd,bhmd->bhnm', q_, k_)
         
+        if causal:
+            mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool).to(QK.device)
+            QK.masked_fill_(mask, float('-inf'))
+        
+        # compute rowmax
         max_vec = QK.max(dim=-1, keepdim=True).values
-        l_vec   = QK - max_vec
-        l_vec   = torch.exp(l_vec)
-        l_vec   = l_vec.sum(dim=-1, keepdim=True)
-        l_vec   = max_vec + torch.log(l_vec)
+        
+        QK = QK * (1.0 / (q_.size(-1) ** 0.5))
+        QK = QK * (1.44269504089)
+        
+        max_vec = max_vec * (1.44269504089) * (1.0 / (q_.size(-1) ** 0.5))
+
+        QK = QK - max_vec
+        QK = torch.exp2(QK)
+        
+        norm_vec = QK.sum(dim=-1, keepdim=True)
+        
+        max_vec  = max_vec * 0.69314718056
+        norm_vec = torch.log(norm_vec)
+        l_vec   = max_vec + norm_vec
         
         if (q_.size(-1) == 64):
             l_vec = l_vec * -8.0
         if (q_.size(-1) == 128):
             l_vec = l_vec * -11.313708499
-        
         l_vec = l_vec.to(torch.float)
+        
+        _, l_vec_fa3 = flash_attn_func(Q.permute(0, 2, 1, 3), K.permute(0, 2, 1, 3), V.permute(0, 2, 1, 3), causal=causal)
+        if (q_.size(-1) == 64):
+            l_vec_fa3 = l_vec_fa3 * -8.0
+        if (q_.size(-1) == 128):
+            l_vec_fa3 = l_vec_fa3 * -11.313708499
+        l_vec_fa3 = l_vec_fa3.to(torch.float)
+        
         d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec_fa3, d_vec, dO, causal)
         
         return o, qg, kg, vg
     else:
@@ -230,8 +251,8 @@ def generate_error_graphs(b, h, d, causal, mean, std, grad_type='all'):
         plt.close()
 
 # Example usage
-b, h, d = 1, 8, 64
-causal = True
+b, h, d = 1, 8, 128
+causal = False
 mean = 1e-1
 std = 1
 
