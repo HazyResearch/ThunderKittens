@@ -17,6 +17,12 @@ norm = nn.LayerNorm(D).cuda()
 if TESTNAME == 'ones':
     x = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
     residual = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+elif TESTNAME == 'arange':
+    x = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda')
+    residual = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda')
+    for i in range(B):
+        for j in range(N):
+            x[i,j] = torch.arange(D, dtype=torch.bfloat16, device='cuda')
 elif TESTNAME == 'randn':
     torch.random.manual_seed(42)
     x = torch.randn((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()

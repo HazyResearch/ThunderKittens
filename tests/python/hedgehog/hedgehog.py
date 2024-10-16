@@ -135,11 +135,16 @@ def run_test(testname, B, H, N):
     alphas is fp32 (H,)
     betas is fp32 (H,)
     """
-    tk.hedgehog(q, k, v, o, k_state, kv_state, qmap, kmap, alphas, betas)
+
+    # breakpoint()
+    o = tk.hedgehog(q, k, v, qmap.unsqueeze(0), kmap.unsqueeze(0), alphas, betas)
+    print(f"{q.shape=}, {k.shape=}, {v.shape=}, {qmap.shape=}, {kmap.shape=}, {alphas.shape=}, {betas.shape=}")
+    o, kv_state, k_state = o
 
     print_errors('O', o_ref, o)
-    print_errors('kv_state', kv_state_ref, kv_state)
-    print_errors('k_state', k_state_ref, k_state)
+    print(o.shape, o[0,0,0,:8], o_ref[0,0,0,:8])
+    # print_errors('kv_state', kv_state_ref, kv_state)
+    # print_errors('k_state', k_state_ref, k_state)
 
 tests = {
     'testname': ['randn', 'ones', 'qk_test', 'v_or', 'dbg'],

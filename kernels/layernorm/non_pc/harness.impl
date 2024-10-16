@@ -181,7 +181,7 @@ int main(int argc, char **argv) {
     using T = kittens::bf16;
     using H = kittens::bf16;
     cudaFuncSetAttribute(
-        layernorm<ATTN_D, N_TILE_SIZE, N_PER_TILE>,
+        layernorm_tk<ATTN_D, N_TILE_SIZE, N_PER_TILE>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
@@ -193,7 +193,7 @@ int main(int argc, char **argv) {
     const auto start = std::chrono::high_resolution_clock::now();
     dim3 grid(ATTN_B*N_TILE_SIZE, 1, 1);
     for(int i = 0; i < ITER; i++) {  
-        layernorm<ATTN_D, N_TILE_SIZE, N_PER_TILE><<<grid,NUM_THREADS,mem_size>>>(g);  
+        layernorm_tk<ATTN_D, N_TILE_SIZE, N_PER_TILE><<<grid,NUM_THREADS,mem_size>>>(g);  
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -218,8 +218,16 @@ int main(int argc, char **argv) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
+            if (i % 1023 == 0 && i != 0) {
+                o_ref_file << std::endl;
+                o_file << std::endl;
+                diff_file << std::endl;
+            }
         }
         if(abs(diff) > 0.1 || isnan(diff)) {
+            if (good == true) { 
+                printf("i: %d\n", i);
+            }
             // printf("diff: %f\n", diff);
             good = false;
         }
