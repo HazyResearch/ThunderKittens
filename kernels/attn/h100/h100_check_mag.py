@@ -187,7 +187,7 @@ def generate_error_graphs(b, h, n, d, causal, std, mean_range):
     plt.close()
 
 # Example usage
-b, h, n, d = 16, 16, 768*2, 64
+b, h, n, d = 1, 8, 768, 128
 causal = True
 std = 0.75
 mean_range = (1e-3, 10)

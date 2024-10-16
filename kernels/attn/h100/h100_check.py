@@ -68,21 +68,42 @@ def fa3_test(Q, K, V, dO, causal):
     
     return output, qg_, kg_, vg_
 
-def h100_fwd_kernel_test(Q, K, V, dO, causal):
-    Q.requires_grad = True
-    K.requires_grad = True
-    V.requires_grad = True
+def h100_fwd_kernel_test(Q, K, V, dO, causal, mode): 
     
-    o = torch.zeros_like(Q).contiguous()
-    l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float).requires_grad_()
-    
-    tk.mha_forward(Q, K, V, o, l_vec, causal)
-
-    d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float).requires_grad_()
-    
-    qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
-
-    return o, qg, kg, vg
+    if mode == 'backward':
+        o = torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=causal)
+        
+        q_ = Q.to(torch.float64)
+        k_ = K.to(torch.float64)
+        
+        QK = torch.matmul(q_, k_.transpose(-2, -1))
+        QK /= (q_.size(-1) ** 0.5)
+        
+        max_vec = QK.max(dim=-1, keepdim=True).values
+        l_vec   = QK - max_vec
+        l_vec   = torch.exp(l_vec)
+        l_vec   = l_vec.sum(dim=-1, keepdim=True)
+        l_vec   = max_vec + torch.log(l_vec)
+        
+        l_vec = l_vec.to(torch.float)
+        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        
+        return o, qg, kg, vg
+    else:
+        Q.requires_grad = True
+        K.requires_grad = True
+        V.requires_grad = True
+        
+        o = torch.zeros_like(Q).contiguous()
+        
+        l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+        tk.mha_forward(Q, K, V, o, l_vec, causal)
+        
+        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        
+        return o, qg, kg, vg
 
 def generate_tensor(shape, mean, std, dtype, device):
     tensor = torch.randn(shape, dtype=dtype, device=device)
@@ -92,7 +113,7 @@ def generate_tensor(shape, mean, std, dtype, device):
     
     return scaled_tensor.contiguous()
 
-def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100):
+def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100, error_mode='all'):
     results = {
         'TK vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
         'FA2 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
@@ -106,19 +127,24 @@ def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100):
         K  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
         V  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
         dO = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
-
+        
         pt_o, pt_qg, pt_kg, pt_vg = pytorch_test(Q, K, V, dO, causal)
         fa2_o, fa2_qg, fa2_kg, fa2_vg = fa2_test(Q, K, V, dO, causal)
         fa3_o, fa3_qg, fa3_kg, fa3_vg = fa3_test(Q, K, V, dO, causal)
-        tk_o, tk_qg, tk_kg, tk_vg = h100_fwd_kernel_test(Q, K, V, dO, causal)
-
-        tensors = [
-            (pt_o, tk_o, fa2_o, fa3_o),
-            (pt_qg, tk_qg, fa2_qg, fa3_qg),
-            (pt_kg, tk_kg, fa2_kg, fa3_kg),
-            (pt_vg, tk_vg, fa2_vg, fa3_vg)
-        ]
-
+        tk_o, tk_qg, tk_kg, tk_vg = h100_fwd_kernel_test(Q, K, V, dO, causal, error_mode)
+        
+        if error_mode == 'output':
+            tensors = [(pt_o, tk_o, fa2_o, fa3_o)]
+        elif error_mode == 'backward':
+            tensors = [(pt_qg, tk_qg, fa2_qg, fa3_qg),
+                       (pt_kg, tk_kg, fa2_kg, fa3_kg),
+                       (pt_vg, tk_vg, fa2_vg, fa3_vg)]
+        else:  # 'all'
+            tensors = [(pt_o, tk_o, fa2_o, fa3_o),
+                       (pt_qg, tk_qg, fa2_qg, fa3_qg),
+                       (pt_kg, tk_kg, fa2_kg, fa3_kg),
+                       (pt_vg, tk_vg, fa2_vg, fa3_vg)]
+        
         for pt, tk, fa2, fa3 in tensors:
             for name, impl in [('TK vs PT', tk), ('FA2 vs PT', fa2), ('FA3 vs PT', fa3)]:
                 diff = pt - impl
@@ -126,10 +152,10 @@ def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100):
                 results[name]['sum_diff'] += torch.sum(abs_diff).item()
                 results[name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
                 results[name]['max_diff'] = max(results[name]['max_diff'], torch.max(abs_diff).item())
-
+                
         torch.cuda.empty_cache()
 
-    total_elements = b * h * n * d * num_iterations * 4 
+    total_elements = b * h * n * d * num_iterations * (1 if error_mode == 'output' else 3 if error_mode == 'backward' else 4)
     for name, data in results.items():
         avg_diff = data['sum_diff'] / total_elements
         max_diff = data['max_diff']
@@ -137,15 +163,15 @@ def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100):
 
     return results
 
-def generate_error_graphs(b, h, d, causal, mean, std):
-    seq_lengths = [768 * (2**i) for i in range(5)]  # 768, 1536, 3072, 6144, 12288
+def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
+    seq_lengths = [768 * (2**i) for i in range(3)]
 
     tk_avg_errors, tk_max_errors = [], []
     fa2_avg_errors, fa2_max_errors = [], []
     fa3_avg_errors, fa3_max_errors = [], []
 
     for n in tqdm(seq_lengths, desc="Generating error data"):
-        results = check_correctness(b, h, n, d, causal, mean, std)
+        results = check_correctness(b, h, n, d, causal, mean, std, error_mode=error_mode)
         
         tk_avg_errors.append(results['TK vs PT']['avg_diff'])
         tk_max_errors.append(results['TK vs PT']['max_diff'])
@@ -162,13 +188,13 @@ def generate_error_graphs(b, h, d, causal, mean, std):
 
     plt.xlabel('Sequence Length')
     plt.ylabel('Average Error')
-    plt.title(f'Average Error vs Sequence Length (b={b}, h={h}, d={d}, causal={causal}, mean={mean}, std={std})')
+    plt.title(f'Average Error vs Sequence Length (b={b}, h={h}, d={d}, causal={causal}, mean={mean}, std={std}, mode={error_mode})')
     plt.legend()
     plt.xscale('log', base=2)
     plt.yscale('linear')
     plt.xticks(seq_lengths, labels=seq_lengths)
     plt.grid(True)
-    plt.savefig(f'avg_error_graph_b{b}_h{h}_d{d}_causal{causal}_mean{mean}_std{std}.png')
+    plt.savefig(f'avg_error_graph_b{b}_h{h}_d{d}_causal{causal}_mean{mean}_std{std}_mode{error_mode}.png')
     plt.close()
 
     # Generate max error graph
@@ -179,13 +205,13 @@ def generate_error_graphs(b, h, d, causal, mean, std):
 
     plt.xlabel('Sequence Length')
     plt.ylabel('Maximum Error')
-    plt.title(f'Maximum Error vs Sequence Length (b={b}, h={h}, d={d}, causal={causal}, mean={mean}, std={std})')
+    plt.title(f'Maximum Error vs Sequence Length (b={b}, h={h}, d={d}, causal={causal}, mean={mean}, std={std}, mode={error_mode})')
     plt.legend()
     plt.xscale('log', base=2)
     plt.yscale('linear')
     plt.xticks(seq_lengths, labels=seq_lengths)
     plt.grid(True)
-    plt.savefig(f'max_error_graph_b{b}_h{h}_d{d}_causal{causal}_mean{mean}_std{std}.png')
+    plt.savefig(f'max_error_graph_b{b}_h{h}_d{d}_causal{causal}_mean{mean}_std{std}_mode{error_mode}.png')
     plt.close()
 
 # Example usage
@@ -194,6 +220,7 @@ causal = True
 mean = 1e-1
 std = 1
 
-generate_error_graphs(b, h, d, causal, mean, std)
+for mode in ['output', 'backward', 'all']:
+    generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
 
-print("Error graphs generated and saved.")
+print("Error graphs generated and saved for all modes.")
