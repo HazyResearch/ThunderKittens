@@ -69,41 +69,40 @@ def fa3_test(Q, K, V, dO, causal):
     return output, qg_, kg_, vg_
 
 def h100_fwd_kernel_test(Q, K, V, dO, causal, mode): 
+    # if mode == 'backward':
+    #     o = torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=causal)
+        
+    #     q_ = Q.to(torch.float64)
+    #     k_ = K.to(torch.float64)
+        
+    #     QK = torch.matmul(q_, k_.transpose(-2, -1))
+    #     QK /= (q_.size(-1) ** 0.5)
+        
+    #     max_vec = QK.max(dim=-1, keepdim=True).values
+    #     l_vec   = QK - max_vec
+    #     l_vec   = torch.exp(l_vec)
+    #     l_vec   = l_vec.sum(dim=-1, keepdim=True)
+    #     l_vec   = max_vec + torch.log(l_vec)
+        
+    #     l_vec = l_vec.to(torch.float)
+    #     d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+    #     qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        
+    #     return o, qg, kg, vg
+    # else:
+    Q.requires_grad = True
+    K.requires_grad = True
+    V.requires_grad = True
     
-    if mode == 'backward':
-        o = torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=causal)
-        
-        q_ = Q.to(torch.float64)
-        k_ = K.to(torch.float64)
-        
-        QK = torch.matmul(q_, k_.transpose(-2, -1))
-        QK /= (q_.size(-1) ** 0.5)
-        
-        max_vec = QK.max(dim=-1, keepdim=True).values
-        l_vec   = QK - max_vec
-        l_vec   = torch.exp(l_vec)
-        l_vec   = l_vec.sum(dim=-1, keepdim=True)
-        l_vec   = max_vec + torch.log(l_vec)
-        
-        l_vec = l_vec.to(torch.float)
-        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
-        
-        return o, qg, kg, vg
-    else:
-        Q.requires_grad = True
-        K.requires_grad = True
-        V.requires_grad = True
-        
-        o = torch.zeros_like(Q).contiguous()
-        
-        l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        tk.mha_forward(Q, K, V, o, l_vec, causal)
-        
-        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
-        
-        return o, qg, kg, vg
+    o = torch.zeros_like(Q).contiguous()
+    
+    l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+    tk.mha_forward(Q, K, V, o, l_vec, causal)
+    
+    d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
+    qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+    
+    return o, qg, kg, vg
 
 def generate_tensor(shape, mean, std, dtype, device):
     tensor = torch.randn(shape, dtype=dtype, device=device)
@@ -215,7 +214,7 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
     plt.close()
 
 # Example usage
-b, h, d = 1, 8, 128
+b, h, d = 1, 16, 128
 causal = True
 mean = 1e-1
 std = 1
