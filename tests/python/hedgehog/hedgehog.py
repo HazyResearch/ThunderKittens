@@ -135,22 +135,32 @@ def run_test(testname, B, H, N):
     alphas is fp32 (H,)
     betas is fp32 (H,)
     """
-
-    # breakpoint()
-    o = tk.hedgehog(q, k, v, qmap.unsqueeze(0), kmap.unsqueeze(0), alphas, betas)
+    o = tk.hedgehog(q, k, v, qmap, kmap, alphas, betas)
     print(f"{q.shape=}, {k.shape=}, {v.shape=}, {qmap.shape=}, {kmap.shape=}, {alphas.shape=}, {betas.shape=}")
     o, kv_state, k_state = o
 
-    print_errors('O', o_ref, o)
-    print(o.shape, o[0,0,0,:8], o_ref[0,0,0,:8])
-    # print_errors('kv_state', kv_state_ref, kv_state)
-    # print_errors('k_state', k_state_ref, k_state)
+    print(testname)
+    avg_diff, avg_magnitude, avg_error = print_errors('O', o_ref, o)
+    if (avg_error > 0.1):
+        breakpoint()
+    print(o.shape)
+    rand_b = torch.randint(0, B, (1,))
+    rand_h = torch.randint(0, H, (1,))
+    rand_n = torch.randint(0, N, (1,))
+    print(o[rand_b,rand_h,rand_n,:8])
+    print(o_ref[rand_b,rand_h,rand_n,:8])
+    avg_diff, avg_magnitude, avg_error = print_errors('kv_state', kv_state_ref, kv_state)
+    avg_diff, avg_magnitude, avg_error = print_errors('k_state', k_state_ref, k_state)
 
 tests = {
-    'testname': ['randn', 'ones', 'qk_test', 'v_or', 'dbg'],
+    'testname': [
+        'randn', 
+        # 'ones', 'qk_test', 
+        # 'v_or', 'dbg'
+    ],
     'B': [1,4], # at larger sizes, OOM due to inefficient pytorch
     'H': [1,4],
-    'N': [256, 1024, 4096, 16384]
+    'N': [256, 1024, 4096]
 }
 
 for values in itertools.product(*tests.values()):

@@ -15,8 +15,8 @@ TESTNAME = sys.argv[1]
 norm = nn.LayerNorm(D).cuda()
 
 if TESTNAME == 'ones':
-    x = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
-    residual = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    x = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_()
+    residual = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda').requires_grad_() * 2
 elif TESTNAME == 'arange':
     x = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda')
     residual = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda')

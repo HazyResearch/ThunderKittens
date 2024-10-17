@@ -88,8 +88,13 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
-    int batch     = blockIdx.x / g.n_tile_size;
-    int seq_start = blockIdx.x % g.n_tile_size;
+    // int batch     = blockIdx.x / g.n_tile_size;
+    // int seq_start = 2 * ( blockIdx.x % g.n_tile_size );
+    // int batch     = blockIdx.x;
+    // int seq_start = blockIdx.z*2;
+
+    int batch = blockIdx.y;
+    int seq_start = blockIdx.x *2;
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -159,11 +164,6 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
     }
 }
 
-
-#ifdef TK_COMPILE_FUSED_LAYERNORM
-#include "common/pyutils/torch_helpers.cuh"
-#include <iostream>
-template<int D>
 void dispatch_layernorm(
     bf16 *d_x_bf,
     bf16 *d_residual_bf,
@@ -174,13 +174,12 @@ void dispatch_layernorm(
     float dropout_p,
     int B, int N
 ) {
-    const int n_tile_size = N / 2;
-    const int n_per_tile = 2;
+    constexpr size_t D = 1024;
 
     // types
     // error: invalid narrowing conversion from "int" to "size_t"
-    using vec_smem_1xD  = sv_bf<D>;
-    using tile_smem_1xD = st<bf16, 1, D>;
+    using vec_smem_1xD  = sv_bf<static_cast<size_t>(D)>;
+    using tile_smem_1xD = st<bf16, 1, static_cast<size_t>(D)>;
     
 
     // global descriptors
@@ -200,22 +199,28 @@ void dispatch_layernorm(
     norm_weight_gl norm_weight_arg{d_norm_weight_bf, 1, 1,      1, D};
     norm_bias_gl norm_bias_arg{d_norm_bias_bf, 1, 1, 1, D};
 
+    const int n_tile_size = N / 2;
+    const int n_per_tile = 2;
     globals g{x_arg, residual_arg, o_arg, o_resid_arg, norm_weight_arg, norm_bias_arg,
     n_tile_size, n_per_tile};
 
-    unsigned long mem_size = D*NUM_WORKERS*2*2*2 + D*2*2;
+    unsigned long mem_size = 25480; 
     cudaFuncSetAttribute(
         layernorm_tk<D>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
-    dim3 grid(B*n_tile_size, 1, 1);
+    // dim3 grid(B*n_tile_size, 1, 1);
+    dim3 grid(n_tile_size, B, 1);
     layernorm_tk<D><<<grid,NUM_THREADS,mem_size>>>(g);
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    cudaDeviceSynchronize();
 }
 
 
+#ifdef TK_COMPILE_FUSED_LAYERNORM
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
 std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     const torch::Tensor x, 
     const torch::Tensor residual, 
@@ -257,12 +262,13 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
     bf16 *d_o_resid = reinterpret_cast<bf16*>(out_resid.data_ptr<c10::BFloat16>());
 
-    dispatch_layernorm<d>(
-        d_x_bf, d_residual_bf, d_norm_weight_bf, d_norm_bias_bf, d_o, d_o_resid, dropout_p,
-        b, n
+    dispatch_layernorm(
+        d_x_bf, d_residual_bf, 
+        d_norm_weight_bf, d_norm_bias_bf, 
+        d_o, d_o_resid, dropout_p,
+        b, n, d
     );
     CHECK_CUDA_ERROR(cudaGetLastError());
-    // return out, out_resid;
 
     return std::make_tuple(out, out_resid);
 }

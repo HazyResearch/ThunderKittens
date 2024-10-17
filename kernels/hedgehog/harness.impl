@@ -3,11 +3,11 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B (16)
-#define ATTN_H (16)
+#define ATTN_B (2)
+#define ATTN_H (2)
 #define ATTN_N (1024)
 
-#define LOAD_HEADS (16)
+#define LOAD_HEADS (2)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -136,17 +136,17 @@ int main(int argc, char **argv) {
 
     // inputs, replicated across batch and head dimensions
     for(uint64_t i = 0; i < TOTAL_ELEMENTS_QK; i++) {
-        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS_QK]);
-        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS_QK]);
+        q_bf[i] = __float2bfloat16(q[i]);
+        k_bf[i] = __float2bfloat16(k[i]);
     }
     std::cout << "Q, K prepared\n";
     for(uint64_t i = 0; i < TOTAL_ELEMENTS_VO; i++) {
-        v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS_VO]);
+        v_bf[i] = __float2bfloat16(v[i]);
     }
     std::cout << "V prepared\n";
     for(uint64_t i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) {
-        qmap_bf[i] = __float2bfloat16(qmap[i % TOTAL_UNIQUE_ELEMENTS_QK_MAP]);
-        kmap_bf[i] = __float2bfloat16(kmap[i % TOTAL_UNIQUE_ELEMENTS_QK_MAP]);
+        qmap_bf[i] = __float2bfloat16(qmap[i]);
+        kmap_bf[i] = __float2bfloat16(kmap[i]);
     }
     std::cout << "maps prepared\n";
     for(uint64_t i = LOAD_HEADS; i < ATTN_H; i++) {
@@ -278,7 +278,7 @@ int main(int argc, char **argv) {
     std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO];
+        float diff = o[i] - o_ref[i];
         if(should_print && i < TOTAL_UNIQUE_ELEMENTS_VO) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
@@ -292,7 +292,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > max_o_diff || isnan(diff)) {
             max_o_diff = abs(diff);
             if(isnan(diff)) {
-                printf("NAN detected idx=%d, o = %f, o_ref = %f, diff = %f\n", i, o[i], o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO], diff);
+                printf("NAN detected idx=%d, o = %f, o_ref = %f, diff = %f\n", i, o[i], o_ref[i], diff);
                 break;
             }
         }
@@ -306,7 +306,7 @@ int main(int argc, char **argv) {
     std::ofstream kv_state_diff_file("printouts/kv_state_diff.txt");
     float max_kv_diff=0, total_kv_diff=0, total_kv_abs = 0;
     for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        float diff = kv_state[i] - kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV];
+        float diff = kv_state[i] - kv_state_ref[i];
         if(should_print && i < TOTAL_UNIQUE_ELEMENTS_KV) {
             kv_state_ref_file << kv_state_ref[i] << ' ';
             kv_state_file << kv_state[i] << ' ';
@@ -320,12 +320,12 @@ int main(int argc, char **argv) {
         if(abs(diff) > max_kv_diff || isnan(diff)) {
             max_kv_diff = abs(diff);
             if(isnan(diff)) {
-                printf("KV state NAN detected idx=%d, kv_state = %f, kv_state_ref = %f, diff = %f\n", i, kv_state[i], kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV], diff);
+                printf("KV state NAN detected idx=%d, kv_state = %f, kv_state_ref = %f, diff = %f\n", i, kv_state[i], kv_state_ref[i], diff);
                 break;
             }
         }
 
-        total_kv_abs += abs(kv_state_ref[i % TOTAL_UNIQUE_ELEMENTS_KV]);
+        total_kv_abs += abs(kv_state_ref[i]);
         total_kv_diff += abs(diff); 
     }
 
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
     std::ofstream k_state_diff_file("printouts/k_state_diff.txt");
     float max_k_diff=0, total_k_diff=0, total_k_abs=0;
     for (int i = 0; i < TOTAL_ELEMENTS_K; i++) {
-        float diff = k_state[i] - k_state_ref[i % TOTAL_UNIQUE_ELEMENTS_K];
+        float diff = k_state[i] - k_state_ref[i];
         if (should_print && i < TOTAL_UNIQUE_ELEMENTS_K) {
             k_state_ref_file << k_state_ref[i] << ' ';
             k_state_file << k_state[i] << ' ';
@@ -348,12 +348,12 @@ int main(int argc, char **argv) {
         if (abs(diff) > max_k_diff || isnan(diff)) {
             max_k_diff = abs(diff);
             if(isnan(diff)) {
-                printf("K state NAN detected idx=%d, k_state = %f, k_state_ref = %f, diff = %f\n", i, k_state[i], k_state_ref[i % TOTAL_UNIQUE_ELEMENTS_K], diff);
+                printf("K state NAN detected idx=%d, k_state = %f, k_state_ref = %f, diff = %f\n", i, k_state[i], k_state_ref[i], diff);
                 break;
             }
         }
 
-        total_k_abs += abs(k_state_ref[i % TOTAL_UNIQUE_ELEMENTS_K]);
+        total_k_abs += abs(k_state_ref[i]);
         total_k_diff += abs(diff);
     }
 

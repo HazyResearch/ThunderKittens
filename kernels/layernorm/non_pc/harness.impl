@@ -147,54 +147,20 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
 
-    /****************** Start TK2 Changes **************************/
-
-    // types
-    static constexpr int d_model = ATTN_D;
-    using vec_smem_1xD = sv_bf<d_model>;
-    using tile_reg_1xD = rt_bf<1, d_model>;
-
-    // global descriptors
-    using x_gl           = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-    using residual_gl    = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-    using o_gl           = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-    using o_resid_gl     = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-    using norm_weight_gl = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-    using norm_bias_gl   = gl<bf16, -1, -1, -1, -1, vec_smem_1xD>;
-
-    using globals = norm_globals<ATTN_D, N_TILE_SIZE, N_PER_TILE>;
-
-    x_gl                     x_arg{d_x,        ATTN_B, 1, ATTN_N, ATTN_D};
-    residual_gl       residual_arg{d_residual, ATTN_B, 1, ATTN_N, ATTN_D};
-    o_gl                     o_arg{d_o,        ATTN_B, 1, ATTN_N, ATTN_D};
-    o_resid_gl         o_resid_arg{d_o_resid,  ATTN_B, 1, ATTN_N, ATTN_D};
-    norm_weight_gl norm_weight_arg{d_norm_weight,   1, 1,      1, ATTN_D};
-    norm_bias_gl     norm_bias_arg{d_norm_bias,     1, 1,      1, ATTN_D};
-
-    globals g{x_arg, residual_arg, o_arg, o_resid_arg, norm_weight_arg, norm_bias_arg};
-
-    /************************* End TK2 Changes **************************/
-
-    
-    unsigned long mem_size = 25480; // have the flag tell us
-    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
-    using T = kittens::bf16;
-    using H = kittens::bf16;
-    cudaFuncSetAttribute(
-        layernorm_tk<ATTN_D, N_TILE_SIZE, N_PER_TILE>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    );
-
-    const int ITER = 2;
+    std::cout << "Starting kernel\n";
     cudaDeviceSynchronize();
     CudaCheckError();
-    std::cout << "Starting kernel\n";
     const auto start = std::chrono::high_resolution_clock::now();
-    dim3 grid(ATTN_B*N_TILE_SIZE, 1, 1);
-    for(int i = 0; i < ITER; i++) {  
-        layernorm_tk<ATTN_D, N_TILE_SIZE, N_PER_TILE><<<grid,NUM_THREADS,mem_size>>>(g);  
-    }
+    dispatch_layernorm(
+        d_x,
+        d_residual,
+        d_norm_weight,
+        d_norm_bias,
+        d_o,
+        d_o_resid,
+        dropout_p,
+        ATTN_B, ATTN_N
+    );
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
@@ -218,7 +184,7 @@ int main(int argc, char **argv) {
             o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
-            if (i % 1023 == 0 && i != 0) {
+            if (i % 1024 == 1023) {
                 o_ref_file << std::endl;
                 o_file << std::endl;
                 diff_file << std::endl;
@@ -247,11 +213,20 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {
         float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
         if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+            
             o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
             o_resid_file << o_resid[i] << ' ';
             resid_diff_file << resid_diff << ' ';
+            if (i % 1024 == 1023) {
+                o_resid_ref_file << std::endl;
+                o_resid_file << std::endl;
+                resid_diff_file << std::endl;
+            }
         }
         if(abs(resid_diff) > 0.1 || isnan(resid_diff)) {
+            if (good_resid == true) { 
+                printf("i: %d\n", i);
+            }
             good_resid = false;
         }
     }
@@ -259,7 +234,7 @@ int main(int argc, char **argv) {
     else std::cout << "Incorrect out resid :(\n";
 
     std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
-    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()  << " us" << std::endl;
 
     cudaFree(d_x);
     cudaFree(d_residual);
