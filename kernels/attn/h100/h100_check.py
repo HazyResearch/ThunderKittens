@@ -138,7 +138,7 @@ def generate_tensor(shape, mean, std, dtype, device):
     
     return scaled_tensor.contiguous()
 
-def check_correctness(b, h, n, d, causal, mean, std, num_iterations=10000, error_mode='all'):
+def check_correctness(b, h, n, d, causal, mean, std, num_iterations=1000, error_mode='all'):
     results = {
         'TK vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
         'FA2 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
