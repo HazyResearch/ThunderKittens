@@ -3,16 +3,16 @@
 #include <fstream>
 
 constexpr int ATTN_B     = 1;
-constexpr int QO_HEADS   = 8;
-constexpr int KV_HEADS   = 8;
+constexpr int QO_HEADS   = 16;
+constexpr int KV_HEADS   = 16;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 768; 
+constexpr int ATTN_N     = 3072; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
-constexpr int ITER       = 1; 
+constexpr int ITER       = 10; 
 
 constexpr bool causal    = false; 
 
