@@ -49,16 +49,6 @@ template<int D> struct fwd_globals {
     const int hr;
 };
 
-template<ducks::rv::all RV> __device__ inline bool isnan(const RV& x) {
-    return isnan(x[0][0].x) || isnan(x[0][0].y);
-}
-template<ducks::rv::all RV> __device__ inline bool ispinf(const RV& x) {
-    return (isinf(x[0][0].x) && x[0][0].x > 0) || (isinf(x[0][0].y) && x[0][0].y > 0);
-}
-template<ducks::rv::all RV> __device__ inline bool isninf(const RV& x) {
-    return (isinf(x[0][0].x) && x[0][0].x < 0) || (isinf(x[0][0].y) && x[0][0].y < 0);
-}
-
 template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
