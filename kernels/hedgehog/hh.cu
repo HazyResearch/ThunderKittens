@@ -425,7 +425,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     int H = q.size(1);
     int N = q.size(2);
     int DV = v.size(3);
-    int FD = qmap.size(2);
+    int FD = qmap.size(1);
 
     // checks
     TORCH_CHECK(k.size(0) == B, "k batch?");
@@ -436,15 +436,16 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     TORCH_CHECK(v.size(1) == H, "v heads?");
     TORCH_CHECK(v.size(2) == N, "v length?");
 
-    TORCH_CHECK(qmap.size(0) == 1, "qmap batch?");
-    TORCH_CHECK(qmap.size(1) == FD, "qmap heads?");
-    TORCH_CHECK(qmap.size(2) == FD, "qmap length?");
-    TORCH_CHECK(qmap.size(3) == 64, "qmap length?");
+    // TORCH_CHECK(qmap.size(0) == 1, "qmap batch?");
+    // printf("qmap size: %d %d %d\n", qmap.size(0), qmap.size(1), qmap.size(2));
+    TORCH_CHECK(qmap.size(0) == H, "qmap heads?");
+    TORCH_CHECK(qmap.size(1) == FD, "qmap length?");
+    TORCH_CHECK(qmap.size(2) == 64, "qmap length?");
 
-    TORCH_CHECK(kmap.size(0) == 1, "kmap batch?");
-    TORCH_CHECK(kmap.size(1) == FD, "kmap heads?");
-    TORCH_CHECK(kmap.size(2) == FD, "kmap length?");
-    TORCH_CHECK(kmap.size(3) == 64, "kmap length?");
+    // TORCH_CHECK(kmap.size(0) == 1, "kmap batch?");
+    TORCH_CHECK(kmap.size(0) == H, "kmap heads?");
+    TORCH_CHECK(kmap.size(1) == FD, "kmap length?");
+    TORCH_CHECK(kmap.size(2) == 64, "kmap length?");
 
     TORCH_CHECK(d_alphas.size(0) == H, "alphas heads?");
     TORCH_CHECK(d_betas.size(0) == H, "betas heads?");
