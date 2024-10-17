@@ -181,6 +181,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
                         if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
                         else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                        __syncwarp();
                     }
                 }
             }
@@ -219,6 +220,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 arrive(compute_done[(kv_idx)%K::stages], count); 
             }
         }
+        group<12>::sync(10); // ffs
 
         div_row(o_reg, o_reg, norm_vec);
 

@@ -245,7 +245,6 @@ causal = True
 mean = 1e-1
 std = 1
 
-# generate_error_graphs(b, h, d, causal, mean, std, error_mode='backward')
 for mode in ['output', 'backward', 'all']:
     generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
 
