@@ -199,10 +199,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             }
 
             row_max(max_vec, att_block, max_vec);
-            // if(good && (max_vec[0][0].x < max_vec_last[0][0].x || max_vec[0][0].y < max_vec_last[0][0].y)) {
-            //     printf("max_vec is less and this is bad.\n");
-            //     good = false;
-            // }
             
             if constexpr (D == 64) { 
                 mul(att_block, att_block, 1.44269504089f*0.125f); 
@@ -212,35 +208,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 mul(att_block, att_block, 1.44269504089f*0.08838834764f); 
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             }
-            // if(good && (isnan(max_vec) || ispinf(max_vec))) {
-            //     printf("max_vec nan'd post-mul at kv_idx %d, tid=%d, block=(%d,%d,%d)\n", kv_idx, threadIdx.x, blockIdx.x, blockIdx.y, blockIdx.z);
-            //     good = false;
-            // }
 
             sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
 
-            // decltype(max_vec_last) max_vec_last_sub;
-            // sub(max_vec_last_sub, max_vec_last, max_vec);
-            // if(good && (isnan(max_vec_last_sub) || ispinf(max_vec_last_sub))) {
-            //     printf("max_vec_last nan'd post-sub at kv_idx %d, tid=%d, block=(%d,%d,%d)\n", kv_idx, threadIdx.x, blockIdx.x, blockIdx.y, blockIdx.z);
-            //     printf("max_vec_last: %f, max_vec: %f\n", max_vec_last[0][0].x, max_vec[0][0].y);
-            //     good = false;
-            // }
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-            // exp2(max_vec_last_sub,       max_vec_last);
-            // if(good && (isnan(max_vec_last_sub) || ispinf(max_vec_last_sub))) {
-            //     printf("max_vec_last nan'd post-exp2 at kv_idx %d, tid=%d, block=(%d,%d,%d)\n", kv_idx, threadIdx.x, blockIdx.x, blockIdx.y, blockIdx.z);
-            //     printf("max_vec_last_exp'd: %f, %f\n", max_vec_last_sub[0][0].x, max_vec_last_sub[0][0].y);
-            //     printf("max_vec_last: %f, %f\n", max_vec_last[0][0].x, max_vec_last[0][0].y);
-            //     good = false;
-            // }
             exp2(max_vec_last_scaled,       max_vec_last_scaled);
             mul(norm_vec,            norm_vec,     max_vec_last_scaled);
-            // if(good && (isnan(norm_vec) || ispinf(norm_vec) || isninf(norm_vec))) {
-            //     printf("norm_vec nan'd post-mul at kv_idx %d, tid=%d, block=(%d,%d,%d)\n", kv_idx, threadIdx.x, blockIdx.x, blockIdx.y, blockIdx.z);
-            //     good = false;
-            // }
 
             row_sum(norm_vec,  att_block, norm_vec);
             add(att_block, att_block, 0.f);
