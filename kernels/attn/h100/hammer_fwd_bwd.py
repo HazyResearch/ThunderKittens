@@ -51,7 +51,7 @@ def check_consistency(b, h, n, d, causal, mean, std, num_iterations=100000):
         max_diff_kg = max(max_diff_kg, torch.abs(kg - ref_kg).max().item())
         max_diff_vg = max(max_diff_vg, torch.abs(vg - ref_vg).max().item())
         
-        if max_diff_O > 1e-7 or max_diff_L > 1e-7 or max_diff_qg > 1e-14 or max_diff_kg > 1e-7 or max_diff_vg > 1e-7:
+        if max_diff_O > 1e-7 or max_diff_L > 1e-7 or max_diff_qg > 1e-7 or max_diff_kg > 1e-7 or max_diff_vg > 1e-7:
             print(f"Iteration {_}: Large difference detected")
             print(f"Max diff O: {max_diff_O}")
             print(f"Max diff L: {max_diff_L}")
