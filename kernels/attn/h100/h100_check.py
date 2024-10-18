@@ -138,7 +138,7 @@ def generate_tensor(shape, mean, std, dtype, device):
     
     return scaled_tensor.contiguous()
 
-def check_correctness(b, h, n, d, causal, mean, std, num_iterations=10, error_mode='all'):
+def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100, error_mode='all'):
     results = {
         'TK vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
         'FA2 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
@@ -241,9 +241,9 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
 
 # Example usage
 b, h, d = 12, 12, 64
-causal = True
+causal = False
 mean = 1e-1
-std = 1
+std = 1000
 
 for mode in ['output', 'backward', 'all']:
     generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)

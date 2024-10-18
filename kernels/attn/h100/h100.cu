@@ -224,6 +224,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
         group<12>::sync(10); // ffs
 
+        add(norm_vec, norm_vec, 1e-10f);
         div_row(o_reg, o_reg, norm_vec);
 
         warpgroup::store(o_smem[warpgroupid], o_reg); 
