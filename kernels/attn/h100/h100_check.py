@@ -207,7 +207,7 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
 
     # Generate average error graph
     plt.figure(figsize=(12, 8))
-    plt.plot(seq_lengths, tk_avg_errors, label='TK', marker='o')
+    plt.plot(seq_lengths, tk_avg_errors, label='TK',   marker='o')
     plt.plot(seq_lengths, fa2_avg_errors, label='FA2', marker='s')
     plt.plot(seq_lengths, fa3_avg_errors, label='FA3', marker='^')
 
@@ -224,7 +224,7 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
 
     # Generate max error graph
     plt.figure(figsize=(12, 8))
-    plt.plot(seq_lengths, tk_max_errors,  label='TK', marker='o')
+    plt.plot(seq_lengths, tk_max_errors,  label='TK',  marker='o')
     plt.plot(seq_lengths, fa2_max_errors, label='FA2', marker='s')
     plt.plot(seq_lengths, fa3_max_errors, label='FA3', marker='^')
 
@@ -241,9 +241,9 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
 
 # Example usage
 b, h, d = 12, 12, 64
-causal = False
+causal = True
 mean = 1e-1
-std = 1000
+std = 10
 
 for mode in ['output', 'backward', 'all']:
     generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)

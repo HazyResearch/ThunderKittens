@@ -110,8 +110,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         
         int kv_iters; 
         if constexpr (is_causal) {
-            kv_iters = (seq_idx * (K::qo_height/kittens::TILE_DIM)) - 1 + (CONSUMER_WARPGROUPS * (K::qo_height/kittens::TILE_DIM)); 
-            kv_iters = ((kv_iters / (K::kv_height/kittens::TILE_DIM)) == 0) ? (0) : ((kv_iters / (K::kv_height/kittens::TILE_DIM)) - 1);
+            kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4); 
+            kv_iters = ((kv_iters / 8) == 0) ? (0) : ((kv_iters / 8) - 1);
         }
         else {
             kv_iters = kv_blocks-2; 
@@ -147,15 +147,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         int kv_iters; 
         if constexpr (is_causal) {
-            kv_iters = (seq_idx * (K::qo_height/kittens::TILE_DIM)) - 1 + ((warpgroupid + 1) * (K::qo_height/kittens::TILE_DIM));
-            kv_iters = (kv_iters/(K::kv_height/kittens::TILE_DIM));
+            kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4);
+            kv_iters = (kv_iters/8);
         }
         else { 
             kv_iters = kv_blocks - 1; 
         }
         
-        const int kv_do = (seq_idx)/(K::kv_height/K::qo_height);
-
         wait(qsmem_barrier, 0);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
@@ -191,11 +189,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             row_max(max_vec, att_block, max_vec);
             
             if constexpr (D == 64) { 
-                mul(att_block, att_block, 1.44269504089f*0.125f); 
+                mul(att_block, att_block,    1.44269504089f*0.125f); 
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
             }
             else                   { 
-                mul(att_block, att_block, 1.44269504089f*0.08838834764f); 
+                mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             }
 
@@ -217,14 +215,10 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             warpgroup::mma_AB(o_reg, att_block_mma, v_smem[(kv_idx)%K::stages]);
             warpgroup::mma_async_wait();
 
-            if(warpgroup::laneid() == 0) {
-                int count = ((warpgroupid == CONSUMER_WARPGROUPS - 1) && (kv_idx > kv_do) && is_causal) ? (2 - (blockIdx.x % 2)) : 1;
-                arrive(compute_done[(kv_idx)%K::stages], count); 
-            }
+            if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
         group<12>::sync(10); // ffs
 
-        add(norm_vec, norm_vec, 1e-10f);
         div_row(o_reg, o_reg, norm_vec);
 
         warpgroup::store(o_smem[warpgroupid], o_reg); 
