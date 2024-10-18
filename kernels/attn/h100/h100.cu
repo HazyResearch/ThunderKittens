@@ -604,7 +604,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
                 warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
                 warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
-                warpgroup::mma_commit_group(); 
 
                 wait(qg_ready, toc);
                 if (qo_idx > 0) tma::store_async_wait();
