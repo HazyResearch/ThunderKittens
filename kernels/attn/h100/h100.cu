@@ -189,11 +189,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             row_max(max_vec, att_block, max_vec);
             
             if constexpr (D == 64) { 
-                mul(att_block, att_block, 1.44269504089f*0.125f); 
+                mul(att_block, att_block,    1.44269504089f*0.125f); 
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
             }
             else                   { 
-                mul(att_block, att_block, 1.44269504089f*0.08838834764f); 
+                mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             }
 
@@ -217,7 +217,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
-        group<12>::sync(10); // ffs
+        // group<12>::sync(10); // ffs
         
         div_row(o_reg, o_reg, norm_vec);
 
