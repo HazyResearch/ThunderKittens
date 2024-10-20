@@ -143,7 +143,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         neg_infty(max_vec);
         zero(norm_vec);
         zero(o_reg);
-        bool good = true;
 
         int kv_iters; 
         if constexpr (is_causal) {
@@ -250,6 +249,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     
         tma::store_async_wait();
     }
+    __syncthreads();
 }
 
 template<int D>
@@ -326,6 +326,7 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     }
 
     tma::store_async_wait();
+    __syncthreads();
 }
 
 template<int D> struct bwd_attend_ker_tile_dims {};
@@ -606,6 +607,9 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             asm volatile("bar.sync 10, 256;\n");
 
             warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
+            warpgroup::mma_commit_group(); 
+            warpgroup::mma_async_wait();
+            
             warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
             warpgroup::mma_commit_group(); 
 
@@ -786,6 +790,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
         tma::store_async_wait();
     }
+    __syncthreads();
 }
 
 #ifdef TORCH_COMPILE
@@ -977,6 +982,8 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
         // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
         // std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
     }
+
+    cudaDeviceSynchronize();
 }
 
 std::vector<torch::Tensor> 
@@ -1341,6 +1348,8 @@ attention_backward(torch::Tensor q,
         // const auto end = std::chrono::high_resolution_clock::now();
         // std::cout << "BWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << "us" << std::endl;
     }
+
+    cudaDeviceSynchronize();
 
     return {qg, kg, vg};
 }
