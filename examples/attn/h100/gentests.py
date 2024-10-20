@@ -89,31 +89,31 @@ with open(fn, 'w') as f:
     v_grad = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
     
     for i in trange(B*H*N*D):
-        f.write(repr(qf[i]))
+        f.write(repr(float(qf[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(kf[i]))
+        f.write(repr(float(kf[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(vf[i]))
+        f.write(repr(float(vf[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(of[i]))
+        f.write(repr(float(of[i])))
         f.write(' ')
     for i in trange(B*H*N):
-        f.write(repr(l_vecf[i]))
+        f.write(repr(float(l_vecf[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(grad_outputf[i]))
+        f.write(repr(float(grad_outputf[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(q_grad[i]))
+        f.write(repr(float(q_grad[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(k_grad[i]))
+        f.write(repr(float(k_grad[i])))
         f.write(' ')
     for i in trange(B*H*N*D):
-        f.write(repr(v_grad[i]))
+        f.write(repr(float(v_grad[i])))
         f.write(' ')
         
 print(f'Run the harness like `./attn_bwd {fn}`')
