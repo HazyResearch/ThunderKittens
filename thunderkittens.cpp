@@ -23,16 +23,12 @@ m.def("attention_inference_forward", attention_inference_forward);
 */
 
 #ifdef TK_COMPILE_ATTN
-extern torch::Tensor attention_forward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-    torch::Tensor l_vec,
-    bool causal
+extern std::vector<torch::Tensor> attention_forward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
 ); 
 extern std::vector<torch::Tensor> attention_backward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, 
-    torch::Tensor o, 
-    torch::Tensor l_vec, torch::Tensor d_vec, 
-    torch::Tensor og, 
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
+    torch::Tensor l_vec, torch::Tensor og, 
     bool causal
 );
 #endif

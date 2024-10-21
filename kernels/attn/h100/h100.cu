@@ -805,12 +805,12 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 #include <ATen/cuda/CUDAContext.h>
 #include <iostream>
 
-torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor l_vec, bool causal)
+std::vector<torch::Tensor> 
+attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal)
 {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
-    CHECK_INPUT(l_vec);
 
     auto batch    = q.size(0);
     auto seq_len  = q.size(2); 
@@ -823,7 +823,6 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
-    TORCH_CHECK(l_vec.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
 
     TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
@@ -837,28 +836,36 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
     TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
     TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(l_vec.size(1) == qo_heads, "L head dimension - idx 1 - must match for all inputs");    
+    TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");  
 
     auto hr = qo_heads / kv_heads;
 
     c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
-            float         *l_ptr = l_vec.data_ptr<float>();
 
     bf16*  d_q = reinterpret_cast<bf16*>(q_ptr);
     bf16*  d_k = reinterpret_cast<bf16*>(k_ptr);
     bf16*  d_v = reinterpret_cast<bf16*>(v_ptr);
-    float* d_l = reinterpret_cast<float*>(l_ptr);
     
     // for the returned outputs
-    torch::Tensor o = torch::empty({static_cast<const uint>(batch), 
-                                    static_cast<const uint>(qo_heads), 
-                                    static_cast<const uint>(seq_len), 
-                                    static_cast<const uint>(head_dim)}, v.options());
+    torch::Tensor o     = torch::empty({static_cast<const uint>(batch), 
+                                        static_cast<const uint>(qo_heads), 
+                                        static_cast<const uint>(seq_len), 
+                                        static_cast<const uint>(head_dim)}, v.options());
+    
+    torch::Tensor l_vec = torch::empty({static_cast<const uint>(batch), 
+                                        static_cast<const uint>(qo_heads), 
+                                        static_cast<const uint>(seq_len), 
+                                        static_cast<const uint>(1)}, 
+                                        torch::TensorOptions().dtype(torch::kFloat).device(q.device()).memory_format(at::MemoryFormat::Contiguous));
+        
+
     bf16*  o_ptr = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
-    bf16*  d_o = reinterpret_cast<bf16*>(o_ptr);
+    bf16*  d_o   = reinterpret_cast<bf16*>(o_ptr);
+
+    float* l_ptr = reinterpret_cast<float*>(l_vec.data_ptr<float>());
+    float* d_l   = reinterpret_cast<float*>(l_ptr);
 
     cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream(); 
@@ -966,7 +973,7 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         cudaStreamSynchronize(stream);
     }
 
-    return o;
+    return {o, l_vec};
     cudaDeviceSynchronize();
 }
 
@@ -975,8 +982,7 @@ attention_backward(torch::Tensor q,
                    torch::Tensor k, 
                    torch::Tensor v, 
                    torch::Tensor o, 
-                   torch::Tensor l_vec, 
-                   torch::Tensor d_vec, 
+                   torch::Tensor l_vec,
                    torch::Tensor og,
                    bool causal)
 {
@@ -984,7 +990,6 @@ attention_backward(torch::Tensor q,
     CHECK_INPUT(k);
     CHECK_INPUT(v);
     CHECK_INPUT(l_vec);
-    CHECK_INPUT(d_vec);
     CHECK_INPUT(o);
     CHECK_INPUT(og);
 
@@ -997,7 +1002,6 @@ attention_backward(torch::Tensor q,
     TORCH_CHECK(k.size(0)     == batch, "K  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(v.size(0)     == batch, "V  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(l_vec.size(0) == batch, "L  batch dimension - idx 0 - must match for all inputs");
-    TORCH_CHECK(d_vec.size(0) == batch, "D  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(o.size(0)     == batch, "O  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(og.size(0)    == batch, "OG batch dimension - idx 0 - must match for all inputs");
 
@@ -1005,7 +1009,6 @@ attention_backward(torch::Tensor q,
     TORCH_CHECK(k.size(2)     == seq_len, "K  sequence length dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(v.size(2)     == seq_len, "V  sequence length dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(l_vec.size(2) == seq_len, "L  sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(d_vec.size(2) == seq_len, "D  sequence length dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(o.size(2)     == seq_len, "O  sequence length dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(og.size(2)    == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
 
@@ -1026,7 +1029,6 @@ attention_backward(torch::Tensor q,
 
     TORCH_CHECK(q.size(1)     == qo_heads, "Q  heads dimension - idx 1 - must match for all inputs");
     TORCH_CHECK(l_vec.size(1) == qo_heads, "L  heads dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(d_vec.size(1) == qo_heads, "D  heads dimension - idx 1 - must match for all inputs");
     TORCH_CHECK(o.size(1)     == qo_heads, "O  heads dimension - idx 1 - must match for all inputs");
     TORCH_CHECK(og.size(1)    == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
     TORCH_CHECK(k.size(1)  == kv_heads, "K  heads dimension - idx 1 - must match for all inputs");
@@ -1040,24 +1042,29 @@ attention_backward(torch::Tensor q,
     c10::BFloat16* o_ptr  = o.data_ptr<c10::BFloat16>();
     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
     float*         l_ptr  = l_vec.data_ptr<float>();
-    float*         d_ptr  = d_vec.data_ptr<float>();
 
     torch::Tensor qg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(qo_heads), 
                                      static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)}, l_vec.options());
+                                     static_cast<const uint>(head_dim)},   l_vec.options());
     torch::Tensor kg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(kv_heads), 
                                      static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)}, l_vec.options());
+                                     static_cast<const uint>(head_dim)},   l_vec.options());
     torch::Tensor vg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(kv_heads), 
                                      static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)}, l_vec.options());
+                                     static_cast<const uint>(head_dim)},   l_vec.options());
+    
+    torch::Tensor d_vec = torch::empty({static_cast<const uint>(batch), 
+                                        static_cast<const uint>(qo_heads), 
+                                        static_cast<const uint>(seq_len), 
+                                        static_cast<const uint>(1)},       l_vec.options());
 
     float*         qg_ptr = qg.data_ptr<float>();
     float*         kg_ptr = kg.data_ptr<float>();
     float*         vg_ptr = vg.data_ptr<float>();
+    float*         d_ptr  = d_vec.data_ptr<float>();
 
     bf16*  d_q  = reinterpret_cast<bf16*>(q_ptr);
     bf16*  d_k  = reinterpret_cast<bf16*>(k_ptr);

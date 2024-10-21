@@ -111,8 +111,7 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
             l_vec_fa3 = l_vec_fa3 * -11.313708499
         l_vec_fa3 = l_vec_fa3.to(torch.float)
         
-        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec_fa3, d_vec, dO, causal)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec_fa3, dO, causal)
         
         return o, qg, kg, vg
     else:
@@ -120,13 +119,8 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
         K.requires_grad = True
         V.requires_grad = True
         
-        o = torch.zeros_like(Q).contiguous()
-        
-        l_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        tk.mha_forward(Q, K, V, o, l_vec, causal)
-        
-        d_vec = torch.zeros(Q.shape[0], Q.shape[1], Q.shape[2], 1, device=Q.device, dtype=torch.float)
-        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, d_vec, dO, causal)
+        o, l_vec   = tk.mha_forward(Q, K, V, causal)
+        qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, dO, causal)
         
         return o, qg, kg, vg
 
