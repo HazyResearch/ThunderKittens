@@ -216,6 +216,9 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
+
+        group<12>::sync(10); // ffs
+
         div_row(o_reg, o_reg, norm_vec);
 
         warpgroup::store(o_smem[warpgroupid], o_reg); 
@@ -804,8 +807,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
 torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor l_vec, bool causal)
 {
-    // const auto start = std::chrono::high_resolution_clock::now();
-
     CHECK_INPUT(q);
     CHECK_INPUT(k);
     CHECK_INPUT(v);
@@ -859,6 +860,7 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     bf16*  o_ptr = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
     bf16*  d_o = reinterpret_cast<bf16*>(o_ptr);
 
+    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream(); 
 
     if (head_dim == 64) {
@@ -889,7 +891,6 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
 
         // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), qo_heads, batch);
-        // const auto kernel = std::chrono::high_resolution_clock::now();
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -911,11 +912,6 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         }
         CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
-
-        // const auto end = std::chrono::high_resolution_clock::now();
-        // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
-        // std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
-        // std::cout << "---" << std::endl;
     }
 
     if (head_dim == 128) {
@@ -947,8 +943,6 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), qo_heads, batch);
 
-        // const auto kernel = std::chrono::high_resolution_clock::now();
-
         if (is_causal) {
             cudaFuncSetAttribute(
                 fwd_attend_ker<128, true>,
@@ -970,10 +964,6 @@ torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
 
         CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
-
-        // const auto end = std::chrono::high_resolution_clock::now();
-        // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
-        // std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
     }
 
     return o;
@@ -1083,17 +1073,13 @@ attention_backward(torch::Tensor q,
     auto mem_size = kittens::MAX_SHARED_MEMORY; 
     auto threads  = 4 * kittens::WARP_THREADS;
 
+    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-    cudaStreamSynchronize(stream); 
-    // cudaDeviceSynchronize();
+    cudaStreamSynchronize(stream);
 
     // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
     dim3 grid_bwd(seq_len/(4*kittens::TILE_DIM*4), qo_heads, batch);
-
-    // std::cout << "---" << std::endl;
-    // cudaStreamSynchronize(stream);
-    // const auto start = std::chrono::high_resolution_clock::now();
 
     if (head_dim == 64)  {
         using og_tile = st_bf<4*16, 64>;
@@ -1171,6 +1157,8 @@ attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
+        cudaDeviceSynchronize();
+
         if (is_causal) {
             cudaFuncSetAttribute(
                 bwd_attend_ker<64, true>,
@@ -1202,6 +1190,7 @@ attention_backward(torch::Tensor q,
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
+        cudaDeviceSynchronize();
         // const auto kernel_end = std::chrono::high_resolution_clock::now();
         // std::cout << "Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - start).count() << "us" << std::endl;
         // std::cout << "---" << std::endl;
@@ -1285,8 +1274,7 @@ attention_backward(torch::Tensor q,
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
         cudaStreamSynchronize(stream);
-        // cudaDeviceSynchronize(); 
-        // const auto start = std::chrono::high_resolution_clock::now();
+        cudaDeviceSynchronize(); 
         
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -1319,8 +1307,7 @@ attention_backward(torch::Tensor q,
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
-        // const auto end = std::chrono::high_resolution_clock::now();
-        // std::cout << "BWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << "us" << std::endl;
+        cudaDeviceSynchronize();
     }
 
     return {qg, kg, vg};
