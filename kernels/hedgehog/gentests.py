@@ -110,63 +110,63 @@ NAMES = ['randn', 'ones', 'qk_test', 'v_or', 'dbg']
 TESTNAME = sys.argv[1]
 
 # get inputs
-B, H, N = 2, 2, 1024
+B, H, N = 4, 4, 1024
 assert TESTNAME in NAMES, f"bad testname {TESTNAME}"
 q, k ,v, qmap, kmap, alphas, betas = generate_inputs(TESTNAME, B, H, N)
 out, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
-    qf = q.to(torch.float32).flatten().cpu().numpy()
-    kf = k.to(torch.float32).flatten().cpu().numpy()
-    vf = v.to(torch.float32).flatten().cpu().numpy()
-    qmf = qmap.to(torch.float32).flatten().cpu().numpy()
-    kmf = kmap.to(torch.float32).flatten().cpu().numpy()
-    af = alphas.to(torch.float32).cpu().numpy()
-    bf = betas.to(torch.float32).cpu().numpy()
-    of = out.to(torch.float32).flatten().cpu().numpy()
-    kvf = kv_state.flatten().cpu().numpy()
-    ksf = k_state.flatten().cpu().numpy()
+    qf = q.to(torch.float32).flatten().cpu().numpy().tolist()
+    kf = k.to(torch.float32).flatten().cpu().numpy().tolist()
+    vf = v.to(torch.float32).flatten().cpu().numpy().tolist()
+    qmf = qmap.to(torch.float32).flatten().cpu().numpy().tolist()
+    kmf = kmap.to(torch.float32).flatten().cpu().numpy().tolist()
+    af = alphas.to(torch.float32).cpu().numpy().tolist()
+    bf = betas.to(torch.float32).cpu().numpy().tolist()
+    of = out.to(torch.float32).flatten().cpu().numpy().tolist()
+    kvf = kv_state.flatten().cpu().numpy().tolist()
+    ksf = k_state.flatten().cpu().numpy().tolist()
 
     # 1. alpha and beta 
-    for i in trange(af.shape[0]):
+    for i in trange(len(af)):
         f.write(repr(af[i]))
         f.write(' ')
 
-    for i in trange(bf.shape[0]):
+    for i in trange(len(bf)):
         f.write(repr(bf[i]))
         f.write(' ')
 
     # 2. qmap and kmap
-    for i in trange(qmf.shape[0]):
+    for i in trange(len(qmf)):
         f.write(repr(qmf[i]))
         f.write(' ')
 
-    for i in trange(kmf.shape[0]):
+    for i in trange(len(kmf)):
         f.write(repr(kmf[i]))
         f.write(' ')
 
     # 3. q, k, v, out
-    for i in trange(qf.shape[0]):
+    for i in trange(len(qf)):
         f.write(repr(qf[i]))
         f.write(' ')
     
-    for i in trange(kf.shape[0]):
+    for i in trange(len(kf)):
         f.write(repr(kf[i]))
         f.write(' ')
 
-    for i in trange(vf.shape[0]):
+    for i in trange(len(vf)):
         f.write(repr(vf[i]))
         f.write(' ')
     
-    for i in trange(of.shape[0]):
+    for i in trange(len(of)):
         f.write(repr(of[i]))
         f.write(' ')
     
     # k then kv state
-    for i in trange(ksf.shape[0]):
+    for i in trange(len(ksf)):
         f.write(repr(ksf[i]))
         f.write(' ')
 
-    for i in trange(kvf.shape[0]):
+    for i in trange(len(kvf)):
         f.write(repr(kvf[i]))
         f.write(' ')
