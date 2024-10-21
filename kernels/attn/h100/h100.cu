@@ -799,70 +799,64 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 #include <ATen/cuda/CUDAContext.h>
 #include <iostream>
 
-void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal)
+torch::Tensor attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor l_vec, bool causal)
 {
     // const auto start = std::chrono::high_resolution_clock::now();
 
-    // CHECK_INPUT(q);
-    // CHECK_INPUT(k);
-    // CHECK_INPUT(v);
-    // CHECK_INPUT(l);
-    // CHECK_INPUT(o);
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(l_vec);
 
     auto batch    = q.size(0);
     auto seq_len  = q.size(2); 
     auto head_dim = q.size(3); 
-
-    // check to see that these dimensions match for all inputs
-    // TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(l.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(o.size(0) == batch, "O batch dimension - idx 0 - must match for all inputs");
-
-    // TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(l.size(2) == seq_len, "L sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(o.size(2) == seq_len, "O sequence length dimension - idx 2 - must match for all inputs");
-
-    // TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(o.size(3) == head_dim, "O head dimension - idx 3 - must match for all non-vector inputs");
-
     auto is_causal = causal; 
-
     auto qo_heads = q.size(1);
     auto kv_heads = k.size(1);
 
-    // TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
-    // TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
+    // check to see that these dimensions match for all inputs
+    TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(0) == batch, "L batch dimension - idx 0 - must match for all inputs");
 
-    // TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(l.size(1) == qo_heads, "L head dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(o.size(1) == qo_heads, "O head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
+
+    TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
+
+    TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
+    TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
+    TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(1) == qo_heads, "L head dimension - idx 1 - must match for all inputs");    
 
     auto hr = qo_heads / kv_heads;
 
     c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
-    c10::BFloat16* o_ptr = o.data_ptr<c10::BFloat16>();
-    float         *l_ptr = l.data_ptr<float>();
+            float         *l_ptr = l_vec.data_ptr<float>();
 
     bf16*  d_q = reinterpret_cast<bf16*>(q_ptr);
     bf16*  d_k = reinterpret_cast<bf16*>(k_ptr);
     bf16*  d_v = reinterpret_cast<bf16*>(v_ptr);
-    bf16*  d_o = reinterpret_cast<bf16*>(o_ptr);
     float* d_l = reinterpret_cast<float*>(l_ptr);
+    
+    // for the returned outputs
+    torch::Tensor o = torch::empty({static_cast<const uint>(batch), 
+                                    static_cast<const uint>(qo_heads), 
+                                    static_cast<const uint>(seq_len), 
+                                    static_cast<const uint>(head_dim)}, v.options());
+    bf16*  o_ptr = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
+    bf16*  d_o = reinterpret_cast<bf16*>(o_ptr);
 
-    auto stream = at::cuda::getCurrentCUDAStream().stream();
-
-    // std::cout << "---" << std::endl;
-    // cudaStreamSynchronize(stream);
+    auto stream = at::cuda::getCurrentCUDAStream().stream(); 
 
     if (head_dim == 64) {
         using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
@@ -892,7 +886,6 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
 
         // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_DIM*4), qo_heads, batch);
-
         // const auto kernel = std::chrono::high_resolution_clock::now();
 
         if (is_causal) {
@@ -913,12 +906,10 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
 
             fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
-
-        // CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
 
         // const auto end = std::chrono::high_resolution_clock::now();
-
         // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
         // std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
         // std::cout << "---" << std::endl;
@@ -974,15 +965,15 @@ void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch:
             fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
 
-        // CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
 
         // const auto end = std::chrono::high_resolution_clock::now();
-
         // std::cout << "FWD Prep Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel - start).count() << "us" << std::endl;
         // std::cout << "FWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - kernel).count() << "us" << std::endl;
     }
 
+    return o;
     cudaDeviceSynchronize();
 }
 
@@ -996,52 +987,40 @@ attention_backward(torch::Tensor q,
                    torch::Tensor og,
                    bool causal)
 {
-    // CHECK_INPUT(q);
-    // CHECK_INPUT(k);
-    // CHECK_INPUT(v);
-    // CHECK_INPUT(l_vec);
-    // CHECK_INPUT(d_vec);
-    // CHECK_INPUT(o);
-    // CHECK_INPUT(og);
-    // CHECK_INPUT(qg);
-    // CHECK_INPUT(kg);
-    // CHECK_INPUT(vg);
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+    CHECK_INPUT(l_vec);
+    CHECK_INPUT(d_vec);
+    CHECK_INPUT(o);
+    CHECK_INPUT(og);
 
     auto batch    = q.size(0);
     auto seq_len  = q.size(2);
     auto head_dim = q.size(3);
 
     // check to see that these dimensions match for all inputs
-    // TORCH_CHECK(q.size(0)     == batch, "Q  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(k.size(0)     == batch, "K  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(v.size(0)     == batch, "V  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(l_vec.size(0) == batch, "L  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(d_vec.size(0) == batch, "D  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(o.size(0)     == batch, "O  batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(og.size(0)    == batch, "OG batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(qg.size(0)    == batch, "QG batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(kg.size(0)    == batch, "KG batch dimension - idx 0 - must match for all inputs");
-    // TORCH_CHECK(vg.size(0)    == batch, "VG batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(q.size(0)     == batch, "Q  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(k.size(0)     == batch, "K  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(v.size(0)     == batch, "V  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(0) == batch, "L  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(0) == batch, "D  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(o.size(0)     == batch, "O  batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(og.size(0)    == batch, "OG batch dimension - idx 0 - must match for all inputs");
 
-    // TORCH_CHECK(q.size(2)     == seq_len, "Q  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(k.size(2)     == seq_len, "K  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(v.size(2)     == seq_len, "V  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(l_vec.size(2) == seq_len, "L  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(d_vec.size(2) == seq_len, "D  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(o.size(2)     == seq_len, "O  sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(og.size(2)    == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(qg.size(2)    == seq_len, "QG sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(kg.size(2)    == seq_len, "KG sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(vg.size(2)    == seq_len, "VG sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(q.size(2)     == seq_len, "Q  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(k.size(2)     == seq_len, "K  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(2)     == seq_len, "V  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(2) == seq_len, "L  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(2) == seq_len, "D  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(o.size(2)     == seq_len, "O  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(og.size(2)    == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
 
-    // TORCH_CHECK(q.size(3)  == head_dim, "Q  head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(k.size(3)  == head_dim, "K  head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(v.size(3)  == head_dim, "V  head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(o.size(3)  == head_dim, "O  head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(og.size(3) == head_dim, "OG head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(qg.size(3) == head_dim, "QG head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(kg.size(3) == head_dim, "KG head dimension - idx 3 - must match for all non-vector inputs");
-    // TORCH_CHECK(vg.size(3) == head_dim, "VG head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(q.size(3)  == head_dim, "Q  head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(k.size(3)  == head_dim, "K  head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(v.size(3)  == head_dim, "V  head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(o.size(3)  == head_dim, "O  head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(og.size(3) == head_dim, "OG head dimension - idx 3 - must match for all non-vector inputs");
 
     // check if causal
     auto is_causal = causal;
@@ -1049,20 +1028,16 @@ attention_backward(torch::Tensor q,
     auto qo_heads = q.size(1);
     auto kv_heads = k.size(1);
 
-    // TORCH_CHECK(qo_heads >= kv_heads,     "Q heads must be greater than or equal to K and V heads");
-    // TORCH_CHECK(qo_heads % kv_heads == 0, "Q heads must be divisible by KV heads");
+    TORCH_CHECK(qo_heads >= kv_heads,     "Q heads must be greater than or equal to K and V heads");
+    TORCH_CHECK(qo_heads % kv_heads == 0, "Q heads must be divisible by KV heads");
 
-    // TORCH_CHECK(q.size(1)     == qo_heads, "Q  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(l_vec.size(1) == qo_heads, "L  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(d_vec.size(1) == qo_heads, "D  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(o.size(1)     == qo_heads, "O  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(og.size(1)    == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(qg.size(1)    == qo_heads, "QG heads dimension - idx 1 - must match for all inputs");
-
-    // TORCH_CHECK(k.size(1)  == kv_heads, "K  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(v.size(1)  == kv_heads, "V  heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(kg.size(1) == kv_heads, "KG heads dimension - idx 1 - must match for all inputs");
-    // TORCH_CHECK(vg.size(1) == kv_heads, "VG heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(q.size(1)     == qo_heads, "Q  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(1) == qo_heads, "L  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(d_vec.size(1) == qo_heads, "D  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(o.size(1)     == qo_heads, "O  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(og.size(1)    == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(k.size(1)  == kv_heads, "K  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(1)  == kv_heads, "V  heads dimension - idx 1 - must match for all inputs");
 
     auto hr = qo_heads / kv_heads;
 
@@ -1107,7 +1082,7 @@ attention_backward(torch::Tensor q,
 
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-    // cudaStreamSynchronize(stream); 
+    cudaStreamSynchronize(stream); 
     // cudaDeviceSynchronize();
 
     // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
@@ -1115,7 +1090,6 @@ attention_backward(torch::Tensor q,
 
     // std::cout << "---" << std::endl;
     // cudaStreamSynchronize(stream);
-
     // const auto start = std::chrono::high_resolution_clock::now();
 
     if (head_dim == 64)  {
@@ -1225,9 +1199,7 @@ attention_backward(torch::Tensor q,
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
-        
         // const auto kernel_end = std::chrono::high_resolution_clock::now();
-
         // std::cout << "Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - start).count() << "us" << std::endl;
         // std::cout << "---" << std::endl;
     }
@@ -1309,7 +1281,7 @@ attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
-        // cudaStreamSynchronize(stream);
+        cudaStreamSynchronize(stream);
         // cudaDeviceSynchronize(); 
         // const auto start = std::chrono::high_resolution_clock::now();
         
@@ -1344,14 +1316,12 @@ attention_backward(torch::Tensor q,
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
         cudaStreamSynchronize(stream);
-
         // const auto end = std::chrono::high_resolution_clock::now();
         // std::cout << "BWD Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << "us" << std::endl;
     }
 
-    cudaDeviceSynchronize();
-
     return {qg, kg, vg};
+    cudaDeviceSynchronize();
 }
 
 #else
