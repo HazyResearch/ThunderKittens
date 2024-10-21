@@ -7,9 +7,5 @@ CUDA_VISIBLE_DEVICES=0 python -Wignore demo_llama_hf.py \
     --max_new_tokens 50  \
     --model_type tk_attention 
     
-    #tk_attention
-    
-    # tk_attention
-# --benchmark
 
 

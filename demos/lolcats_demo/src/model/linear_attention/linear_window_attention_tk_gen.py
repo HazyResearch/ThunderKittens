@@ -5,12 +5,6 @@ from typing import Optional, Tuple, List
 import torch
 import torch.nn.functional as F
 
-# try:
-#     from thunderkittens import hedgehog as tk_window_hedgehog_attention
-#     print(f"Successfully imported ThunderKittens for TK window attention")
-# except:
-#     print(f"Failed to import ThunderKittens for TK window attention")
-
 try:
     import thunderkittens as tk
     print(f"Successfully imported ThunderKittens for TK window attention")
@@ -96,19 +90,12 @@ class LolcatsWindowAttentionTKGen(LolcatsTKWindowLongAttention):
             #                            f_k[:, :, :-self.window_size], 
             #                            v[:, :, :-self.window_size])  # b, h, f, d
             # 4. k_state = f_k[:, :, :-self.window_size].sum(dim=-2)   # b, h, d
-
-            # tk_window_hedgehog_attention(q.contiguous(), k.contiguous(), 
-            #                              v.contiguous(), 
-            #                              self.y_true, self.k_state, self.kv_state, 
-            #                              q_map, k_map, alphas, betas)
-
             q = q.contiguous()
             k = k.contiguous()
             v = v.contiguous()
             y_true, kv_state, k_state = tk.hedgehog(q, k, v, q_map, k_map, alphas, betas)
             y_true = y_true.to(q.dtype)
-            k_state = k_state.squeeze(-2)
-            past_key_value.update_with_kv(kv_state, k_state.unsqueeze(-2), k, v, self.layer_idx)
+            past_key_value.update_with_kv(kv_state, k_state, k, v, self.layer_idx)
         
         # Concatenate heads and apply output projection
         y_true = y_true.transpose(1, 2).contiguous().view(b, l, self.hidden_size)

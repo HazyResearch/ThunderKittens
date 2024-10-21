@@ -7,8 +7,6 @@
 #define ATTN_H (2)
 #define ATTN_N (1024)
 
-#define LOAD_HEADS (2)
-
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();
@@ -56,11 +54,11 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*       ATTN_D*ATTN_F;
     constexpr int TOTAL_ELEMENTS_K   = ATTN_B*ATTN_H*ATTN_F;
 
-    constexpr int TOTAL_UNIQUE_ELEMENTS_QK_MAP = LOAD_HEADS*ATTN_D*ATTN_D / 2;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = LOAD_HEADS*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = LOAD_HEADS*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = LOAD_HEADS*ATTN_D*ATTN_F;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_K = LOAD_HEADS*ATTN_F;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK_MAP = ATTN_H*ATTN_D*ATTN_D / 2;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_H*ATTN_D*ATTN_F;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_K = ATTN_H*ATTN_F;
 
     float *alphas       = new float[ATTN_H];
     float *betas        = new float[ATTN_H];
@@ -89,22 +87,22 @@ int main(int argc, char **argv) {
 
         std::cout << "Starting to enter!" << std::endl;
 
-        printf("LOAD_HEADS = %d\n", LOAD_HEADS);
+        printf("ATTN_H = %d\n", ATTN_H);
         printf("TOTAL_UNIQUE_ELEMENTS_QK_MAP = %d\n", TOTAL_UNIQUE_ELEMENTS_QK_MAP);
         printf("TOTAL_UNIQUE_ELEMENTS_QK = %d\n", TOTAL_UNIQUE_ELEMENTS_QK);
         printf("TOTAL_UNIQUE_ELEMENTS_VO = %d\n", TOTAL_UNIQUE_ELEMENTS_VO);
 
         // 1, alpha and beta
-        for(int i = 0; i < LOAD_HEADS; i++) {
+        for(int i = 0; i < ATTN_H; i++) {
             infile >> alphas[i];
             printf("alphas[%d] = %f\n", i, alphas[i]);
         }
-        std::cout << "Finished loading " << LOAD_HEADS << " elements of alphas" << std::endl;
-        for(int i = 0; i < LOAD_HEADS; i++) {
+        std::cout << "Finished loading " << ATTN_H << " elements of alphas" << std::endl;
+        for(int i = 0; i < ATTN_H; i++) {
             infile >> betas[i];
             printf("betas[%d] = %f\n", i, betas[i]);
         }
-        std::cout << "Finished loading " << LOAD_HEADS << " elements of betas" << std::endl;
+        std::cout << "Finished loading " << ATTN_H << " elements of betas" << std::endl;
 
         // 2. QK map
         for(int i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) infile >> qmap[i];
@@ -149,9 +147,9 @@ int main(int argc, char **argv) {
         kmap_bf[i] = __float2bfloat16(kmap[i]);
     }
     std::cout << "maps prepared\n";
-    for(uint64_t i = LOAD_HEADS; i < ATTN_H; i++) {
-        alphas[i] = alphas[i % LOAD_HEADS];
-        betas[i]  = betas [i % LOAD_HEADS];
+    for(uint64_t i = ATTN_H; i < ATTN_H; i++) {
+        alphas[i] = alphas[i];
+        betas[i]  = betas [i];
     }
 
     std::cout << "Initializing memory on GPU\n";
@@ -185,47 +183,16 @@ int main(int argc, char **argv) {
     
     /***************** Start TK2 Changes ****************/
 
-    // Create global pointers. 
-    using q_tile = st_bf<4*16, 8*16>;
-    using k_tile = st_bf<4*16, 8*16>;
-    using v_tile = st_bf<4*16, 8*16>;
-    using o_tile = st_bf<4*16, 8*16>;
-    using kv_state_tile = st_fl<8*16, 8*16>;
-    using k_state_vec = sv_fl<8*16>;
-    using qk_map_tile = st_bf<8*16, 4*16>;
+    hedgehog_globals g = hedgehog_init(
+        d_q, d_k, d_v, d_o,
+        d_qmap, d_kmap,
+        d_k_state, d_kv_state,
+        d_alphas, d_betas,
+        ATTN_B, ATTN_H, ATTN_N
+    );
     
-    // Globals
-    using q_global = gl<bf16, -1, -1, -1, -1, q_tile>;
-    using k_global = gl<bf16, -1, -1, -1, -1, k_tile>;
-    using v_global = gl<bf16, -1, -1, -1, -1, v_tile>;
-    using o_global = gl<bf16, -1, -1, -1, -1, o_tile>;
-    using kv_state_global = gl<float, -1, -1, -1, -1, kv_state_tile>;
-    using k_state_global = gl<float, -1, -1, -1, -1, k_state_vec>;
-    using qmap_global = gl<bf16, -1, -1, -1, -1, qk_map_tile>;
-    using kmap_global = gl<bf16, -1, -1, -1, -1, qk_map_tile>;
-    
-    // Create pointers
-    using globals = hedgehog_globals;
-    q_global q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, ATTN_F};
-    k_global k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_F};
-    v_global v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    o_global o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    qmap_global qmap_arg{d_qmap, 1, ATTN_H, ATTN_F, 64};
-    kmap_global kmap_arg{d_kmap, 1, ATTN_H, ATTN_F, 64};
-    kv_state_global kv_state_arg{d_kv_state, ATTN_B, ATTN_H, ATTN_F, ATTN_D};
-    k_state_global k_state_arg{d_k_state, ATTN_B, ATTN_H, 1, ATTN_D};
-
-    globals g{
-        q_arg, k_arg, v_arg, 
-        qmap_arg, kmap_arg,
-        k_state_arg, kv_state_arg,
-        o_arg, d_alphas, d_betas
-    };
-
     /***************** End TK2 Changes ******************/
     
-    using T = kittens::bf16;
-    using H = kittens::bf16;
     cudaFuncSetAttribute(
         hedgehog_linear_attention_smd,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -238,7 +205,7 @@ int main(int argc, char **argv) {
     std::cout << "Starting kernel with " << ATTN_B*ATTN_H << " blocks and " << NUM_THREADS << " threads\n";
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        hedgehog_linear_attention_smd<<<dim3(ATTN_H,ATTN_B), NUM_THREADS, mem_size>>>(g); 
+        hedgehog_linear_attention_smd<<<dim3(ATTN_H,ATTN_B), NUM_THREADS, mem_size>>>(g, ATTN_N); 
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
@@ -279,7 +246,7 @@ int main(int argc, char **argv) {
     std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i] - o_ref[i];
-        if(should_print && i < TOTAL_UNIQUE_ELEMENTS_VO) {
+        if(should_print && i < TOTAL_ELEMENTS_VO) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
@@ -297,7 +264,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        total_o_abs += abs(o_ref[i % TOTAL_UNIQUE_ELEMENTS_VO]);
+        total_o_abs += abs(o_ref[i]);
         total_o_diff += abs(diff); 
     }
 
@@ -307,7 +274,7 @@ int main(int argc, char **argv) {
     float max_kv_diff=0, total_kv_diff=0, total_kv_abs = 0;
     for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
         float diff = kv_state[i] - kv_state_ref[i];
-        if(should_print && i < TOTAL_UNIQUE_ELEMENTS_KV) {
+        if(should_print && i < TOTAL_ELEMENTS_KV) {
             kv_state_ref_file << kv_state_ref[i] << ' ';
             kv_state_file << kv_state[i] << ' ';
             kv_state_diff_file << diff << ' ';
@@ -335,7 +302,7 @@ int main(int argc, char **argv) {
     float max_k_diff=0, total_k_diff=0, total_k_abs=0;
     for (int i = 0; i < TOTAL_ELEMENTS_K; i++) {
         float diff = k_state[i] - k_state_ref[i];
-        if (should_print && i < TOTAL_UNIQUE_ELEMENTS_K) {
+        if (should_print && i < TOTAL_ELEMENTS_K) {
             k_state_ref_file << k_state_ref[i] << ' ';
             k_state_file << k_state[i] << ' ';
             k_state_diff_file << diff << ' ';

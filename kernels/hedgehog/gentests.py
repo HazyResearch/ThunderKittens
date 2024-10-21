@@ -110,7 +110,7 @@ NAMES = ['randn', 'ones', 'qk_test', 'v_or', 'dbg']
 TESTNAME = sys.argv[1]
 
 # get inputs
-B, H, N = 4, 4, 1024
+B, H, N = 2, 2, 1024
 assert TESTNAME in NAMES, f"bad testname {TESTNAME}"
 q, k ,v, qmap, kmap, alphas, betas = generate_inputs(TESTNAME, B, H, N)
 out, kv_state, k_state = pytorch_test(q, k, v, qmap, kmap, alphas, betas)

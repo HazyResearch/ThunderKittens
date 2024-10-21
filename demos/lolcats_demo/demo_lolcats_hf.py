@@ -22,7 +22,8 @@ except ImportError:
     print("Please pip install huggingface-hub")
 
 
-system_prompt = """{prompt}"""
+system_prompt = """Below is an instruction that describes a task. Write a response that appropriately completes the request. 
+{prompt}"""
 
 
 def get_args():
@@ -306,6 +307,9 @@ def main():
     while True:
         print(f'\n>> Generating {args.num_generations} responses in parallel')
         prompt = input(f'>> Your prompt: (or cmd-c to quit)... ')
+        # Sample prompt
+        # prompt = "List the capitals of the United states in alphabetical order.\n"
+
         all_prompts = [system_prompt.format(prompt=prompt)] * args.num_generations
 
         
@@ -321,16 +325,24 @@ def main():
             model_input = tokenizer(all_prompts, return_tensors="pt").to(model.device)
             print(model_input['input_ids'].shape)
 
-            if args.use_cuda_kernels or args.benchmark:
-                # pad to next multiple of 64 (our kernel only supports this)
-                seqlen = model_input['input_ids'].shape[1]
-                multiple = seqlen - (seqlen % 64)
-                multiple = multiple + 64
-                eos_token_id = tokenizer.eos_token_id
-                model_input['input_ids'] = torch.cat([model_input['input_ids'], 
-                                                      torch.full((args.num_generations, multiple - seqlen), eos_token_id, dtype=torch.long, device=model_input['input_ids'].device)], dim=1)
-                model_input['attention_mask'] = torch.cat([model_input['attention_mask'],
-                                                            torch.full((args.num_generations, multiple - seqlen), 0, dtype=torch.long, device=model_input['attention_mask'].device)], dim=1)
+            # pad the prompt with zeros to make it a multiple of 64
+            if model_input['input_ids'].shape[1] % 64 != 0:
+                model_input['input_ids'] = torch.cat([ 
+                                                      torch.zeros((model_input['input_ids'].shape[0], 
+                                                                   64 - model_input['input_ids'].shape[1] % 64), 
+                                                                  dtype=model_input['input_ids'].dtype, 
+                                                                  device=model_input['input_ids'].device),
+                                                      model_input['input_ids']], 
+                                                     dim=1)
+                model_input['attention_mask'] = torch.cat([
+                                                            torch.zeros((model_input['attention_mask'].shape[0], 
+                                                                         64 - model_input['attention_mask'].shape[1] % 64), 
+                                                                        dtype=model_input['attention_mask'].dtype, 
+                                                                        device=model_input['attention_mask'].device),
+                                                            model_input['attention_mask']], 
+                                                             dim=1)
+            # print(model_input['input_ids'])
+            # assert model_input['input_ids'].shape[1] % 64 == 0, 'Prompt length mismatch' 
 
             if args.benchmark:
                 torch.cuda.synchronize()
@@ -353,8 +365,8 @@ def main():
                 print(f'├── Total tokens processed + generated:   {total_tokens}')
                 print(f'├── Throughput (lagged by last response): {total_tokens / elapsed:.3f} tokens/sec')
                 
-        if args.benchmark:
-            break
+        # if args.benchmark:
+        #     break
 
 if __name__ == '__main__':
     main()

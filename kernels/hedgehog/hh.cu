@@ -37,18 +37,20 @@ __device__ inline void softmax_featuremap_inplace(RT &tile) {
     div_row(tile, tile, sum_vec);
 }
 
+#define CHUNK_SIZE 64
 #define ATTN_D 128
 #define ATTN_F 128
+#define HALF_ATTN_F 64
 
 struct hedgehog_globals { 
     // shapes    
-    using q_tile = st_bf<4*16, 8*16>;
-    using k_tile = st_bf<4*16, 8*16>;
-    using v_tile = st_bf<4*16, 8*16>;
-    using o_tile = st_bf<4*16, 8*16>;
-    using kv_state_tile = st_fl<8*16, 8*16>;
-    using k_state_vec = sv_fl<8*16>;
-    using qk_map_tile = st_bf<8*16, 4*16>;
+    using q_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using k_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using v_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using o_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using kv_state_tile = st_fl<ATTN_F, ATTN_D>;
+    using k_state_vec = sv_fl<ATTN_D>;
+    using qk_map_tile = st_bf<ATTN_D, HALF_ATTN_F>;
 
     // global layouts
     using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
@@ -72,15 +74,13 @@ struct hedgehog_globals {
 
     float *alphas; 
     float *betas;
-
-    int N;
 };
 
 
 // should be launched with a grid of size (HEADS, BATCH) and blocks of 256 threads.
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void hedgehog_linear_attention_smd (
-    const __grid_constant__ hedgehog_globals g
+    const __grid_constant__ hedgehog_globals g, int N
 )  { // alpha is for linear component, beta is for sliding window component. Array, per head.
 
     extern __shared__ int __shm[]; // this is the CUDA shared memory
@@ -88,19 +88,19 @@ void hedgehog_linear_attention_smd (
 
     const int batch = blockIdx.y;
     const int head  = blockIdx.x;
-    const int batch_head_id = batch*gridDim.x + head;
-    // if(threadIdx.x == 0) printf("\nhead_id: %d, batch_id: %d, batch_head_id: %d\n\n", head_id, batch_id, batch_head_id);
+    // const int batch_head_id = batch*gridDim.x + head;
+
     float alpha = g.alphas[head];
     float beta  = g.betas [head];
 
     // smem
-    using q_tile = st_bf<4*16, 8*16>;
-    using k_tile = st_bf<4*16, 8*16>;
-    using v_tile = st_bf<4*16, 8*16>;
-    using o_tile = st_bf<4*16, 8*16>;
-    using qk_map_tile = st_bf<8*16, 4*16>;
-    using kv_state_tile = st_fl<8*16, 8*16>;
-    using k_state_vec = sv_fl<8*16>;
+    using q_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using k_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using v_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using o_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using kv_state_tile = st_fl<ATTN_F, ATTN_D>;
+    using k_state_vec = sv_fl<ATTN_D>;
+    using qk_map_tile = st_bf<ATTN_D, HALF_ATTN_F>;
     q_tile (&q_smem)[2] = al.allocate<q_tile, 2>(); // 32k, (tic/toc)*16k
     k_tile (&k_smem)[3] = al.allocate<k_tile, 3>(); // 48k, (3-ring)*(64x128)
     v_tile (&v_smem)[3] = al.allocate<v_tile, 3>(); // 48k, (3-ring)*(64x128)
@@ -109,14 +109,14 @@ void hedgehog_linear_attention_smd (
     qk_map_tile (&kf_map) = al.allocate<qk_map_tile>(); // 16k, for fusing featuremap computation
 
     // norm stuff
-    st_bf<4*16, 8*16> (&kv_smem)[2] = al.allocate<st_bf<4*16, 8*16>, 2>(); // 32k, 64x128 featurized 
-    row_vec<st_fl<4*16,4*16>> (&cumsum_k_smem)[2] = al.allocate<row_vec<st_fl<4*16,4*16>>, 2>(); // smol
-    col_vec<st_fl<4*16,4*16>> (&norm_exchange)[2] = al.allocate<col_vec<st_fl<4*16,4*16>>, 2>(); // smol
-    st_bf<4*16, 4*16> (*k_scratch_smem)     = reinterpret_cast<st_bf<4*16, 4*16>*>(&kv_smem[0].data[0]);
+    st_bf<CHUNK_SIZE, ATTN_F> (&kv_smem)[2] = al.allocate<st_bf<CHUNK_SIZE, ATTN_F>, 2>(); // 32k, 64x128 featurized 
+    row_vec<st_fl<CHUNK_SIZE,4*16>> (&cumsum_k_smem)[2] = al.allocate<row_vec<st_fl<CHUNK_SIZE,4*16>>, 2>(); // smol
+    col_vec<st_fl<CHUNK_SIZE,4*16>> (&norm_exchange)[2] = al.allocate<col_vec<st_fl<CHUNK_SIZE,4*16>>, 2>(); // smol
+    st_bf<CHUNK_SIZE, 4*16> (*k_scratch_smem)     = reinterpret_cast<st_bf<CHUNK_SIZE, 4*16>*>(&kv_smem[0].data[0]);
 
     int warpid = kittens::warpid();
     int warpgroupid = warpid/4;
-    int blocks = g.N / (q_tile::rows);
+    int blocks = N / (q_tile::rows);
 
     int tic = 0, toc = 1;
     int ring_id = 0;
@@ -133,8 +133,8 @@ void hedgehog_linear_attention_smd (
             size_bytes<typeof(kf_map)>
         );
         // first thing we need to do is load the QK map
-        tma::load_async(qf_map, g.qmap, {batch, 0, head,0}, qkv_barrier); // load the right head
-        tma::load_async(kf_map, g.kmap, {batch, 0, head,0}, qkv_barrier);
+        tma::load_async(qf_map, g.qmap, {0, head, 0, 0}, qkv_barrier); // load the right head
+        tma::load_async(kf_map, g.kmap, {0, head, 0, 0}, qkv_barrier);
         // now we also load the first data we need
         tma::load_async(q_smem[tic],  g.q,      {batch, head, 0, 0}, qkv_barrier);
         tma::load_async(k_smem[ring_id+1], g.k, {batch, head, 0, 0}, qkv_barrier);
@@ -176,7 +176,6 @@ void hedgehog_linear_attention_smd (
         if(warpgroupid == 0) {
 
             // ******* sliding window attn ******* // 
-
             rt_fl<1*16, 4*16> att_block[2];
             rt_bf<1*16, 4*16> att_block_bf[2];
             rt_fl<1*16, 4*16>::col_vec max_vec;
@@ -238,7 +237,6 @@ void hedgehog_linear_attention_smd (
             // ******* linear attn ******** // 
 
             // matmul to generate linear_q before softmax
-
             rt_fl<1*16, 4*16> linear_q;
             rt_bf<1*16, 4*16> linear_q_bf;
 
@@ -301,7 +299,6 @@ void hedgehog_linear_attention_smd (
         tma::store_async_wait();
 
         // next step is to sum two norm vecs
-        
         if(warpgroupid == 1) {
             warpgroup::store(o_smem, linear_o);
             warpgroup::store(norm_exchange[0], linear_norm_vec);
@@ -329,7 +326,6 @@ void hedgehog_linear_attention_smd (
     tma::store_async_wait();
 
     // Finally we want to write out the kv state and the k state
-    
     // reinterpret k state as a vector of length 128, to save a tma call
     k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
     // store out kv state into smem.
@@ -346,24 +342,21 @@ void hedgehog_linear_attention_smd (
     tma::store_async_wait();
 }
 
-#ifdef TK_COMPILE_HEDGEHOG
-#include "common/pyutils/torch_helpers.cuh"
-#include <iostream>
-void dispatch_hedgehog( 
+hedgehog_globals hedgehog_init(
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
     bf16 *d_qmap, bf16 *d_kmap,
     float *d_k_state, float *d_kv_state,
     float *d_alphas, float *d_betas,
     int ATTN_B, int ATTN_H, int ATTN_N
-){
+) {
     // global pointers. 
-    using q_tile = st_bf<4*16, 8*16>;
-    using k_tile = st_bf<4*16, 8*16>;
-    using v_tile = st_bf<4*16, 8*16>;
-    using o_tile = st_bf<4*16, 8*16>;
-    using kv_state_tile = st_fl<8*16, 8*16>;
-    using k_state_vec = sv_fl<8*16>;
-    using qk_map_tile = st_bf<8*16, 4*16>;
+    using q_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using k_tile = st_bf<CHUNK_SIZE, ATTN_F>;
+    using v_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using o_tile = st_bf<CHUNK_SIZE, ATTN_D>;
+    using kv_state_tile = st_fl<ATTN_F, ATTN_D>;
+    using k_state_vec = sv_fl<ATTN_D>;
+    using qk_map_tile = st_bf<ATTN_D, HALF_ATTN_F>;
     
     using q_global = gl<bf16, -1, -1, -1, -1, q_tile>;
     using k_global = gl<bf16, -1, -1, -1, -1, k_tile>;
@@ -379,8 +372,8 @@ void dispatch_hedgehog(
     k_global k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_F};
     v_global v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
     o_global o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    qmap_global qmap_arg{d_qmap, 1, ATTN_H, ATTN_F, 64};
-    kmap_global kmap_arg{d_kmap, 1, ATTN_H, ATTN_F, 64};
+    qmap_global qmap_arg{d_qmap, 1, ATTN_H, ATTN_F, HALF_ATTN_F};
+    kmap_global kmap_arg{d_kmap, 1, ATTN_H, ATTN_F, HALF_ATTN_F};
     kv_state_global kv_state_arg{d_kv_state, ATTN_B, ATTN_H, ATTN_F, ATTN_D};
     k_state_global k_state_arg{d_k_state, ATTN_B, ATTN_H, 1, ATTN_D};
 
@@ -388,9 +381,28 @@ void dispatch_hedgehog(
         q_arg, k_arg, v_arg, 
         qmap_arg, kmap_arg,
         k_state_arg, kv_state_arg,
-        o_arg, d_alphas, d_betas,
-        ATTN_N
+        o_arg, d_alphas, d_betas
     };
+    return g;
+}
+
+#ifdef TK_COMPILE_HEDGEHOG
+#include "common/pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_hedgehog( 
+    bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
+    bf16 *d_qmap, bf16 *d_kmap,
+    float *d_k_state, float *d_kv_state,
+    float *d_alphas, float *d_betas,
+    int ATTN_B, int ATTN_H, int ATTN_N
+){
+    hedgehog_globals g = hedgehog_init(
+        d_q, d_k, d_v, d_o,
+        d_qmap, d_kmap,
+        d_k_state, d_kv_state,
+        d_alphas, d_betas,
+        ATTN_B, ATTN_H, ATTN_N
+    );
 
     // launch
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
@@ -400,7 +412,7 @@ void dispatch_hedgehog(
         mem_size
     );
     dim3 grid(ATTN_H, ATTN_B);
-    hedgehog_linear_attention_smd<<<grid,NUM_THREADS,mem_size>>>(g);
+    hedgehog_linear_attention_smd<<<grid,NUM_THREADS,mem_size>>>(g, ATTN_N);
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
@@ -436,13 +448,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     TORCH_CHECK(v.size(1) == H, "v heads?");
     TORCH_CHECK(v.size(2) == N, "v length?");
 
-    // TORCH_CHECK(qmap.size(0) == 1, "qmap batch?");
-    // printf("qmap size: %d %d %d\n", qmap.size(0), qmap.size(1), qmap.size(2));
     TORCH_CHECK(qmap.size(0) == H, "qmap heads?");
     TORCH_CHECK(qmap.size(1) == FD, "qmap length?");
     TORCH_CHECK(qmap.size(2) == 64, "qmap length?");
 
-    // TORCH_CHECK(kmap.size(0) == 1, "kmap batch?");
     TORCH_CHECK(kmap.size(0) == H, "kmap heads?");
     TORCH_CHECK(kmap.size(1) == FD, "kmap length?");
     TORCH_CHECK(kmap.size(2) == 64, "kmap length?");
@@ -483,7 +492,6 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     );
 
     CHECK_CUDA_ERROR(cudaGetLastError());
-    
     return std::make_tuple(out, kv_state, k_state);
 }
 #else

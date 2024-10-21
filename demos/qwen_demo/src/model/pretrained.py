@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 import transformers
-from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def get_pretrained_loader(pretrained_model_name_or_path: str,
@@ -99,14 +99,7 @@ class PretrainedModelLoader():
         """
         Load pretrained tokenizer
         """
-        try:
-            return AutoTokenizer.from_pretrained(**self.loading_kwargs)
-        except Exception as e:
-            print("-> Error with `AutoTokenizer.from_pretrained(**self.loading_kwargs)`:", e)
-            print("-> Trying `LlamaTokenizer.from_pretrained(**self.loading_kwargs)`")
-            # MZ 6/1: Mistral-7B-Instruct-v0.3 in Transformers v4.36 doesn't work with the above
-            return LlamaTokenizer.from_pretrained(**self.loading_kwargs)  
-
+        return AutoTokenizer.from_pretrained(**self.loading_kwargs)
 
 class PretrainedQwenLoader(PretrainedModelLoader):
     def load(self, model_type: str = 'flash_attention_2'):
@@ -126,5 +119,3 @@ class PretrainedQwenLoader(PretrainedModelLoader):
 
     def load_tokenizer(self):
         return AutoTokenizer.from_pretrained(**self.loading_kwargs)
-
-

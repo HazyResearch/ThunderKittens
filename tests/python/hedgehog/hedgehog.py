@@ -150,7 +150,11 @@ def run_test(testname, B, H, N):
     print(o[rand_b,rand_h,rand_n,:8])
     print(o_ref[rand_b,rand_h,rand_n,:8])
     avg_diff, avg_magnitude, avg_error = print_errors('kv_state', kv_state_ref, kv_state)
-    avg_diff, avg_magnitude, avg_error = print_errors('k_state', k_state_ref, k_state)
+    if (avg_error > 0.1):
+        breakpoint()
+    avg_diff, avg_magnitude, avg_error = print_errors('k_state', k_state_ref, k_state.squeeze(2))
+    if (avg_error > 0.1):
+        breakpoint()
 
 tests = {
     'testname': [
