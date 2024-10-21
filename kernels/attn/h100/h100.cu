@@ -83,6 +83,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             init_barrier(v_smem_arrived[j], 0, 1); 
             init_barrier(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         
         tma::expect_bytes(qsmem_barrier, sizeof(q_smem));
 
@@ -100,7 +101,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             tma::load_async(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
         }
     }
-
     __syncthreads(); 
 
     int pipe_idx = K::stages - 1; 
@@ -216,17 +216,15 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
-        // group<12>::sync(10); // ffs
-        
         div_row(o_reg, o_reg, norm_vec);
 
         warpgroup::store(o_smem[warpgroupid], o_reg); 
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         warpgroup::sync();
 
         if (warpid % 4 == 0) {
             int4 o_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + warpgroupid, 0};
             tma::store_async(g.o, o_smem[warpgroupid], o_tile_idx);
-            tma::store_commit_group();
         }
 
         mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
@@ -235,16 +233,14 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
         else                   { mul(norm_vec, norm_vec, -11.313708499f); }
-
-        warpgroup::sync(); 
     
         warpgroup::store(l_smem[warpgroupid], norm_vec);
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         warpgroup::sync();
         
         if (warpid % 4 == 0) {
             int4 tile_idx = {blockIdx.z, blockIdx.y, 0, (seq_idx) + warpgroupid};
             tma::store_async(g.l, l_smem[warpgroupid], tile_idx);
-            tma::store_commit_group();
         }
     
         tma::store_async_wait();
@@ -294,6 +290,7 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
 
     if (threadIdx.x == 0) {
         init_barrier(smem_barrier, 0, 1);
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         tma::expect_bytes(smem_barrier, sizeof(og_smem[0]) * 4 * 2);
     }
     __syncthreads();
@@ -315,6 +312,7 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     row_sum(d_reg, og_reg);
     
     store(d_smem[warpid], d_reg);
+    asm volatile("fence.proxy.async;\n" ::: "memory");
     __syncthreads(); 
 
     if (warpid == 0) {
@@ -322,7 +320,6 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
             int4 tile_idx = {blockIdx.z, blockIdx.y, 0, (blockIdx.x * 4) + w};
             tma::store_async(g.d, d_smem[w], tile_idx);
         }
-        tma::store_commit_group();
     }
 
     tma::store_async_wait();
@@ -454,6 +451,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             
             init_barrier(compute_done[s], 1, 0);
         }
+        asm volatile("fence.proxy.async;\n" ::: "memory");
 
         tma::expect_bytes(kv_b, (sizeof(k_smem[0]) + sizeof(v_smem[0])) * BWD_CONSUMER_WARPGROUPS);
         for (int w = 0; w < BWD_CONSUMER_WARPGROUPS; w++) {
@@ -473,7 +471,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         tma::load_async(l_smem[tic], g.l, vec_idx, vec_b[tic]);
         tma::load_async(d_smem[tic], g.d, vec_idx, vec_b[tic]);
     }
-
     __syncthreads(); 
 
     if (warpgroupid == BWD_NUM_WARPGROUPS - 1) {
@@ -504,7 +501,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 
                 int4 tile_idx = {blockIdx.z, blockIdx.y, qo_idx, 0};
                 tma::store_add_async(g.qg, qg_smem, tile_idx);
-                tma::store_commit_group();
                 tma::store_async_wait();
                 
                 if(laneid() == 0) arrive(qg_ready); 
@@ -604,6 +600,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             warpgroup::mma_commit_group();
             
             warpgroup::mma_async_wait();
+            asm volatile("fence.proxy.async;\n" ::: "memory");
             asm volatile("bar.sync 10, 256;\n");
 
             warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
@@ -619,6 +616,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             warpgroup::mma_async_wait();
             warpgroup::store(qg_smem, qg_reg);
 
+            asm volatile("fence.proxy.async;\n" ::: "memory");
             asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroup::groupid()+4));
 
             if (warpgroup::laneid() == 0) arrive(compute_done[tic]);
@@ -629,6 +627,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         if (warpgroupid == 0) warpgroup::store(kg_smem[0], kg_reg);
         if (warpgroupid == 1) warpgroup::store(kg_smem[1], kg_reg);
 
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroup::groupid()+4));
 
         if (warpid == 0) {
@@ -646,6 +645,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         if(warpgroupid == 0) warpgroup::store(vg_smem[0], vg_reg);
         if(warpgroupid == 1) warpgroup::store(vg_smem[1], vg_reg);
         
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroup::groupid()+4));
 
         if (warpid == 0) {
@@ -750,6 +750,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
             warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
+            asm volatile("fence.proxy.async;\n" ::: "memory");
             asm volatile("bar.sync 10, 256;\n");
         }
 
@@ -758,6 +759,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         if (warpgroupid == 0) warpgroup::store(kg_smem[0], kg_reg);
         if (warpgroupid == 1) warpgroup::store(kg_smem[1], kg_reg);
 
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroup::groupid()+4));
 
         if (warpid == 0) {
@@ -775,6 +777,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         if(warpgroupid == 0) warpgroup::store(vg_smem[0], vg_reg);
         if(warpgroupid == 1) warpgroup::store(vg_smem[1], vg_reg);
         
+        asm volatile("fence.proxy.async;\n" ::: "memory");
         asm volatile("bar.sync %0, 128;\n" :: "r"(warpgroup::groupid()+4));
 
         if (warpid == 0) {
