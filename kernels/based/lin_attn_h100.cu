@@ -17,22 +17,32 @@ struct based_globals {
     // shapes    
     static constexpr int dv = 64;
     static constexpr int fd = 16;
-    using q_tile = st_bf<4*16, 1*fd>;
-    using k_tile = st_bf<4*16, 1*fd>;
-    using v_tile = st_bf<4*16, 1*dv>;
-    using o_tile = st_bf<4*16, 1*dv>;
+
+    using q_tile = st_bf<4*16, fd>;
+    using k_tile = st_bf<4*16, fd>;
+    using v_tile = st_bf<4*16, dv>;
+    using o_tile = st_bf<4*16, dv>;
+    using kv_a0_tile = sv_bf<dv>; // kv state
+    using kv_a1_tile = st_bf<dv, fd>; 
+    using kv_a2_tile = st_bf<dv, 4*fd>;
 
     // global layouts
     using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
     using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
     using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
     using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using kv_a0_gl = gl<bf16,  -1, -1, -1, -1, kv_a0_tile>;
+    using kv_a1_gl = gl<bf16,  -1, -1, -1, -1, kv_a1_tile>;
+    using kv_a2_gl = gl<bf16,  -1, -1, -1, -1, kv_a2_tile>;
 
     // pointers
     q_gl q;
     k_gl k;
     v_gl v, v3;
     o_gl o;
+    kv_a0_gl kv_a0;
+    kv_a1_gl kv_a1;
+    kv_a2_gl kv_a2;
     int n;
 };
 
@@ -192,6 +202,9 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         warpgroup::mma_commit_group(); // dew it
         warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
 
+        // temperature scaling; divide a1 term by sqrt(d)
+        mul(local_attn, local_attn, 0.25f);
+
         // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
         copy(temp_attn_accum, local_attn);
         mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it
@@ -211,16 +224,22 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         warpgroup::mma_fence(a1_trans); // a1 accumulation matmul fence
         warpgroup::mm_AB(o, local_attn_bf, v_s[tic]); // reset o here, and do local chunk.
         warpgroup::mma_commit_group(); // dew it
-        warpgroup::mma_ABt(o, q_s[tic], a1_trans_s); // incorporate a1 onto o
+
+        rt_bf<1*16,1*16> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
+        warpgroup::load(q_src, q_s[tic]);
+        // temperature scaling; divide by d
+        mul(q_src, q_src, __float2bfloat16(0.25));
+        
+        warpgroup::mma_ABt(o, q_src, a1_trans_s); // incorporate a1 onto o (SA: FLAG WAS q_smem[tic] HERE)
         warpgroup::mma_commit_group(); // dew it
+
+        // a1 kv state
         warpgroup::mma_AtB(a1_trans, v_s_2[tic], k_s[tic]); // we now have 4 1x4 registers that need to eventually be summed.
         warpgroup::mma_commit_group(); // dew it
         warpgroup::mma_async_wait(); // tmp
         warpgroup::store(a1_trans_s, a1_trans);
 
-        rt_bf<1*16,1*16> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
-        warpgroup::load(q_src, q_s[tic]);
-        mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here.
+        mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices 
         rt_bf<4*16,1*16> k_src_tmp;
         rt_bf<1*16,4*16> k_src;
         load(k_src_tmp, k_s[tic]);
@@ -274,6 +293,87 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         }
     }
     tma::store_async_wait();
+
+    // save the KV state (A2)
+    for (int rt = 0; rt < 4; rt++) {
+        // reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
+        // it tells the compiler to treat a2_s as a reference to the type we've specified.
+        auto &kv_smem_2 = reinterpret_cast<st_bf<4*16,4*16>&>(a2_s); // this layout is better for global HBM stores so we cast.
+        mul(a2[rt], a2[rt], (0.70710678118*0.70710678118*0.25*1.41421)); // divides by math.sqrt(math.sqrt(D_QK))
+        warpgroup::store(kv_smem_2, a2[rt]); 
+        __syncthreads();
+        if (warpid == 0) {
+            // int tile_idx = (blockIdx.x * 4) + rt; 
+            tma::store_async(g.kv_a2, kv_smem_2, {batch, head, rt, 0});  // tile_idx
+            tma::store_commit_group(); 
+        }
+        tma::store_async_wait();
+    }
+    // save the KV state A1
+    auto &kv_smem_1 = reinterpret_cast<st_bf<4*16,1*16>&>(a1_trans_s);
+    mul(a1_trans, a1_trans, 0.5);  // divides by math.sqrt(math.sqrt(D_QK))
+    warpgroup::store(kv_smem_1, a1_trans);   // from individual warps to shared address
+    __syncthreads();
+    if (warpid == 0) {    // one warp takes care of the write to HBM
+        tma::store_async(g.kv_a1, kv_smem_1, {batch, head, 0, 0}); 
+        tma::store_commit_group(); 
+    }
+    tma::store_async_wait();
+    // save the KV state A0
+    if (warpid == 0) {   
+        tma::store_async(g.kv_a0, a0_total, {batch, head, 0, 0}); 
+        tma::store_commit_group(); 
+    }
+    tma::store_async_wait();
+
+}
+
+
+based_globals based_init(
+    bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
+    bf16 *d_kv_a2, bf16 *d_kv_a1, bf16 *d_kv_a0,
+    int ATTN_B, int ATTN_H, int ATTN_N
+) {
+    // global pointers
+    int ATTN_D = 64; 
+    int ATTN_D_SMALL = 16;
+
+    static constexpr int dv = 64;
+    static constexpr int fd = 16;
+
+    using q_tile = st_bf<4*16, fd>;
+    using k_tile = st_bf<4*16, fd>;
+    using v_tile = st_bf<4*16, dv>;
+    using o_tile = st_bf<4*16, dv>;
+    using kv_a0_tile = sv_bf<dv>; // kv state
+    using kv_a1_tile = st_bf<dv, fd>; 
+    using kv_a2_tile = st_bf<dv, 4*fd>;
+
+    // global layouts
+    using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
+    using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
+    using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using kv_a0_gl = gl<bf16,  -1, -1, -1, -1, kv_a0_tile>;
+    using kv_a1_gl = gl<bf16,  -1, -1, -1, -1, kv_a1_tile>;
+    using kv_a2_gl = gl<bf16,  -1, -1, -1, -1, kv_a2_tile>;
+
+    using globals = based_globals;
+
+    q_gl q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    k_gl k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
+    v_gl v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    v_gl v_3_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    o_gl o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
+    kv_a0_gl kv_a0{d_kv_a0, ATTN_B, ATTN_H, 1, ATTN_D};
+    kv_a1_gl kv_a1{d_kv_a1, ATTN_B, ATTN_H, ATTN_D, ATTN_D_SMALL};
+    kv_a2_gl kv_a2{d_kv_a2, ATTN_B, ATTN_H, ATTN_D_SMALL*ATTN_D_SMALL, ATTN_D};
+
+    globals g{
+        q_arg, k_arg, v_arg, v_3_arg, o_arg, 
+        kv_a0, kv_a1, kv_a2, ATTN_N
+    };
+    return g;
 }
 
 
@@ -282,29 +382,14 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 #include <iostream>
 void dispatch_based( 
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
+    bf16 *d_kv_a2, bf16 *d_kv_a1, bf16 *d_kv_a0,
     int ATTN_B, int ATTN_H, int ATTN_N
 ){
-    // global pointers
-    int ATTN_D = 64; 
-    int ATTN_D_SMALL = 16;
-
-    using q_tile = st_bf<4*16, 1*16>;
-    using k_tile = st_bf<4*16, 1*16>;
-    using v_tile = st_bf<4*16, 1*64>;
-    using o_tile = st_bf<4*16, 1*64>;
-
-    using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
-    using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
-    using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
-    using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
-    using globals = based_globals;
-
-    q_gl q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
-    k_gl k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, ATTN_D_SMALL};
-    v_gl v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    v_gl v_3_arg{d_v, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    o_gl o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, ATTN_D};
-    globals g{q_arg, k_arg, v_arg, v_3_arg, o_arg, ATTN_N};
+    based_globals g = based_init(
+        d_q, d_k, d_v, d_o, 
+        d_kv_a2, d_kv_a1, d_kv_a0,
+        ATTN_B, ATTN_H, ATTN_N
+    );
 
     // launch
     unsigned long mem_size = 98000;
@@ -331,6 +416,7 @@ torch::Tensor based(
     int H = q.size(1);
     int DV = v.size(3);
     int N = q.size(2);
+    int FD = k.size(3);
 
     // checks
     TORCH_CHECK(k.size(0) == B, "k batch?");
@@ -343,6 +429,9 @@ torch::Tensor based(
 
     // allocate output
     torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
+    torch::Tensor kv_a0 = torch::empty({B, H, 1,  DV}, v.options());
+    torch::Tensor kv_a1 = torch::empty({B, H, DV, FD}, v.options());
+    torch::Tensor kv_a2 = torch::empty({B, H, DV, FD*FD}, v.options());
 
     // convert to bf16
     c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
@@ -353,8 +442,15 @@ torch::Tensor based(
     bf16 *d_k = reinterpret_cast<bf16*>(k_bf16);
     bf16 *d_v = reinterpret_cast<bf16*>(v_bf16);
     bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a0 = reinterpret_cast<bf16*>(kv_a0.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a1 = reinterpret_cast<bf16*>(kv_a1.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a2 = reinterpret_cast<bf16*>(kv_a2.data_ptr<c10::BFloat16>());
 
-    dispatch_based(d_q, d_k, d_v, d_o, B, H, N);
+    dispatch_based(
+        d_q, d_k, d_v, d_o, 
+        d_kv_a2, d_kv_a1, d_kv_a0, 
+        B, H, N
+    );
 
     CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
