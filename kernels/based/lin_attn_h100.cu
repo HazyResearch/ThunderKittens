@@ -1,6 +1,7 @@
 #include "kittens.cuh"
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
+#include <tuple>
 
 #ifdef TORCH_COMPILE
 #define TK_COMPILE_BASED
@@ -403,7 +404,7 @@ void dispatch_based(
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
-torch::Tensor based(
+std::tuple<torch::Tensor, torch::Tensor> based(
     const torch::Tensor q, 
     const torch::Tensor k,
     const torch::Tensor v
@@ -431,7 +432,7 @@ torch::Tensor based(
     torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
     torch::Tensor kv_a0 = torch::empty({B, H, 1,  DV}, v.options());
     torch::Tensor kv_a1 = torch::empty({B, H, DV, FD}, v.options());
-    torch::Tensor kv_a2 = torch::empty({B, H, DV, FD*FD}, v.options());
+    torch::Tensor kv_a2 = torch::empty({B, H, FD*FD, DV}, v.options());
 
     // convert to bf16
     c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
@@ -452,8 +453,11 @@ torch::Tensor based(
         B, H, N
     );
 
+    kv_a1 = kv_a1.transpose(2, 3);
+    torch::Tensor kv_concat = torch::cat({kv_a2, kv_a1, kv_a0}, /*dim=*/2);
+
     CHECK_CUDA_ERROR(cudaGetLastError());
-    return out;
+    return std::make_tuple(out, kv_concat);
 }
 #else
 #include "harness.impl"

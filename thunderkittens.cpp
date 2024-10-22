@@ -36,7 +36,7 @@ extern std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
 #endif
 
 #ifdef TK_COMPILE_BASED
-extern torch::Tensor based(
+extern std::tuple<torch::Tensor, torch::Tensor> based(
     const torch::Tensor q, 
     const torch::Tensor k, 
     const torch::Tensor v

@@ -27,8 +27,13 @@ We include:
 
 Based is a state-of-the-art linear attention architecture that combines short sliding window attentions with large-state-size linear attentions. TK includes a forwards / prefill kernel.
 
+Added installs:
+```bash
+pip install -U git+https://github.com/sustcsonglin/flash-linear-attention
+```
+
 We include:
-1. LLM inference integration:
+LLM inference integration:
 - Run [Based 1.3B](https://huggingface.co/hazyresearch/my-awesome-model) with TK on a series of recall-intensive in-context learning tasks
 
 
