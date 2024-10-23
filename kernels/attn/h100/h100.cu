@@ -666,7 +666,8 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
         wait(kv_b, 0);
 
-        for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
+        auto qo_idx = q_start;
+        for (qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
 
             wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
 
