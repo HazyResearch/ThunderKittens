@@ -10,14 +10,11 @@ using namespace kittens;
 constexpr int R = 32, D = 64; // height of tiles
 template<typename T=bf16, typename L=row_l> using qkvo_tile = rt<T, R, D, L>;
 template<typename T=float> using attn_tile = rt<T, R, R>;
-using shared_tile = st_bf<R, D>;
+using shared_tile = st_bf<R, D, wmma_l>;
 using global_layout = gl<bf16, -1, -1, -1, D>; // B, H, N specified at runtime, D=64 known at compile time for this kernel
 struct globals {
     global_layout Qg, Kg, Vg, Og;
 };
-
-#define PRINT_MESSAGE(msg) if(laneid() == 0) printf("warp (%d) %s\n", workerid, msg); __syncwarp();
-#define PRINT_MESSAGE_d(msg, arg) if(laneid() == 0) printf("warp (%d) %s, %d\n", workerid, msg, arg); __syncwarp();
 
 __launch_bounds__(NUM_WORKERS*32, 1)
 __global__ void attend_ker64(const __grid_constant__ globals g) {
@@ -70,8 +67,8 @@ __global__ void attend_ker64(const __grid_constant__ globals g) {
 
         if(kv_idx+1 < kv_blocks) {
             int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
-            load_async(k_smem[loadid][tic^1], g.Kg, {batch, head, next_load_idx, 0});
-            load_async(v_smem[loadid][tic^1], g.Vg, {batch, head, next_load_idx, 0});
+            load_group::load_async(k_smem[loadid][tic^1], g.Kg, {batch, head, next_load_idx, 0});
+            load_group::load_async(v_smem[loadid][tic^1], g.Vg, {batch, head, next_load_idx, 0});
             load_async_wait<2>(); // next k, v can stay in flight.
         }
         else {
