@@ -350,6 +350,7 @@ __device__ static inline void make_causal_t(RT &dst, const RT &src, const typena
                 }
                 
             }
+            __syncwarp();
         }
     }
 }

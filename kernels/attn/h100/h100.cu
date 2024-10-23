@@ -180,7 +180,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
                         if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
                         else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
-                        __syncwarp();
                     }
                 }
             }
@@ -248,7 +247,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     
         tma::store_async_wait();
     }
-    __syncthreads();
+    // __syncthreads();
 }
 
 template<int D>
@@ -441,7 +440,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     __shared__ kittens::barrier compute_done[2], qg_ready; 
 
     int tic = 0, toc = 1;
-    const int q_start = (is_causal) ? (blockIdx.x) : (0);
+    const int q_start = (is_causal) ? (blockIdx.x * 2) : (0);
 
     if (threadIdx.x == 0) {
         init_barrier(kv_b,  0, 1);
