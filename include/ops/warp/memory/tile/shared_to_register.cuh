@@ -188,7 +188,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 }
                 else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
                     asm volatile("wmma.store.d.sync.aligned.row.m16n16k16.shared.f32 [%8], {%0, %1, %2, %3, %4, %5, %6, %7};\n"
-                                 :: "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[3].x), "=f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                                 :: "f"(tmp[0].x), "f"(tmp[0].y), "f"(tmp[1].x), "f"(tmp[1].y), "f"(tmp[2].x), "f"(tmp[2].y), "f"(tmp[3].x), "f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
                 }
                 else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 2) {
                     asm volatile("wmma.store.d.sync.aligned.col.m16n16k16.shared.f16 [%4], {%0, %1, %2, %3};\n"
@@ -196,7 +196,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 }
                 else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 4) {
                     asm volatile("wmma.store.d.sync.aligned.col.m16n16k16.shared.f32 [%8], {%0, %1, %2, %3, %4, %5, %6, %7};\n"
-                                 :: "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[3].x), "=f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                                 :: "f"(tmp[0].x), "f"(tmp[0].y), "f"(tmp[2].x), "f"(tmp[2].y), "f"(tmp[1].x), "f"(tmp[1].y), "f"(tmp[3].x), "f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
                 }
             }
             else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {

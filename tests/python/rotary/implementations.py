@@ -163,7 +163,7 @@ def apply_rotary_emb_tk(dt, b, h, n, dv, verbose=False):
 
 
 IMPLEMENTATIONS = {
-    'flash_rotary': apply_flash_rotary,
-    'rotary_emb_torch': apply_rotary_emb_torch,
-    'rotary_emb_tk': apply_rotary_emb_tk
+    'flash_triton_rotary': apply_flash_rotary,
+    'torch_rotary': apply_rotary_emb_torch,
+    'tk_rotary': apply_rotary_emb_tk
 }

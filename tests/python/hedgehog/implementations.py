@@ -94,6 +94,7 @@ def get_flops(batch, seqlen, headdim, nheads):
     f = (attn_flops * pct_swa) + (lin_flops * pct_lin)
     return f
 
+
 def generate_inputs(testname, B, H, N):
     alphas = torch.rand((H,), dtype=torch.float32, device='cuda')*3
     betas = torch.rand((H,), dtype=torch.float32, device='cuda')
@@ -170,35 +171,40 @@ def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
         
         return x
     
-    torch.cuda.synchronize()
-    t0 = time.time()
+    try:
+        torch.cuda.synchronize()
+        t0 = time.time()
 
-    Qs = pytorch_softmax_gt(Q, Qmap)
-    Ks = pytorch_softmax_gt(K, Kmap)
-    
-    a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
-    a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
-    # mask
-    a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # zero out unwanted entries
-    a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
-    a_exp -= a_exp.amax(dim=-1, keepdim=True)
-    a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
+        Qs = pytorch_softmax_gt(Q, Qmap)
+        Ks = pytorch_softmax_gt(K, Kmap)
+        a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
+        a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
+        # mask
+        a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # zero out unwanted entries
+        a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
+        a_exp -= a_exp.amax(dim=-1, keepdim=True)
+        a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
 
-    a = a_exp + a_lin
-    a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
-    
-    out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
+        a = a_exp + a_lin
+        a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
+        
+        out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
+        kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
+        k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
 
-    torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
 
-    kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
-    k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
-    state_size = kv_state.numel()
+    except:
+        tot = -1
+        out = None
+        kv_state = None
+        k_state = None
+    # state_size = kv_state.numel()
     # print(f"state_size: {state_size}")
     
-    return out, tot
+    return (out, kv_state, k_state), tot
 
 
 def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
@@ -219,7 +225,7 @@ def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
         tot = -1
         o = None
 
-    return o, tot
+    return (o, kv_state, k_state), tot
 
 
 def profile_hedgehog_fla(dt, b, h, n, dv, verbose=True, **kwargs):
@@ -271,56 +277,9 @@ def profile_hedgehog_fla(dt, b, h, n, dv, verbose=True, **kwargs):
     return o, tot
 
 
-def print_errors(name, x_true, x):
-    avg_diff = torch.mean(torch.abs(x_true.to(torch.float32) - x.to(torch.float32)))
-    avg_magnitude = torch.mean(torch.abs(x_true.to(torch.float32)))
-    avg_error = avg_diff / avg_magnitude
-    print(f'Reporting error for {name:10s}: avg_diff={avg_diff:.8f}, avg_magnitude={avg_magnitude:2.4f}, avg_error={avg_error*100:.2f}%')
-    return avg_diff, avg_magnitude, avg_error
-
-
-def test_correctness(testname, B, H, N):
-    assert(N%64==0)
-    q, k, v, qmap, kmap, alphas, betas = generate_inputs(testname, B, H, N)
-    o_ref, kv_state_ref, k_state_ref = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
-
-    o = torch.zeros_like(o_ref)
-    kv_state = torch.zeros_like(kv_state_ref)
-    k_state = torch.zeros_like(k_state_ref)
-    """
-    Q, K, V, O are bf16 (B,H,N,128)
-    k_state is fp32 (B,H,128)
-    kv_state is fp32 (B,H,128,128)
-    qmap is bf16 (H,128,64)
-    kmap is bf16 (H,128,64)
-    alphas is fp32 (H,)
-    betas is fp32 (H,)
-    """
-    o = tk.hedgehog(q, k, v, qmap, kmap, alphas, betas)
-    print(f"{q.shape=}, {k.shape=}, {v.shape=}, {qmap.shape=}, {kmap.shape=}, {alphas.shape=}, {betas.shape=}")
-    o, kv_state, k_state = o
-
-    print(testname)
-    avg_diff, avg_magnitude, avg_error = print_errors('O', o_ref, o)
-    if (avg_error > 0.1):
-        breakpoint()
-    print(o.shape)
-    rand_b = torch.randint(0, B, (1,))
-    rand_h = torch.randint(0, H, (1,))
-    rand_n = torch.randint(0, N, (1,))
-    print(o[rand_b,rand_h,rand_n,:8])
-    print(o_ref[rand_b,rand_h,rand_n,:8])
-    avg_diff, avg_magnitude, avg_error = print_errors('kv_state', kv_state_ref, kv_state)
-    if (avg_error > 0.1):
-        breakpoint()
-    avg_diff, avg_magnitude, avg_error = print_errors('k_state', k_state_ref, k_state.squeeze(2))
-    if (avg_error > 0.1):
-        breakpoint()
-
-
 IMPLEMENTATIONS = {
-    "hedgehog_pytorch": hedgehog_pytorch_test,
+    "torch_hedgehog": hedgehog_pytorch_test,
     "tk_hedgehog": profile_tk_hedgehog,
-    "fla_hedgehog": profile_hedgehog_fla
+    "fla_triton_hedgehog": profile_hedgehog_fla
 }
 

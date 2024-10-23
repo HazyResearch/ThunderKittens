@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import argparse
+import math
 
 try:
     import thunderkittens as tk
@@ -27,8 +28,8 @@ except:
     print("Could not import FlashFFTConv. Please clone and install.")
 
 try:
-    from baselines.tk_fftconv import TKFFTConv
-    from baselines.tk_fftconv import ref_fftconv
+    from fftconv.baselines.tk_fftconv import TKFFTConv
+    from fftconv.baselines.tk_fftconv import ref_fftconv
     print(f"Successfully imported TKFFTConv")
 except:
     TKFFTConv = None
@@ -40,7 +41,6 @@ except:
 
 def get_flops(batch, seqlen, headdim, nheads):
     d_model = headdim * nheads
-    import math
     flops = 2 * (10 * seqlen * math.log(seqlen, 2) * d_model * batch)
     return flops 
 
@@ -57,19 +57,22 @@ def fftconv_tk_test(dt, b, h, n, dv, verbose=True, **kwargs):
         print(f"Sequence length {n} not supported by TKFFTConv")
         return None, -1
     
-    u, k = get_fft_inputs(dt, b, h, n, dv)
-    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=u.dtype).to(u.device)
+    x, k = get_fft_inputs(dt, b, h, n, dv)
+    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
 
     torch.cuda.synchronize()
     t0 = time.time()
 
-    y_tk = tk_fft(u, k)
+    y_tk = tk_fft(x, k)
 
     torch.cuda.synchronize()
     t1 = time.time()
     tot = t1-t0
 
-    y_ref = ref_fftconv(u, k, n)
+    assert not np.isnan(y_tk.float().cpu()).any(), "NaN values detected in output 'y_tk'"
+    assert not np.isinf(y_tk.float().cpu()).any(), "Inf values detected in output 'y_tk'"
+
+    y_ref = ref_fftconv(x, k, n)
     max_diff = torch.abs(y_tk - y_ref).max().item()
     mean_diff = torch.abs(y_tk - y_ref).mean().item()
     print(f"tk-torch {max_diff=}, {mean_diff=}")
@@ -115,5 +118,9 @@ def fftconv_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
 
     return x, tot
 
-
+IMPLEMENTATIONS = {
+    "pytorch_conv": fftconv_pytorch_test,
+    "tk_fftconv": fftconv_tk_test,
+    "flashfft_conv": fftconv_cutlass_test
+}
 
