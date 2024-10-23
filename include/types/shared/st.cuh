@@ -90,7 +90,6 @@ struct KITTENS_DEFAULT_ALIGN st {
 
     // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
-    // dtype data[rows*cols + (std::is_same_v<_layout, ducks::st_layout::wmma> ? underlying_width*16/sizeof(dtype) : 0)]; ///< Raw data storage for the tile.
 
     __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major coord default
     if constexpr (std::is_same_v<_layout, ducks::st_layout::swizzled>) {
@@ -104,7 +103,7 @@ struct KITTENS_DEFAULT_ALIGN st {
         else {
             constexpr int minicol_width = 32/sizeof(T);
             int supercol = c/minicol_width, subcol = c%minicol_width;
-            return &ptr[(supercol*(underlying_rows) + r)*minicol_width + subcol];
+            return &ptr[(supercol*underlying_rows + r)*minicol_width + subcol];
         }
     }
     /**
@@ -207,7 +206,7 @@ struct st_subtile {
         else {
             constexpr int minicol_width = 32/sizeof(dtype);
             int supercol = c/minicol_width, subcol = c%minicol_width;
-            return &ptr[(supercol*(underlying_rows) + r)*minicol_width + subcol];
+            return &ptr[(supercol*underlying_rows + r)*minicol_width + subcol];
         }
     }
     /**
