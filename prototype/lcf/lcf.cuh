@@ -89,7 +89,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             printf("        finish_smem size:                  %llu\n", sizeof(finish_block));
             printf("        dynamic shared memory usage:       %llu\n", sizeof(scratch_alloc_block) + uint64_t(&scratch_smem) - uint64_t(&__shm[0]));
         }
-        everyone::sync(0);
+        everyone::sync(15);
     }
 
     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
@@ -107,7 +107,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             }
             init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // consumer warps must say they are done with the finish block
         }
-        everyone::sync(0); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
@@ -130,12 +130,12 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
                 lcft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             }
-            producers::sync(2); // producer warps must finish before consumer warps can proceed
+            producers::sync(13); // producer warps must finish before consumer warps can proceed
         } // task iter loop
     } // producer warpgroup
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
-        everyone::sync(0); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
@@ -153,9 +153,9 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
                 lcft::consumer::compute({c_state, *input_smem[input_ring], inputs_finished[input_ring], it, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             } // work loop
-            consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
+            consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.
             lcft::consumer::finish({c_state, *finish_smem, finish_finished, unif});
-            consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
+            consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.
         } // task iter loop
     } // consumer warpgroup
 }

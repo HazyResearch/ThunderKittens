@@ -102,7 +102,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             printf("        finish_smem size:                  %llu\n", sizeof(finish_block));
             printf("        dynamic shared memory usage:       %llu\n", sizeof(scratch_alloc_block) + uint64_t(&scratch_smem) - uint64_t(&__shm[0]));
         }
-        everyone::sync(0);
+        everyone::sync(15);
     }
 
     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
@@ -125,7 +125,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             }
             init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // consumer warps must say they are done with the finish block
         }
-        everyone::sync(0); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
@@ -165,12 +165,12 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
                 } // poll load, do load
                 __nanosleep(10); // relinquish for a little while
             } // load and store loop
-            producers::sync(2); // producer warps must finish before consumer warps can proceed
+            producers::sync(13); // producer warps must finish before consumer warps can proceed
         } // task iter loop
     } // producer warpgroup
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
-        everyone::sync(0); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
@@ -200,9 +200,9 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
                 }
             }
             // no need to update phase bit, as nothing is actually changing before the next wait starts.
-            consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
+            consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.
             lcsft::consumer::finish({c_state, *finish_smem, finish_finished, unif});
-            consumers::sync(1); // cannot overwrite finish block until all consumer warps are done.
+            consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.
         } // task iter loop
     } // consumer warpgroup
 }

@@ -61,7 +61,7 @@ struct attn_fwd_template {
 			zero(args.state.o_reg);
 			neg_infty(args.state.max_vec);
 			zero(args.state.norm_vec);
-			warpgroup::sync();
+			warpgroup::sync(warpgroup::groupid());
 		}
 		__device__ static inline void compute(consumer_compute_args<layout> args) {
       		// A = Q @ K.T
@@ -92,13 +92,13 @@ struct attn_fwd_template {
 				div_row(args.state.o_reg, args.state.o_reg, args.state.norm_vec);
 				auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
 				warpgroup::store(o_smem, args.state.o_reg);
-				warpgroup::sync();
+				warpgroup::sync(warpgroup::groupid());
 				if(warpgroup::warpid() == 0) {
 					tma::store_async(args.globals.O, o_smem,
 							{args.common.batch, args.common.head, args.common.seq*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), 0});
 					tma::store_async_read_wait();
 				}
-				warpgroup::sync();
+				warpgroup::sync(warpgroup::groupid());
 			}
 		}
 	};
