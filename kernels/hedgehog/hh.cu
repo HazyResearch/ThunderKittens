@@ -121,10 +121,10 @@ void hedgehog_linear_attention_smd (
     int tic = 0, toc = 1;
     int ring_id = 0;
 
-    __shared__ barrier qkv_barrier;
+    __shared__ semaphore qkv_semaphore;
     if (warpid == 0) {
-        init_barrier(qkv_barrier, 0, 1);
-        tma::expect_bytes(qkv_barrier, 
+        init_semaphore(qkv_semaphore, 0, 1);
+        tma::expect_bytes(qkv_semaphore, 
             size_bytes<typeof(q_smem[0])> + 
             size_bytes<typeof(k_smem[0])> + 
             size_bytes<typeof(v_smem[0])> +
@@ -133,12 +133,12 @@ void hedgehog_linear_attention_smd (
             size_bytes<typeof(kf_map)>
         );
         // first thing we need to do is load the QK map
-        tma::load_async(qf_map, g.qmap, {0, head, 0, 0}, qkv_barrier); // load the right head
-        tma::load_async(kf_map, g.kmap, {0, head, 0, 0}, qkv_barrier);
+        tma::load_async(qf_map, g.qmap, {0, head, 0, 0}, qkv_semaphore); // load the right head
+        tma::load_async(kf_map, g.kmap, {0, head, 0, 0}, qkv_semaphore);
         // now we also load the first data we need
-        tma::load_async(q_smem[tic],  g.q,      {batch, head, 0, 0}, qkv_barrier);
-        tma::load_async(k_smem[ring_id+1], g.k, {batch, head, 0, 0}, qkv_barrier);
-        tma::load_async(v_smem[ring_id+1], g.v, {batch, head, 0, 0}, qkv_barrier);
+        tma::load_async(q_smem[tic],  g.q,      {batch, head, 0, 0}, qkv_semaphore);
+        tma::load_async(k_smem[ring_id+1], g.k, {batch, head, 0, 0}, qkv_semaphore);
+        tma::load_async(v_smem[ring_id+1], g.v, {batch, head, 0, 0}, qkv_semaphore);
     }
 
     rt_fl<1*16, 8*16> local_kv; // this is going to be split across the two warpgroups involved.
@@ -151,18 +151,18 @@ void hedgehog_linear_attention_smd (
 
     for (int block = 0; block < blocks; block++, tic^=1, toc^=1, ring_id=(ring_id+1)%3) {
 
-        wait(qkv_barrier, tic);  // ding! memory arrived
+        wait(qkv_semaphore, tic);  // ding! memory arrived
         __syncthreads();
 
         if (warpid == 0 && block < blocks-1) {
-            tma::expect_bytes(qkv_barrier,
+            tma::expect_bytes(qkv_semaphore,
                 size_bytes<typeof(q_smem[0])> + 
                 size_bytes<typeof(k_smem[0])> + 
                 size_bytes<typeof(v_smem[0])>
             );
-            tma::load_async(q_smem[toc],           g.q, {batch, head, block+1, 0}, qkv_barrier); 
-            tma::load_async(k_smem[(ring_id+2)%3], g.k, {batch, head, block+1, 0}, qkv_barrier); 
-            tma::load_async(v_smem[(ring_id+2)%3], g.v, {batch, head, block+1, 0}, qkv_barrier);
+            tma::load_async(q_smem[toc],           g.q, {batch, head, block+1, 0}, qkv_semaphore); 
+            tma::load_async(k_smem[(ring_id+2)%3], g.k, {batch, head, block+1, 0}, qkv_semaphore); 
+            tma::load_async(v_smem[(ring_id+2)%3], g.v, {batch, head, block+1, 0}, qkv_semaphore);
         }
         __syncthreads();
 
@@ -184,9 +184,7 @@ void hedgehog_linear_attention_smd (
 
             for(int subtile = 0; subtile < 2; subtile++) {
                 if (block + subtile >= 1) { // ensure tile has been loaded by now.
-                    warpgroup::mma_fence(att_block[subtile]);
                     warpgroup::mm_ABt(att_block[subtile], q_smem[tic], k_smem[(ring_id+subtile)%3]);
-                    warpgroup::mma_commit_group();
                     warpgroup::mma_async_wait();
                 }
                 else {
@@ -218,10 +216,8 @@ void hedgehog_linear_attention_smd (
                 row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
                 copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
             }
-            warpgroup::mma_fence(sliding_o);
             for(int subtile = 0; subtile < 2; subtile++) {
                 warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
-                warpgroup::mma_commit_group();
             }
             warpgroup::mma_async_wait();
         }
@@ -240,9 +236,7 @@ void hedgehog_linear_attention_smd (
             rt_fl<1*16, 4*16> linear_q;
             rt_bf<1*16, 4*16> linear_q_bf;
 
-            warpgroup::mma_fence(linear_q);
             warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
-            warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // q is now projected
             if(warpgroupid) mul(linear_q, linear_q, -1.44269504089f);
             else            mul(linear_q, linear_q,  1.44269504089f);
@@ -254,9 +248,7 @@ void hedgehog_linear_attention_smd (
             // copy the local KV cache into shared memory to shared memory and do matmul
             warpgroup::store(kv_smem[warpgroupid], local_kv);
             __syncthreads(); // this should probably be a cooperative group of just the 4 warps
-            warpgroup::mma_fence(linear_o);
             warpgroup::mm_AB(linear_o, linear_q_bf, kv_smem[warpgroupid]);
-            warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
 
             // next we need to go figure out the norm.
@@ -278,9 +270,7 @@ void hedgehog_linear_attention_smd (
             rt_fl<1*16, 4*16> linear_k;
 
             // matmul to generate linear_k before softmax
-            warpgroup::mma_fence(linear_k);
             warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
-            warpgroup::mma_commit_group();
             warpgroup::mma_async_wait(); // k is now projected
             if(warpgroupid) mul(linear_k, linear_k, -1.44269504089f);
             else            mul(linear_k, linear_k,  1.44269504089f);
@@ -291,9 +281,7 @@ void hedgehog_linear_attention_smd (
             warpgroup::store(k_scratch_smem[warpgroupid], linear_k); // screw it, this is now just a scratchpad.
             __syncthreads();
             cumulative_add(cumsum_k_smem[warpgroupid], k_scratch_smem[warpgroupid]);
-            warpgroup::mma_fence(local_kv);
             warpgroup::mma_AtB(local_kv, k_scratch_smem[warpgroupid], v_smem[ring_id]);
-            warpgroup::mma_commit_group();
             warpgroup::mma_async_wait();
         }
         tma::store_async_wait();
@@ -320,7 +308,6 @@ void hedgehog_linear_attention_smd (
 
         if(warpid == 0) {
             tma::store_async(g.o, o_smem, {batch, head, block, 0});
-            tma::store_commit_group();
         }
     }
     tma::store_async_wait();
