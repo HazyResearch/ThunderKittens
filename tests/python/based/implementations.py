@@ -1,23 +1,65 @@
+
 import torch
-import math
+import sys
+import os
+import time
+import argparse
+
+try:
+    import thunderkittens as tk
+    print(f"Successfully imported thunderkittens")
+except:
+    print("Could not import thunderkittens")
+    
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from statistics import median
+import numpy as np
 import torch.nn as nn
-from einops import rearrange
+import torch.nn.functional as F
+from einops import rearrange, repeat
 
-import thunderkittens as tk
+try:
+    # To compare to Faster Transformers
+    from csrc.causal_dot_prod import causal_dot_product
+    print(f"Successfully imported causal_attention_cuda")
+except:
+    causal_dot_product = None
+    print("Could not import causal_attention_cuda")
+
+try:
+    from fla.ops.based import fused_chunk_based, parallel_based
+    from fla.ops.based.naive import naive_parallel_based
+    from fla.ops.gla import chunk_gla, fused_chunk_gla, fused_recurrent_gla
+    from fla.ops.linear_attn import fused_chunk_linear_attn
+    print(f"Successfully imported flash_linear_attention")
+except:
+    fused_chunk_based, parallel_based, naive_parallel_based = None, None
+    chunk_gla, fused_chunk_gla, fused_recurrent_gla = None, None, None
+    print("Could not import flash_linear_attention. pip install -U git+https://github.com/sustcsonglin/flash-linear-attention")
 
 
-def __eq(str, x,y, tol=1e-5, debug=False): 
-    err = torch.abs(x-y).max()
-    pass_str = "pass" if err < tol else "fail" 
-    print(f"{str} : {pass_str} [err={err:0.5f}]")
-    if(debug and (err > tol)):
-        print(f"x\n{x}")
-        print(f"y\n{y}")
-        print(f"diff\n{x-y}")
-        
-    return err <= tol
+################ Based ################
 
-################ Based Versions ################
+
+def get_flops(batch, seqlen, headdim, nheads):
+    featuredim = 16
+    expanded_dim = featuredim * featuredim + featuredim + 1
+    f = 2 * batch * seqlen * nheads * expanded_dim # compute feature map on q and k
+    f += batch * seqlen * nheads * headdim * expanded_dim # (k * v)
+    f += batch * seqlen * nheads * headdim * expanded_dim # (cumsum)
+    f += batch * seqlen * nheads * headdim * expanded_dim # (q * (k * v).cumsum)
+    f += batch * seqlen * nheads * headdim * expanded_dim # .sum(dim=-1)
+    return f
+
+
+def get_based_inputs(b, h, n, dv, dt):
+    feature_dim = 16
+    Q   = torch.randn(b,h,n,feature_dim, dtype=dt, device='cuda')/feature_dim
+    K   = torch.randn(b,h,n,feature_dim, dtype=dt, device='cuda')/feature_dim
+    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+    return Q, K, V
+
 
 eps = 1e-12
 TERMS = set([0, 1, 2])
@@ -120,7 +162,7 @@ def pytorch_test_v2(dt, Q, K, V, d, verbose=True, add_norm=False, add_scale=Fals
         den = (Q * k_state).sum(dim=-1) + eps
         y = y / den.unsqueeze(-1)
 
-    return y#, k_state[:,:,-1]
+    return y
 
 
 def pytorch_test_v3(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=False, **kwargs):
@@ -210,27 +252,86 @@ def pytorch_test_v4(dt, Q, K, V, d, verbose=True, add_norm=False,  add_scale=Fal
         o = o / (den + eps)
 
     k_state_a2 = rearrange(k_state_a2, 'b h n d e -> b h n (d e)')
-    return o #, k_state_a2[:,:,-1], k_state_a1[:,:,-1], D0[:,:,-1]
+    return o 
 
 
-def based_kernel_test(dt, Q, K, V, d, verbose=True, add_scale=False, add_norm=False, output_state=False):
-    b, h, n, d = Q.shape
-    dv = V.shape[-1]
-    o  = torch.zeros_like(V)
+def pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
+    Q, K, v = get_based_inputs(b, h, n, dv, dt)
+    d = 16
+    feature_map = TaylorExp(input_dim=d)
+    try:
+        torch.cuda.synchronize()
+        t0 = time.time()
+        q, k = feature_map(Q), feature_map(K)
+        q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
+        kv_state = (k * v).cumsum(dim=2)  # causal 
+        # k_state = k.cumsum(dim=2)
+        y = ((q * kv_state).sum(dim=-1)) 
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except Exception as e:
+        tot = -1
+        y= None
+    return y, tot
 
-    kv_state_a2 = torch.zeros((b, h, d*d, dv), dtype=dt, device='cuda')
-    kv_state_a1 = torch.zeros((b, h, dv, d), dtype=dt, device='cuda')
-    kv_state_a0 = torch.zeros((b, h, dv), dtype=dt, device='cuda')
 
-    o, kv_state = tk.based(
-        Q, K, V
-    )
-    return o, kv_state
+def fast_transformer_test(dt, b, h, n, dv, verbose=True, **kwargs):
+    q, k, v = get_based_inputs(b, h, n, dv, dt)
+    feature_map = TaylorExp(input_dim=d)
+    try:
+        torch.cuda.synchronize()
+        t0 = time.time()
+        q, k = feature_map(q), feature_map(k)
+        v = causal_dot_product(
+            q.contiguous().to(dtype=torch.float32), 
+            k.contiguous().to(dtype=torch.float32),
+            v.contiguous().to(dtype=torch.float32),
+        )
+        y = v 
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except Exception as e:
+        tot = -1
+        y = None
+    return y, tot
 
 
-################### Benchmarking and Correctness Tests ####################
+def fla_parallel_based_test(dt, b, h, n, dv, verbose=True, **kwargs):
+    q, k, v = get_based_inputs(b, h, n, dv, dt)
+    try:
+        torch.cuda.synchronize()
+        t0 = time.time()
+        y = parallel_based(q, k, v, False, False)
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except Exception as e:
+        tot = -1
+        y = None
+    return y, tot
 
-def linear_attn_correct(dt):
+
+def based_kernel_test(dt, b, h, n, dv, verbose=True, device='4090'):
+    Q, K, V = get_based_inputs(b, h, n, dv, dt)
+    try:
+        torch.cuda.synchronize()
+        t0 = time.time()
+        o, kv_state = tk.based( Q, K, V )
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+        assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
+        assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
+    except Exception as e:
+        tot = -1
+        o = None
+    return o, tot
+
+
+def test_correctness(): 
+    dt = torch.bfloat16
     b = 2
     n = 2048
     h = 2
@@ -299,4 +400,12 @@ def linear_attn_correct(dt):
 
 
 if __name__ == "__main__":
-    linear_attn_correct(torch.bfloat16)
+    test_correctness()
+
+    
+IMPLEMENTATIONS = {
+    "based_tk": based_kernel_test,
+    "pytorch": pytorch_test,
+    # "fast_transformer": fast_transformer_test,
+    "fla_parallel_based": fla_parallel_based_test,
+}

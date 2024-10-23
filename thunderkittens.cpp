@@ -23,8 +23,14 @@ m.def("attention_inference_forward", attention_inference_forward);
 */
 
 #ifdef TK_COMPILE_ATTN
-extern void attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l, bool causal); 
-extern void attention_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, torch::Tensor l_vec, torch::Tensor d_vec, torch::Tensor og, torch::Tensor qg, torch::Tensor kg, torch::Tensor vg, bool causal);
+extern std::vector<torch::Tensor> attention_forward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
+); 
+extern std::vector<torch::Tensor> attention_backward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
+    torch::Tensor l_vec, torch::Tensor og, 
+    bool causal
+);
 #endif
 
 #ifdef TK_COMPILE_HEDGEHOG
