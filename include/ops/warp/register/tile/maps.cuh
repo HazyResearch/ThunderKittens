@@ -445,6 +445,17 @@ __device__ static inline void log(T &dst, const T &src) {
     unary_map<base_ops::log, T>(dst, src);
 }
 /**
+ * @brief Applies the logarithm base 2 function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the logarithm base 2 function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void log2(T &dst, const T &src) {
+    unary_map<base_ops::log2, T>(dst, src);
+}
+/**
  * @brief Applies the absolute value function to each element of a tile.
  *
  * @tparam T Tile type.
