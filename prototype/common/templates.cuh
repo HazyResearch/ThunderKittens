@@ -47,9 +47,9 @@ FLAG_GETTER(MAX_SHARED_MEMORY, kittens::MAX_SHARED_MEMORY)
 FLAG_GETTER(INPUT_PIPE_STAGES, 1)
 // How many output pipe stages to use, per block.
 FLAG_GETTER(OUTPUT_PIPE_STAGES, 1)
-// How many arrivals to initialize for each consumer barrier.
+// How many arrivals to initialize for each consumer semaphore.
 FLAG_GETTER(CONSUMER_BARRIER_ARRIVALS, NUM_CONSUMER_WARPS_v<T>)
-// How many arrivals to initialize for each producer barrier.
+// How many arrivals to initialize for each producer semaphore.
 FLAG_GETTER(PRODUCER_BARRIER_ARRIVALS, NUM_PRODUCER_WARPS_v<T>)
 // Some handy constants
 template<typename T> constexpr int NUM_WARPS_v = NUM_CONSUMER_WARPS_v<T> + NUM_PRODUCER_WARPS_v<T>;

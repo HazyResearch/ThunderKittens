@@ -23,17 +23,17 @@ struct test_dsmem_vec { // load with dsmem, write out normally
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&src_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&dst_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
 
-        __shared__ kittens::barrier dsmem_barrier;
+        __shared__ kittens::semaphore dsmem_semaphore;
         kittens::load(src_vec, input, {(int)blockIdx.x, 0});
 
-        kittens::init_barrier(dsmem_barrier, 0, 1);
-        kittens::tma::expect(dsmem_barrier, dst_vec);
+        kittens::init_semaphore(dsmem_semaphore, 0, 1);
+        kittens::tma::expect(dsmem_semaphore, dst_vec);
 
         kittens::tma::cluster::sync();
 
-        kittens::tma::cluster::store_async(dst_vec, src_vec, (blockIdx.x+3)%4, dsmem_barrier);
+        kittens::tma::cluster::store_async(dst_vec, src_vec, (blockIdx.x+3)%4, dsmem_semaphore);
 
-        kittens::wait(dsmem_barrier, 0);
+        kittens::wait(dsmem_semaphore, 0);
 
         kittens::store(output, dst_vec, {(int)blockIdx.x, 0});
     }

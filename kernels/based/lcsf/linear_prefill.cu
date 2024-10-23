@@ -108,7 +108,7 @@ struct based_prefill_template {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
         }
-        __device__ static void load(producer_load_args<layout> args) { // barrier for the producer to load into
+        __device__ static void load(producer_load_args<layout> args) { // semaphore for the producer to load into
             if(warpgroup::warpid() != args.iter%2) return;
             int4 index = { (int)blockIdx.y, (int)blockIdx.x, args.iter, 0 };
             tma::expect(args.inputs_arrived, args.input);

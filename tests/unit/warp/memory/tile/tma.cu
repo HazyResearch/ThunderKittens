@@ -18,15 +18,15 @@ struct test_load { // load with TMA, write out normally
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
         kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>(); // assuming compile-time known dimensions
         
-        __shared__ kittens::barrier smem_barrier; 
-        kittens::init_barrier(smem_barrier, 0, 1);
+        __shared__ kittens::semaphore smem_semaphore; 
+        kittens::init_semaphore(smem_semaphore, 0, 1);
         __syncwarp();
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
-            kittens::tma::expect_bytes(smem_barrier, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
+            kittens::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::load_async(shared_tile[i][j], input, {a, b, i, j}, smem_barrier);
+                kittens::tma::load_async(shared_tile[i][j], input, {a, b, i, j}, smem_semaphore);
             }
-            kittens::wait(smem_barrier, (a*input.depth+b)%2);
+            kittens::wait(smem_semaphore, (a*input.depth+b)%2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::store(output, shared_tile[i][j], {a, b, i, j});
             }

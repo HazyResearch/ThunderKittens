@@ -74,21 +74,21 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     int kv_head_idx = blockIdx.y / g.hr;
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
 
-    __shared__ kittens::barrier qsmem_barrier, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
+    __shared__ kittens::semaphore q_smem_arrived, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
     if (threadIdx.x == 0) { 
-        init_barrier(qsmem_barrier, 0, 1); 
+        init_semaphore(q_smem_arrived, 0, 1); 
 
         for(int j = 0; j < K::stages; j++) {
-            init_barrier(k_smem_arrived[j], 0, 1); 
-            init_barrier(v_smem_arrived[j], 0, 1); 
-            init_barrier(compute_done[j], CONSUMER_WARPGROUPS, 0); 
+            init_semaphore(k_smem_arrived[j], 0, 1); 
+            init_semaphore(v_smem_arrived[j], 0, 1); 
+            init_semaphore(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
         
-        tma::expect_bytes(qsmem_barrier, sizeof(q_smem));
+        tma::expect_bytes(q_smem_arrived, sizeof(q_smem));
 
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
             int4 q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
-            tma::load_async(q_smem[wg], g.q, q_tile_idx, qsmem_barrier);
+            tma::load_async(q_smem[wg], g.q, q_tile_idx, q_smem_arrived);
         }
 
         for (int j = 0; j < K::stages - 1; j++) {
@@ -156,7 +156,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         
         const int kv_do = (seq_idx)/(K::kv_height/K::qo_height);
 
-        wait(qsmem_barrier, 0);
+        wait(q_smem_arrived, 0);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
         
@@ -295,23 +295,23 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     fl_reg_tile  o_reg; 
     fl_reg_col   d_reg;
 
-    __shared__ kittens::barrier smem_barrier;
+    __shared__ kittens::semaphore smem_semaphore;
 
     if (threadIdx.x == 0) {
-        init_barrier(smem_barrier, 0, 1);
-        tma::expect_bytes(smem_barrier, sizeof(og_smem[0]) * 4 * 2);
+        init_semaphore(smem_semaphore, 0, 1);
+        tma::expect_bytes(smem_semaphore, sizeof(og_smem[0]) * 4 * 2);
     }
     __syncthreads();
 
     if (warpid == 0) {
         for (int w = 0; w < 4; w++) { // load o, o_grad
             int4 tile_idx = {blockIdx.z, blockIdx.y, (blockIdx.x * 4) + w, 0};
-            tma::load_async(o_smem[w],  g.o,  tile_idx, smem_barrier);
-            tma::load_async(og_smem[w], g.og, tile_idx, smem_barrier);
+            tma::load_async(o_smem[w],  g.o,  tile_idx, smem_semaphore);
+            tma::load_async(og_smem[w], g.og, tile_idx, smem_semaphore);
         }
     }
 
-    wait(smem_barrier, 0);
+    wait(smem_semaphore, 0);
 
     load(o_reg, o_smem[warpid]);
     load(og_reg, og_smem[warpid]);
@@ -441,22 +441,22 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     int qo_blocks   = N / (G::tile_h_qo);
     int kv_head_idx = (blockIdx.y) / hr; 
 
-    __shared__ kittens::barrier kv_b, q_b[2], o_b[2], vec_b[2];
-    __shared__ kittens::barrier compute_done[2], qg_ready; 
+    __shared__ kittens::semaphore kv_b, q_b[2], o_b[2], vec_b[2];
+    __shared__ kittens::semaphore compute_done[2], qg_ready; 
 
     int tic = 0, toc = 1;
     const int q_start = (is_causal) ? (blockIdx.x) : (0);
 
     if (threadIdx.x == 0) {
-        init_barrier(kv_b,  0, 1);
-        init_barrier(qg_ready, 1, 0);
+        init_semaphore(kv_b,  0, 1);
+        init_semaphore(qg_ready, 1, 0);
         
         for (int s = 0; s < 2; s++) {
-            init_barrier(q_b[s],  0, 1);
-            init_barrier(o_b[s],  0, 1); 
-            init_barrier(vec_b[s], 0, 1);
+            init_semaphore(q_b[s],  0, 1);
+            init_semaphore(o_b[s],  0, 1); 
+            init_semaphore(vec_b[s], 0, 1);
             
-            init_barrier(compute_done[s], 1, 0);
+            init_semaphore(compute_done[s], 1, 0);
         }
 
         tma::expect_bytes(kv_b, (sizeof(k_smem[0]) + sizeof(v_smem[0])) * BWD_CONSUMER_WARPGROUPS);

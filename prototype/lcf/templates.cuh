@@ -51,12 +51,12 @@ template<kittens_layout T> struct producer_load_args : uniform_args<T> {
     using CKL = complete_kittens_layout<T>;
     typename CKL::producer_state_t & state;
     typename CKL::input_block_t & input;
-    kittens::barrier & inputs_arrived;
+    kittens::semaphore & inputs_arrived;
     int iter;
     __device__ producer_load_args(
         typename CKL::producer_state_t& _state,
         typename CKL::input_block_t& _input,
-        barrier& _inputs_arrived,
+        semaphore& _inputs_arrived,
         int _iter,
         uniform_args<T> &_args
     ) : uniform_args<T>(_args), input(_input), state(_state), inputs_arrived(_inputs_arrived), iter(_iter) {}
@@ -77,12 +77,12 @@ template<kittens_layout T> struct consumer_compute_args : uniform_args<T> {
     using CKL = complete_kittens_layout<T>;
     typename CKL::consumer_state_t & state;
     typename CKL::input_block_t & input;
-    kittens::barrier & inputs_finished;
+    kittens::semaphore & inputs_finished;
     int iter;
     __device__ consumer_compute_args(
         typename CKL::consumer_state_t& _state,
         typename CKL::input_block_t& _input,
-        barrier& _inputs_finished,
+        semaphore& _inputs_finished,
         int _iter,
         uniform_args<T> &_args
     ) : uniform_args<T>(_args), input(_input), state(_state), inputs_finished(_inputs_finished), iter(_iter) {}
@@ -93,11 +93,11 @@ template<kittens_layout T> struct consumer_finish_args : uniform_args<T> {
     using CKL = complete_kittens_layout<T>;
     typename CKL::consumer_state_t & state;
     typename CKL::finish_block_t & finish;
-    kittens::barrier & finish_finished;
+    kittens::semaphore & finish_finished;
     __device__ consumer_finish_args(
         typename CKL::consumer_state_t& _state,
         typename CKL::finish_block_t& _finish,
-        barrier& _finish_finished,
+        semaphore& _finish_finished,
         uniform_args<T> &_args
     ) : uniform_args<T>(_args), finish(_finish), state(_state), finish_finished(_finish_finished) {}
 };

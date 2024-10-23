@@ -71,7 +71,7 @@ struct matmul_template {
             __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
                 warpgroup::producer_registers(); // decrease registers for the producer warpgroup
             }
-            __device__ static void load(producer_load_args<layout> args) { // barrier for the producer to load into
+            __device__ static void load(producer_load_args<layout> args) { // semaphore for the producer to load into
                 if(warpgroup::warpid() == 0) {
                     tma::expect(args.inputs_arrived, args.input);
                     tma::load_async(reinterpret_cast<layout::a_tile_tma&>(args.input.a), args.globals.a, {args.task_coord.r, args.iter + args.task_coord.d}, args.inputs_arrived);

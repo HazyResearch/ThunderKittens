@@ -116,22 +116,25 @@ template<> struct move<float4> {
     }
 };
 
-/* ----------   Generic (non-Hopper specific) barrier functions  ---------- */
+/* ----------   Generic (non-Hopper specific) semaphore functions  ---------- */
 
-using barrier = uint64_t;
+struct semaphore {
+private:
+    uint64_t _;
+}; // note that this is an opaque type, so the value should not be accessed directly.
 
 /**
- * @brief Initializes a synchronization barrier with a transaction count and sets the expected number of bytes.
+ * @brief Initializes a synchronization semaphore with a transaction count and sets the expected number of bytes.
  *
- * This function sets up a barrier that is used to synchronize threads within a block during asynchronous operations.
- * It initializes the barrier with a thread count barrier.
+ * This function sets up a semaphore that is used to synchronize threads within a block during asynchronous operations.
+ * It initializes the semaphore with a thread count semaphore.
  *
  * Additionally, if it is given a shared tile type, it will also call `set_bytes` to prepare for the memory transaction.
  *
- * @param[out] barrier The barrier variable to initialize.
- * @param[in] tc The thread counter for the barrier.
+ * @param[out] semaphore The semaphore variable to initialize.
+ * @param[in] tc The thread counter for the semaphore.
  */
-__device__ static inline void init_barrier(barrier& bar, int thread_count, int transaction_count) {
+__device__ static inline void init_semaphore(semaphore& bar, int thread_count, int transaction_count) {
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -145,10 +148,10 @@ __device__ static inline void init_barrier(barrier& bar, int thread_count, int t
 /**
  * @brief Invalidate an mbarrier
  *
- * @param[out] barrier The barrier variable to initialize.
- * @param[in] tc The thread counter for the barrier.
+ * @param[out] semaphore The semaphore variable to initialize.
+ * @param[in] tc The thread counter for the semaphore.
  */
-__device__ static inline void invalidate_barrier(barrier& bar) {
+__device__ static inline void invalidate_semaphore(semaphore& bar) {
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -160,14 +163,14 @@ __device__ static inline void invalidate_barrier(barrier& bar) {
 }
 
 /**
-* @brief Arrives at a barrier.
+* @brief Arrives at a semaphore.
 *
 * Marks a warp arrival at an mbarrier
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void arrive(barrier& bar) {
+__device__ static inline void arrive(semaphore& bar) {
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     asm volatile (
         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
@@ -177,16 +180,34 @@ __device__ static inline void arrive(barrier& bar) {
     );
 }
 
+// /**
+// * @brief Arrives at a semaphore.
+// *
+// * Marks a warp arrival at an mbarrier
+// *
+// * @param semaphore Reference to the semaphore variable.
+// * @param kPhaseBit The phase bit used for the semaphore.
+// */
+// template<int num_warps> __device__ static inline void arrive(int semaphore_id) {
+//     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+//     asm volatile (
+//         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
+//         :
+//         : "r"(mbar_ptr)
+//         : "memory"
+//     );
+// }
+
 #ifdef KITTENS_HOPPER
 /**
-* @brief Arrives at a barrier.
+* @brief Arrives at a semaphore.
 *
 * Marks a warp arrival at an mbarrier
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void arrive(barrier& bar, uint32_t count) {
+__device__ static inline void arrive(semaphore& bar, uint32_t count) {
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
     asm volatile (
         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
@@ -198,12 +219,12 @@ __device__ static inline void arrive(barrier& bar, uint32_t count) {
 #endif
 
 /**
-* @brief Waits for the requested barrier phase.
+* @brief Waits for the requested semaphore phase.
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void wait(barrier& bar, int kPhaseBit) {
+__device__ static inline void wait(semaphore& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -238,12 +259,12 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
 }
 
 /**
-* @brief Checks if the requested barrier phase is ready.
+* @brief Checks if the requested semaphore phase is ready.
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline int test_wait(barrier& bar, int kPhaseBit) {
+__device__ static inline int test_wait(semaphore& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
     int result;
@@ -259,7 +280,7 @@ __device__ static inline int test_wait(barrier& bar, int kPhaseBit) {
     return result;
 }
 
-__device__ static inline void arrive_and_wait(barrier& bar, int kPhaseBit) {
+__device__ static inline void arrive_and_wait(semaphore& bar, int kPhaseBit) {
     arrive(bar);
     wait(bar, kPhaseBit);
 }

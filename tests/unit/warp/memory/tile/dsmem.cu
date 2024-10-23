@@ -26,12 +26,12 @@ struct test_dsmem { // load with dsmem, write out normally
         
         kittens::load(src_tile, input, kittens::coord{0, (int)blockIdx.x, 0, 0});
 
-        __shared__ kittens::barrier dsmem_barrier;
-        kittens::init_barrier(dsmem_barrier, 0, 1);
-        kittens::tma::expect(dsmem_barrier, dst_tile);
+        __shared__ kittens::semaphore dsmem_semaphore;
+        kittens::init_semaphore(dsmem_semaphore, 0, 1);
+        kittens::tma::expect(dsmem_semaphore, dst_tile);
         kittens::tma::cluster::sync();
-        kittens::tma::cluster::store_async(dst_tile, src_tile, (blockIdx.x+3)%4, dsmem_barrier);
-        kittens::wait(dsmem_barrier, 0);
+        kittens::tma::cluster::store_async(dst_tile, src_tile, (blockIdx.x+3)%4, dsmem_semaphore);
+        kittens::wait(dsmem_semaphore, 0);
 
         kittens::store(output, dst_tile, kittens::coord{0, (int)blockIdx.x, 0, 0});
     }

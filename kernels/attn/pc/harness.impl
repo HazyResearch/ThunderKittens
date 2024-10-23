@@ -4,9 +4,9 @@
 
 constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 3072; // 768*2; // 4096;
+constexpr int ATTN_N = 768; // 768*2; // 4096;
 constexpr int ATTN_D = 128; // hardcoded into this kernel
-constexpr int ITER   = 1;
+constexpr int ITER   = 10;
 
 constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<attn_fwd_template>;
 

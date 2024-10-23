@@ -73,7 +73,7 @@ struct flux_matmul_gelu_template {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
         }
-        __device__ static void load(producer_load_args<layout> args) { // barrier for the producer to load into
+        __device__ static void load(producer_load_args<layout> args) { // semaphore for the producer to load into
             if(warpgroup::warpid() == 0) {
                 tma::expect_bytes(args.inputs_arrived, sizeof(layout::input_block));
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {

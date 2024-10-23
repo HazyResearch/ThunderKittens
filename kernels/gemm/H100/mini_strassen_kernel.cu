@@ -15,8 +15,8 @@ __device__ inline void load(tile (&a_s)[7],
                             tile (&b_s)[2][7],
                             const input_layout &A,
                             const input_layout &B,
-                            barrier (&inputs_arrived)[7],
-                            barrier (&inputs_finished)[7],
+                            semaphore (&inputs_arrived)[7],
+                            semaphore (&inputs_finished)[7],
                             const coord &block_coords, int iter) {
     int phase = (iter%2)^1;
     #pragma unroll
@@ -34,8 +34,8 @@ __device__ inline void load(tile (&a_s)[7],
 __device__ inline void work(rt_hf<16, 64> (&c_r)[2][2],
                             wgmma::descriptor<tile, 0> (&a_s)[7],
                             wgmma::descriptor<tile, 1> (&b_s)[7],
-                            barrier (&inputs_arrived)[7],
-                            barrier (&inputs_finished)[7],
+                            semaphore (&inputs_arrived)[7],
+                            semaphore (&inputs_finished)[7],
                             int iter) {
     int phase = iter%2;
     rt_hf<16, 64> accum[2];
@@ -81,8 +81,8 @@ __device__ inline void work(rt_hf<16, 64> (&c_r)[2][2],
 // __device__ inline void work(rt_hf<16, 64> (&c_r)[2][2],
 //                             tile (&a_s)[7],
 //                             tile (&b_s)[7],
-//                             barrier (&inputs_arrived)[7],
-//                             barrier (&inputs_finished)[7],
+//                             semaphore (&inputs_arrived)[7],
+//                             semaphore (&inputs_finished)[7],
 //                             int iter) {
 //     int phase = iter%2;
 //     rt_hf<16, 64> accum[2];
@@ -169,17 +169,17 @@ void mini_matmul(const __grid_constant__ globals g) {
     tile (&b_s)[2][7] = alloc.allocate<tile, 2, 7>();
     tile (&c_s)[2][2][2] = reinterpret_cast<tile(&)[2][2][2]>(a_s);
 
-    // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
-    __shared__ kittens::barrier inputs_arrived[7], inputs_finished[7];
+    // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
+    __shared__ kittens::semaphore inputs_arrived[7], inputs_finished[7];
     if (warpid() == 0) { // a single warp (in fact a single thread) does these.
         for(int i = 0; i < 7; i++) {
-            init_barrier(inputs_arrived[i], 1, 0); // needs to wait on each producer warp
-            init_barrier(inputs_finished[i], 8, 0); // needs to wait on one thread from each consumer warp
+            init_semaphore(inputs_arrived[i], 1, 0); // needs to wait on each producer warp
+            init_semaphore(inputs_finished[i], 8, 0); // needs to wait on one thread from each consumer warp
         }
     }
     int iters = num_iters(g);
 
-    __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
+    __syncthreads(); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
 
     if(warpid() >= NUM_CONSUMER_WARPS) { // last warpgroup is a producer
         warpgroup::producer_registers(); // decrease registers for producers
@@ -231,17 +231,17 @@ void mini_matmul(const __grid_constant__ globals g) {
 // __global__ __launch_bounds__(NUM_THREADS, 1)
 // void dummy_kernel(const __grid_constant__ globals g) {
 
-//     // Initialize barriers. This is constant for all two-stage producer-consumer kernels.
-//     __shared__ kittens::barrier inputs_arrived[7], inputs_finished[7];
+//     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
+//     __shared__ kittens::semaphore inputs_arrived[7], inputs_finished[7];
 //     if (warpid() == 0) { // a single warp (in fact a single thread) does these.
 //         for(int i = 0; i < 7; i++) {
-//             init_barrier(inputs_arrived[i], 4, 0); // needs to wait on each producer warp
-//             init_barrier(inputs_finished[i], 8, 0); // needs to wait on each consumer warp
+//             init_semaphore(inputs_arrived[i], 4, 0); // needs to wait on each producer warp
+//             init_semaphore(inputs_finished[i], 8, 0); // needs to wait on each consumer warp
 //         }
 //     }
 //     int iters = 2;
 
-//     __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
+//     __syncthreads(); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
 
 //     if(warpid() >= NUM_CONSUMER_WARPS) { // last warpgroup is a producer
 //         for(int load_iter = 0; load_iter < iters; load_iter++) {

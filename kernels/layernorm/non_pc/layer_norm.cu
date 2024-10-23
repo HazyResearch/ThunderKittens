@@ -1,7 +1,7 @@
 #include "kittens.cuh"
 #include <cooperative_groups.h>
 #include <curand_kernel.h>
-#include <cuda/barrier>
+#include <cuda/semaphore>
 #include <cuda/pipeline>
 #include <tuple>
 
@@ -112,8 +112,8 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
     // pipelining
     int tic = 0, toc = 1;
     auto block = cooperative_groups::this_thread_block();
-     __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_cheat;
-    if (threadIdx.x == 0) {init(&barrier_cheat, block.size());}
+     __shared__ cuda::semaphore<cuda::thread_scope::thread_scope_block> semaphore_cheat;
+    if (threadIdx.x == 0) {init(&semaphore_cheat, block.size());}
     block.sync(); // Need to make sure none calls before setup.
 
     // global loads
@@ -131,7 +131,7 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
     
     int n_blocks = g.n_per_tile/NUM_WORKERS; 
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
-        barrier_cheat.arrive_and_wait();  
+        semaphore_cheat.arrive_and_wait();  
         auto cur_idx  = (block + 0)*NUM_WORKERS + warpid;
         auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
 

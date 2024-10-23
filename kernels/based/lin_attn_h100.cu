@@ -157,8 +157,8 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     int n_blocks = g.n / (q_s[0].rows);
 
     // initial load
-    __shared__ barrier bar;
-    if (warpid == 0) init_barrier(bar, 0, 1);
+    __shared__ semaphore bar;
+    if (warpid == 0) init_semaphore(bar, 0, 1);
     __syncthreads();
     if (warpid == 0) {
         tma::expect_bytes(bar,
