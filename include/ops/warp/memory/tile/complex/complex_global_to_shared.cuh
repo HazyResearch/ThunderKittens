@@ -45,7 +45,7 @@ __device__ static inline void store(const CGL &dst, CST &src, const coord &idx) 
 }
 
 /**
- * @brief Asynchronously loads data from global memory into a complex shared memory tile with a row layout using CUDA barriers.
+ * @brief Asynchronously loads data from global memory into a complex shared memory tile with a row layout using CUDA semaphores.
  *
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
@@ -53,7 +53,7 @@ __device__ static inline void store(const CGL &dst, CST &src, const coord &idx) 
  * @param[in] imsrc The source global memory array for the imaginary component.
  * @param re_row_stride[in] The stride between rows in the real component source array.
  * @param im_row_stride[in] The stride between rows in the imaginary component source array.
- * @param barrier[in,out] The CUDA barrier used for synchronization.
+ * @param semaphore[in,out] The CUDA semaphore used for synchronization.
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */

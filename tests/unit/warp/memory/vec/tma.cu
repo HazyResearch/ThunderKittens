@@ -18,15 +18,15 @@ struct test_load { // load with TMA, write out normally
         kittens::tma_allocator al((int*)&__shm[0]); 
         kittens::row_vec<kittens::st<dtype, 16*S, 16*S>> (&shared_vec) = al.allocate<kittens::row_vec<kittens::st<dtype, 16*S, 16*S>>>();
         
-        __shared__ kittens::barrier smem_barrier; 
-        kittens::init_barrier(smem_barrier, 0, 1);
+        __shared__ kittens::semaphore smem_semaphore; 
+        kittens::init_semaphore(smem_semaphore, 0, 1);
         __syncwarp();
         int tic = 0;
         for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
             for(int c = 0; c < input.rows; c++) for(int d = 0; d < input.cols/shared_vec.length; d++) {
-                kittens::tma::expect(smem_barrier, shared_vec);
-                kittens::tma::load_async(shared_vec, input, {a, b, c, d}, smem_barrier);
-                kittens::wait(smem_barrier, tic);
+                kittens::tma::expect(smem_semaphore, shared_vec);
+                kittens::tma::load_async(shared_vec, input, {a, b, c, d}, smem_semaphore);
+                kittens::wait(smem_semaphore, tic);
                 kittens::store(output, shared_vec, {a, b, c, d});
                 tic^=1;
             }

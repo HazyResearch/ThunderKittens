@@ -144,7 +144,6 @@ __device__ inline static void store(SV &dst, const RV &src) {
         #pragma unroll
         for(auto w = 0; w < src.outer_dim; w++) {
             if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
-                // printf("warp %d, thread %d storing %f to %d, addr %p\n", warpid(), laneid, __half2float(src[w][0]), w*32 + laneid, &dst[w*32 + laneid]);
                 U tmp = base_types::convertor<U, T>::convert(src[w][0]);
                 move<U>::sts(&dst[w*32 + laneid], tmp);
             }

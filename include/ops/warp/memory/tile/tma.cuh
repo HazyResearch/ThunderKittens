@@ -192,12 +192,12 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination shared memory tile.
  * @param[in] src_tma_map The source tensormap address in global memory
- * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in,out] bar The semaphore used for synchronization of the asynchronous copy.
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, barrier& bar) {
+__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, semaphore& bar) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
@@ -229,13 +229,13 @@ namespace cluster {
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination shared memory tile.
  * @param[in] src_tma_map The source tensormap address in global memory
- * @param[in,out] bar The barrier used for synchronization of the asynchronous copy.
+ * @param[in,out] bar The semaphore used for synchronization of the asynchronous copy.
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
 template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, barrier& bar, uint16_t cluster_mask) {
+__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, semaphore& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));

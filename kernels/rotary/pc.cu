@@ -1,6 +1,10 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
 
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_FUSED_ROTARY
+#endif
+
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcsf;
@@ -22,8 +26,11 @@ template<int _headdim, int _warps> struct rotary_layout {
 template<int _headdim> struct rotary_template {
     static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
-    __device__ static inline void task_init(task_init_args<layout> args) {
-        args.num_iters = (args.task_iter == 0) ? min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth : -1; // batches*heads handled by block
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        if(args.task_iter == 0) {
+            args.num_iters = min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth; // batches*heads handled by block
+        }
+        else args.num_iters = -1;
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -41,7 +48,8 @@ template<int _headdim> struct rotary_template {
                 for(int i = 0; i < args.state.active_warps; i++) {
                     tma::load_async(args.input.x[i], args.globals.x, {idx.b,idx.d,idx.r+i,idx.c}, args.inputs_arrived);
                 }
-                arrive(args.inputs_arrived, 3);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                __syncwarp();
             }
         }
         __device__ static void store(producer_store_args<layout> args) {
@@ -54,7 +62,8 @@ template<int _headdim> struct rotary_template {
                     tma::store_async(args.globals.o, args.output.o[i], {idx.b,idx.d,idx.r+i,idx.c});
                 }
                 tma::store_async_read_wait();
-                arrive(args.outputs_finished, 4);
+                if(laneid() == 0) arrive(args.outputs_finished, 4);
+                __syncwarp();
             }
         }
     };
@@ -69,7 +78,8 @@ template<int _headdim> struct rotary_template {
             rt_fl<16, headdim> x;
             rt_fl<16, headdim/2> x1, x2, temp1, temp2;
             load(x, args.input.x[warpid()]);
-            arrive(args.inputs_finished);
+            if(laneid() == 0) arrive(args.inputs_finished);
+            __syncwarp();
             for(int i = 0; i < headdim/32; i++) {
                 #pragma unroll
                 for(int j = 0; j < 4; j++) {
@@ -93,15 +103,15 @@ template<int _headdim> struct rotary_template {
             }
             store(args.output.o[warpid()], x);
             __syncwarp();
-            arrive(args.outputs_arrived);
+            if(laneid() == 0) arrive(args.outputs_arrived);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            arrive(args.finish_finished); // nothing to do here
+            if(laneid() == 0) arrive(args.finish_finished); // nothing to do here
         }
     };
 };
 
-#ifdef TORCH_COMPILE_ROTARY
+#ifdef TK_COMPILE_FUSED_ROTARY
 #include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
 template<int ATTN_D>
@@ -128,16 +138,16 @@ void dispatch_fused_rotary(
 
     unsigned long mem_size = (MAX_SHARED_MEMORY-2048);
     constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
-    cudaFuncSetAttribute(prototype::pc<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(prototype::lcsf::kernel<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, (ATTN_B+BATCHES_PER_BLOCK-1)/BATCHES_PER_BLOCK);
-    dim3 block(num_threads<rope_t>);
-    pc<rope_t><<<grid, block, mem_size>>>(g); 
+    dim3 block(kittens::prototype::detail::NUM_THREADS_v<rope_t>);
+    kittens::prototype::lcsf::kernel<rope_t><<<grid, block, mem_size>>>(g); 
 }
 
 torch::Tensor fused_rotary(
-    const torch::Tensor &x,
-    const torch::Tensor &cos_in,
-    const torch::Tensor &sin_in
+    const torch::Tensor x,
+    const torch::Tensor cos_in,
+    const torch::Tensor sin_in
 ) {
     CHECK_INPUT(x);
     CHECK_INPUT(sin_in);

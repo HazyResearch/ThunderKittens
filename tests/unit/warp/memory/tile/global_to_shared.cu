@@ -100,6 +100,7 @@ void warp::memory::tile::global_to_shared::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
     sweep_gmem_type_2d_warp<st_load_store, SIZE, SIZE>::run(results);
+    std::cout << "done with st_load_store, starting async" << std::endl;
     sweep_gmem_type_2d_warp<st_load_store_async, SIZE, SIZE>::run(results);
 }
 

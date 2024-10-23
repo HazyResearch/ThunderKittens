@@ -38,7 +38,7 @@ struct vec_async_load_store {
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
         G::load_async(shared_vec, input, {});
-        G::load_async_wait();
+        G::load_async_wait(0);
         G::store(output, shared_vec, {});
     }
 };

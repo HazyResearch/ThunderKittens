@@ -15,16 +15,16 @@ namespace tma {
 /* ----------   Barrier functions for async load  ---------- */
 
 /**
-* @brief Sets the number of bytes expected at the barrier.
+* @brief Sets the number of bytes expected at the semaphore.
 *
-* This function sets the number of bytes expected at the barrier for the first thread in the warp.
-* It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
+* This function sets the number of bytes expected at the semaphore for the first thread in the warp.
+* It converts the semaphore pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
 *
-* @param barrier Reference to the barrier variable.
-* @param bytes The number of bytes expected at the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param bytes The number of bytes expected at the semaphore.
 */
-__device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
+__device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -34,12 +34,12 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes) {
     }
 }
 /**
-* @brief Sets the number of bytes expected at the barrier.
+* @brief Sets the number of bytes expected at the semaphore.
 *
 * This function sets the number of bytes expected at the mbarrier before the transaction arrives.
 */
 template<typename T, typename... args>
-__device__ static inline void expect(barrier& bar, const T& _1, const args&... _2) {
+__device__ static inline void expect(semaphore& bar, const T& _1, const args&... _2) {
     expect_bytes(bar, size_bytes<T, args...>);
 }
 
@@ -95,10 +95,10 @@ namespace cluster {
 
 // Synchronization functions
 __device__ static inline void arrive_aligned() { // All threads in the cluster must call this
-    asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+    asm volatile ("semaphore.cluster.arrive.release.aligned;\n");
 }
 __device__ static inline void wait_aligned() {
-    asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
+    asm volatile ("semaphore.cluster.wait.acquire.aligned;\n");
 }
 __device__ static inline void sync() {
     arrive_aligned();
@@ -106,12 +106,12 @@ __device__ static inline void sync() {
 }
 
 /**
-* @brief Waits for the requested barrier phase, at cluster scope
+* @brief Waits for the requested semaphore phase, at cluster scope
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void wait(barrier& bar, int kPhaseBit) {
+__device__ static inline void wait(semaphore& bar, int kPhaseBit) {
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
@@ -130,20 +130,20 @@ __device__ static inline void wait(barrier& bar, int kPhaseBit) {
 }
 
 /**
-* @brief Sets the number of bytes expected at the barrier, assuming a multicast instruction.
+* @brief Sets the number of bytes expected at the semaphore, assuming a multicast instruction.
 *
-* This function sets the number of bytes expected at the barrier for the first thread in the warp.
-* It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
+* This function sets the number of bytes expected at the semaphore for the first thread in the warp.
+* It converts the semaphore pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
 * 
 * It's worth being aware that this function is particularly necessary for multicast loads, and
 * distributed shared memory can actually be done with a normal tma::expect followed by wait. See
 * the unit tests of dsmem for an example.
 *
-* @param barrier Reference to the barrier variable.
-* @param bytes The number of bytes expected at the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param bytes The number of bytes expected at the semaphore.
 */
-__device__ static inline void expect_bytes(barrier& bar, uint32_t bytes, int dst_cta) {
+__device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int dst_cta) {
     if (::kittens::laneid() == 0) {
         uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
         uint32_t neighbor_mbar_addr;
@@ -158,34 +158,34 @@ __device__ static inline void expect_bytes(barrier& bar, uint32_t bytes, int dst
     }
 }
 /**
-* @brief Sets the number of bytes expected at the barrier.
+* @brief Sets the number of bytes expected at the semaphore.
 *
-* This function sets the number of bytes expected at the barrier for the first thread in the warp.
-* It converts the barrier pointer to a generic shared memory pointer and uses an inline assembly
+* This function sets the number of bytes expected at the semaphore for the first thread in the warp.
+* It converts the semaphore pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
 *
-* @tparam T The type of the data to be stored at the barrier.
-* @param barrier Reference to the barrier variable.
+* @tparam T The type of the data to be stored at the semaphore.
+* @param semaphore Reference to the semaphore variable.
 */
 /**
-* @brief Sets the number of bytes expected at the barrier.
+* @brief Sets the number of bytes expected at the semaphore.
 *
 * This function sets the number of bytes expected at the mbarrier before the transaction arrives.
 */
 template<typename T, typename... args>
-__device__ static inline void expect(barrier& bar, int dst_cta, const T& _1, const args&... _2) {
+__device__ static inline void expect(semaphore& bar, int dst_cta, const T& _1, const args&... _2) {
     expect_bytes(bar, size_bytes<T, args...>, dst_cta);
 }
 
 /**
-* @brief Arrives at a barrier in cluster scope.
+* @brief Arrives at a semaphore in cluster scope.
 *
 * Marks a thread arrival at an mbarrier
 *
-* @param barrier Reference to the barrier variable.
-* @param kPhaseBit The phase bit used for the barrier.
+* @param semaphore Reference to the semaphore variable.
+* @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void arrive(barrier& bar, int dst_cta, uint32_t count=1) {
+__device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count=1) {
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     uint32_t neighbor_mbar_addr;
     asm volatile (
@@ -202,7 +202,7 @@ __device__ static inline void arrive(barrier& bar, int dst_cta, uint32_t count=1
 }
 
 // Generic transfer
-__device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, barrier& bar) {
+__device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, semaphore& bar) {
     if (laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t mbarrier_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
@@ -241,7 +241,7 @@ __device__ static inline void store_async(void *dst, void *src, int dst_cta, uin
 
 // Templated transfer for convenience
 template<typename T>
-__device__ static inline void store_async(T &dst_, T &src_, int dst_cta, barrier& bar) {
+__device__ static inline void store_async(T &dst_, T &src_, int dst_cta, semaphore& bar) {
     store_async((void*)&dst_, (void*)&src_, dst_cta, size_bytes<T>, bar);
 }
 

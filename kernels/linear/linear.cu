@@ -59,7 +59,7 @@ struct linear_template {
             s.col_idx = blockIdx.y; // just 1 tile horizontal per block
             s.n_blocks = g.Wg.cols / w_tile::cols; // number of blocks to process
         }
-        __device__ static bool load(state &s, input_block &b, globals &g, barrier &inputs_arrived, int iter) { // barrier for the producer to load into
+        __device__ static bool load(state &s, input_block &b, globals &g, semaphore &inputs_arrived, int iter) { // semaphore for the producer to load into
             if(warpgroup::warpid() == 0) {
                 tma::expect_bytes(inputs_arrived, size_bytes<w_tile>*NUM_CONSUMER_WARPGROUPS + size_bytes<x_tile>);
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {
@@ -80,7 +80,7 @@ struct linear_template {
             init_bias<y_tile::width>(s.acc, scratch.bias);
             s.n_blocks = g.Wg.cols / w_tile::cols;
         }
-        __device__ static bool work(state &s, input_block &b, scratch_block &scratch, output_block &o, barrier &inputs_finished, barrier &outputs_arrived, int iter) {
+        __device__ static bool work(state &s, input_block &b, scratch_block &scratch, output_block &o, semaphore &inputs_finished, semaphore &outputs_arrived, int iter) {
             warpgroup::mma_AB(s.acc, b.w[warpgroup::groupid()], b.x);
             warpgroup::mma_async_wait();
             arrive(inputs_finished);

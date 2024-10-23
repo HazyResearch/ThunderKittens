@@ -53,18 +53,18 @@ void cylon_forwards(int N,
 
     st_fl_4x4 (&kv_state_smem)[2][2] = reinterpret_cast<st_fl_4x4(&)[2][2]>(q_smem); // we can reuse old memory for the writeout at the end
 
-    // Initialize barriers
-    __shared__ kittens::barrier inputs_arrived[2], inputs_finished[2], outputs_ready[2];
+    // Initialize semaphores
+    __shared__ kittens::semaphore inputs_arrived[2], inputs_finished[2], outputs_ready[2];
     if (warpid == 0) {
-        init_barrier(inputs_arrived[0], 0, 2); // needs to wait on just one memory transaction, plus confirmation that o is available for writing.
-        init_barrier(inputs_arrived[1], 0, 2);
+        init_semaphore(inputs_arrived[0], 0, 2); // needs to wait on just one memory transaction, plus confirmation that o is available for writing.
+        init_semaphore(inputs_arrived[1], 0, 2);
         if(laneid == 0) { // o is available for writing on the initial load, so mark that appropriately
             arrive(inputs_arrived[0]);
         }
-        init_barrier(inputs_finished[0], NUM_CONSUMER_WARPS, 0);
-        init_barrier(inputs_finished[1], NUM_CONSUMER_WARPS, 0);
-        init_barrier(outputs_ready[0],   NUM_CONSUMER_WARPGROUPS, 0);
-        init_barrier(outputs_ready[1],   NUM_CONSUMER_WARPGROUPS, 0);
+        init_semaphore(inputs_finished[0], NUM_CONSUMER_WARPS, 0);
+        init_semaphore(inputs_finished[1], NUM_CONSUMER_WARPS, 0);
+        init_semaphore(outputs_ready[0],   NUM_CONSUMER_WARPGROUPS, 0);
+        init_semaphore(outputs_ready[1],   NUM_CONSUMER_WARPGROUPS, 0);
     }
     // Launch first load. No sync needed since thread 0 is doing these, too.
     if(warpid == 0) {
@@ -82,7 +82,7 @@ void cylon_forwards(int N,
         tma::load_async(k_map[1], tma_k_map, inputs_arrived[0], base_map_idx+1);
     }
 
-    __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
+    __syncthreads(); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
 
     if(warpgroupid == NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
         warpgroup::decrease_registers<24>();
@@ -280,22 +280,22 @@ void cylon_backwards(int N,
 
     // cumulative smem at this point: 180224 + 32768 = 212992
 
-    // Initialize barriers
-    __shared__ kittens::barrier inputs_arrived[2], inputs_finished[2], setup_barrier;
+    // Initialize semaphores
+    __shared__ kittens::semaphore inputs_arrived[2], inputs_finished[2], setup_semaphore;
     if (warpid == 0) {
-        init_barrier(inputs_arrived[0], 0, 1); // needs to wait on just one memory transaction, plus confirmation that o is available for writing.
-        init_barrier(inputs_arrived[1], 0, 1);
-        init_barrier(setup_barrier, 0, 1); // wait for kv state to load
-        init_barrier(inputs_finished[0], NUM_CONSUMER_WARPS, 0);
-        init_barrier(inputs_finished[1], NUM_CONSUMER_WARPS, 0);
+        init_semaphore(inputs_arrived[0], 0, 1); // needs to wait on just one memory transaction, plus confirmation that o is available for writing.
+        init_semaphore(inputs_arrived[1], 0, 1);
+        init_semaphore(setup_semaphore, 0, 1); // wait for kv state to load
+        init_semaphore(inputs_finished[0], NUM_CONSUMER_WARPS, 0);
+        init_semaphore(inputs_finished[1], NUM_CONSUMER_WARPS, 0);
     }
     // Launch first load. No sync needed since thread 0 is doing these, too.
     if(warpid == 0) {
-        tma::expect<st_fl_4x4, 2>(setup_barrier);
+        tma::expect<st_fl_4x4, 2>(setup_semaphore);
         // load kv state
         int kv_idx = (((batch_id * gridDim.y) + head_id) * gridDim.x) + state_id;
-        tma::load_async(kv_state_load_smem[0], tma_kv_state, setup_barrier, kv_idx, 0);
-        tma::load_async(kv_state_load_smem[1], tma_kv_state, setup_barrier, kv_idx, 1);
+        tma::load_async(kv_state_load_smem[0], tma_kv_state, setup_semaphore, kv_idx, 0);
+        tma::load_async(kv_state_load_smem[1], tma_kv_state, setup_semaphore, kv_idx, 1);
         // load q, k, v, q_map, k_map
         tma::expect<st_bf_4x4, 8>(inputs_arrived[0]); // 6 in bf16, 2 in fp32
         int load_idx = ((batch_id * gridDim.y) + head_id) * n_chunks + (n_chunks-1);
@@ -312,7 +312,7 @@ void cylon_backwards(int N,
     }
 
     // if(blockIdx.x == 0 && laneid == 0) printf("(warp %d) about to hit syncthreads\n", warpid);
-    __syncthreads(); // all warps must arrive here, confirming barrier initialization is visible to all threads.
+    __syncthreads(); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
 
     if(warpgroupid == NUM_CONSUMER_WARPGROUPS) { // last warpgroup is a producer
         warpgroup::decrease_registers<24>();
@@ -337,7 +337,7 @@ void cylon_backwards(int N,
 
         rt_fl_1x4<> kv_state, kv_state_grad;
         zero(kv_state_grad); // zero initial grads
-        wait(setup_barrier, 0);
+        wait(setup_semaphore, 0);
         warpgroup::load(kv_state, kv_state_load_smem[warpgroupid]);
         mul(kv_state, kv_state, -1.f); // this is so that we can do mma's onto it with + later.
         warpgroup::store(kv_state_smem[warpgroupid], kv_state);

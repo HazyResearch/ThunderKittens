@@ -89,8 +89,6 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory array.
- * @param row_stride[in] The stride between rows in the source array.
- * @param barrier[in,out] The CUDA barrier used for synchronization.
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
@@ -120,8 +118,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const coord &id
 
         asm volatile(
             "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
-            :
-            : "l"((uint64_t)&dst[{row, col}]), "l"((uint64_t)&src_ptr[row*row_stride + col])
+            :: "l"(__cvta_generic_to_shared(&dst[{row, col}])), "l"(&src_ptr[row*row_stride + col])
             : "memory"
         );
     }

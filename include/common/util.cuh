@@ -57,11 +57,11 @@ __device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; }
  */
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER)
 constexpr int MAX_SHARED_MEMORY = 227000;
-#elif KITTENS_A100
+#elif defined(KITTENS_A100)
 constexpr int MAX_SHARED_MEMORY = 164000;
-#elif KITTENS_4090
+#elif defined(KITTENS_4090)
 constexpr int MAX_SHARED_MEMORY = 100000;
 #endif
 

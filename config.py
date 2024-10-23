@@ -2,7 +2,7 @@
 sources = {
     'attn': {
         'source_files': {
-            'h100': 'kernels/attn/h100/h100.cu' # define these source files for each GPU target desired. (they can be the same.)
+            'h100': 'kernels/attn/h100/h100.cu' # define these source files for each GPU target desired.
         }
     },
     'hedgehog': {
@@ -13,7 +13,7 @@ sources = {
     'based': {
         'source_files': {
             'h100': [
-                'kernels/based/linear_prefill/linear_prefill.cu',
+                'kernels/based/lin_attn_h100.cu',
             ]
         }
     },
@@ -40,6 +40,11 @@ sources = {
             'h100': 'kernels/rotary/pc.cu'
         }
     },
+    'fused_layernorm': {
+        'source_files': {
+            'h100': 'kernels/layernorm/non_pc/layer_norm.cu'
+        }
+    },
     'mamba2': {
         'source_files': {
             'h100': 'kernels/mamba2/pc.cu'
@@ -49,8 +54,8 @@ sources = {
 
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
-# kernels = ['attn', 'mamba2', 'hedgehog', 'cylon', 'fftconv', 'fused_rotary']
-kernels = ['attn']
+# kernels = ['attn', 'mamba2', 'hedgehog', 'cylon', 'fftconv', 'fused_rotary', 'based', 'fused_layernorm']
+kernels = ['based']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'

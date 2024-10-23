@@ -7,6 +7,7 @@
 
 using namespace kittens;
 using namespace kittens::prototype;
+using namespace kittens::prototype::lcsf;
 struct mamba2_fwd_layout {
 	using q_tile   = st_bf<64, 64>;
 	using k_tile   = st_bf<64, 64>;
@@ -34,6 +35,9 @@ struct mamba2_fwd_layout {
         a_vec         a_cumsum;
         a_vec         padding[7];
     };
+    struct common_state {
+        int batch, head;
+    };
 	struct consumer_state {
 		rt_fl<16, 64> o_reg;
 		rt_fl<16, 64> att_block;
@@ -47,15 +51,13 @@ struct mamba2_fwd_template {
 	static constexpr int NUM_CONSUMER_WARPS = 4, NUM_BLOCKS=2,
         OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
 	using layout = mamba2_fwd_layout;
-	__device__ static inline bool task_coord(coord &coords, const typename layout::globals &g, int task_id) {
-		coords.b = task_id/g.Q.depth; // batch = id / heads.
-		task_id -= coords.b*g.Q.depth;
-		coords.d = task_id;
-		return coords.b < g.Q.batch;
-	}
-	__device__ static inline int iters(const typename layout::globals &g, const coord &task_coord) {
-		return g.K.rows/layout::k_tile::rows;
-	}
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        int task_id = args.task_iter*gridDim.x + blockIdx.x;
+		args.common.batch = task_id/args.globals.Q.depth; // batch = id / heads.
+		task_id -= args.common.batch*args.globals.Q.depth;
+		args.common.head = task_id;
+		args.num_iters = args.common.batch < args.globals.Q.batch ? args.globals.K.rows/layout::k_tile::rows : -1;
+    }
 	struct producer {
 		__device__ static void setup(producer_setup_args<layout> args) {
 			warpgroup::producer_registers();
@@ -63,19 +65,19 @@ struct mamba2_fwd_template {
 		__device__ static void load(producer_load_args<layout> args) {
 			if(warpgroup::warpid() == 0) {
                 tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v, args.input.a);
-                tma::load_async(args.input.q, args.globals.Q, {args.task_coord.b,                 0, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.k, args.globals.K, {args.task_coord.b,                 0, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.v, args.globals.V, {args.task_coord.b, args.task_coord.d, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.a, args.globals.A, {args.task_coord.b, args.task_coord.d, 0, args.iter}, args.inputs_arrived);
-                arrive(args.inputs_arrived, 3);
+                tma::load_async(args.input.q, args.globals.Q, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
+                tma::load_async(args.input.k, args.globals.K, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
+                tma::load_async(args.input.v, args.globals.V, {args.common.batch,  args.common.head, args.iter, 0}, args.inputs_arrived);
+                tma::load_async(args.input.a, args.globals.A, {args.common.batch,  args.common.head, 0, args.iter}, args.inputs_arrived);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
 		}
         __device__ static void store(producer_store_args<layout> args) {
             if(warpgroup::warpid() == 0) {;
-                tma::store_async(args.globals.O, args.output.o, {args.task_coord.b, args.task_coord.d, args.iter, 0});
+                tma::store_async(args.globals.O, args.output.o, {args.common.batch, args.common.head, args.iter, 0});
                 tma::store_async_read_wait();
                 __syncwarp();
-                arrive(args.outputs_finished, 4);
+                if(laneid() == 0) arrive(args.outputs_finished, 4);
             }
         }
 	};
@@ -84,7 +86,7 @@ struct mamba2_fwd_template {
 			warpgroup::increase_registers<224>();
             zero(args.state.kv);
 		}
-		__device__ static bool work(consumer_work_args<layout> args) {
+		__device__ static bool compute(consumer_compute_args<layout> args) {
             // Start by doing cumsum into shared memory
             warpgroup::sync();
             warpgroup::copy(args.scratch.a_cumsum, args.input.a);
@@ -176,9 +178,12 @@ struct mamba2_fwd_template {
             warpgroup::sync();
             warpgroup::mma_AtB(args.state.kv, args.scratch.k, args.input.v);
             warpgroup::mma_async_wait();
-            arrive(args.outputs_arrived);
-            arrive(args.inputs_finished);
+            if(laneid() == 0) arrive(args.outputs_arrived);
+            if(laneid() == 0) arrive(args.inputs_finished);
 		}
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            if(laneid() == 0) arrive(args.finish_finished);
+        }
 	};
 };
 

@@ -1,0 +1,5 @@
+rich
+transformers
+omegaconf
+accelerate>=0.26.0
+peft
