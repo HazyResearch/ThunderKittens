@@ -25,6 +25,7 @@ This is meant to be used with a `using group_N = kittens::group<NUM_WORKERS>;` a
 */
 template<int N_WARPS>
 struct group {
+static constexpr int GROUP_WARPS = N_WARPS; // This alias produces nice parallelism.
 static constexpr int GROUP_THREADS = N_WARPS * kittens::WARP_THREADS; // This alias produces nice parallelism.
 __device__ static inline int laneid() { return threadIdx.x % GROUP_THREADS; }
 __device__ static inline int warpid() { return laneid() / kittens::WARP_THREADS; }

@@ -13,9 +13,9 @@ struct vec_copy {
         __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec1;
         __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec2;
         G::load(vec1, input, {});
-        G::sync();
+        G::sync(0);
         G::copy(vec2, vec1);
-        G::sync();
+        G::sync(0);
         G::store(output, vec2, {});
     }
 };

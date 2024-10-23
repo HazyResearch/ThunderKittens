@@ -42,7 +42,7 @@ struct group_shared_load_store_async {
         kittens::st<dtype, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
 
         G::load_async(shared_tile, input, {});
-        G::load_async_wait();
+        G::load_async_wait(0);
         G::store(output, shared_tile, {});
     }
 };

@@ -89,8 +89,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const coord &id
         if (i<total_calls-1 || row<dst.rows) { // the first condition lets compiler short-circuit on unrolled iters
             asm volatile(
                 "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
-                :
-                : "l"((uint64_t)&dst[{row, col}]), "l"((uint64_t)&src_ptr[row*row_stride + col])
+                :: "l"(__cvta_generic_to_shared(&dst[{row, col}])), "l"(&src_ptr[row*row_stride + col])
                 : "memory"
             );
         }
