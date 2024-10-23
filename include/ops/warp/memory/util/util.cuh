@@ -18,101 +18,213 @@ template<typename T> struct move {
 // unpacked types
 template<> struct move<bf16> {
     template<typename U> __device__ static inline void lds(bf16& dst, U* src) {
+#ifdef KITTENS_HOPPER // for whatever reason, this misbehaves on earlier architectures
         asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
-    }
-    template<typename U> __device__ static inline void ldg(bf16& dst, U* src) {
-        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(bf16*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, bf16& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+#else
+        *(bf16*)dst = src;
+#endif
+    }
+    template<typename U> __device__ static inline void ldg(bf16& dst, U* src) {
+#ifdef KITTENS_HOPPER
+        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(bf16*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, bf16& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+#else
+        *(bf16*)dst = src;
+#endif
     }
 };
 template<> struct move<half> {
     template<typename U> __device__ static inline void lds(half& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(half*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, half& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+#else
+        *(half*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(half& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(half*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, half& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst) : "memory");
+#else
+        *(half*)dst = src;
+#endif
     }
 };
 template<> struct move<float> {
     template<typename U> __device__ static inline void lds(float& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(dst) : "l"(src) : "memory");
+#else
+        dst = *(float*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, float& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.f32 [%1], %0;\n" : : "f"(src), "l"(dst) : "memory");
+#else
+        *(float*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(float& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.f32 %0, [%1];\n" : "=f"(dst) : "l"(src) : "memory");
+#else
+        dst = *(float*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, float& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.f32 [%1], %0;\n" : : "f"(src), "l"(dst) : "memory");
+#else
+        *(float*)dst = src;
+#endif
     }
 };
 // packed types
 template<> struct move<bf16_2> {
     template<typename U> __device__ static inline void lds(bf16_2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(bf16_2*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, bf16_2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+#else
+        *(bf16_2*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(bf16_2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(bf16_2*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, bf16_2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+#else
+        *(bf16_2*)dst = src;
+#endif
     }
 };
 template<> struct move<half_2> {
     template<typename U> __device__ static inline void lds(half_2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(half_2*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, half_2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+#else
+        *(half_2*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(half_2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src) : "memory");
+#else
+        dst = *(half_2*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, half_2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst) : "memory");
+#else
+        *(half_2*)dst = src;
+#endif
     }
 };
 template<> struct move<float2> {
     template<typename U> __device__ static inline void lds(float2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+#else
+        dst = *(float2*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, float2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst) : "memory");
+#else
+        *(float2*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(float2& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+#else
+        dst = *(float2*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, float2& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst) : "memory");
+#else
+        *(float2*)dst = src;
+#endif
     }
 };
 template<> struct move<float4> {
     template<typename U> __device__ static inline void lds(float4& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src) : "memory");
+#else
+        dst = *(float4*)src;
+#endif
     }
     template<typename U> __device__ static inline void sts(U* dst, float4& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.shared.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst) : "memory");
+#else
+        *(float4*)dst = src;
+#endif
     }
     template<typename U> __device__ static inline void ldg(float4& dst, U* src) {
+#ifdef KITTENS_HOPPER
         asm volatile("ld.global.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src) : "memory");
+#else
+        dst = *(float4*)src;
+#endif
     }
     template<typename U> __device__ static inline void stg(U* dst, float4& src) {
+#ifdef KITTENS_HOPPER
         asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst) : "memory");
+#else
+        *(float4*)dst = src;
+#endif
     }
 };
 
@@ -120,8 +232,15 @@ template<> struct move<float4> {
 
 struct semaphore {
 private:
-    uint64_t _;
+    uint64_t value;
 }; // note that this is an opaque type, so the value should not be accessed directly.
+template<int num_warps> struct barrier {
+    int barrier_id;
+    __device__ __forceinline__ barrier(int _id) : barrier_id(_id) {}
+    __device__ __forceinline__ barrier operator[](int i) {
+        return barrier(barrier_id + i);
+    }
+};
 
 /**
  * @brief Initializes a synchronization semaphore with a transaction count and sets the expected number of bytes.
@@ -170,8 +289,8 @@ __device__ static inline void invalidate_semaphore(semaphore& bar) {
 * @param semaphore Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void arrive(semaphore& bar) {
-    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+__device__ static inline void arrive(semaphore& sem) {
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&sem)); 
     asm volatile (
         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
         :
@@ -179,24 +298,9 @@ __device__ static inline void arrive(semaphore& bar) {
         : "memory"
     );
 }
-
-// /**
-// * @brief Arrives at a semaphore.
-// *
-// * Marks a warp arrival at an mbarrier
-// *
-// * @param semaphore Reference to the semaphore variable.
-// * @param kPhaseBit The phase bit used for the semaphore.
-// */
-// template<int num_warps> __device__ static inline void arrive(int semaphore_id) {
-//     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
-//     asm volatile (
-//         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0];\n"
-//         :
-//         : "r"(mbar_ptr)
-//         : "memory"
-//     );
-// }
+template<int num_warps> __device__ static inline void arrive(barrier<num_warps> bar) {
+    asm volatile("bar.arrive %0, %1;\n" :: "r"(bar.barrier_id), "n"(num_warps*WARP_THREADS) : "memory");
+}
 
 #ifdef KITTENS_HOPPER
 /**
@@ -207,8 +311,8 @@ __device__ static inline void arrive(semaphore& bar) {
 * @param semaphore Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void arrive(semaphore& bar, uint32_t count) {
-    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+__device__ static inline void arrive(semaphore& sem, uint32_t count) {
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&sem));
     asm volatile (
         "mbarrier.arrive.release.cta.shared::cta.b64 _, [%0], %1;\n"
         :
@@ -224,8 +328,8 @@ __device__ static inline void arrive(semaphore& bar, uint32_t count) {
 * @param semaphore Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline void wait(semaphore& bar, int kPhaseBit) {
-    void const* const ptr = &bar;
+__device__ static inline void wait(semaphore& sem, int kPhaseBit) {
+    void const* const ptr = &sem;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
 #ifdef KITTENS_HOPPER
@@ -264,8 +368,8 @@ __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
 * @param semaphore Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
-__device__ static inline int test_wait(semaphore& bar, int kPhaseBit) {
-    void const* const ptr = &bar;
+__device__ static inline int test_wait(semaphore& sem, int kPhaseBit) {
+    void const* const ptr = &sem;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
     int result;
     asm volatile (
@@ -280,9 +384,12 @@ __device__ static inline int test_wait(semaphore& bar, int kPhaseBit) {
     return result;
 }
 
-__device__ static inline void arrive_and_wait(semaphore& bar, int kPhaseBit) {
-    arrive(bar);
-    wait(bar, kPhaseBit);
+__device__ static inline void arrive_and_wait(semaphore& sem, int kPhaseBit) {
+    arrive(sem);
+    wait(sem, kPhaseBit);
+}
+template<int num_warps> __device__ static inline void arrive_and_wait(barrier<num_warps> bar) {
+    asm volatile("bar.sync %0, %1;\n" :: "r"(bar.barrier_id), "n"(num_warps*WARP_THREADS) : "memory");
 }
 
 template<int N=0> __device__ static inline void load_async_wait() { // for completing (non-TMA) async loads

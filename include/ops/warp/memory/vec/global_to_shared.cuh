@@ -76,8 +76,7 @@ __device__ static inline void load_async(SV &dst, const GL &src, const coord &id
         if(i * elem_per_transfer < dst.length) {
             asm volatile(
                 "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
-                :
-                : "l"((uint64_t)&dst[i*elem_per_transfer]), "l"((uint64_t)&src_ptr[i*elem_per_transfer])
+                :: "l"(__cvta_generic_to_shared(&dst[i*elem_per_transfer])), "l"((uint64_t)&src_ptr[i*elem_per_transfer])
                 : "memory"
             );
         }

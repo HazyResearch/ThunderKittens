@@ -26,11 +26,11 @@ struct group_normalize_row {
         kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
-        G::sync();
+        G::sync(0);
         G::row_sum(accum, shared_tile);
-        G::sync();
+        G::sync(0);
         G::div_row(shared_tile, shared_tile, accum);
-        G::sync();
+        G::sync(0);
         G::store(output, shared_tile, {});
     }
 };
@@ -58,11 +58,11 @@ struct group_normalize_col {
         kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
-        G::sync();
+        G::sync(0);
         G::col_sum(accum, shared_tile);
-        G::sync();
+        G::sync(0);
         G::div_col(shared_tile, shared_tile, accum);
-        G::sync();
+        G::sync(0);
         G::store(output, shared_tile, {});
     }
 };
@@ -90,11 +90,11 @@ struct group_broadcast_row {
         kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::col_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
-        G::sync();
+        G::sync(0);
         G::row_sum(accum, shared_tile);
-        G::sync();
+        G::sync(0);
         G::broadcast_row(shared_tile, accum);
-        G::sync();
+        G::sync(0);
         G::store(output, shared_tile, {});
     }
 };
@@ -122,11 +122,11 @@ struct group_broadcast_col {
         kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         __shared__ kittens::row_vec<typeof(shared_tile)> accum;
         G::load(shared_tile, input, {});
-        G::sync();
+        G::sync(0);
         G::col_sum(accum, shared_tile);
-        G::sync();
+        G::sync(0);
         G::broadcast_col(shared_tile, accum);
-        G::sync();
+        G::sync(0);
         G::store(output, shared_tile, {});
     }
 };

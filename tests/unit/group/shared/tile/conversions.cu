@@ -15,9 +15,9 @@ struct test_shared_copy {
         kittens::st_bf<16*H, 16*W> &t1 = al.allocate<kittens::st_bf<16*H, 16*W>>();
         kittens::st_bf<16*H, 16*W> &t2 = al.allocate<kittens::st_bf<16*H, 16*W>>();
         G::load(t2, input, {});
-        G::sync();
+        G::sync(0);
         G::copy(t1, t2);
-        G::sync();
+        G::sync(0);
         G::store(output, t1, {});
     }
 };

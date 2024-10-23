@@ -14,9 +14,9 @@ struct test_exp {
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st_bf<16*H, 16*W> &shared_tile = al.allocate<kittens::st_bf<16*H, 16*W>>();
         G::load(shared_tile, input, {});
-        G::sync();
+        G::sync(0);
         G::exp(shared_tile, shared_tile);
-        G::sync();
+        G::sync(0);
         G::store(output, shared_tile, {});
     }
 };

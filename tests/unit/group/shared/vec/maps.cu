@@ -15,9 +15,9 @@ struct vec_add1 {
         using G = kittens::group<NW>;
         __shared__ kittens::col_vec<kittens::st_bf<16*S, 16*S>> vec;
         G::load(vec, input, {});
-        G::sync();
+        G::sync(0);
         G::add(vec, vec, __float2bfloat16(1.));
-        G::sync();
+        G::sync(0);
         G::store(output, vec, {});
     }
 };

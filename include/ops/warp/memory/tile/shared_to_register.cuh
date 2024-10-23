@@ -13,6 +13,12 @@
 
 namespace kittens {
 
+namespace detail {
+template<ducks::st::all ST> __device__ inline static int wmma_offset(int tile_row, int tile_col) {
+    return tile_row*512 + tile_col*(512*ST::underlying_height);
+}
+}
+
 // These probably need to be redone to reduce bank conflicts.
 // They currently work fine with xor layout but it should be
 // possible to reduce their bank conflicts with other layouts too.
@@ -36,11 +42,43 @@ __device__ inline static void load(RT &dst, const ST &src) {
     using U  = ST::dtype;
     using U2 = base_types::packing<U >::packed_type;
 
+    // convert to shared state space
+    uint64_t shared_addr;
+    asm volatile("cvta.to.shared.u64 %0, %1;\n" : "=l"(shared_addr) : "l"((uint64_t)(&src)));
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
+            if constexpr(std::is_same_v<typename ST::layout, ducks::st_layout::wmma>) {
+                U2 tmp[4];
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
+                    asm volatile("wmma.load.a.sync.aligned.row.m16n16k16.shared.bf16 {%0, %1, %2, %3}, [%4];\n"
+                                 : "=r"(*(uint32_t*)&tmp[0]), "=r"(*(uint32_t*)(&tmp[1])), "=r"(*(uint32_t*)&tmp[2]), "=r"(*(uint32_t*)(&tmp[3]))
+                                 : "l"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+                    asm volatile("wmma.load.a.sync.aligned.row.m16n16k16.shared.tf32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
+                                 : "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[3].x), "=f"(tmp[3].y)
+                                 : "l"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 2) {
+                    asm volatile("wmma.load.b.sync.aligned.row.m16n16k16.shared.bf16 {%0, %1, %2, %3}, [%4];\n"
+                                 : "=r"(*(uint32_t*)&tmp[0]), "=r"(*(uint32_t*)(&tmp[2])), "=r"(*(uint32_t*)&tmp[1]), "=r"(*(uint32_t*)(&tmp[3]))
+                                 : "l"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 4) {
+                    asm volatile("wmma.load.b.sync.aligned.row.m16n16k16.shared.tf32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
+                                 : "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[3].x), "=f"(tmp[3].y)
+                                 : "l"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+                dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+                dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+                dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+            }
+            else
             if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
                 // handle the row-major layout for 16-bit types
                 int row = i*dst.tile_size + (laneid / 4);
@@ -129,12 +167,39 @@ __device__ inline static void store(ST &dst, const RT &src) {
     using U  = ST::dtype;
     using U2 = base_types::packing<U >::packed_type;
 
+    // convert to shared state space
+    uint64_t shared_addr;
+    asm volatile("cvta.to.shared.u64 %0, %1;\n" : "=l"(shared_addr) : "l"((uint64_t)(&src)));
+
     int laneid = threadIdx.x % 32;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
+            if constexpr(std::is_same_v<typename ST::layout, ducks::st_layout::wmma>) {
+                U2 tmp[4];
+                tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+                tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+                tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+                tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
+                    asm volatile("wmma.store.d.sync.aligned.row.m16n16k16.shared.f16 [%4], {%0, %1, %2, %3};\n"
+                                 :: "r"(*(uint32_t*)&tmp[0]), "r"(*(uint32_t*)(&tmp[1])), "r"(*(uint32_t*)&tmp[2]), "r"(*(uint32_t*)(&tmp[3])), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+                    asm volatile("wmma.store.d.sync.aligned.row.m16n16k16.shared.f32 [%8], {%0, %1, %2, %3, %4, %5, %6, %7};\n"
+                                 :: "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[3].x), "=f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 2) {
+                    asm volatile("wmma.store.d.sync.aligned.col.m16n16k16.shared.f16 [%4], {%0, %1, %2, %3};\n"
+                                 :: "r"(*(uint32_t*)&tmp[0]), "r"(*(uint32_t*)(&tmp[2])), "r"(*(uint32_t*)&tmp[1]), "r"(*(uint32_t*)(&tmp[3])), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+                else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::col> && sizeof(typename ST::dtype) == 4) {
+                    asm volatile("wmma.store.d.sync.aligned.col.m16n16k16.shared.f32 [%8], {%0, %1, %2, %3, %4, %5, %6, %7};\n"
+                                 :: "=f"(tmp[0].x), "=f"(tmp[0].y), "=f"(tmp[2].x), "=f"(tmp[2].y), "=f"(tmp[1].x), "=f"(tmp[1].y), "=f"(tmp[3].x), "=f"(tmp[3].y), "r"(shared_addr+detail::wmma_offset<ST>(i, j)));
+                }
+            }
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 2) {
                 // handle the row-major layout
                 int row = i*src.tile_size + (laneid / 4);
                 int col = j*src.tile_size + 2*(laneid % 4);

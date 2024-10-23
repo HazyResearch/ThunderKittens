@@ -28,6 +28,10 @@ namespace st {
  */
 struct identifier {};
 } // namespace st
+namespace st_layout {
+struct swizzled {};
+struct wmma {};
+} // namespace st_layout
 } // namespace ducks
 
 // Forward declaration of subtile
@@ -36,7 +40,8 @@ template<
     int _underlying_height,
     int _underlying_width,
     int _subtile_height,
-    int _subtile_width
+    int _subtile_width,
+    typename _layout = ducks::st_layout::swizzled
 >
 struct st_subtile;
 
@@ -47,12 +52,13 @@ struct st_subtile;
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */
-template<typename _T, int _rows, int _cols>
+template<typename _T, int _rows, int _cols, typename _layout = ducks::st_layout::swizzled>
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
+    using layout = _layout;
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_rows          = _rows;
@@ -70,6 +76,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
+    static_assert(std::is_same_v<_layout, ducks::st_layout::swizzled> || std::is_same_v<_layout, ducks::st_layout::wmma>);
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 2 ? (
@@ -85,12 +92,19 @@ struct KITTENS_DEFAULT_ALIGN st {
     dtype data[rows*cols]; ///< Raw data storage for the tile.
 
     __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major coord default
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+    if constexpr (std::is_same_v<_layout, ducks::st_layout::swizzled>) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        }
+        else {
+            constexpr int minicol_width = 32/sizeof(T);
+            int supercol = c/minicol_width, subcol = c%minicol_width;
+            return &ptr[(supercol*underlying_rows + r)*minicol_width + subcol];
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -135,13 +149,15 @@ template<
     int _underlying_rows,
     int _underlying_cols,
     int _subtile_rows,
-    int _subtile_cols
+    int _subtile_cols,
+    typename _layout
 >
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
+    using layout = _layout;
 
     static constexpr int underlying_rows          = _underlying_rows;
     static_assert(underlying_rows % TILE_DIM == 0, "Underlying rows must be divisible by the tile dimension");
@@ -179,12 +195,19 @@ struct st_subtile {
     }
 
     __device__ static inline T* idx(T *ptr, int r, int c) { // naive row-major coord default
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+        if constexpr (std::is_same_v<_layout, ducks::st_layout::swizzled>) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        }
+        else {
+            constexpr int minicol_width = 32/sizeof(dtype);
+            int supercol = c/minicol_width, subcol = c%minicol_width;
+            return &ptr[(supercol*underlying_rows + r)*minicol_width + subcol];
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -229,8 +252,8 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width> using st_bf = st<bf16, _height, _width>;
-template<int _height, int _width> using st_hf = st<half, _height, _width>;
-template<int _height, int _width> using st_fl = st<float, _height, _width>;
+template<int _height, int _width, typename L=ducks::st_layout::swizzled> using st_bf = st<bf16,  _height, _width, L>;
+template<int _height, int _width, typename L=ducks::st_layout::swizzled> using st_hf = st<half,  _height, _width, L>;
+template<int _height, int _width, typename L=ducks::st_layout::swizzled> using st_fl = st<float, _height, _width, L>;
 
 }
