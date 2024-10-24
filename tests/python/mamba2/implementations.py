@@ -103,7 +103,8 @@ def get_inputs_mamba(dt, b, h, n, dv, verbose=True, **kwargs):
 
     ## Dimensions
     # Denoted (B, T, Q, D, P) in the paper
-    batch, seqlen, chunk_size, dim, headdim = b, 2048, 64, 2048, 64
+    batch, seqlen, chunk_size, dim, headdim = b, n, 64, (h*dv), 64
+    # print(f"FLAG: {batch=}, {seqlen=}, {chunk_size=}, {dim=}, {headdim=}")
     nheads = dim // headdim  # (H) in the paper
     ngroups = 1 # (G) in the paper
     dstate = 64  # (N) in the paper
@@ -118,6 +119,7 @@ def get_inputs_mamba(dt, b, h, n, dv, verbose=True, **kwargs):
     C = torch.randn(batch, seqlen, ngroups, dstate, dtype=dtype, device=device)
     D = torch.randn(nheads, dtype=dtype, device=device)
     z = None
+
     return x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype
 
 
@@ -151,21 +153,20 @@ def run_torch(dt, b, h, n, dv, verbose=True, **kwargs):
 def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
 
-    q = C.to(torch.bfloat16)
-    k = B.to(torch.bfloat16)
-    v = x.to(torch.bfloat16)
+    torch.cuda.empty_cache()
 
-    # 4 TFLOPS in these multiplies
-    D_factor = (x * rearrange(D, "d -> d 1")).to(torch.bfloat16)
+    # TK 
+    q = C 
+    k = B
+    D_factor = x * rearrange(D, "d -> d 1")
     _dt = F.softplus(dt + dt_bias)
-    v = v*_dt.unsqueeze(-1).to(torch.bfloat16)
+    v = x*_dt.unsqueeze(-1)
     a = A*_dt
 
-    # 40 TFLOPS in these transposes
-    q = rearrange(q, "b l h d -> b h l d").contiguous()
-    k = rearrange(k, "b l h d -> b h l d").contiguous()
-    v = rearrange(v, "b l h d -> b h l d").contiguous()
-    a = rearrange(a, "b h l -> b l h").contiguous()
+    q = rearrange(q, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+    k = rearrange(k, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+    v = rearrange(v, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+    a = rearrange(a, "b h l -> b l h").to(torch.float32).contiguous()
 
     torch.cuda.synchronize()
     start = time.time()

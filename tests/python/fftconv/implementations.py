@@ -86,16 +86,21 @@ def fftconv_cutlass_test(dt, b, h, n, dv, verbose=True, **kwargs):
         return None, -1
     
     u, k = get_fft_inputs(dt, b, h, n, dv)
-    conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
 
-    torch.cuda.synchronize()
-    t0 = time.time()
+    try:
+        conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
+        
+        torch.cuda.synchronize()
+        t0 = time.time()
 
-    y_flashfft = conv_flashfft(u, k)
+        y_flashfft = conv_flashfft(u, k)
 
-    torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+        torch.cuda.synchronize()
+        t1 = time.time()
+        tot = t1-t0
+    except:
+        print(f"Error: {sys.exc_info()[0]}")
+        return None, -1
 
     return y_flashfft, tot
 
