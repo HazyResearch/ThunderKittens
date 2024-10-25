@@ -2,10 +2,11 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
+constexpr int ATTN_B = 32;
 constexpr int ATTN_H = 32;
-constexpr int ATTN_N = 2048; // 768*2; // 4096;
+constexpr int ATTN_N = 2048;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ATTN_G = 1;  // hardcoded into this kernel
 constexpr int ITER   = 10;
 
 constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
@@ -43,7 +44,10 @@ int main(int argc, char **argv) {
     std::cout << "Entered main!" << std::endl;
 
     // create dummy variables that are the right size
-    constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_VO  = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_QK  = ATTN_B*ATTN_G*ATTN_N*ATTN_D; 
+    constexpr int TOTAL_ELEMENTS_A   = ATTN_B*ATTN_H*ATTN_N;
+
     constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS];
@@ -52,12 +56,13 @@ int main(int argc, char **argv) {
     float *v = new float[TOTAL_UNIQUE_ELEMENTS];
     float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS];
 
-    bf16 *q_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *k_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *v_bf = new bf16[TOTAL_ELEMENTS];
-    bf16 *o_bf = new bf16[TOTAL_ELEMENTS];
+    bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *v_bf = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
+
     float *a_in = new float[ATTN_B*ATTN_H*ATTN_N];
-    float *o = new float[TOTAL_ELEMENTS];
+    float *o    = new float[TOTAL_ELEMENTS_VO];
 
     std::ifstream infile(argv[1]);
 
@@ -101,37 +106,46 @@ int main(int argc, char **argv) {
 
     std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
 
-    // replicate into heads
-    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
-        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
+    // replicate v into batch and heads
+    for (int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
     }
-    for(int i = 0; i < ATTN_B*ATTN_H*ATTN_N; i++) {
+
+    // replicate q and k into batch
+    for (int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
+        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
+    }
+
+    // replicate a into batch and heads
+    for (int i = 0; i < TOTAL_ELEMENTS_A; i++) {
         a_in[i] = a[i % ATTN_N];
     }
 
     bf16 *d_q, *d_k, *d_v, *d_o;
     float *d_a;
-    cudaMalloc(&d_q, TOTAL_ELEMENTS * sizeof(bf16));
-    cudaMalloc(&d_k, TOTAL_ELEMENTS * sizeof(bf16));    
-    cudaMalloc(&d_v, TOTAL_ELEMENTS * sizeof(bf16));
-    cudaMalloc(&d_o, TOTAL_ELEMENTS * sizeof(bf16));
+    cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
+    cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));    
+    cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_a, ATTN_B*ATTN_H*ATTN_N * sizeof(float));
 
-    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_a, a_in, ATTN_B*ATTN_H*ATTN_N * sizeof(float), cudaMemcpyHostToDevice);
 
-    mamba2_fwd_template::layout::q_global Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    mamba2_fwd_template::layout::q_global Qg(d_q, ATTN_B, ATTN_G, ATTN_N, nullptr);
+    mamba2_fwd_template::layout::k_global Kg(d_k, ATTN_B, ATTN_G, ATTN_N, nullptr);
+
     mamba2_fwd_template::layout::a_global Ag(d_a, ATTN_B, ATTN_H, nullptr, ATTN_N);
-    mamba2_fwd_template::layout::k_global Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
+
     mamba2_fwd_template::layout::v_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
     mamba2_fwd_template::layout::o_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+
     mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY/2-2048; // have the flag tell us
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048; // have the flag tell us
     
     cudaFuncSetAttribute(
         prototype::lcsf::kernel<mamba2_fwd_template>,
@@ -162,8 +176,8 @@ int main(int argc, char **argv) {
     std::cout << "Finished kernel\n";
     
     // check correctness
-    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
 
@@ -174,9 +188,11 @@ int main(int argc, char **argv) {
     std::ofstream diff_file("printouts/diff.txt");
     for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
         float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        o_file << o[i] << ' ';
-        diff_file << diff << ' ';
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
         if(i % 64 == 63) {
             o_ref_file << '\n';
             o_file << '\n';
