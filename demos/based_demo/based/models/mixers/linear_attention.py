@@ -155,11 +155,8 @@ class LinearAttention(nn.Module):
             k = torch.cat([k, torch.zeros(b, h, self.l_max - l, D, dtype=k.dtype, device=k.device)], dim=2)
             v = torch.cat([v, torch.zeros(b, h, self.l_max - l, d, dtype=v.dtype, device=v.device)], dim=2)
 
-            y, kv_state = tk.based(
-                q.to(dtype=torch.bfloat16).contiguous(),
-                k.to(dtype=torch.bfloat16).contiguous(),
-                v.to(dtype=torch.bfloat16).contiguous(), 
-            )
+            y, kv_state = tk.based( q, k, v )
+            
             # unpadding
             y = y[:, :, :l]    
             kv_state = kv_state[:, :, None].transpose(3, 4)
@@ -185,7 +182,7 @@ class LinearAttention(nn.Module):
         # output norm and gating 
         y = self.g_norm(y)
         y = rearrange(y, 'b h l d -> b l (h d)')
-        return self.out_proj(y.to(x.dtype)), kv_state.to(x.dtype)
+        return self.out_proj(y.to(x.dtype)), kv_state#.to(x.dtype)
 
     def recurrent_forward(self, hidden_states: torch.Tensor, kv_state: torch.Tensor, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, impl_choice: str="default"):
         """
@@ -211,3 +208,8 @@ class LinearAttention(nn.Module):
     def _get_inference_cache(self, inference_params: InferenceParams):
         return inference_params.key_value_memory_dict[self.layer_idx]
 
+    def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype=None, **kwargs):
+        """Creates a state tensor of shape ..."""
+        kv_shape = (batch_size, self.num_heads, 1, self.head_dim, self.expanded_size())
+        kv_state = torch.zeros(*kv_shape, dtype=dtype, device=self.out_proj.weight.device)
+        return kv_state 
