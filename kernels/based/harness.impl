@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 2
-#define ATTN_H 2
+#define ATTN_B 16
+#define ATTN_H 16
 #define ATTN_N 2048
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
     CudaCheckError();
     std::cout << "Warmup!\n";
     dim3 grid(ATTN_H, ATTN_B);
-    for(int i = 0; i < 1; i++) {
+    for(int i = 0; i < ITER; i++) {
         based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g); ;
     }
     cudaDeviceSynchronize();
