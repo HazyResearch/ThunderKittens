@@ -77,28 +77,23 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
     if (threadIdx.x == 0) { 
         init_semaphore(qsmem_semaphore, 0, 1); 
-
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1); 
             init_semaphore(v_smem_arrived[j], 0, 1); 
             init_semaphore(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
-        // asm volatile("fence.proxy.async;\n" ::: "memory");
-        
 
         tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
 
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
             int4 q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
             tma::load_async(q_smem[wg], g.q, q_tile_idx, qsmem_semaphore);
-
         }
 
         for (int j = 0; j < K::stages - 1; j++) {
             int4 kv_tile_idx = {blockIdx.z, kv_head_idx, j, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
             tma::load_async(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
-
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
             tma::load_async(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
         }
@@ -115,16 +110,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             kv_iters = (seq_idx * (K::qo_height/kittens::TILE_DIM)) - 1 + (CONSUMER_WARPGROUPS * (K::qo_height/kittens::TILE_DIM)); 
             kv_iters = ((kv_iters / (K::kv_height/kittens::TILE_DIM)) == 0) ? (0) : ((kv_iters / (K::kv_height/kittens::TILE_DIM)) - 1);
         }
-        else {
-            kv_iters = kv_blocks-2; 
-        }
+        else { kv_iters = kv_blocks-2; }
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
                 int4 kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
                 tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-
                 tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
                 tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
                 
@@ -139,8 +131,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         rt_bf<16, K::kv_height>  att_block_mma;
         rt_fl<16, K::tile_width> o_reg;
         
-        col_vec<rt_fl<16, K::kv_height>> max_vec, norm_vec;
-        col_vec<rt_fl<16, K::kv_height>> max_vec_last_scaled, max_vec_scaled;
+        col_vec<rt_fl<16, K::kv_height>> max_vec, norm_vec, max_vec_last_scaled, max_vec_scaled;
         
         neg_infty(max_vec);
         zero(norm_vec);
@@ -151,17 +142,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4);
             kv_iters = (kv_iters/8);
         }
-        else { 
-            kv_iters = kv_blocks - 1; 
-        }
+        else { kv_iters = kv_blocks - 1; }
 
         wait(qsmem_semaphore, 0);
-
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
         
             wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-            
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
             
             copy(max_vec_last_scaled, max_vec);
@@ -201,14 +188,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
-
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled,       max_vec_last_scaled);
             mul(norm_vec,            norm_vec,     max_vec_last_scaled);
-
             row_sum(norm_vec,  att_block, norm_vec);
             add(att_block, att_block, 0.f);
-            
             copy(att_block_mma, att_block); 
             mul_row(o_reg, o_reg, max_vec_last_scaled); 
 
@@ -220,13 +204,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
 
-        // group<12>::sync(10); // ffs
-
         div_row(o_reg, o_reg, norm_vec);
-
         warpgroup::store(o_smem[warpgroupid], o_reg); 
-        // asm volatile("fence.proxy.async;\n" ::: "memory");
-
         warpgroup::sync(warpgroupid+4);
 
         if (warpid % 4 == 0) {
@@ -242,16 +221,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         else                   { mul(norm_vec, norm_vec, -11.313708499f); }
     
         warpgroup::store(l_smem[warpgroupid], norm_vec);
-        // asm volatile("fence.proxy.async;\n" ::: "memory");
-        
         warpgroup::sync(warpgroupid+4);
 
-        
         if (warpid % 4 == 0) {
             int4 tile_idx = {blockIdx.z, blockIdx.y, 0, (seq_idx) + warpgroupid};
             tma::store_async(g.l, l_smem[warpgroupid], tile_idx);
         }
-    
         tma::store_async_wait();
     }
 }
@@ -286,44 +261,32 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     og_tile (&og_smem)[4] = al.allocate<og_tile, 4>();
     o_tile  (&o_smem) [4] = al.allocate<o_tile , 4>();
     d_tile  (&d_smem) [4] = al.allocate<d_tile , 4>();
-
-    using fl_reg_tile = rt_fl<4*16, D>;
-    using fl_reg_col  = col_vec<rt_fl<4*16, D>>;
     
-    fl_reg_tile og_reg;
-    fl_reg_tile  o_reg; 
-    fl_reg_col   d_reg;
+    rt_fl<4*16, D> og_reg, o_reg; 
+    col_vec<rt_fl<4*16, D>> d_reg;
 
     __shared__ kittens::semaphore smem_semaphore;
 
     if (threadIdx.x == 0) {
         init_semaphore(smem_semaphore, 0, 1);
-        // asm volatile("fence.proxy.async;\n" ::: "memory");
         tma::expect_bytes(smem_semaphore, sizeof(og_smem[0]) * 4 * 2);
-
     }
     __syncthreads();
 
     if (warpid == 0) {
-        for (int w = 0; w < 4; w++) { // load o, o_grad
+        for (int w = 0; w < 4; w++) {
             int4 tile_idx = {blockIdx.z, blockIdx.y, (blockIdx.x * 4) + w, 0};
-
             tma::load_async(o_smem[w],  g.o,  tile_idx, smem_semaphore);
             tma::load_async(og_smem[w], g.og, tile_idx, smem_semaphore);
-
         }
     }
 
     wait(smem_semaphore, 0);
-
     load(o_reg, o_smem[warpid]);
     load(og_reg, og_smem[warpid]);
-
     mul(og_reg, og_reg, o_reg);
     row_sum(d_reg, og_reg);
-    
     store(d_smem[warpid], d_reg);
-    // asm volatile("fence.proxy.async;\n" ::: "memory");
     __syncthreads(); 
 
     if (warpid == 0) {
@@ -332,9 +295,7 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
             tma::store_async(g.d, d_smem[w], tile_idx);
         }
     }
-
     tma::store_async_wait();
-    __syncthreads();
 }
 
 template<int D> struct bwd_attend_ker_tile_dims {};
@@ -342,14 +303,12 @@ template<> struct bwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = (64);
     constexpr static int tile_h     = (4*16);
     constexpr static int tile_h_qo  = (4*16);
-
     constexpr static int blocks_sm = 1;
 };
 template<> struct bwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int tile_h     = (4*16);
     constexpr static int tile_h_qo  = (4*16);
-
     constexpr static int blocks_sm = 1; 
 };
 
@@ -428,16 +387,64 @@ __device__ static inline void
 causal_mask(auto &reg_tile, int qo_idx) {
     int q_blk = (qo_idx) * (tile_h_qo/kittens::TILE_DIM);
     int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * (tile_h/kittens::TILE_DIM)) 
-              + ((kittens::warpid()/kittens::WARPGROUP_WARPS) * (tile_h/kittens::TILE_DIM)) 
-              + (kittens::warpid() % kittens::WARPGROUP_WARPS);
+                + ((kittens::warpid()/kittens::WARPGROUP_WARPS) * (tile_h/kittens::TILE_DIM)) 
+                + (kittens::warpid() % kittens::WARPGROUP_WARPS);
 
     for (int j = 0; j < (tile_h_qo/kittens::TILE_DIM); j++) {
         int q_idx = q_blk + j;
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-
         if      (q_idx  < k_blk) { neg_infty(attn_subtile); }
         else if (q_idx == k_blk) { make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
     }
+}
+
+template<bool is_causal, int tile_h_qo, int tile_h, int tile_width, int D>
+__device__ static inline void
+compute_bwd_loop(
+        kittens::semaphore *vec_b, kittens::semaphore *q_b, kittens::semaphore *o_b, 
+        rt_fl<16, 64> &s_block_t, rt_fl<16, 64> &dp_block_t, 
+        rt_fl<16, 64> &p_block_t, rt_fl<16, 64> &ds_block_t,  
+        rt_bf<16, 64> &p_block_t_mma,  rt_bf<16, 64> &ds_block_t_mma,
+        rt_fl<16, tile_width> &kg_reg, rt_fl<16, tile_width> &vg_reg,
+        auto &q_smem, auto &k_smem, auto &v_smem, 
+        auto &og_smem, auto &ds_smem, auto &l_smem, auto &d_smem,
+        int qo_idx, int q_start, int tic, int toc) 
+{
+    wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
+    stream_tile(s_block_t, l_smem, tic);
+    wait(q_b[tic], ((qo_idx - q_start)/2)%2);
+
+    warpgroup::mma_ABt(s_block_t, k_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], q_smem[tic]);
+    warpgroup::mma_commit_group();
+
+    wait(o_b[tic], ((qo_idx - q_start)/2)%2);
+    warpgroup::mm_ABt(dp_block_t, v_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], og_smem[tic]);
+    warpgroup::mma_commit_group();
+    warpgroup::mma_async_wait();
+
+    if constexpr (D == 64) { mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
+    else                   { mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
+
+    if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx); }
+
+    exp2(s_block_t, s_block_t);
+    copy(p_block_t, s_block_t);
+    copy(p_block_t_mma, s_block_t);
+    stream_sub_tile(dp_block_t, d_smem, tic);
+    mul(ds_block_t, p_block_t, dp_block_t);
+
+    if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
+    else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
+
+    warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
+    warpgroup::mma_commit_group();
+    
+    copy(ds_block_t_mma, ds_block_t);
+    warpgroup::store(ds_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], ds_block_t);
+    warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
+    warpgroup::mma_commit_group();
+    warpgroup::mma_async_wait();
+    group<8>::sync(10); 
 }
 
 __device__ static inline void 
@@ -448,7 +455,6 @@ kv_store(auto &kg_smem, auto &kg_reg,
     group<8>::sync(10); 
     warpgroup::store(kg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], kg_reg);
 
-    // asm volatile("fence.proxy.async;\n" ::: "memory");
     group<4>::sync(warpgroup::groupid()+4);
     if (kittens::warpid() % 4 == 0) {
         int4 tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + (kittens::warpid()/kittens::WARPGROUP_WARPS), 0};
@@ -458,8 +464,6 @@ kv_store(auto &kg_smem, auto &kg_reg,
 
     wait(bar, toc);
     warpgroup::store(vg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], vg_reg);
-    
-    // asm volatile("fence.proxy.async;\n" ::: "memory");
     group<4>::sync(warpgroup::groupid()+4);
 
     if (kittens::warpid() % 4 == 0) {
@@ -467,34 +471,27 @@ kv_store(auto &kg_smem, auto &kg_reg,
         tma::store_add_async(dst.vg, vg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], tile_idx);
         tma::store_commit_group();
     }
-
-    tma::store_async_wait();
+    tma::store_async_wait(); 
 }
 
 template<int D, bool is_causal>
 __global__ __launch_bounds__(BWD_NUM_WORKERS*kittens::WARP_THREADS, bwd_attend_ker_tile_dims<D>::blocks_sm)
 void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
-                        
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
 
     const int N = g.N, hr = g.hr;
-
     using G = bwd_attend_ker_tile_dims<D>;
     
-    using kg_tile = st_fl<G::tile_h, G::tile_width>;
-    using vg_tile = st_fl<G::tile_h, G::tile_width>;
-
-    using k_tile = st_bf<G::tile_h, G::tile_width>;
-    using v_tile = st_bf<G::tile_h, G::tile_width>;
-
-    using q_tile  = st_bf<G::tile_h_qo, G::tile_width>;
-    using og_tile = st_bf<G::tile_h_qo, G::tile_width>;
-    using qg_tile = st_fl<G::tile_h_qo, G::tile_width>;
-
-    using l_tile = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
-    using d_tile = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
-
+    using kg_tile   = st_fl<G::tile_h, G::tile_width>;
+    using vg_tile   = st_fl<G::tile_h, G::tile_width>;
+    using k_tile    = st_bf<G::tile_h, G::tile_width>;
+    using v_tile    = st_bf<G::tile_h, G::tile_width>;
+    using q_tile    = st_bf<G::tile_h_qo, G::tile_width>;
+    using og_tile   = st_bf<G::tile_h_qo, G::tile_width>;
+    using qg_tile   = st_fl<G::tile_h_qo, G::tile_width>;
+    using l_tile    = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
+    using d_tile    = row_vec<st_fl<G::tile_h_qo, G::tile_h>>;
     using attn_tile = st_bf<G::tile_h_qo, G::tile_h>; 
 
     k_tile  (&k_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<k_tile, BWD_CONSUMER_WARPGROUPS>();
@@ -513,7 +510,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
     const int warpid      = kittens::warpid();
     const int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
-
     const int qo_blocks   = N / (G::tile_h_qo);
     const int kv_head_idx = (blockIdx.y) / hr; 
 
@@ -526,16 +522,13 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     if (threadIdx.x == 0) {
         init_semaphore(kv_b,  0, 1);
         init_semaphore(qg_ready, 1, 0);
-        
         for (int s = 0; s < 2; s++) {
-            init_semaphore(q_b[s],  0, 1);
-            init_semaphore(o_b[s],  0, 1); 
+            init_semaphore(q_b[s],   0, 1);
+            init_semaphore(o_b[s],   0, 1); 
             init_semaphore(vec_b[s], 0, 1);
-            
             init_semaphore(compute_done[s], 1, 0);
         }
-        // asm volatile("fence.proxy.async;\n" ::: "memory");
-
+        
         tma::expect_bytes(kv_b, (sizeof(k_smem[0]) + sizeof(v_smem[0])) * BWD_CONSUMER_WARPGROUPS);
         for (int w = 0; w < BWD_CONSUMER_WARPGROUPS; w++) {
             int4 tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + w, 0};
@@ -562,7 +555,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         if (warpid % kittens::WARPGROUP_WARPS == 0) {
             for (auto qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 if (qo_idx + 1 < qo_blocks) {
-                    
                     int4 tile_idx = {blockIdx.z, blockIdx.y, qo_idx + 1, 0};
                     tma::expect_bytes(q_b[toc],   sizeof(q_smem[0])); 
                     tma::load_async(q_smem[toc], g.q,  tile_idx, q_b[toc]);
@@ -590,168 +582,60 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             }
         }
     }
-    else if(warpgroupid == 0) {
-        warpgroup::increase_registers<256>();
-
-        rt_fl<16, G::tile_width> kg_reg;
-        rt_fl<16, G::tile_width> vg_reg;
-        rt_fl<16, G::tile_width> qg_reg;
-
-        row_vec<rt_fl<16, G::tile_h_qo>> row_reg; 
-
-        rt_fl<16, G::tile_h_qo> s_block_t; 
-        rt_fl<16, G::tile_h_qo> dp_block_t;
-
-        rt_fl<16, G::tile_h_qo> p_block_t;
-        rt_fl<16, G::tile_h_qo> ds_block_t;
-
-        rt_bf<16, G::tile_h_qo> p_block_t_mma;
-        rt_bf<16, G::tile_h_qo> ds_block_t_mma;
-
-        zero(kg_reg);
-        zero(vg_reg);
-
-        wait(kv_b, 0);
-
-        for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
-
-            wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
-
-            stream_tile(s_block_t, l_smem, tic);
-
-            wait(q_b[tic], ((qo_idx - q_start)/2)%2);
-
-            warpgroup::mma_ABt(s_block_t, k_smem[warpgroupid], q_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            wait(o_b[tic], ((qo_idx - q_start)/2)%2);
-
-            warpgroup::mm_ABt(dp_block_t, v_smem[warpgroupid], og_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            warpgroup::mma_async_wait();
-
-            if constexpr (D == 64) { mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
-            else                   { mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
-
-            if constexpr (is_causal) {
-                causal_mask<G::tile_h_qo, G::tile_h>(s_block_t, qo_idx);
-            }
-
-            exp2(s_block_t, s_block_t);
-            copy(p_block_t, s_block_t);
-            copy(p_block_t_mma, s_block_t);
-
-            stream_sub_tile(dp_block_t, d_smem, tic);
-
-            mul(ds_block_t, p_block_t, dp_block_t);
-
-            if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
-            else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
-
-            warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            copy(ds_block_t_mma, ds_block_t);
-            
-            warpgroup::store(ds_smem[warpgroupid], ds_block_t);
-
-            warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
-            warpgroup::mma_commit_group();
-            
-            warpgroup::mma_async_wait();
-            // asm volatile("fence.proxy.async;\n" ::: "memory");
-            group<8>::sync(10);
-
-            warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
-            warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
-            warpgroup::mma_commit_group(); 
-
-            wait(qg_ready, toc);
-            if (qo_idx > 0) tma::store_async_wait();
-
-            warpgroup::mma_async_wait();
-            warpgroup::store(qg_smem, qg_reg);
-            // asm volatile("fence.proxy.async;\n" ::: "memory");
-            group<4>::sync(warpgroup::groupid()+4);
-
-            if (warpgroup::laneid() == 0) arrive(compute_done[tic]);
-        }
-
-        kv_store(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
-    }
     else {
-        warpgroup::increase_registers<224>();
-
-        rt_fl<16, G::tile_width> kg_reg;
-        rt_fl<16, G::tile_width> vg_reg;
-
+        rt_fl<16, G::tile_width> kg_reg, vg_reg;
+    
         row_vec<rt_fl<16, 64>> row_reg; 
 
-        rt_fl<16, 64> s_block_t; 
-        rt_fl<16, 64> dp_block_t;
-        rt_fl<16, 64> p_block_t;
-        rt_fl<16, 64> ds_block_t;
-        rt_bf<16, 64> p_block_t_mma;
-        rt_bf<16, 64> ds_block_t_mma;
+        rt_fl<16, 64> s_block_t,  p_block_t; 
+        rt_fl<16, 64> ds_block_t, dp_block_t; 
+        rt_bf<16, 64> ds_block_t_mma, p_block_t_mma;
 
         zero(kg_reg);
         zero(vg_reg);
 
-        wait(kv_b, 0);
+        if (warpgroupid == 0) {
+            warpgroup::increase_registers<256>();
+            wait(kv_b, 0);
+            for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
+                compute_bwd_loop<is_causal, G::tile_h_qo, G::tile_h, G::tile_width, D>(
+                    vec_b, q_b, o_b,
+                    s_block_t, dp_block_t, p_block_t, ds_block_t, p_block_t_mma, ds_block_t_mma,
+                    kg_reg, vg_reg,
+                    q_smem, k_smem, v_smem, og_smem, ds_smem, l_smem, d_smem,
+                    qo_idx, q_start, tic, toc
+                );
 
-        auto qo_idx = q_start;
-        for (qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
+                rt_fl<16, G::tile_width> qg_reg; 
+                warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
+                warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
+                warpgroup::mma_commit_group(); 
+    
+                wait(qg_ready, toc);
+                if (qo_idx > 0) tma::store_async_wait();
 
-            wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
-
-            stream_tile(s_block_t, l_smem, tic);
-
-            wait(q_b[tic], ((qo_idx - q_start)/2)%2);
-
-            warpgroup::mma_ABt(s_block_t, k_smem[warpgroupid], q_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            wait(o_b[tic], ((qo_idx - q_start)/2)%2);
-
-            warpgroup::mm_ABt(dp_block_t, v_smem[warpgroupid], og_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            warpgroup::mma_async_wait();
-
-            if constexpr (D == 64) { mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
-            else                   { mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
-
-            if constexpr (is_causal) {
-                causal_mask<G::tile_h_qo, G::tile_h>(s_block_t, qo_idx);
+                warpgroup::mma_async_wait();
+                warpgroup::store(qg_smem, qg_reg);
+                group<4>::sync(warpgroup::groupid()+4);
+    
+                if (warpgroup::laneid() == 0) arrive(compute_done[tic]);
             }
-
-            exp2(s_block_t, s_block_t);
-            copy(p_block_t, s_block_t);
-            copy(p_block_t_mma, s_block_t);
-
-            stream_sub_tile(dp_block_t, d_smem, tic);
-
-            mul(ds_block_t, p_block_t, dp_block_t);
-
-            if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
-            else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
-
-            warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
-            warpgroup::mma_commit_group();
-
-            copy(ds_block_t_mma, ds_block_t);
-            
-            warpgroup::store(ds_smem[warpgroupid], ds_block_t);
-
-            warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
-            warpgroup::mma_commit_group();
-            warpgroup::mma_async_wait();
-            // asm volatile("fence.proxy.async;\n" ::: "memory");
-            group<8>::sync(10);
+            kv_store(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
         }
-
-        kv_store(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
+        else {
+            warpgroup::increase_registers<224>();
+            wait(kv_b, 0);
+            for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
+                compute_bwd_loop<is_causal, G::tile_h_qo, G::tile_h, G::tile_width, D>(
+                    vec_b, q_b, o_b,
+                    s_block_t, dp_block_t, p_block_t, ds_block_t, p_block_t_mma, ds_block_t_mma,
+                    kg_reg, vg_reg,
+                    q_smem, k_smem, v_smem, og_smem, ds_smem, l_smem, d_smem,
+                    qo_idx, q_start, tic, toc
+                );
+            }
+            kv_store(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
+        }
     }
 }
 

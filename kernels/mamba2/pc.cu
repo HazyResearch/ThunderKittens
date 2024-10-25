@@ -198,21 +198,25 @@ void dispatch_mamba2(
     int B, int H, int N
 ){
 
-    mamba2_fwd_template::layout::q_global Qg(d_q, B, H, N, nullptr);
+    mamba2_fwd_template::layout::q_global Qg(d_q, B, 1, N, nullptr);
+    mamba2_fwd_template::layout::k_global Kg(d_k, B, 1, N, nullptr);
     mamba2_fwd_template::layout::a_global Ag(d_a, B, H, nullptr, N);
-    mamba2_fwd_template::layout::k_global Kg(d_k, B, H, N, nullptr);
     mamba2_fwd_template::layout::v_global Vg(d_v, B, H, N, nullptr);
     mamba2_fwd_template::layout::o_global Og(d_o, B, H, N, nullptr);
+
     mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
     
     // launch setup
-    unsigned long mem_size = MAX_SHARED_MEMORY;
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048;
+    
     cudaFuncSetAttribute(
         prototype::lcsf::kernel<mamba2_fwd_template>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
-    dim3 grid(132, 1, 1);
+
+    dim3 grid(264, 1, 1);
+
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
     prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
 }
