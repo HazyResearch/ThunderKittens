@@ -45,6 +45,7 @@ struct test_subtile {
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &t = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
         kittens::load(t, input, {});
+        __syncwarp();
         for(int i = 0; i < H/ST_H; i++) {
             for(int j = 0; j < W/ST_W; j++) {
                 auto ref = kittens::subtile_inplace<16*ST_H, 16*ST_W>(t, i, j);
@@ -55,6 +56,7 @@ struct test_subtile {
                 kittens::store(ref, reg);
             }
         }
+        __syncwarp();
         kittens::store(output, t, {});
     }
 };

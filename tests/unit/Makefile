@@ -4,7 +4,7 @@
 
 # GPU Selection: Set to either 4090 or H100
 GPU_TARGET=4090
-COMP_LEVEL=debug #fast
+COMP_LEVEL=debug
 
 # Compiler
 NVCC=nvcc

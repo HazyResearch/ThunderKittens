@@ -54,8 +54,9 @@ __device__ inline typename ST::subtile<subtile_rows, subtile_cols> subtile_inpla
     static_assert(subtile_cols % TILE_DIM == 0);
     static_assert(ST::height % (subtile_rows/TILE_DIM) == 0);
     static_assert(ST::width % (subtile_cols/TILE_DIM) == 0);
+    static_assert(ST::height == ST::underlying_height && ST::width == ST::underlying_width); // must be a real ST, no recursive subtiles.
     return typename ST::subtile<subtile_rows, subtile_cols>(
-        &src[0], subtile_rows*row_idx, subtile_cols*col_idx
+        &src.data[0], subtile_rows*row_idx, subtile_cols*col_idx
     );
 }
 

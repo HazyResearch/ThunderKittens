@@ -31,6 +31,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
     static_assert(src.length == dst.length);
     
     int laneid = ::kittens::laneid();
+    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     
     __syncwarp();
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -42,7 +43,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
             // this should be a maximally coalesced load.
             if(idx < dst.outer_dim*16) {
                 U2 tmp;
-                move<U2>::lds(tmp, &src[idx]);
+                move<U2>::lds(tmp, src_ptr + sizeof(typename SV::dtype)*idx);
                 dst[o_dim][i_dim] = base_types::convertor<T2, U2>::convert(tmp);
             }
         }
@@ -65,7 +66,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
             // this should be a maximally coalesced load.
             if(idx < dst.outer_dim*16) {
                 U tmp;
-                move<U>::lds(tmp, &src[idx]);
+                move<U>::lds(tmp, src_ptr + sizeof(typename SV::dtype)*idx);
                 if(laneid%2==0) dst[o_dim][0].x =  base_types::convertor<T, U>::convert(tmp);
                 else dst[o_dim][0].y = base_types::convertor<T, U>::convert(tmp);
             }
@@ -84,7 +85,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
         for(auto w = 0; w < dst.outer_dim; w++) {
             if(w < dst.outer_dim-1 || dst.length%32 == 0 || laneid<16) {
                 U tmp;
-                move<U>::lds(tmp, &src[w*32 + laneid]);
+                move<U>::lds(tmp, src_ptr + sizeof(typename SV::dtype)*(w*32 + laneid));
                 dst[w][0] = base_types::convertor<T, U>::convert(tmp);
             }
         }
@@ -109,7 +110,8 @@ __device__ inline static void store(SV &dst, const RV &src) {
     static_assert(dst.length == src.length);
     
     int laneid = ::kittens::laneid();
-    
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
+
     __syncwarp();
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         #pragma unroll
@@ -120,7 +122,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
             // this should be a maximally coalesced store. I hope!
             if(idx < src.outer_dim*16) {
                 U2 tmp = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
-                move<U2>::sts(&dst[idx], tmp);
+                move<U2>::sts(dst_ptr + sizeof(typename SV::dtype)*idx, tmp);
             }
         }
     }
@@ -136,7 +138,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
                 U tmp;
                 if(laneid%2==0) tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
                 else tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
-                move<U>::sts(&dst[idx], tmp);
+                move<U>::sts(dst_ptr + sizeof(typename SV::dtype)*idx, tmp);
             }
         }
     }
@@ -145,7 +147,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
         for(auto w = 0; w < src.outer_dim; w++) {
             if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
                 U tmp = base_types::convertor<U, T>::convert(src[w][0]);
-                move<U>::sts(&dst[w*32 + laneid], tmp);
+                move<U>::sts(dst_ptr + sizeof(typename SV::dtype)*(w*32 + laneid), tmp);
             }
         }
     }

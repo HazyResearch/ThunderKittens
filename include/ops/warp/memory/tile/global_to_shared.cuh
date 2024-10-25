@@ -23,6 +23,7 @@ namespace kittens {
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.row_stride();
     
     // each thread needs to do 1 call per width*height
@@ -45,8 +46,8 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
         int col = (idx*elem_per_memcpy) % dst.cols;
 
         float4 tmp;
-        move<float4>::ldg(tmp, &src_ptr[row*row_stride + col]);
-        move<float4>::sts(&dst[{row, col}], tmp);
+        move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
+        move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
     }
 }
 /**
@@ -60,6 +61,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void store(const GL &dst, const ST &src, const coord &idx) {
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
+    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     const int row_stride = dst.row_stride();
 
     int laneid = threadIdx.x % 32;
@@ -78,8 +80,8 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
         int col = (idx*elem_per_memcpy) % src.cols;
 
         float4 tmp;
-        move<float4>::lds(tmp, &src[{row, col}]);
-        move<float4>::stg(&dst_ptr[row*row_stride + col], tmp);
+        move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
+        move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
     }
 }
 
@@ -95,6 +97,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.row_stride();
 
     // each thread needs to do 1 call per width*height
@@ -117,8 +120,8 @@ __device__ static inline void load_async(ST &dst, const GL &src, const coord &id
         int col = (idx*elem_per_memcpy) % dst.cols;
 
         asm volatile(
-            "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
-            :: "l"(__cvta_generic_to_shared(&dst[{row, col}])), "l"(&src_ptr[row*row_stride + col])
+            "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
+            :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
             : "memory"
         );
     }

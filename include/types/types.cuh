@@ -58,8 +58,4 @@ using align_l = ducks::rv_layout::align;
 using ortho_l = ducks::rv_layout::ortho;
 using naive_l = ducks::rv_layout::naive;
 
-// shared tile layouts
-using swizzled_l = ducks::st_layout::swizzled;
-using wmma_l = ducks::st_layout::wmma;
-
 }
