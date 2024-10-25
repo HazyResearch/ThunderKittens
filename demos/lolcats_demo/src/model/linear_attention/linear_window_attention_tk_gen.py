@@ -15,17 +15,16 @@ from .linear_window_attention_tk_long import LolcatsTKWindowLongAttention
 from .linear_attention import LinearAttentionState
 
 class LolcatsWindowAttentionTKGen(LolcatsTKWindowLongAttention):
-    def __init__(self, *args, window_size: int = 64, **kwargs):
+    def __init__(self, *args, window_size: int = 64, layer_idx=0, **kwargs):
         super().__init__(*args, **kwargs)
         self.train_attention = False
         self.base_inference = False 
         self.window_size = 64   # hard-coded support for TK kernel
         self.decode_window_size = 64
+        self.layer_idx = layer_idx
         
-        # b, h, l, d = 1, 32, 8192, 128
-        # self.y_true   = torch.zeros(b, h, l, d, dtype=torch.bfloat16, device='cuda')
-        # self.kv_state = torch.zeros(b, h, d, d, dtype=torch.float32, device='cuda')
-        # self.k_state  = torch.zeros(b, h, d, dtype=torch.float32, device='cuda')
+        if self.layer_idx == 0: 
+            print(f"Using LolcatsWindowAttentionTKGen!")
     
     def forward(self,
                 hidden_states: torch.Tensor,

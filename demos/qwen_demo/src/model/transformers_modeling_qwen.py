@@ -599,11 +599,6 @@ class Qwen2TKAttention(Qwen2Attention):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        head_size = args[0].hidden_size // args[0].num_attention_heads
-        heads = args[0].num_attention_heads
-        b, seq_len = 1, 192
-        self.o = torch.zeros(b, heads, seq_len, head_size, dtype=torch.bfloat16, device='cuda')
-        self.l_vec = torch.zeros(b, heads, seq_len, head_size, dtype=torch.float32, device='cuda')
 
     def forward(
         self,
@@ -688,8 +683,8 @@ class Qwen2TKAttention(Qwen2Attention):
             query_states = query_states.to(torch.bfloat16).contiguous()
             key_states = key_states.to(torch.bfloat16).contiguous()
             value_states = value_states.to(torch.bfloat16).contiguous()
-            tk.mha_forward(query_states, key_states, value_states, self.o, self.l_vec, self.is_causal)
-            attn_output = self.o.transpose(1, 2).contiguous()
+            o, _ = tk.mha_forward(query_states, key_states, value_states, self.is_causal)
+            attn_output = o.transpose(1, 2).contiguous()
 
             # Unpad if self.o is longer than q_len
             if pad_len is not None:

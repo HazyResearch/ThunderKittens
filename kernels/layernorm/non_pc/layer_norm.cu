@@ -227,7 +227,7 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
 
     int b = x.size(0);
     int n = x.size(1);
-    constexpr int d = 1024;
+    constexpr int d = 1024; // hard coded for this kernel
 
     TORCH_CHECK(b == residual.size(0), "Differing b sizes?");
     TORCH_CHECK(x.size(2) == d, "x is d_model?");
@@ -258,7 +258,7 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
         d_x_bf, d_residual_bf, 
         d_norm_weight_bf, d_norm_bias_bf, 
         d_o, d_o_resid, dropout_p,
-        b, n, d
+        b, n
     );
     CHECK_CUDA_ERROR(cudaGetLastError());
 

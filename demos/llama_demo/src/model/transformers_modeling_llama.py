@@ -364,11 +364,6 @@ class LlamaAttention(nn.Module):
         # TODO (joao): remove in v4.46 (RoPE is computed in the model, not in the decoder layers)
         self.rotary_emb = LlamaRotaryEmbedding(config=self.config)
 
-        b, seq_len = 1, 192
-        head_size = config.hidden_size // config.num_attention_heads
-        heads = config.num_attention_heads
-        self.o = torch.zeros(b, heads, seq_len, head_size, dtype=torch.bfloat16, device='cuda')
-        self.l_vec = torch.zeros(b, heads, seq_len, head_size, dtype=torch.float32, device='cuda')
 
     def forward(
         self,
@@ -719,13 +714,10 @@ class LlamaTKAttention(LlamaAttention):
     untouched. The only required change would be on the forward pass where it needs to correctly call the public API of ThunderKittens and deal with padding tokens in case the input contains any of them.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self,  *args, **kwargs):
         super().__init__(*args, **kwargs)
         head_size = kwargs['config'].hidden_size // kwargs['config'].num_attention_heads
         heads = kwargs['config'].num_attention_heads
-        b, seq_len = 1, 192
-        self.o = torch.zeros(b, heads, seq_len, head_size, dtype=torch.bfloat16, device='cuda')
-        self.l_vec = torch.zeros(b, heads, seq_len, head_size, dtype=torch.float32, device='cuda')
 
     def forward(
         self,
@@ -779,8 +771,8 @@ class LlamaTKAttention(LlamaAttention):
             query_states = query_states.to(torch.bfloat16).contiguous()
             key_states = key_states.to(torch.bfloat16).contiguous()
             value_states = value_states.to(torch.bfloat16).contiguous()
-            tk.mha_forward(query_states, key_states, value_states, self.o, self.l_vec, self.is_causal)
-            attn_output = self.o.transpose(1, 2).contiguous()
+            o, l_vec = tk.mha_forward(query_states, key_states, value_states, self.is_causal)
+            attn_output = o.transpose(1, 2).contiguous()
 
             # Unpad if self.o is longer than q_len
             if pad_len is not None:
