@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 
 try:
-    from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
+    from layernorm.baselines.layer_norm_triton import layer_norm_fn, RMSNorm
     print(f"Successfully imported layer_norm_fn")
 except:
     layer_norm_fn = None
@@ -114,27 +114,25 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     ) = get_layer_norm_inputs(b, h, n, dv, dt)
     has_residual = int(residual is not None)
     
-    import sys
-    sys.path.append("/home/bfs/simran/clean2/ThunderKittens/examples/layer_norm/kernel/")
-    import layer_norm as mod
 
     torch.cuda.synchronize()
     t0 = time.time()
-    # tk.fused_layernorm(
-    #     int(has_residual), float(dropout.p),
-    #     x, residual, 
-    #     norm_weight, norm_bias, 
-    #     out, out_resid
-    # )
-    mod.fused_ln_tk(
-            1, 0.1,
-            x, residual, 
-            norm_weight, norm_bias, 
-            out, out_resid
+    
+    out, out_resid = tk.fused_layernorm(
+        x, residual, 
+        norm_weight, norm_bias, 
+        dropout.p,
     )
+
     torch.cuda.synchronize()
     t1 = time.time()
     tot = t1-t0
     return out, tot
 
+
+IMPLEMENTATIONS = {
+    'pytorch': pytorch_layernorm_test,
+    'triton': triton_layer_norm_test,
+    'tk': layer_norm_test,
+}
 
