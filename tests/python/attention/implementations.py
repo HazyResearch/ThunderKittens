@@ -26,7 +26,9 @@ except:
 def get_flops(batch, seqlen, nheads, headdim, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
     f = 4 * batch * seqlen**2 * nheads * headdim // (2 if causal else 1)
-    return f if mode == "fwd" else (2.5 * f if mode == "bwd" else 3.5 * f)
+    flops = f if mode == "fwd" else (2.5 * f if mode == "bwd" else 3.5 * f)
+    print(f"causal={causal}, mode={mode}, flops={flops}")
+    return flops
 
 
 ################ ATTENTION ################
@@ -45,11 +47,13 @@ def get_attention_inputs(b, h, n, dv, dt=torch.bfloat16, pad_multiple=0, ):
 
 def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     q, k, v, dO = get_attention_inputs(b, h, n, dv, dt)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     
     try:
-
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         QK = torch.matmul(q, k.transpose(-2, -1))
         QK /= (q.size(-1) ** 0.5)
@@ -59,9 +63,9 @@ def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
         QK = torch.nn.functional.softmax(QK, dim=-1)
         y = torch.matmul(QK, v)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     except Exception as e:
         if verbose:
@@ -74,7 +78,7 @@ def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
 
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y.backward(dO)
     
@@ -87,9 +91,9 @@ def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
         v_grad = v_grad.to(torch.bfloat16)
         y = y.to(torch.bfloat16)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     except Exception as e:
         if verbose:
@@ -102,18 +106,20 @@ def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     return (q_grad, k_grad, v_grad), tot
 
 
-def fa2_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
+def fa2_test(dt, b, h, n, dv,  causal, is_forwards, verbose=True, **kwargs):
     q, k, v, dO = get_attention_inputs(b, h, n, dv, dt)
-    
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except Exception as e:
         if verbose:
             print(f"Error: {e}")
@@ -123,10 +129,11 @@ def fa2_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     if is_forwards:
         return y, tot
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     try:
-
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y.backward(dO)
 
@@ -134,10 +141,9 @@ def fa2_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
         k_grad = k.grad
         v_grad = v.grad
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
-
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except Exception as e:
         if verbose:
             print(f"Error: {e}")
@@ -145,22 +151,24 @@ def fa2_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
         q_grad = None
         k_grad = None
         v_grad = None
-
     return (q_grad, k_grad, v_grad), tot
 
 
 def tk_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
-    q, k, v, dO = get_attention_inputs(b, h, n, dv, dt, pad_multiple=192)
+    q, k, v, dO = get_attention_inputs(b, h, n, dv, dt) #, pad_multiple=192)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y, l_vec = tk.mha_forward(q, k, v, causal)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
         assert not np.isnan(y.detach().float().cpu()).any(), "NaN values detected in output 'o'"
         assert not np.isinf(y.detach().float().cpu()).any(), "Inf values detected in output 'o'"
     except Exception as e:
@@ -172,15 +180,17 @@ def tk_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     if is_forwards:
         return y, tot
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         q_grad, k_grad, v_grad = tk.mha_backward(q, k, v, y, l_vec, dO, causal)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
         assert not np.isnan(q_grad.float().cpu()).any(), "NaN values detected in output 'q_grad'"
         assert not np.isinf(q_grad.float().cpu()).any(), "Inf values detected in output 'q_grad'"
         assert not np.isnan(k_grad.float().cpu()).any(), "NaN values detected in output 'k_grad'"
@@ -205,16 +215,19 @@ def fa3_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     k = k.transpose(1,2)
     v = v.transpose(1,2)
     dO = dO.transpose(1,2)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
-        y, _ = flash_attn_func3(q, k, v, causal=causal)
+        y, lse = flash_attn_func3(q, k, v, causal=causal)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
         assert not np.isnan(y.detach().float().cpu()).any(), "NaN values detected in output 'o'"
         assert not np.isinf(y.detach().float().cpu()).any(), "Inf values detected in output 'o'"
     
@@ -229,7 +242,7 @@ def fa3_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
 
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y.backward(dO)
 
@@ -237,9 +250,9 @@ def fa3_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
         k_grad = k.grad
         v_grad = v.grad
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except:
         if verbose:
             print(f"Error: {sys.exc_info()[0]}")
@@ -253,26 +266,26 @@ def fa3_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
 
 
 from functools import partial
-IMPLEMENTATIONS = {
-    "fwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=True),
-    "fwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=True),
-    "fwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=True),
-    "fwd_TK_c=t": partial(tk_test, causal=True, is_forwards=True),
-    "fwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=True),
-    "fwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=True),
-    "fwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=True),
-    "fwd_TK_c=f": partial(tk_test, causal=False, is_forwards=True),
-}
+# IMPLEMENTATIONS = {
+#     "fwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=True),
+#     "fwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=True),
+#     "fwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=True),
+#     "fwd_TK_c=t": partial(tk_test, causal=True, is_forwards=True),
+#     "fwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=True),
+#     "fwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=True),
+#     "fwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=True),
+#     "fwd_TK_c=f": partial(tk_test, causal=False, is_forwards=True),
+# }
 
-IMPLEMENTATIONS_BWD = {
-    "bwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=False),
-    "bwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=False),
+IMPLEMENTATIONS = {
+    # "bwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=False),
+    # "bwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=False),
     "bwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=False),
-    "bwd_TK_c=t": partial(tk_test, causal=True, is_forwards=False),
-    "bwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=False),
-    "bwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=False),
-    "bwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=False),
-    "bwd_TK_c=f": partial(tk_test, causal=False, is_forwards=False),
+    # "bwd_TK_c=t": partial(tk_test, causal=True, is_forwards=False),
+    # "bwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=False),
+    # "bwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=False),
+    # "bwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=False),
+    # "bwd_TK_c=f": partial(tk_test, causal=False, is_forwards=False),
 }
 
 
