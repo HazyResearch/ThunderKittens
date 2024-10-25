@@ -130,9 +130,9 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     return out, tot
 
 
-IMPLEMENTATIONS = {
-    'pytorch': pytorch_layernorm_test,
-    'triton': triton_layer_norm_test,
-    'tk': layer_norm_test,
-}
 
+IMPLEMENTATIONS = {
+    "tk_layernorm": layer_norm_test,
+    "torch_layernorm": pytorch_layernorm_test,
+    # "triton_layernorm": triton_layer_norm_test,
+}
