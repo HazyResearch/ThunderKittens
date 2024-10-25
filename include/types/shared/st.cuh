@@ -32,9 +32,7 @@ struct identifier {};
 
 // Forward declaration of subtile
 template<
-    typename _T,
-    int _underlying_height,
-    int _underlying_width,
+    typename ST,
     int _subtile_height,
     int _subtile_width
 >
@@ -125,7 +123,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
     using row_vec = sv<dtype, cols>; ///< Row vector type for this tile
     template<int subtile_rows, int subtile_cols> using subtile = st_subtile<
-        dtype, rows, cols, subtile_rows, subtile_cols
+        st<T, rows, cols>, subtile_rows, subtile_cols
     >; ///< A templated subtile type wrapper for this tile.
 };
 
@@ -141,25 +139,24 @@ struct KITTENS_DEFAULT_ALIGN st {
  * You can generally just pretend this is an st. But not for wgmma's.
  */
 template<
-    typename _T,
-    int _underlying_rows,
-    int _underlying_cols,
+    typename _ST,
     int _subtile_rows,
     int _subtile_cols
 >
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
-    using T = base_types::packing<_T>::unpacked_type;
-    using T2 = base_types::packing<_T>::packed_type;
+    using ST = _ST;
+    using T = ST::T;
+    using T2 = ST::T2;
     using dtype = T; ///< Data type of the elements in the tile.
 
-    static constexpr int underlying_rows          = _underlying_rows;
+    static constexpr int underlying_rows          = ST::underlying_rows;
     static_assert(underlying_rows % TILE_DIM == 0, "Underlying rows must be divisible by the tile dimension");
-    static constexpr int underlying_cols          = _underlying_cols;
+    static constexpr int underlying_cols          = ST::underlying_cols;
     static_assert(underlying_cols % TILE_DIM == 0, "Underlying cols must be divisible by the tile dimension");
-    static constexpr int underlying_height        = underlying_rows / kittens::TILE_DIM;
-    static constexpr int underlying_width         = underlying_cols / kittens::TILE_DIM;
-    static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
+    static constexpr int underlying_height        = ST::underlying_height;
+    static constexpr int underlying_width         = ST::underlying_width;
+    static constexpr int underlying_num_elements  = ST::underlying_num_elements;
 
     static constexpr int rows                = _subtile_rows;
     static_assert(rows % TILE_DIM == 0, "Rows must be divisible by the tile dimension");
@@ -169,23 +166,15 @@ struct st_subtile {
     static constexpr int width               = cols / kittens::TILE_DIM;
     static constexpr int num_elements        = rows * cols;
 
-    static constexpr int swizzle_bytes = (
-        sizeof(dtype) == 2 ? (
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ?  64 : 32
-        ) :
-        sizeof(dtype) == 4 ? (
-            underlying_width%2 == 0 ? 128 : 64
-        ) : -1
-    );
+    static constexpr int swizzle_bytes = ST::swizzle_bytes;
 
     dtype *data;
     int row_offset, col_offset;
 
-    __device__ st_subtile(dtype *src, int _row_offset, int _col_offset) {
-        data = src;
-        row_offset = _row_offset;
-        col_offset = _col_offset;
+    __device__ st_subtile(ST &src, int2 rowcol) {
+        data = &src.data[0];
+        row_offset = rowcol.x * rows;
+        col_offset = rowcol.y * cols;
     }
 
     __device__ inline T* idx(T *ptr, const int2 coord) { // naive row-major coord default
