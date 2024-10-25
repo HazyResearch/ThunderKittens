@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 4;
-constexpr int ATTN_H = 4;
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 32;
 constexpr int ATTN_N = 2048;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ATTN_G = 1;  // hardcoded into this kernel
@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     std::ofstream diff_file("printouts/diff.txt");
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         float diff = o[i] - o_ref[i];
-        if (i < TOTAL_ELEMENTS_VO) {
+        if (i < ATTN_H*ATTN_N*ATTN_D) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
@@ -196,8 +196,9 @@ int main(int argc, char **argv) {
             o_file << '\n';
             diff_file << '\n';
         }
-        if(abs(diff) > 0.1 || isnan(diff)) {
+        if(abs(diff) > 0.1 || isnan(diff) || isinf(diff)) {
             good = false;
+            if(isnan(diff) || isinf(diff)) std::cout << "NaN/inf detected at " << i << std::endl;
         }
         total_error += diff;
     }

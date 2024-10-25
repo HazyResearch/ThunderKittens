@@ -37,7 +37,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     method2timing = defaultdict(dict)
 
     b = 16
-    h = 16
+    h = 32
     dv = 64
     if verbose:
         print(f"{b=}, {n=}, {h=}, {dv=}")
@@ -108,9 +108,9 @@ if __name__ == "__main__":
                 if verbose:
                     print(f"Method: {m}")
                 for n in [
-                    1024, 
+                    # 1024, 
                     2048, 
-                    4096,
+                    # 4096,
                     # 8192,
                     # 16384
                 ]:

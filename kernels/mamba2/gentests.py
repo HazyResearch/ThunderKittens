@@ -69,8 +69,8 @@ def ssd_minimal_discrete(X, A, B, C, block_len, initial_states=None):
 
 torch.manual_seed(0)
 
-batch = 4
-dim = 4*64
+batch = 16
+dim = 64*32
 
 length     = 2048 #int(sys.argv[1])
 chunk_size = 64

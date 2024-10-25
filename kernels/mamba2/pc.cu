@@ -52,32 +52,35 @@ struct mamba2_fwd_template {
         OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
 	using layout = mamba2_fwd_layout;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int task_id = args.task_iter * gridDim.x + blockIdx.x;
-		args.common.batch = task_id / args.globals.V.depth; // batch = id / heads.
-		task_id -= args.common.batch*args.globals.V.depth;
-		args.common.head = task_id;
-		args.num_iters = args.common.batch < args.globals.Q.batch ? args.globals.K.rows/layout::k_tile::rows : -1;
+        // int task_id = args.task_iter * gridDim.x + blockIdx.x;
+		// args.common.batch = task_id / args.globals.V.depth; // batch = id / heads.
+		// task_id -= args.common.batch*args.globals.V.depth;
+		// args.common.head = task_id;
+        args.common.batch = blockIdx.y; 
+        args.common.head = blockIdx.x;
+		args.num_iters = args.task_iter==0 ? args.globals.K.rows/layout::k_tile::rows : -1;
     }
 	struct producer {
 		__device__ static void setup(producer_setup_args<layout> args) {
 			warpgroup::producer_registers();
 		}
 		__device__ static void load(producer_load_args<layout> args) {
-			if(warpgroup::warpid() == 0) {
+			if(warpgroup::warpid() == args.iter%4) {
                 tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v, args.input.a);
                 tma::load_async(args.input.q, args.globals.Q, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.k, args.globals.K, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.v, args.globals.V, {args.common.batch,  args.common.head, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.a, args.globals.A, {args.common.batch,  args.common.head, 0, args.iter}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                __syncwarp();
             }
 		}
         __device__ static void store(producer_store_args<layout> args) {
-            if(warpgroup::warpid() == 0) {;
+            if(warpgroup::warpid() == args.iter%4) {
                 tma::store_async(args.globals.O, args.output.o, {args.common.batch, args.common.head, args.iter, 0});
                 tma::store_async_read_wait();
-                __syncwarp();
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
+                __syncwarp();
             }
         }
 	};
@@ -182,9 +185,11 @@ struct mamba2_fwd_template {
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.outputs_arrived);
             if(laneid() == 0) arrive(args.inputs_finished);
+            __syncwarp();
 		}
         __device__ static void finish(consumer_finish_args<layout> args) {
             if(laneid() == 0) arrive(args.finish_finished);
+            __syncwarp();
         }
 	};
 };
@@ -215,7 +220,8 @@ void dispatch_mamba2(
         mem_size
     );
 
-    dim3 grid(264, 1, 1);
+    dim3 grid(H, B, 1);
+    // dim3 grid(264, 1, 1);
 
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
     prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);

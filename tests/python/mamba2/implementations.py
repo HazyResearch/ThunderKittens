@@ -111,16 +111,15 @@ def get_inputs_mamba(dt, b, h, n, dv, verbose=True, **kwargs):
     dtype = torch.float32
     device = "cuda"
 
-    x = torch.randn(batch, seqlen, nheads, headdim, dtype=dtype, device=device)
-    dt = torch.randn(batch, seqlen, nheads, dtype=dtype, device=device).requires_grad_()
-    dt_bias = torch.randn(nheads, dtype=dtype, device=device).requires_grad_()
-    A = (-torch.exp(torch.rand(nheads, dtype=dtype, device=device))).requires_grad_()
+    x  = torch.randn(batch, seqlen, nheads, headdim, dtype=dtype, device=device)
+    dt = F.softplus(torch.randn(batch, seqlen, nheads, dtype=torch.float32, device=device) - 4).requires_grad_()
+    A = (-torch.exp(torch.rand(nheads, dtype=torch.float32, device=device))).requires_grad_()
     B = torch.randn(batch, seqlen, ngroups, dstate, dtype=dtype, device=device)
     C = torch.randn(batch, seqlen, ngroups, dstate, dtype=dtype, device=device)
     D = torch.randn(nheads, dtype=dtype, device=device)
     z = None
 
-    return x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype
+    return x, dt, 0, A, B, C, D, z, chunk_size, dtype
 
 
 def run_triton(dt, b, h, n, dv, verbose=True, **kwargs):
@@ -156,6 +155,7 @@ def run_torch(dt, b, h, n, dv, verbose=True, **kwargs):
     end_events[0].record()
     torch.cuda.synchronize()
     tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+    
     return y_min, tot
 
 def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
@@ -167,15 +167,12 @@ def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
 
     # TK 
-    q = C 
-    k = B
     D_factor = x * rearrange(D, "d -> d 1")
     _dt = F.softplus(dt + dt_bias)
     v = x*_dt.unsqueeze(-1)
     a = A*_dt
-
-    q = rearrange(q, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    k = rearrange(k, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+    q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+    k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     v = rearrange(v, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     a = rearrange(a, "b h l -> b l h").to(torch.float32).contiguous()
 
@@ -183,6 +180,8 @@ def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     start_events[0].record()
 
     y_tk = tk.mamba2(q, k, v, a) 
+    
+    # breakpoint()
 
     end_events[0].record()
     torch.cuda.synchronize()
@@ -192,6 +191,8 @@ def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     y_tk = rearrange(y_tk, "b h l d -> b l h d").contiguous()
     y_tk += D_factor
     
+    if np.isnan(y_tk.float().cpu()).any() or np.isinf(y_tk.float().cpu()).any():
+        breakpoint()
     assert not np.isnan(y_tk.float().cpu()).any(), "NaN values detected in output 'y_tk'"
     assert not np.isinf(y_tk.float().cpu()).any(), "Inf values detected in output 'y_tk'"
     return y_tk, tot
@@ -240,7 +241,7 @@ def mamba1_kernel_test(dt, q, k, v, d, verbose=True, **kwargs):
 
     
 IMPLEMENTATIONS = {
-    "mamba2_triton": run_triton,
+    # "mamba2_triton": run_triton,
     "mamba2_torch": run_torch,
     "mamba2_tk": run_tk,
 }
