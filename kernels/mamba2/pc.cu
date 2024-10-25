@@ -97,9 +97,9 @@ struct mamba2_fwd_template {
                 // Perform the prefix sum (Hillis-Steele scan)
                 for (int offset = 1; offset < 64; offset *= 2) {
                     float temp = (threadIdx.x >= offset) ? args.scratch.a_cumsum[threadIdx.x - offset] : 0.0f;
-                    group<2>::sync(14);
+                    group<2>::sync(3);
                     args.scratch.a_cumsum[threadIdx.x] += temp;
-                    group<2>::sync(14);
+                    group<2>::sync(3);
                 }
             }
             warpgroup::sync(warpgroupid + 4); // cumulative sum done
