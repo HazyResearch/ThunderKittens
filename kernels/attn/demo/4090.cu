@@ -51,8 +51,8 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     load_group::load_async(v_smem[loadid][0], g.Vg, {batch, head, loadid, 0});
     // iterate over k, v for these q's that have been loaded
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=(tic+1)%3) {
-        if(kv_idx+1 < kv_blocks) {
-            int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
+        int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
+        if(next_load_idx*ROWS<D> < g.Kg.rows) {
             int next_tic = (tic+1)%3;
             load_group::load_async(k_smem[loadid][next_tic], g.Kg, {batch, head, next_load_idx, 0});
             load_group::load_async(v_smem[loadid][next_tic], g.Vg, {batch, head, next_load_idx, 0});
@@ -61,7 +61,8 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
         else load_async_wait(); // all must arrive
         __syncthreads(); // Everyone's memory must be ready for the next stage.
         // now each warp goes through all of the subtiles, loads them, and then does the flash attention internal alg.
-        for(int subtile = 0; subtile < LOAD_BLOCKS; subtile++) {
+        #pragma unroll LOAD_BLOCKS
+        for(int subtile = 0; subtile < LOAD_BLOCKS && (kv_idx*LOAD_BLOCKS + subtile) < g.Qg.rows; subtile++) {
             load(k_reg, k_smem[subtile][tic]); // load k from shared into registers
             zero(att_block); // zero 16x16 attention tile
             mma_ABt(att_block, q_reg, k_reg, att_block); // Q@K.T
