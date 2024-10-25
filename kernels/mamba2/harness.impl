@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 32;
-constexpr int ATTN_H = 32;
+constexpr int ATTN_B = 4;
+constexpr int ATTN_H = 4;
 constexpr int ATTN_N = 2048;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ATTN_G = 1;  // hardcoded into this kernel
@@ -48,13 +48,11 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS_QK  = ATTN_B*ATTN_G*ATTN_N*ATTN_D; 
     constexpr int TOTAL_ELEMENTS_A   = ATTN_B*ATTN_H*ATTN_N;
 
-    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
-
-    float *q = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *a = new float[ATTN_N];
-    float *k = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *v = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *q = new float[TOTAL_ELEMENTS_QK];
+    float *a = new float[TOTAL_ELEMENTS_A];
+    float *k = new float[TOTAL_ELEMENTS_QK];
+    float *v = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref = new float[TOTAL_ELEMENTS_VO];
 
     bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
@@ -70,35 +68,35 @@ int main(int argc, char **argv) {
 
 
     int elements_loaded = 0;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         infile >> v[i];
         elements_loaded++;
     }
     std::cout << "Finished loading V: " << elements_loaded << " elements loaded" << std::endl;
 
     elements_loaded = 0;
-    for(int i = 0; i < ATTN_N; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_A; i++) {
         infile >> a[i];
         elements_loaded++;
     }
     std::cout << "Finished loading A: " << elements_loaded << " elements loaded" << std::endl;
 
     elements_loaded = 0;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
         infile >> k[i];
         elements_loaded++;
     }
     std::cout << "Finished loading K: " << elements_loaded << " elements loaded" << std::endl;
 
     elements_loaded = 0;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
         infile >> q[i];
         elements_loaded++;
     }
     std::cout << "Finished loading Q: " << elements_loaded << " elements loaded" << std::endl;
 
     elements_loaded = 0;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
         infile >> o_ref[i];
         elements_loaded++;
     }
@@ -108,18 +106,18 @@ int main(int argc, char **argv) {
 
     // replicate v into batch and heads
     for (int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
-        v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
+        v_bf[i] = __float2bfloat16(v[i]);
     }
 
     // replicate q and k into batch
     for (int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
-        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
-        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
+        q_bf[i] = __float2bfloat16(q[i]);
+        k_bf[i] = __float2bfloat16(k[i]);
     }
 
     // replicate a into batch and heads
     for (int i = 0; i < TOTAL_ELEMENTS_A; i++) {
-        a_in[i] = a[i % ATTN_N];
+        a_in[i] = a[i];
     }
 
     bf16 *d_q, *d_k, *d_v, *d_o;
@@ -128,12 +126,12 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));    
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
-    cudaMalloc(&d_a, ATTN_B*ATTN_H*ATTN_N * sizeof(float));
+    cudaMalloc(&d_a, TOTAL_ELEMENTS_A * sizeof(float));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_a, a_in, ATTN_B*ATTN_H*ATTN_N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_a, a_in, TOTAL_ELEMENTS_A * sizeof(float), cudaMemcpyHostToDevice);
 
     mamba2_fwd_template::layout::q_global Qg(d_q, ATTN_B, ATTN_G, ATTN_N, nullptr);
     mamba2_fwd_template::layout::k_global Kg(d_k, ATTN_B, ATTN_G, ATTN_N, nullptr);
@@ -186,9 +184,9 @@ int main(int argc, char **argv) {
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        if (i < TOTAL_UNIQUE_ELEMENTS) {
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        float diff = o[i] - o_ref[i];
+        if (i < TOTAL_ELEMENTS_VO) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
@@ -205,7 +203,7 @@ int main(int argc, char **argv) {
     }
 
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
-    std::cout << "Avg error: " << total_error / TOTAL_UNIQUE_ELEMENTS << std::endl;
+    std::cout << "Avg error: " << total_error / TOTAL_ELEMENTS_VO << std::endl;
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
     // Compute and print average TFLOPs achieved

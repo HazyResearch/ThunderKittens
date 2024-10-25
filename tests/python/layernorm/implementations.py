@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 
 try:
-    from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
+    from layernorm.baselines.layer_norm_triton import layer_norm_fn, RMSNorm
     print(f"Successfully imported layer_norm_fn")
 except:
     layer_norm_fn = None
@@ -113,14 +113,17 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
         out, out_resid, norm, dropout 
     ) = get_layer_norm_inputs(b, h, n, dv, dt)
     has_residual = int(residual is not None)
+    
 
     torch.cuda.synchronize()
     t0 = time.time()
-    out, out_resid =tk.fused_layernorm(
+    
+    out, out_resid = tk.fused_layernorm(
         x, residual, 
         norm_weight, norm_bias, 
-        dropout.p
+        dropout.p,
     )
+
     torch.cuda.synchronize()
     t1 = time.time()
     tot = t1-t0

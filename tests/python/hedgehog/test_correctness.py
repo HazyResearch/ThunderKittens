@@ -7,6 +7,8 @@ import thunderkittens as tk
 
 import torch.nn.functional as F
 
+from implementations import generate_inputs
+
 D_QK = 128
 D_VO = 128
 
@@ -70,3 +72,57 @@ def pytorch_test(Q, K, V, Qmap, Kmap, alphas, betas):
     
     return out, kv_state, k_state
 
+
+def print_errors(name, x_true, x):
+    avg_diff = torch.mean(torch.abs(x_true.to(torch.float32) - x.to(torch.float32)))
+    avg_magnitude = torch.mean(torch.abs(x_true.to(torch.float32)))
+    avg_error = avg_diff / avg_magnitude
+    print(f'Reporting error for {name:10s}: avg_diff={avg_diff:.8f}, avg_magnitude={avg_magnitude:2.4f}, avg_error={avg_error*100:.2f}%')
+    return avg_diff, avg_magnitude, avg_error
+
+
+def test_correctness(testname, B, H, N):
+    assert(N%64==0)
+    q, k, v, qmap, kmap, alphas, betas = generate_inputs(testname, B, H, N)
+    o_ref, kv_state_ref, k_state_ref = pytorch_test(q, k, v, qmap, kmap, alphas, betas)
+
+    o = torch.zeros_like(o_ref)
+    kv_state = torch.zeros_like(kv_state_ref)
+    k_state = torch.zeros_like(k_state_ref)
+    """
+    Q, K, V, O are bf16 (B,H,N,128)
+    k_state is fp32 (B,H,128)
+    kv_state is fp32 (B,H,128,128)
+    qmap is bf16 (H,128,64)
+    kmap is bf16 (H,128,64)
+    alphas is fp32 (H,)
+    betas is fp32 (H,)
+    """
+    o = tk.hedgehog(q, k, v, qmap, kmap, alphas, betas)
+    print(f"{q.shape=}, {k.shape=}, {v.shape=}, {qmap.shape=}, {kmap.shape=}, {alphas.shape=}, {betas.shape=}")
+    o, kv_state, k_state = o
+
+    print(testname)
+    avg_diff, avg_magnitude, avg_error = print_errors('O', o_ref, o)
+    if (avg_error > 0.1):
+        breakpoint()
+    print(o.shape)
+    rand_b = torch.randint(0, B, (1,))
+    rand_h = torch.randint(0, H, (1,))
+    rand_n = torch.randint(0, N, (1,))
+    print(o[rand_b,rand_h,rand_n,:8])
+    print(o_ref[rand_b,rand_h,rand_n,:8])
+    avg_diff, avg_magnitude, avg_error = print_errors('kv_state', kv_state_ref, kv_state)
+    if (avg_error > 0.1):
+        breakpoint()
+    avg_diff, avg_magnitude, avg_error = print_errors('k_state', k_state_ref, k_state.squeeze(2))
+    if (avg_error > 0.1):
+        breakpoint()
+
+
+if __name__ == '__main__':
+    testname = sys.argv[1]
+    B = 2
+    H = 16
+    N = 2048
+    test_correctness(testname, B, H, N)
