@@ -113,24 +113,13 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
         out, out_resid, norm, dropout 
     ) = get_layer_norm_inputs(b, h, n, dv, dt)
     has_residual = int(residual is not None)
-    
-    import sys
-    sys.path.append("/home/bfs/simran/clean2/ThunderKittens/examples/layer_norm/kernel/")
-    import layer_norm as mod
 
     torch.cuda.synchronize()
     t0 = time.time()
-    # tk.fused_layernorm(
-    #     int(has_residual), float(dropout.p),
-    #     x, residual, 
-    #     norm_weight, norm_bias, 
-    #     out, out_resid
-    # )
-    mod.fused_ln_tk(
-            1, 0.1,
-            x, residual, 
-            norm_weight, norm_bias, 
-            out, out_resid
+    out, out_resid =tk.fused_layernorm(
+        x, residual, 
+        norm_weight, norm_bias, 
+        dropout.p
     )
     torch.cuda.synchronize()
     t1 = time.time()
@@ -138,3 +127,9 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     return out, tot
 
 
+
+IMPLEMENTATIONS = {
+    "tk_layernorm": layer_norm_test,
+    "torch_layernorm": pytorch_layernorm_test,
+    # "triton_layernorm": triton_layer_norm_test,
+}

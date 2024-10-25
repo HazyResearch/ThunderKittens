@@ -53,14 +53,14 @@ def get_output(x, residual, norm, dropout_p=0.00):
 o, new_residual, norm_weight, norm_bias, mean, var = get_output(x, residual, norm)
 
 with open(f'{TESTNAME}.txt', 'w') as f:
-    xf = x.to(torch.float32).flatten().detach().cpu().numpy()
-    residualf = residual.to(torch.float32).flatten().detach().cpu().numpy()
-    norm_weightf = norm_weight.to(torch.float32).flatten().detach().cpu().numpy()
-    norm_biasf = norm_bias.to(torch.float32).flatten().detach().cpu().numpy()
-    meanf = mean.to(torch.float32).flatten().detach().cpu().numpy()
-    varf = var.to(torch.float32).flatten().detach().cpu().numpy()
-    of = o.to(torch.float32).flatten().detach().cpu().numpy()
-    o_residf = new_residual.to(torch.float32).flatten().detach().cpu().numpy()
+    xf = x.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    residualf = residual.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    norm_weightf = norm_weight.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    norm_biasf = norm_bias.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    meanf = mean.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    varf = var.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    of = o.to(torch.float32).flatten().detach().cpu().numpy().tolist()
+    o_residf = new_residual.to(torch.float32).flatten().detach().cpu().numpy().tolist()
 
     for i in trange(B*N*D):
         f.write(repr(xf[i]))

@@ -8,6 +8,8 @@
 #define N_PER_TILE 2
 #define ATTN_D 1024 // hardcoded into this kernel
 
+#define ITERS 10
+
 #define dropout_p 0.00
 #define test_with_intermediates 0
 
@@ -144,21 +146,38 @@ int main(int argc, char **argv) {
 
     cudaDeviceSynchronize();
     CudaCheckError();
+    std::cout << "Starting warmups\n";
+    for(int i = 0; i < ITERS; i++) {
+        dispatch_layernorm(
+            d_x,
+            d_residual,
+            d_norm_weight,
+            d_norm_bias,
+            d_o,
+            d_o_resid,
+            dropout_p,
+            ATTN_B, ATTN_N
+        );
+    }
+    cudaDeviceSynchronize();
+    CudaCheckError();
 
     std::cout << "Starting kernel\n";
     cudaDeviceSynchronize();
     CudaCheckError();
     const auto start = std::chrono::high_resolution_clock::now();
-    dispatch_layernorm(
-        d_x,
-        d_residual,
-        d_norm_weight,
-        d_norm_bias,
-        d_o,
-        d_o_resid,
-        dropout_p,
-        ATTN_B, ATTN_N
-    );
+    for(int i = 0; i < ITERS; i++) {
+        dispatch_layernorm(
+            d_x,
+            d_residual,
+            d_norm_weight,
+            d_norm_bias,
+            d_o,
+            d_o_resid,
+            dropout_p,
+            ATTN_B, ATTN_N
+        );
+    }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
@@ -210,7 +229,6 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_ELEMENTS_O];
         if(i < TOTAL_ELEMENTS_O) {
-            
             o_resid_ref_file << o_resid_ref[i % TOTAL_ELEMENTS_O] << ' ';
             o_resid_file << o_resid[i] << ' ';
             resid_diff_file << resid_diff << ' ';
@@ -231,7 +249,7 @@ int main(int argc, char **argv) {
     else std::cout << "Incorrect out resid :(\n";
 
     std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
-    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()  << " us" << std::endl;
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()/ITERS  << " us" << std::endl;
 
     cudaFree(d_x);
     cudaFree(d_residual);
