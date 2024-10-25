@@ -6,20 +6,27 @@ torch.set_grad_enabled(False)
 
 N = 1024
 B = 4
-H = 128
+H = 1024
 N1 = int(np.sqrt(N))
 N_64 = 64
 
 TESTNAME = sys.argv[1]
 
 if TESTNAME in ['ones']:
+    TESTNAME = f'ones_f{N}_H{H}_B{B}'
     u = (torch.ones((B, H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32) 
     k = (torch.ones((H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32)
     
 elif TESTNAME in ['randn']:
+    TESTNAME = f'randn_f{N}_H{H}_B{B}'
     torch.random.manual_seed(42)
     u = (torch.randn((B, H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32) 
     k = (torch.randn((H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32)
+
+elif TESTNAME in ['arange']:
+    TESTNAME = f'arange_f{N}_H{H}_B{B}'
+    u = (torch.arange(B*H*N, dtype=torch.bfloat16, device='cpu')).to(torch.float32).reshape(B, H, N)
+    k = (torch.arange(H*N, dtype=torch.bfloat16, device='cpu')).to(torch.float32).reshape(H, N)
 
 else:
     print('Invalid test name')
