@@ -2,13 +2,13 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 768; // 768*2; // 4096;
-constexpr int ATTN_D = 128; // hardcoded into this kernel
+constexpr int ATTN_B = 8;
+constexpr int ATTN_H = 8;
+constexpr int ATTN_N = 1024;
+constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ITER   = 10;
 
-constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<attn_fwd_template>;
+#define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -89,35 +89,28 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    attn_fwd_template::layout::qo_global Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    attn_fwd_template::layout::kv_global Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    attn_fwd_template::layout::kv_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    attn_fwd_template::layout::qo_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    attn_fwd_template::layout::globals globals = {Og, Qg, Kg, Vg};
+    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 2000; // have the flag tell us
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY-1000) / 2; // have the flag tell us
+    std::cout << "Max shared memory size: " << mem_size << std::endl;
     
     cudaFuncSetAttribute(
-        prototype::lcf::kernel<attn_fwd_template>,
+        attend_ker<ATTN_D>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<attn_fwd_template>;
-    // dim3 grid((ATTN_N + attn_fwd_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (attn_fwd_template::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
-    dim3 grid(132, 1, 1);
-    // dim3 bad_grid(grid.z, grid.y, grid.x);
+    dim3 grid((ATTN_N + qkvo_tile<ATTN_D>::rows*NUM_WORKERS - 1) / (qkvo_tile<ATTN_D>::rows*NUM_WORKERS), ATTN_H, ATTN_B);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
-    // warmup
-    for(int j = 0; j < ITER; j++)
-        prototype::lcf::kernel<attn_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
-    cudaDeviceSynchronize();
-    
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        prototype::lcf::kernel<attn_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+        attend_ker<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(g);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();

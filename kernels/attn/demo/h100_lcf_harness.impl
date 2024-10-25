@@ -2,13 +2,11 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 8;
-constexpr int ATTN_H = 8;
-constexpr int ATTN_N = 1024;
-constexpr int ATTN_D = D; // hardcoded into this kernel
-constexpr int ITER   = 10;
-
-#define BLOCK_SIZE (32*NUM_WARPS)
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16;
+constexpr int ATTN_N = 3072; // 768*2; // 4096;
+constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ITER   = 5;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -39,6 +37,7 @@ constexpr uint64_t ATTN_FLOPS =
 int main(int argc, char **argv) {
     // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
     // which may increase the probability of L2 cache hits on KV
+    using ker_template = attn_fwd_template<ATTN_D>;
 
     std::cout << "Entered main!" << std::endl;
 
@@ -89,28 +88,36 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    global_layout Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    globals g(Qg, Kg, Vg, Og);
+    ker_template::layout::qo_global Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    ker_template::layout::kv_global Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    ker_template::layout::kv_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    ker_template::layout::qo_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    ker_template::layout::globals globals = {Og, Qg, Kg, Vg};
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY-1000; // have the flag tell us
-    std::cout << "Max shared memory size: " << mem_size << std::endl;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 2000; // have the flag tell us
     
     cudaFuncSetAttribute(
-        attend_ker64,
+        prototype::lcf::kernel<ker_template>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    dim3 grid((ATTN_N + qkvo_tile<>::rows*NUM_WORKERS - 1) / (qkvo_tile<>::rows*NUM_WORKERS), ATTN_H, ATTN_B);
+    constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<ker_template>;
+    dim3 grid((ATTN_N + ker_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (ker_template::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
+    constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<ker_template>;
+    // dim3 grid(132, 1, 1);
+    // dim3 bad_grid(grid.z, grid.y, grid.x);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
+    // warmup
+    for(int j = 0; j < ITER; j++)
+        prototype::lcf::kernel<ker_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+    cudaDeviceSynchronize();
+    
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker64<<<grid, BLOCK_SIZE, mem_size>>>(g);
+        prototype::lcf::kernel<ker_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
