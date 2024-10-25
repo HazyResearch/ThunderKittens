@@ -67,7 +67,7 @@ struct test_cmplx_mma_AB_fp32_bf16 {
         kittens::crt_fl<16, 16*W> c;
         kittens::warpgroup::load_async(a, A, {});
         kittens::warpgroup::load_async(b, B, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::mm_AB(c, a, b);
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(C, c, {});
@@ -140,7 +140,7 @@ struct test_cmplx_mma_ABt_fp32_bf16 {
         kittens::crt_fl<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::mm_ABt(c, a, b);
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
@@ -212,7 +212,7 @@ struct test_cmplx_mma_AtB_fp32_bf16 {
         kittens::crt_fl<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::mm_AtB(c, a, b);
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
@@ -284,7 +284,7 @@ struct test_cmplx_mma_AtBt_fp32_bf16 {
         kittens::crt_fl<16, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::mm_AtBt(c, a, b);
         kittens::warpgroup::mma_async_wait();
         kittens::warpgroup::store(c_output, c, {});
@@ -359,7 +359,7 @@ struct reg_cmplx_test_mma_AB_fp32_bf16 {
         kittens::crt_fl<4*H, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::load(a_reg, a);
         kittens::warpgroup::mma_fence(c);
         kittens::warpgroup::mm_AB(c, a_reg, b);
@@ -435,7 +435,7 @@ struct reg_cmplx_test_mma_ABt_fp32_bf16 {
         kittens::crt_fl<4*H, 16*W> c;
         kittens::warpgroup::load_async(a, a_input, {});
         kittens::warpgroup::load_async(b, b_input, {});
-        kittens::warpgroup::load_async_wait();
+        kittens::warpgroup::load_async_wait(0);
         kittens::warpgroup::load(a_reg, a);
         kittens::warpgroup::mma_fence(c);
         kittens::warpgroup::mm_ABt(c, a_reg, b);

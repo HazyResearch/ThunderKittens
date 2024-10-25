@@ -104,11 +104,7 @@ def pytorch_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
 
 def fa2_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
     q, k, v, dO = get_attention_inputs(b, h, n, dv, dt)
-    q = q.transpose(1,2)
-    k = k.transpose(1,2)
-    v = v.transpose(1,2)
-    dO = dO.transpose(1,2)
-
+    
     try:
         torch.cuda.synchronize()
         t0 = time.time()

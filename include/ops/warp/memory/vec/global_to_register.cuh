@@ -28,7 +28,6 @@ __device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
     U *src_ptr = (U*)&src.template get<RV>(idx);
     int laneid = ::kittens::laneid();
     
-    __syncwarp();
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         #pragma unroll
         for(auto w = 0; w < (dst.outer_dim+3)/4; w++) {
@@ -39,7 +38,6 @@ __device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
             if(idx < dst.outer_dim*16)
                 dst[o_dim][i_dim] = base_types::convertor<T2, U2>::convert(*(U2*)&src_ptr[idx]);
         }
-        __syncwarp();
         // now we need to do a bunch of shuffle_sync's to make sure everyone has everything they need.
         #pragma unroll
         for(auto w = 0; w < dst.outer_dim; w++) {
@@ -62,7 +60,6 @@ __device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
                 else dst[o_dim][0].y = tmp;
             }
         }
-        __syncwarp();
         // now we need to do a bunch of shuffle_sync's to make sure everyone has everything they need.
         #pragma unroll
         for(auto w = 0; w < dst.outer_dim; w++) {
@@ -99,7 +96,6 @@ __device__ inline static void store(GL &dst, const RV &src, const coord &idx) {
     U *dst_ptr = (U*)&dst.template get<RV>(idx);
     int laneid = ::kittens::laneid();
     
-    __syncwarp();
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         #pragma unroll
         for(auto w = 0; w < (src.outer_dim+3)/4; w++) {

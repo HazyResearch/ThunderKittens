@@ -20,9 +20,9 @@ warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 from utils import efficiency
 
 import attention.implementations as attention
-import hedgehog.implementations as hedgehog
-import based.implementations as based
-import rotary.implementations as rotary
+# import hedgehog.implementations as hedgehog
+# import based.implementations as based
+# import rotary.implementations as rotary
 # import mamba2.implementations as mamba2
 # import fftconv.implementations as fftconv
 # import layernorm.implementations as layernorm
@@ -38,16 +38,16 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
 
     b = 16
     h = 16
-    dv = 64
+    dv = 128
     if verbose:
         print(f"{b=}, {n=}, {h=}, {dv=}")
 
     if 'c=t' in method_name:
         causal = True
-        flops = mod.get_flops(b, n, dv, h, causal=causal)
+        flops = mod.get_flops(b, n, dv, h, causal=causal, mode='bwd' if 'bwd' in method_name else 'fwd')
     elif 'c=f' in method_name:
         causal = False
-        flops = mod.get_flops(b, n, dv, h, causal=causal)
+        flops = mod.get_flops(b, n, dv, h, causal=causal, mode='bwd' if 'bwd' in method_name else 'fwd')
     else:
         flops = mod.get_flops(b, n, dv, h)  
 
@@ -76,9 +76,9 @@ if __name__ == "__main__":
 
     for mod in [
         # based, 
-        # attention, 
+        attention, 
         # rotary,
-        hedgehog, 
+        # hedgehog, 
         # fftconv, 
         # layernorm, 
         # mamba2, 

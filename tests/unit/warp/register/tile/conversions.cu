@@ -55,7 +55,7 @@ struct test_swap_layout {
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_bf<16*H, 16*W, L> reg_tile;
         kittens::load(reg_tile, input, {});
-        auto reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
+        auto &reg_tile_other_layout = kittens::swap_layout_inplace(reg_tile);
         kittens::store(output, reg_tile_other_layout, {});
     }
 };

@@ -95,10 +95,10 @@ namespace cluster {
 
 // Synchronization functions
 __device__ static inline void arrive_aligned() { // All threads in the cluster must call this
-    asm volatile ("semaphore.cluster.arrive.release.aligned;\n");
+    asm volatile ("barrier.cluster.arrive.release.aligned;\n");
 }
 __device__ static inline void wait_aligned() {
-    asm volatile ("semaphore.cluster.wait.acquire.aligned;\n");
+    asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
 }
 __device__ static inline void sync() {
     arrive_aligned();

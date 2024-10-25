@@ -16,15 +16,16 @@
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
 __device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
-    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
+    for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < dst.length) {
             float4 tmp;
-            move<float4>::ldg(tmp, &src_ptr[i*elem_per_transfer]);
-            move<float4>::sts(&dst[i*elem_per_transfer], tmp);
+            move<float4>::ldg(tmp, (float4*)&src_ptr[i*elem_per_transfer]);
+            move<float4>::sts(dst_ptr + sizeof(typename SV::dtype)*i*elem_per_transfer, tmp);
         }
     }
 }
@@ -42,30 +43,32 @@ __device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
  */
 template<ducks::sv::all SV, ducks::gl::all GL>
 __device__ static inline void store(GL &dst, const SV &src, const coord &idx) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = src.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr uint32_t total_calls = src.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
+    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     #pragma unroll
-    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
+    for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < src.length) {
             float4 tmp;
-            move<float4>::lds(tmp, &src[i*elem_per_transfer]);
-            move<float4>::stg(&dst_ptr[i*elem_per_transfer], tmp);
+            move<float4>::lds(tmp, src_ptr + sizeof(typename SV::dtype)*i*elem_per_transfer);
+            move<float4>::stg((float4*)&dst_ptr[i*elem_per_transfer], tmp);
         }
     }
 }
 
 template<ducks::sv::all SV, ducks::gl::all GL>
 __device__ static inline void load_async(SV &dst, const GL &src, const coord &idx) {
-    constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
+    constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
-    for(int i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
+    for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
         if(i * elem_per_transfer < dst.length) {
             asm volatile(
-                "cp.async.cg.shared::cta.global [%0], [%1], 16;\n"
-                :: "l"(__cvta_generic_to_shared(&dst[i*elem_per_transfer])), "l"((uint64_t)&src_ptr[i*elem_per_transfer])
+                "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
+                :: "r"(dst_ptr + (uint32_t)sizeof(typename SV::dtype)*i*elem_per_transfer), "l"((uint64_t)&src_ptr[i*elem_per_transfer])
                 : "memory"
             );
         }
