@@ -88,4 +88,4 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     }
 }
 
-#include "harness.impl"
+#include "4090_harness.impl"
