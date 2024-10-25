@@ -6,10 +6,6 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
-try:
-    from based.models.baselines.mamba_model import MambaLMHeadModel
-except:
-    print(f"Please install the mamba module to test mamba")
 from train.src.models.gpt import GPTLMHeadModel as BasedGPTLMHeadModel
 
 torch.manual_seed(0)
@@ -22,10 +18,6 @@ def get_model(args, model_name="attn"):
         return BasedGPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/attn-360m"
         ).to("cuda").to(torch.bfloat16)
-    elif 'mamba' == model_name:
-        return MambaLMHeadModel.from_pretrained_hf(
-            "hazyresearch/mamba-360m"
-        ).to("cuda").to(torch.bfloat16) 
     elif "based" == model_name:
         return BasedGPTLMHeadModel.from_pretrained_hf(
             "hazyresearch/my-awesome-model",
@@ -178,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('--context_length', type=int, default=1500, help='Context length')
     parser.add_argument('--generation_length', type=int, default=48, help='Generation length')
     parser.add_argument(
-        '--model_name', type=str, default="based", choices= ["mamba", "attn", "based"], help='Name of the model'
+        '--model_name', type=str, default="based", choices= ["attn", "based"], help='Name of the model'
     )
     parser.add_argument('--task_name', type=str, default="hazyresearch/based-fda", help='Name of the task/dataset')
 

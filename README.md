@@ -2,7 +2,7 @@
 ### Tile primitives for speedy kernels
 
 <div align="center" >
-    <img src="thunderkittens.png" height=350 alt="ThunderKittens logo" style="margin-bottom:px"/> 
+    <img src="assets/thunderkittens.png" height=350 alt="ThunderKittens logo" style="margin-bottom:px"/> 
 </div>
 
 <br>
@@ -16,7 +16,7 @@ ThunderKittens is built around three key principles:
 3. Speed. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 2 implementation speaks for this point.
 
 <div align="center" >
-    <img src="attn.png" height=600 alt="Flash Attention 2, but with kittens!" style="margin-bottom:px"/> 
+    <img src="assets/attn.png" height=600 alt="Flash Attention 2, but with kittens!" style="margin-bottom:px"/> 
 </div>
 
 ThunderKittens is built from the hardware up -- we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
@@ -26,6 +26,8 @@ ThunderKittens makes a few tricky things easy that enable high utilization on mo
 2. Shared Memory. I got ninety-nine problems but a bank conflict ain’t one.
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
 4. Distributed Shared Memory. L2 is _so_ last year.
+5. Worker overlapping. Use our Load-Store-Compute-Finish template to overlap work and I/O.
+
 
 *Example: A Simple Atention Kernel*
 
@@ -125,11 +127,13 @@ Altogether, this is 58 lines of code (not counting whitespace), and achieves abo
 
 To use Thunderkittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
 
+### Library requirements
+
 But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
  - CUDA 12.3+. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines due to a bug in those earlier versions of CUDA.
  - (Extensive) C++20 use -- TK runs on concepts.
 
-```
+```bash
 sudo apt update
 sudo apt install gcc-10 g++-10
 
@@ -140,21 +144,35 @@ sudo apt install clang-10
 ```
 
 If you can't find nvcc, or you experience issues where your environment is pointing to the wrong CUDA version:
-```
-export CUDA_HOME=/usr/local/cuda-12/
+```bash
+export CUDA_HOME=/usr/local/cuda-12.6/
 export PATH=${CUDA_HOME}/bin:${PATH} 
 export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 ```
 
-Finally, thanks to Jordan Juravsky for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+### Installing pre-existing kernels
+
+We've provided a number of TK kernels in the `kernels/` folder! To use these with PyTorch bindings:
+
+1. Set environment variables. 
+
+To compile examples, run `source env.src` from the root directory before going into the examples directory. (Many of the examples use the `$THUNDERKITTENS_ROOT` environment variable to orient themselves and find the src directory.
+
+2. Select the kernels you want to build in `configs.py` file
+
+3. Install:
+```bash
+python setup.py install
+```
+
+**Demos**: We've included a few demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/tk2/demos) folder. Check it out to run your Llamas and LoLCATS with TK kernels!
+
+Finally, thanks to Jordan Juravskey for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+
 
 ## Tests
 
 To validate your install, and run TK's fairly comprehensive unit testing suite, simply run `make -j` in the tests folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
-
-## Examples
-
-To compile examples, run `source env.src` from the root directory before going into the examples directory. (Many of the examples use the `$THUNDERKITTENS_ROOT` environment variable to orient themselves and find the src directory.
 
 ## ThunderKittens Manual
 
