@@ -1,22 +1,16 @@
 #include "kittens.cuh"
 
- // this kernel is more of an example kernel to show some TK programming models, rather than a kernel we think you should put into production, though it is pretty fast!
-
-#define NUM_WORKERS 8 // This kernel uses 16 workers in parallel per block, to help issue instructions more quickly.
-#define NUM_WARPS   (NUM_WORKERS) // This kernel uses 16 workers in parallel per block, to help issue instructions more quickly.
-
 using namespace kittens;
 
+constexpr int NUM_WORKERS = 8; // This kernel uses 8 worker warps per block, and just one block per SM.
 template<int D> constexpr size_t ROWS = 16*(128/D); // height of each worker tile (rows)
 template<int D, typename T=bf16, typename L=row_l> using qkvo_tile = rt<T, ROWS<D>, D, L>;
 template<int D, typename T=float> using attn_tile = rt<T, ROWS<D>, ROWS<D>>;
 template<int D> using shared_tile = st_bf<ROWS<D>, D>;
 template<int D> using global_layout = gl<bf16, -1, -1, -1, D>; // B, H, g.Qg.rows specified at runtime, D=64 known at compile time for this kernel
-template<int D> struct globals {
-    global_layout<D> Qg, Kg, Vg, Og;
-};
+template<int D> struct globals { global_layout<D> Qg, Kg, Vg, Og; };
 
-template<int D> __launch_bounds__(NUM_WORKERS*32, 1)
+template<int D> __launch_bounds__(NUM_WORKERS*WARP_THREADS, 1)
 __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     using load_group = kittens::group<2>; // pairs of workers collaboratively load k, v tiles
     int loadid = load_group::groupid(), workerid = kittens::warpid(); // which worker am I?
