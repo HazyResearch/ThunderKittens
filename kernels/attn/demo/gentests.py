@@ -161,7 +161,7 @@ with torch.backends.cuda.sdp_kernel(
 
     # Time the forward pass
 
-    for i in range(30):
+    for i in range(10):
         start_events[i].record()
         torch.cuda.synchronize()
         o = torch.nn.functional.scaled_dot_product_attention(q, k, v)
@@ -211,7 +211,7 @@ with torch.backends.cuda.sdp_kernel(
 
     # Time the backward pass
 
-    for i in range(30):
+    for i in range(10):
         q.grad = None
         k.grad = None
         v.grad = None
