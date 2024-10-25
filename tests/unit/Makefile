@@ -3,8 +3,8 @@
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
 # GPU Selection: Set to either 4090 or H100
-GPU_TARGET=4090
-COMP_LEVEL=debug
+GPU_TARGET=H100
+COMP_LEVEL=fast
 
 # Compiler
 NVCC=nvcc
@@ -15,7 +15,7 @@ NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
 # (Default) Level 2 takes a minute to compile 3,000 tests.
 # Level 3 takes 5 minutes to compile 10,000 tests.
 # Level 4 takes 15 while to compile 25,000 tests
-NVCCFLAGS+= -DTEST_INTENSITY=1
+NVCCFLAGS+= -DTEST_INTENSITY=2
 # Which tests to run?
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY

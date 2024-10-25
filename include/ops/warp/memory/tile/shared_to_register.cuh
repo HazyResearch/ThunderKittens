@@ -69,8 +69,6 @@ __device__ inline static void load(RT &dst, const ST &src) {
                     col = j*dst.tile_size + 2*(laneid % 4);
                 }
                 else {
-                    if(laneid == 0) printf("Hello, there!\n");
-                    __syncwarp();
                     row = i*dst.tile_size + (laneid / 4)   + src.row_offset;
                     col = j*dst.tile_size + 2*(laneid % 4) + src.col_offset;
                 }
