@@ -20,12 +20,12 @@ warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 from utils import efficiency
 
 import attention.implementations as attention
-# import hedgehog.implementations as hedgehog
-# import based.implementations as based
-# import rotary.implementations as rotary
-# import mamba2.implementations as mamba2
-# import fftconv.implementations as fftconv
-# import layernorm.implementations as layernorm
+import hedgehog.implementations as hedgehog
+import based.implementations as based
+import rotary.implementations as rotary
+import mamba2.implementations as mamba2
+import fftconv.implementations as fftconv
+import layernorm.implementations as layernorm
 
 
 
@@ -33,36 +33,42 @@ import attention.implementations as attention
 
 def measure_efficiency(dt, n, method_name, method, verbose=False):
     num_iters = 10
-    n_warmup = 2
+    n_warmup = 10
     method2timing = defaultdict(dict)
 
     b = 16
     h = 16
-    dv = 128
+    dv = 64
     if verbose:
         print(f"{b=}, {n=}, {h=}, {dv=}")
 
     if 'c=t' in method_name:
         causal = True
-        flops = mod.get_flops(b, n, dv, h, causal=causal, mode='bwd' if 'bwd' in method_name else 'fwd')
+        flops = mod.get_flops(b, n, dv, h, causal=('causal'), mode='bwd' if 'bwd' in method_name else 'fwd')
     elif 'c=f' in method_name:
         causal = False
         flops = mod.get_flops(b, n, dv, h, causal=causal, mode='bwd' if 'bwd' in method_name else 'fwd')
     else:
-        flops = mod.get_flops(b, n, dv, h)  
+        flops = mod.get_flops(b, n, dv, h)
 
-    # try:
-    if 1:
+    try:
+        for _ in range(n_warmup):
+            _ = method(dt, b, h, n, dv)
+    except Exception as e:
+        if verbose:
+            print(f"Error: {e}")
+        return -1, -1
+
+    try:
         lst = [method(dt, b, h, n, dv, verbose=verbose) for _ in range(num_iters)]
-        lst_time = [x[-1] for x in lst][n_warmup : ] # skip the first two iterations (warmup)
-        _time = median(lst_time)
-    # except:
-    #     if verbose:
-    #         print(f"Error: {sys.exc_info()[0]}")
-    #     _time = -1
+        lst_time = [x[-1] for x in lst]
+        _time = np.mean(lst_time) * 1000
+    except:
+        if verbose:
+            print(f"Error: {sys.exc_info()[0]}")
+        _time = -1
 
-    microseconds = _time * 1000000
-    eff = efficiency(flops, microseconds)
+    eff = efficiency(flops, _time)
     if verbose:
         print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {_time:.4f} s and FLOPS: {flops:.2f}")
     torch.cuda.empty_cache()
@@ -72,16 +78,16 @@ if __name__ == "__main__":
     print("Benchmarking the kernels...")
     print("============" * 8)
 
-    verbose = False
+    verbose = True
 
     for mod in [
         # based, 
-        attention, 
+        # attention, 
         # rotary,
         # hedgehog, 
         # fftconv, 
         # layernorm, 
-        # mamba2, 
+        mamba2, 
     ]:
         implementations_list = []
         implementations_fwd = mod.IMPLEMENTATIONS
@@ -102,10 +108,10 @@ if __name__ == "__main__":
                 if verbose:
                     print(f"Method: {m}")
                 for n in [
-                    # 1024, 
+                    1024, 
                     2048, 
-                    # 4096, 
-                    # 8192, 
+                    4096,
+                    # 8192,
                     # 16384
                 ]:
                     if "conv" in m and n not in [1024, 4096]:

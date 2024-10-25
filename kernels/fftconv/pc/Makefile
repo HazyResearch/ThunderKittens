@@ -2,7 +2,7 @@
 GPU_TARGET=H100
 
 # Compiler
-NVCC=/usr/local/cuda-12.5/bin/nvcc
+NVCC=/usr/local/cuda-12.6/bin/nvcc
 
 # Conditional setup based on the target GPU
 ifeq ($(GPU_TARGET),H100)

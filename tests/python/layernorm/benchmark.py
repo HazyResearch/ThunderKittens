@@ -1,13 +1,10 @@
 import torch 
 import time 
 import torch.nn as nn
-# from torchvision.ops import StochasticDepth
 import matplotlib.pyplot as plt
 import os
 
-import sys
-sys.path.append("kernel/")
-import layer_norm as mod
+import thunderkittens as tk
 
 warmup_iters = 10
 num_iters = 100
@@ -37,7 +34,7 @@ def run_torch(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
 
 
 def run_flash(x, residual, drop_path, dropout, norm, residual_in_fp32=True):
-    from layer_norm_triton import layer_norm_fn, RMSNorm
+    from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
 
     timings = []
 
@@ -92,11 +89,10 @@ def run_tk(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
         torch.cuda.synchronize()
         st = time.time()
         
-        mod.fused_ln_tk(
-            int(has_residual), float(dropout.p),
+        out, out_resid = tk.fused_layernorm(
             x, residual, 
             norm_weight, norm_bias, 
-            out, out_resid
+            0.1
         )
 
         torch.cuda.synchronize()

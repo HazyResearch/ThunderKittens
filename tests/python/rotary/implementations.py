@@ -73,8 +73,11 @@ def apply_flash_rotary(dt, b, h, n, dv, verbose=False):
     q = qkv[:,:,0]
     k = qkv[:,:,1]
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
 
     qkv_emb_flash = apply_rotary_emb(
         q, cos, sin
@@ -84,9 +87,10 @@ def apply_flash_rotary(dt, b, h, n, dv, verbose=False):
         k, cos, sin
     )
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end - start
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+
     return qkv_emb_flash, tot
 
 
@@ -113,8 +117,11 @@ def apply_rotary_emb_torch(dt, b, h, n, dv, verbose=False):
     q = qkv[:, :, 0]
     k = qkv[:, :, 1]
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
 
     # for q
     cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
@@ -130,9 +137,10 @@ def apply_rotary_emb_torch(dt, b, h, n, dv, verbose=False):
         dim=-1,
     ).to(o_dt)
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end - start 
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+
     return out, tot
 
 
@@ -147,15 +155,18 @@ def apply_rotary_emb_tk(dt, b, h, n, dv, verbose=False):
     q = q.contiguous()
     k = k.contiguous()
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
 
     out = tk.fused_rotary(q, cos, sin)
     out = tk.fused_rotary(k, cos, sin)
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end-start
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     assert not np.isnan(out.float().cpu()).any(), "NaN values detected in output 'out'"
     assert not np.isinf(out.float().cpu()).any(), "Inf values detected in output 'out'"

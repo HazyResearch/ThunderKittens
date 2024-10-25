@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 
 try:
-    from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
+    from layernorm.baselines.layer_norm_triton import layer_norm_fn, RMSNorm
     print(f"Successfully imported layer_norm_fn")
 except:
     layer_norm_fn = None
@@ -66,16 +66,20 @@ def pytorch_layernorm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     dtype = dt
     dropout_p = dropout.p
     
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    t0 = time.time()
+    start_events[0].record()
 
     dropped = dropout(x) 
     residual = (residual + dropped ) if residual is not None else dropped
     out = norm(residual.to(dtype=norm.weight.dtype))
     residual = residual.to(torch.float32) 
 
-    t1 = time.time()
-    tot = t1-t0
+    end_events[0].record()
+    torch.cuda.synchronize()
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return out, tot
 
 
@@ -87,8 +91,12 @@ def triton_layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     rowscale = torch.ones(x.shape[:-1], device=x.device, dtype=x.dtype, )
     residual_in_fp32 = True
     
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    t0 = time.time()
+    start_events[0].record()
+
     out, residual = layer_norm_fn(
         x,
         norm.weight,
@@ -101,9 +109,9 @@ def triton_layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
         residual_in_fp32=residual_in_fp32,
         is_rms_norm=False
     )
+    end_events[0].record()
     torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return out, tot
 
 
@@ -114,27 +122,27 @@ def layer_norm_test(dt, b, h, n, dv, verbose=True, **kwargs):
     ) = get_layer_norm_inputs(b, h, n, dv, dt)
     has_residual = int(residual is not None)
     
-    import sys
-    sys.path.append("/home/bfs/simran/clean2/ThunderKittens/examples/layer_norm/kernel/")
-    import layer_norm as mod
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
 
     torch.cuda.synchronize()
-    t0 = time.time()
-    # tk.fused_layernorm(
-    #     int(has_residual), float(dropout.p),
-    #     x, residual, 
-    #     norm_weight, norm_bias, 
-    #     out, out_resid
-    # )
-    mod.fused_ln_tk(
-            1, 0.1,
-            x, residual, 
-            norm_weight, norm_bias, 
-            out, out_resid
+    start_events[0].record()
+    
+    out, out_resid = tk.fused_layernorm(
+        x, residual, 
+        norm_weight, norm_bias, 
+        dropout.p,
     )
+
+    end_events[0].record()
     torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return out, tot
 
 
+
+IMPLEMENTATIONS = {
+    "torch_layernorm": pytorch_layernorm_test,
+    # "triton_layernorm": triton_layer_norm_test,
+    "tk_layernorm": layer_norm_test,
+}

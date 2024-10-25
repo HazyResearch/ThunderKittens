@@ -170,10 +170,13 @@ def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
         x = torch.cat([x_pos, x_neg], dim=-1).clamp(min=1e-6)
         
         return x
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         Qs = pytorch_softmax_gt(Q, Qmap)
         Ks = pytorch_softmax_gt(K, Kmap)
@@ -192,9 +195,9 @@ def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
         kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
         k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     except:
         tot = -1
@@ -210,14 +213,18 @@ def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
 def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
     q, k, v, qmap, kmap, alphas, betas =  generate_inputs('randn', b, h, n)
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
+
         o, kv_state, k_state = tk.hedgehog(q, k, v, qmap, kmap, alphas, betas)
+        
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        o += torch.zeros_like(o) # trigger an error if one exists
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
         assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
         assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
     except Exception as e:
@@ -230,6 +237,9 @@ def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
 
 def profile_hedgehog_fla(dt, b, h, n, dv, verbose=True, **kwargs):
     q, k, v, qmap, kmap, alphas, betas =  generate_inputs('randn', b, h, n)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
 
     def pytorch_softmax_gt(x, map_mat, label=None):
 
@@ -264,22 +274,21 @@ def profile_hedgehog_fla(dt, b, h, n, dv, verbose=True, **kwargs):
     # print("state_size", state_size)
 
     torch.cuda.synchronize()
-    t0 = time.time()
+    start_events[0].record()
 
     q = pytorch_softmax_gt(q, qmap)
     k = pytorch_softmax_gt(k, kmap)
     o, _ = fused_chunk_linear_attn(q, k, v, scale=False, normalize=False)
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
-
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return o, tot
 
 
 IMPLEMENTATIONS = {
     "torch_hedgehog": hedgehog_pytorch_test,
+    "fla_triton_hedgehog": profile_hedgehog_fla,
     "tk_hedgehog": profile_tk_hedgehog,
-    "fla_triton_hedgehog": profile_hedgehog_fla
 }
 

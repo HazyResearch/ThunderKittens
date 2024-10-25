@@ -18,7 +18,7 @@ struct mamba2_fwd_layout {
 	using k_global = kittens::gl<bf16, -1, -1, -1, 64, k_tile>;
 	using v_global = kittens::gl<bf16, -1, -1, -1, 64, v_tile>;
 	using o_global = kittens::gl<bf16, -1, -1, -1, 64, o_tile>;
-    using a_global = kittens::gl<float, -1, -1,  1, -1, a_vec>;
+    using a_global = kittens::gl<float, -1, -1, 1, -1, a_vec>;
 	struct globals { q_global Q; k_global K; v_global V; o_global O; a_global A; };
 	struct input_block    { 
         q_tile q;
@@ -52,9 +52,9 @@ struct mamba2_fwd_template {
         OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
 	using layout = mamba2_fwd_layout;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int task_id = args.task_iter*gridDim.x + blockIdx.x;
-		args.common.batch = task_id/args.globals.Q.depth; // batch = id / heads.
-		task_id -= args.common.batch*args.globals.Q.depth;
+        int task_id = args.task_iter * gridDim.x + blockIdx.x;
+		args.common.batch = task_id / args.globals.V.depth; // batch = id / heads.
+		task_id -= args.common.batch*args.globals.V.depth;
 		args.common.head = task_id;
 		args.num_iters = args.common.batch < args.globals.Q.batch ? args.globals.K.rows/layout::k_tile::rows : -1;
     }

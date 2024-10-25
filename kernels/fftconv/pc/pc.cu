@@ -43,10 +43,10 @@ struct fft_1024_template {
         args.num_iters = args.task_iter == 0 ? heads_handled * iters_per_head : -1;
     }
     struct producer {
-        __device__ static void setup(producer_setup_args<layout> args) {
+        __device__ static inline void setup(producer_setup_args<layout> args) {
             warpgroup::decrease_registers<40>();
         }
-        __device__ static void load(producer_load_args<layout> args) {
+        __device__ static inline void load(producer_load_args<layout> args) {
             int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * (NUM_CONSUMER_WARPGROUPS*4); // 4 batch per warpgroup
@@ -61,7 +61,7 @@ struct fft_1024_template {
                 __syncwarp();
             }
         }
-        __device__ static void store(producer_store_args<layout> args) {
+        __device__ static inline void store(producer_store_args<layout> args) {
             int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * (NUM_CONSUMER_WARPGROUPS*4); // 4 batch per warpgroup
@@ -78,7 +78,7 @@ struct fft_1024_template {
         }
     };
     struct consumer {
-        __device__ static void setup(consumer_setup_args<layout> args) {
+        __device__ static inline void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>();
             int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             args.state.current_head = (0 / iters_per_head)*132 + blockIdx.x; // start for iter 0
@@ -89,10 +89,10 @@ struct fft_1024_template {
             consumers::load(args.scratch.twinv_t, args.globals.twinv_t, {0, 0, 0, 0});
             load_head_data(args.scratch, args.globals, args.state.current_head);
         }
-        __device__ static void compute(consumer_compute_args<layout> args) {
+        __device__ static inline void compute(consumer_compute_args<layout> args) {
 
-            int warpgroupid = warpgroup::warpid()/kittens::WARPGROUP_WARPS;
-            int default_barrer_id = warpgroupid + 4;
+            int warpgroupid = warpgroup::groupid();
+            int default_barrer_id = warpgroupid+4; //warpgroupid+4; // FLAG: can they use the same barrier?
 
             // X = F^T X
             crt_fl<16, 64> mma_reg; // 64 registers
@@ -105,7 +105,7 @@ struct fft_1024_template {
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
             mul(accum, accum, tmp);
 
-            group<NUM_CONSUMER_WARPS>::sync(default_barrer_id);
+            group<NUM_CONSUMER_WARPS>::sync(2);  // FLAG: This is important
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
             copy(accum, mma_reg);
@@ -121,7 +121,7 @@ struct fft_1024_template {
             mul(accum, accum, tmp);
 
             warpgroup::store(args.scratch.tmp[warpgroup::groupid()], accum); // must store for AtB
-            warpgroup::sync(default_barrer_id);
+            warpgroup::sync(default_barrer_id); // FLAG: This is important
 
             warpgroup::mm_AB(mma_reg, args.scratch.finv, args.scratch.tmp[warpgroup::groupid()]); // TODO: optimize
             warpgroup::mma_async_wait();
@@ -129,8 +129,13 @@ struct fft_1024_template {
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
             warpgroup::sync(default_barrer_id);
 
-            if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
+            if(laneid() == 0) { 
+                arrive(args.inputs_finished);
+                arrive(args.outputs_arrived); 
+            }
             __syncwarp();
+
+            // persistent grid
             int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
             if(next_head != args.state.current_head) {
@@ -138,9 +143,10 @@ struct fft_1024_template {
                 args.state.current_head = next_head;
             }
         }
-        __device__ static void finish(consumer_finish_args<layout> args) { if(laneid() == 0) arrive(args.finish_finished); }
+        __device__ static inline void finish(consumer_finish_args<layout> args) { if(laneid() == 0) arrive(args.finish_finished); }
     };
 };
+
 template<int _wg> struct fftconv_4096_layout { // 4096
     static constexpr int wg = _wg;
     using seq_tile      = st_bf<64, 64>;
@@ -234,7 +240,7 @@ struct fft_4096_template {
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
             mul(accum, accum, tmp);
 
-            group<NUM_CONSUMER_WARPS>::sync(default_barrer_id);
+            group<NUM_CONSUMER_WARPS>::sync(2);
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
             copy(accum, mma_reg);
@@ -258,7 +264,10 @@ struct fft_4096_template {
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
             warpgroup::sync(default_barrer_id);
 
-            if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
+            if(laneid() == 0) {
+                arrive(args.inputs_finished);
+                arrive(args.outputs_arrived);
+            }
             __syncwarp();
             int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
