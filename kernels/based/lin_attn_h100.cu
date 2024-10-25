@@ -33,7 +33,7 @@ struct based_globals {
     using v_gl     = gl<bf16,  -1, -1, -1, dv, v_tile>;
     using o_gl     = gl<bf16,  -1, -1, -1, dv, o_tile>;
     using kv_a0_gl = gl<bf16,  -1, -1,  1, dv, kv_a0_tile>;
-    using kv_a1_gl = gl<bf16,  -1, -1, fd, dv, kv_a1_tile>;
+    using kv_a1_gl = gl<bf16,  -1, -1, dv, fd, kv_a1_tile>;
     using kv_a2_gl = gl<bf16,  -1, -1, fd*fd, dv, kv_a2_tile>;
 
     // pointers
@@ -250,7 +250,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         __syncthreads();
         #pragma unroll
         for(int t = 0; t < 4; t++) {
-            rt_bf<1*16,4*16> q, k;
+            rt_bf<16,64> q, k;
             mul_slice_row(q, q_src, t*4);
             warpgroup::mma_AB(o, q, a2_s[t]); // incorporate a1 onto o
             warpgroup::mma_async_wait<1>(); // ding dong! o matmuls have now arrived, too.
@@ -273,27 +273,22 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
             tma::store_async(g.o, o_s[tic], {batch, head, block, 0});
         }
     }
-    tma::store_async_wait();
     warpgroup::copy(a0_total, a0_float);
     #pragma unroll
     for (int rt = 0; rt < 4; rt++) {
         mul(a2[rt], a2[rt], (0.70710678118f*0.25f)); // divides by math.sqrt(math.sqrt(D_QK))
         warpgroup::store(a2_s[rt], a2[rt]);
     }
-    __syncthreads();
-
-    tma::store_async(g.kv_a2, a2_s[warpid], {batch, head, warpid, 0});  // tile_idx
-    // save the KV state A1
     mul(a1_trans, a1_trans, 0.5);  // divides by math.sqrt(math.sqrt(D_QK))
     warpgroup::store(a1_trans_s, a1_trans);   // from individual warps to shared address
+    tma::store_async_read_wait();
     __syncthreads();
+    tma::store_async(g.kv_a2, a2_s[warpid], {batch, head, warpid, 0});  // tile_idx
     if (warpid == 0) {    // one warp takes care of the write to HBM
         tma::store_async(g.kv_a1, a1_trans_s, {batch, head, 0, 0});
-    }
-    // save the KV state A0
-    if (warpid == 0) {   
         tma::store_async(g.kv_a0, a0_total, {batch, head, 0, 0});
     }
+    tma::store_async_read_wait();
 }
 
 
