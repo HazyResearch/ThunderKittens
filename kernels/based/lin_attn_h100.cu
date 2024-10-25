@@ -127,6 +127,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     int laneid = kittens::laneid(); 
     int warpid = kittens::warpid(); 
     int tic = 0, toc = 1;
+    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
 
     extern __shared__ alignment_dummy __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -280,7 +281,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
         if (block>0) {
             tma::store_async_read_wait<1>();
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid+4);
         }
 
         // do the cumulative sum last, after everything is stored

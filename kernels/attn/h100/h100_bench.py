@@ -44,20 +44,17 @@ def benchmark_attention(configurations):
         start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
         end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
         
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        
         # Warmup for forward pass
         for _ in range(10):
             tk.mha_forward(q, k, v, o, l_vec, causal)
-
+            
         # Time the forward pass
-        for i in range(10):
-            o.zero_()
-            
-            torch.cuda.synchronize()
+        for i in range(10):          
             start_events_fwd[i].record()
-            
             tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            torch.cuda.synchronize()
             end_events_fwd[i].record()
 
         torch.cuda.synchronize()
@@ -71,14 +68,8 @@ def benchmark_attention(configurations):
         print(f"Average efficiency for forward pass in TFLOPS: {tflops_fwd}")
         print("-" * 60)
         
-        # wait for GPU to reset
-        torch.cuda.synchronize()
-        
-        # clear cache
         torch.cuda.empty_cache()
-        
-        # sleep for 5 seconds
-        time.sleep(5)
+        torch.cuda.synchronize()
         
         # Prepare for timing backward pass
         start_events_bwd = [torch.cuda.Event(enable_timing=True) for _ in range(10)]
@@ -86,38 +77,12 @@ def benchmark_attention(configurations):
         
         # Warmup for backward pass
         for _ in range(10):
-            o.zero_()
-            l_vec.zero_()
-            
-            tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            # zero out gradients
-            qg.zero_()
-            kg.zero_()
-            vg.zero_()
-            d_vec.zero_()
-            
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
-
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
+        
         # Time the backward pass
         for i in range(10):
-            o.zero_()
-            l_vec.zero_()
-            
-            tk.mha_forward(q, k, v, o, l_vec, causal)
-            
-            # zero out gradients
-            qg.zero_()
-            kg.zero_()
-            vg.zero_()
-            d_vec.zero_()
-            
-            torch.cuda.synchronize()
             start_events_bwd[i].record()
-            
-            tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, qg, kg, vg, causal)
-            
-            torch.cuda.synchronize()
+            qg, kg, vg = tk.mha_backward(q, k, v, o, l_vec, d_vec, grad_output, causal)
             end_events_bwd[i].record()
 
         torch.cuda.synchronize()
@@ -131,14 +96,8 @@ def benchmark_attention(configurations):
         print(f"Average efficiency for backward pass in TFLOPS: {tflops_bwd}")
         print("=" * 60)
         
-        # wait for GPU to reset
-        torch.cuda.synchronize()
-        
-        # clear cache
         torch.cuda.empty_cache()
-        
-        # sleep for 5 seconds
-        time.sleep(5)
+        torch.cuda.synchronize()
     
     return results
 
@@ -168,26 +127,27 @@ def plot_results(results):
 # Example list of configurations to test
 configurations = [
     (16, 16, 768,    128, False),
-    (16, 16, 768*2,  128, False),
-    (16, 16, 768*4,  128, False),
-    (16, 16, 768*8,  128, False),
-    (16, 16, 768*16, 128, False),
-    (16, 16, 768,    128, True),
-    (16, 16, 768*2,  128, True),
-    (16, 16, 768*4,  128, True),
-    (16, 16, 768*8,  128, True),
-    (16, 16, 768*16, 128, True),
-    (16, 32, 768,    64,  False),
-    (16, 32, 768*2,  64,  False),
-    (16, 32, 768*4,  64,  False),
-    (16, 32, 768*8,  64,  False),
-    (16, 32, 768*16, 64,  False),
-    (16, 32, 768,    64,  True),
-    (16, 32, 768*2,  64,  True),
-    (16, 32, 768*4,  64,  True),
-    (16, 32, 768*8,  64,  True),
-    (16, 32, 768*16, 64,  True),
+    (16, 16, 768*16,  128, False),
+    # (16, 16, 768*2,  128, False),
+    # (16, 16, 768*4,  128, False),
+    # (16, 16, 768*8,  128, False),
+    # (16, 16, 768*16, 128, False),
+    # (16, 16, 768,    128, True),
+    # (16, 16, 768*2,  128, True),
+    # (16, 16, 768*4,  128, True),
+    # (16, 16, 768*8,  128, True),
+    # (16, 16, 768*16, 128, True),
+    # (16, 32, 768,    64,  False),
+    # (16, 32, 768*2,  64,  False),
+    # (16, 32, 768*4,  64,  False),
+    # (16, 32, 768*8,  64,  False),
+    # (16, 32, 768*16, 64,  False),
+    # (16, 32, 768,    64,  True),
+    # (16, 32, 768*2,  64,  True),
+    # (16, 32, 768*4,  64,  True),
+    # (16, 32, 768*8,  64,  True),
+    # (16, 32, 768*16, 64,  True),
 ]
 
 results = benchmark_attention(configurations)
-plot_results(results)
+# plot_results(results)

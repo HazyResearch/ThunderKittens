@@ -69,17 +69,20 @@ def ssd_minimal_discrete(X, A, B, C, block_len, initial_states=None):
 
 torch.manual_seed(0)
 
-batch   = 1
-headdim = 64
+batch = 1
+dim = 64
 
 length     = 2048 #int(sys.argv[1])
 chunk_size = 64
 num_chunks = length // chunk_size
 
 d_head  = 64
-n_heads = headdim // d_head
+n_heads = dim // d_head
 d_state = 64
 ngroups = 1
+
+assert batch == 1   # expected by c++ harness loader
+assert n_heads == 1 # expected by c++ harness loader
 
 # print hardcoded values
 print("-----------------")

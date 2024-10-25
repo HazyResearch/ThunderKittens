@@ -1,6 +1,10 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
 
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_FUSED_ROTARY
+#endif
+
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcsf;
@@ -107,7 +111,7 @@ template<int _headdim> struct rotary_template {
     };
 };
 
-#ifdef TORCH_COMPILE_ROTARY
+#ifdef TK_COMPILE_FUSED_ROTARY
 #include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
 template<int ATTN_D>
@@ -134,16 +138,16 @@ void dispatch_fused_rotary(
 
     unsigned long mem_size = (MAX_SHARED_MEMORY-2048);
     constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
-    cudaFuncSetAttribute(prototype::pc<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    cudaFuncSetAttribute(prototype::lcsf::kernel<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, (ATTN_B+BATCHES_PER_BLOCK-1)/BATCHES_PER_BLOCK);
-    dim3 block(num_threads<rope_t>);
-    pc<rope_t><<<grid, block, mem_size>>>(g); 
+    dim3 block(kittens::prototype::detail::NUM_THREADS_v<rope_t>);
+    kittens::prototype::lcsf::kernel<rope_t><<<grid, block, mem_size>>>(g); 
 }
 
 torch::Tensor fused_rotary(
-    const torch::Tensor &x,
-    const torch::Tensor &cos_in,
-    const torch::Tensor &sin_in
+    const torch::Tensor x,
+    const torch::Tensor cos_in,
+    const torch::Tensor sin_in
 ) {
     CHECK_INPUT(x);
     CHECK_INPUT(sin_in);

@@ -90,6 +90,10 @@ struct fft_1024_template {
             load_head_data(args.scratch, args.globals, args.state.current_head);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
+
+            int warpgroupid = warpgroup::warpid()/kittens::WARPGROUP_WARPS;
+            int default_barrer_id = warpgroupid + 4;
+
             // X = F^T X
             crt_fl<16, 64> mma_reg; // 64 registers
             crt_bf<16, 64> accum, tmp; // 32 registers each
@@ -101,7 +105,7 @@ struct fft_1024_template {
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
             mul(accum, accum, tmp);
 
-            group<NUM_CONSUMER_WARPS>::sync();
+            group<NUM_CONSUMER_WARPS>::sync(default_barrer_id);
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
             copy(accum, mma_reg);
@@ -117,13 +121,13 @@ struct fft_1024_template {
             mul(accum, accum, tmp);
 
             warpgroup::store(args.scratch.tmp[warpgroup::groupid()], accum); // must store for AtB
-            warpgroup::sync();
+            warpgroup::sync(default_barrer_id);
 
             warpgroup::mm_AB(mma_reg, args.scratch.finv, args.scratch.tmp[warpgroup::groupid()]); // TODO: optimize
             warpgroup::mma_async_wait();
             
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
-            warpgroup::sync();
+            warpgroup::sync(default_barrer_id);
 
             if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
             __syncwarp();
@@ -215,6 +219,10 @@ struct fft_4096_template {
             load_head_data(args.scratch, args.globals, args.state.current_head);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
+
+            int warpgroupid = warpgroup::warpid()/kittens::WARPGROUP_WARPS;
+            int default_barrer_id = warpgroupid + 4;
+
             // X = F^T X
             crt_fl<16, 64> mma_reg; // 64 registers
             crt_bf<16, 64> accum, tmp; // 32 registers each
@@ -226,7 +234,7 @@ struct fft_4096_template {
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
             mul(accum, accum, tmp);
 
-            group<NUM_CONSUMER_WARPS>::sync();
+            group<NUM_CONSUMER_WARPS>::sync(default_barrer_id);
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
             copy(accum, mma_reg);
@@ -242,13 +250,13 @@ struct fft_4096_template {
             mul(accum, accum, tmp);
 
             warpgroup::store(args.scratch.tmp[warpgroup::groupid()], accum); // must store for AtB
-            warpgroup::sync();
+            warpgroup::sync(default_barrer_id);
 
             warpgroup::mm_AB(mma_reg, args.scratch.finv, args.scratch.tmp[warpgroup::groupid()]); // TODO: optimize
             warpgroup::mma_async_wait();
             
             warpgroup::store(args.output.o[warpgroup::groupid()], mma_reg.real); // COMMENT ME OUT LATER
-            warpgroup::sync();
+            warpgroup::sync(default_barrer_id);
 
             if(laneid() == 0) { arrive(args.inputs_finished); arrive(args.outputs_arrived); }
             __syncwarp();

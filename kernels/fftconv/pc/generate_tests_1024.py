@@ -12,11 +12,11 @@ N_64 = 64
 
 TESTNAME = sys.argv[1]
 
-if TESTNAME in ['ones_all']:
+if TESTNAME in ['ones']:
     u = (torch.ones((B, H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32) 
     k = (torch.ones((H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32)
     
-elif TESTNAME in ['randn_all']:
+elif TESTNAME in ['randn']:
     torch.random.manual_seed(42)
     u = (torch.randn((B, H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32) 
     k = (torch.randn((H, N), dtype=torch.bfloat16, device='cpu')).to(torch.float32)
