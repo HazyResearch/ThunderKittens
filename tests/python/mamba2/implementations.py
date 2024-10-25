@@ -125,35 +125,46 @@ def get_inputs_mamba(dt, b, h, n, dv, verbose=True, **kwargs):
 
 def run_triton(dt, b, h, n, dv, verbose=True, **kwargs):
     x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
     
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
+
     y = mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=D, z=z, dt_bias=dt_bias, dt_softplus=True)
+    
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end - start
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return y, tot
 
 def run_torch(dt, b, h, n, dv, verbose=True, **kwargs):
     x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
 
     D_factor = x * rearrange(D, "d -> d 1")
     _dt = F.softplus(dt + dt_bias)
     y_min, _ = ssd_minimal_discrete(x*_dt.unsqueeze(-1), A*_dt, B, C, block_len=chunk_size)
     y_min += D_factor
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end - start
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     return y_min, tot
 
 def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     x, dt, dt_bias, A, B, C, D, z, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
 
     torch.cuda.empty_cache()
+    
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
 
     # TK 
     q = C 
@@ -169,13 +180,13 @@ def run_tk(dt, b, h, n, dv, verbose=True, **kwargs):
     a = rearrange(a, "b h l -> b l h").to(torch.float32).contiguous()
 
     torch.cuda.synchronize()
-    start = time.time()
+    start_events[0].record()
 
     y_tk = tk.mamba2(q, k, v, a) 
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    end = time.time()
-    tot = end - start
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     # 10 TFLOPS in these operations
     y_tk = rearrange(y_tk, "b h l d -> b l h d").contiguous()
@@ -200,8 +211,11 @@ def mamba1_kernel_test(dt, q, k, v, d, verbose=True, **kwargs):
         z = torch.randn(b, dmodel, n, dtype=torch.bfloat16, device=q.device)
         dt_proj_bias = torch.randn(dmodel, dtype=torch.bfloat16, device=q.device)
 
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y = selective_scan_fn(
             x,
@@ -216,79 +230,13 @@ def mamba1_kernel_test(dt, q, k, v, d, verbose=True, **kwargs):
             return_last_state=False,
         )
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except Exception as e:
         tot = -1
         y = None
     return y, tot
-
-
-# Simple test
-def test_correctness():
-    torch.manual_seed(42)
-
-    ## Dimensions
-    # Denoted (B, T, Q, D, P) in the paper
-    batch, seqlen, chunk_size, dim, headdim = 1, 2048, 64, 2048, 64
-    nheads = dim // headdim  # (H) in the paper
-    ngroups = 1 # (G) in the paper
-    dstate = 64  # (N) in the paper
-    dtype = torch.float32
-    device = "cuda"
-
-    x = torch.randn(batch, seqlen, nheads, headdim, dtype=dtype, device=device)
-    dt = torch.randn(batch, seqlen, nheads, dtype=dtype, device=device).requires_grad_()
-    dt_bias = torch.randn(nheads, dtype=dtype, device=device).requires_grad_()
-    A = (-torch.exp(torch.rand(nheads, dtype=dtype, device=device))).requires_grad_()
-    B = torch.randn(batch, seqlen, ngroups, dstate, dtype=dtype, device=device)
-    C = torch.randn(batch, seqlen, ngroups, dstate, dtype=dtype, device=device)
-    D = torch.randn(nheads, dtype=dtype, device=device)
-    z = None
-
-    # Comparing fused version and minimal version
-    y = mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=D, z=z, dt_bias=dt_bias, dt_softplus=True)
-
-    D_factor = x * rearrange(D, "d -> d 1")
-    _dt = F.softplus(dt + dt_bias)
-    y_min, _ = ssd_minimal_discrete(x*_dt.unsqueeze(-1), A*_dt, B, C, block_len=chunk_size)
-    y_min += D_factor
-
-    # TK 
-    q = C 
-    k = B
-    _dt = F.softplus(dt + dt_bias)
-    v = x*_dt.unsqueeze(-1)
-    a = A*_dt
-    q = rearrange(q, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    k = rearrange(k, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    v = rearrange(v, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    a = rearrange(a, "b h l -> b l h").to(torch.float32).contiguous()
-    y_tk = tk.mamba2(q, k, v, a) # chunk size is 64
-    y_tk = rearrange(y_tk, "b h l d -> b l h d").contiguous().to(dtype)
-    y_tk += D_factor
-
-    # Check if the outputs are the same
-    print(y[0,1000,4,:8])
-    print(y_min[0,1000,4,:8])
-    print(y_tk[0,1000,4,:8])
-
-    diff = torch.max(torch.abs(y - y_min))
-    close = torch.allclose(y, y_min, atol=1e-4)
-    print(f"PyTorch (FP32) - Triton (FP32): Max diff: {diff}; Close: {close}")
-
-    diff = torch.max(torch.abs(y - y_tk))
-    close = torch.allclose(y, y_tk, atol=1e-4)
-    print(f"TK (BF16) - PyTorch (FP32): Max diff: {diff}; Close: {close}")
-
-    diff = torch.max(torch.abs(y_min - y_tk))
-    close = torch.allclose(y_min, y_tk, atol=1e-4)
-    print(f"TK (BF16) -Triton (FP32): Max diff: {diff}; Close: {close}")
-
-
-if __name__ == "__main__":
-    test_correctness()
 
     
 IMPLEMENTATIONS = {

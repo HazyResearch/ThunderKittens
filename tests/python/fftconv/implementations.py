@@ -60,14 +60,17 @@ def fftconv_tk_test(dt, b, h, n, dv, verbose=True, **kwargs):
     x, k = get_fft_inputs(dt, b, h, n, dv)
     tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    t0 = time.time()
+    start_events[0].record()
 
     y_tk = tk_fft(x, k)
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     assert not np.isnan(y_tk.float().cpu()).any(), "NaN values detected in output 'y_tk'"
     assert not np.isinf(y_tk.float().cpu()).any(), "Inf values detected in output 'y_tk'"
@@ -87,17 +90,20 @@ def fftconv_cutlass_test(dt, b, h, n, dv, verbose=True, **kwargs):
     
     u, k = get_fft_inputs(dt, b, h, n, dv)
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     try:
         conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
         
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
 
         y_flashfft = conv_flashfft(u, k)
 
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except:
         print(f"Error: {sys.exc_info()[0]}")
         return None, -1
@@ -112,14 +118,17 @@ def fftconv_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
     
     x, k = get_fft_inputs(dt, b, h, n, dv)
 
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     torch.cuda.synchronize()
-    t0 = time.time()
+    start_events[0].record()
 
     x = ref_fftconv(x, k, n)
 
+    end_events[0].record()
     torch.cuda.synchronize()
-    t1 = time.time()
-    tot = t1-t0
+    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
 
     return x, tot
 

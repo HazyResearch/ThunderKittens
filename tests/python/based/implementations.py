@@ -1,23 +1,24 @@
-
-import torch
 import sys
 import os
 import time
 import argparse
+    
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from statistics import median
+import numpy as np
+import math
+
+import torch 
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange, repeat
 
 try:
     import thunderkittens as tk
     print(f"Successfully imported thunderkittens")
 except:
     print("Could not import thunderkittens")
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
-import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat
 
 try:
     # To compare to Faster Transformers
@@ -53,11 +54,13 @@ def get_flops(batch, seqlen, headdim, nheads):
     return f
 
 
-def get_based_inputs(b, h, n, dv, dt):
+def get_based_inputs(b, h, n, dv, dt, seed=42):
+    torch.manual_seed(seed)
+
     feature_dim = 16
-    Q   = torch.randn(b,h,n,feature_dim, dtype=dt, device='cuda')/feature_dim
-    K   = torch.randn(b,h,n,feature_dim, dtype=dt, device='cuda')/feature_dim
-    V   = torch.randn(b,h,n,dv, dtype=dt, device='cuda')/dv
+    Q   = torch.randn((b,h,n,feature_dim), dtype=dt, device='cuda') / feature_dim
+    K   = torch.randn((b,h,n,feature_dim), dtype=dt, device='cuda') / feature_dim
+    V   = torch.randn((b,h,n,dv), dtype=dt, device='cuda') / dv
     return Q, K, V
 
 
@@ -91,17 +94,24 @@ def pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
     Q, K, v = get_based_inputs(b, h, n, dv, dt)
     d = 16
     feature_map = TaylorExp(input_dim=d)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
+
         q, k = feature_map(Q), feature_map(K)
         q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
         kv_state = (k * v).cumsum(dim=2)  # causal 
         # k_state = k.cumsum(dim=2)
         y = ((q * kv_state).sum(dim=-1)) 
+        
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+    
     except Exception as e:
         tot = -1
         y= None
@@ -111,9 +121,14 @@ def pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
 def fast_transformer_test(dt, b, h, n, dv, verbose=True, **kwargs):
     q, k, v = get_based_inputs(b, h, n, dv, dt)
     feature_map = TaylorExp(input_dim=d)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
+
         q, k = feature_map(q), feature_map(k)
         v = causal_dot_product(
             q.contiguous().to(dtype=torch.float32), 
@@ -121,9 +136,11 @@ def fast_transformer_test(dt, b, h, n, dv, verbose=True, **kwargs):
             v.contiguous().to(dtype=torch.float32),
         )
         y = v 
+        
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+
     except Exception as e:
         tot = -1
         y = None
@@ -132,13 +149,19 @@ def fast_transformer_test(dt, b, h, n, dv, verbose=True, **kwargs):
 
 def fla_parallel_based_test(dt, b, h, n, dv, verbose=True, **kwargs):
     q, k, v = get_based_inputs(b, h, n, dv, dt)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
+
         y = parallel_based(q, k, v, False, False)
+        
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
     except Exception as e:
         tot = -1
         y = None
@@ -147,24 +170,30 @@ def fla_parallel_based_test(dt, b, h, n, dv, verbose=True, **kwargs):
 
 def based_kernel_test(dt, b, h, n, dv, verbose=True, device='4090'):
     Q, K, V = get_based_inputs(b, h, n, dv, dt)
+
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+
     try:
         torch.cuda.synchronize()
-        t0 = time.time()
+        start_events[0].record()
+
         o, kv_state = tk.based( Q, K, V )
+        
+        end_events[0].record()
         torch.cuda.synchronize()
-        t1 = time.time()
-        tot = t1-t0
+        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
         assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
         assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
     except Exception as e:
         tot = -1
         o = None
-    return o, tot
+    return (o, kv_state), tot
 
     
 IMPLEMENTATIONS = {
-    "tk_based": based_kernel_test,
     "torch_based": pytorch_test,
     # "fast_transformer": fast_transformer_test,
     "fla_triton_based": fla_parallel_based_test,
+    "tk_based": based_kernel_test,
 }

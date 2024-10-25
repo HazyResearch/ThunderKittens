@@ -19,12 +19,12 @@ warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 
 from utils import efficiency
 
-# import attention.implementations as attention
-# import hedgehog.implementations as hedgehog
-# import based.implementations as based
-# import rotary.implementations as rotary
-# import mamba2.implementations as mamba2
-# import fftconv.implementations as fftconv
+import attention.implementations as attention
+import hedgehog.implementations as hedgehog
+import based.implementations as based
+import rotary.implementations as rotary
+import mamba2.implementations as mamba2
+import fftconv.implementations as fftconv
 import layernorm.implementations as layernorm
 
 
@@ -86,8 +86,8 @@ if __name__ == "__main__":
         # rotary,
         # hedgehog, 
         # fftconv, 
-        layernorm, 
-        # mamba2, 
+        # layernorm, 
+        mamba2, 
     ]:
         implementations_list = []
         implementations_fwd = mod.IMPLEMENTATIONS
@@ -108,10 +108,10 @@ if __name__ == "__main__":
                 if verbose:
                     print(f"Method: {m}")
                 for n in [
-                    768, 
-                    # 768*2, 
-                    # 768*3, 
-                    # 768*16, 
+                    1024, 
+                    2048, 
+                    4096,
+                    # 8192,
                     # 16384
                 ]:
                     if "conv" in m and n not in [1024, 4096]:

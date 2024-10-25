@@ -27,7 +27,6 @@ def get_flops(batch, seqlen, nheads, headdim, causal, mode="fwd"):
     assert mode in ["fwd", "bwd", "fwd_bwd"]
     f = 4 * batch * seqlen**2 * nheads * headdim // (2 if causal else 1)
     flops = f if mode == "fwd" else (2.5 * f if mode == "bwd" else 3.5 * f)
-    print(f"causal={causal}, mode={mode}, flops={flops}")
     return flops
 
 
@@ -266,26 +265,26 @@ def fa3_test(dt, b, h, n, dv, causal, is_forwards, verbose=True, **kwargs):
 
 
 from functools import partial
-# IMPLEMENTATIONS = {
-#     "fwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=True),
-#     "fwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=True),
-#     "fwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=True),
-#     "fwd_TK_c=t": partial(tk_test, causal=True, is_forwards=True),
-#     "fwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=True),
-#     "fwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=True),
-#     "fwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=True),
-#     "fwd_TK_c=f": partial(tk_test, causal=False, is_forwards=True),
-# }
+IMPLEMENTATIONS = {
+    "fwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=True),
+    "fwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=True),
+    "fwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=True),
+    "fwd_TK_c=t": partial(tk_test, causal=True, is_forwards=True),
+    "fwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=True),
+    "fwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=True),
+    "fwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=True),
+    "fwd_TK_c=f": partial(tk_test, causal=False, is_forwards=True),
+}
 
 IMPLEMENTATIONS = {
-    # "bwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=False),
-    # "bwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=False),
+    "bwd_PT_c=t": partial(pytorch_test, causal=True, is_forwards=False),
+    "bwd_FA2_c=t": partial(fa2_test, causal=True, is_forwards=False),
     "bwd_FA3_c=t": partial(fa3_test, causal=True, is_forwards=False),
-    # "bwd_TK_c=t": partial(tk_test, causal=True, is_forwards=False),
-    # "bwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=False),
-    # "bwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=False),
-    # "bwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=False),
-    # "bwd_TK_c=f": partial(tk_test, causal=False, is_forwards=False),
+    "bwd_TK_c=t": partial(tk_test, causal=True, is_forwards=False),
+    "bwd_PT_c=f": partial(pytorch_test, causal=False, is_forwards=False),
+    "bwd_FA2_c=f": partial(fa2_test, causal=False, is_forwards=False),
+    "bwd_FA3_c=f": partial(fa3_test, causal=False, is_forwards=False),
+    "bwd_TK_c=f": partial(tk_test, causal=False, is_forwards=False),
 }
 
 
