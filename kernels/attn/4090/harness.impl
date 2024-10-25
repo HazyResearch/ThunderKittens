@@ -5,10 +5,10 @@
 constexpr int ATTN_B = 8;
 constexpr int ATTN_H = 8;
 constexpr int ATTN_N = 1024;
-constexpr int ATTN_D = D; // hardcoded into this kernel
+constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ITER   = 10;
 
-#define BLOCK_SIZE (32*NUM_WARPS)
+#define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -89,28 +89,28 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    global_layout Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    globals g(Qg, Kg, Vg, Og);
+    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY-1000; // have the flag tell us
     std::cout << "Max shared memory size: " << mem_size << std::endl;
     
     cudaFuncSetAttribute(
-        attend_ker64,
+        attend_ker<ATTN_D>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    dim3 grid((ATTN_N + qkvo_tile<>::rows*NUM_WORKERS - 1) / (qkvo_tile<>::rows*NUM_WORKERS), ATTN_H, ATTN_B);
+    dim3 grid((ATTN_N + qkvo_tile<ATTN_D>::rows*NUM_WORKERS - 1) / (qkvo_tile<ATTN_D>::rows*NUM_WORKERS), ATTN_H, ATTN_B);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
-        attend_ker64<<<grid, BLOCK_SIZE, mem_size>>>(g);
+        attend_ker<ATTN_D><<<grid, BLOCK_SIZE, mem_size>>>(g);
     }
     cudaDeviceSynchronize();
     const auto finish = std::chrono::high_resolution_clock::now();
