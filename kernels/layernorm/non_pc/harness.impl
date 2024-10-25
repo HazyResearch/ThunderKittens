@@ -2,8 +2,8 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B 1
-#define ATTN_N  2048
+#define ATTN_B 4
+#define ATTN_N  1024
 #define N_TILE_SIZE 1024  //  N / 2, since 2 workers. Num launches.
 #define N_PER_TILE 2
 #define ATTN_D 1024 // hardcoded into this kernel
@@ -40,16 +40,14 @@ int main(int argc, char **argv) {
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS_X = ATTN_B*ATTN_N*ATTN_D;
     constexpr int TOTAL_ELEMENTS_O = ATTN_B*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_X = ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_O = ATTN_N*ATTN_D;
 
     constexpr int TOTAL_ELEMENTS_NORM_WEIGHT = ATTN_D;
     constexpr int TOTAL_ELEMENTS_NORM_BIAS   = ATTN_D;
 
-    float *x            = new float[TOTAL_UNIQUE_ELEMENTS_X];
-    float *residual     = new float[TOTAL_UNIQUE_ELEMENTS_X];
-    float *o_ref        = new float[TOTAL_UNIQUE_ELEMENTS_O];
-    float *o_resid_ref  = new float[TOTAL_UNIQUE_ELEMENTS_O];
+    float *x            = new float[TOTAL_ELEMENTS_X];
+    float *residual     = new float[TOTAL_ELEMENTS_X];
+    float *o_ref        = new float[TOTAL_ELEMENTS_O];
+    float *o_resid_ref  = new float[TOTAL_ELEMENTS_O];
     bf16 *x_bf          = new bf16[TOTAL_ELEMENTS_X];
     bf16 *residual_bf   = new bf16[TOTAL_ELEMENTS_X];
     bf16 *o_bf          = new bf16[TOTAL_ELEMENTS_O];
@@ -77,19 +75,19 @@ int main(int argc, char **argv) {
 
         printf("Loading from %s\n", argv[1]);
         std::cout << "Starting to enter!" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  
             infile >> x[i];   
             // if (i < 5) { std::cout << x[i] << std::endl; }
         }
         std::cout << "Finished loading X" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> residual[i];   }
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  infile >> residual[i];   }
         std::cout << "Finished loading RESIDUAL" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {  
+        for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {  
             infile >> o_ref[i];  
             // if (i < 5) { std::cout << o_ref[i] << std::endl; }
         }
         std::cout << "Finished loading O_REF" << std::endl;
-        for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {  infile >> o_resid_ref[i];   }
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  infile >> o_resid_ref[i];   }
         std::cout << "Finished loading OUT_RESIDUAL" << std::endl;
 
         for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  infile >> norm_weight[i];   }
@@ -113,9 +111,9 @@ int main(int argc, char **argv) {
     }
 
     // set the inputs
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_X; i++) {
-        x_bf[i] = __float2bfloat16(x[i % TOTAL_UNIQUE_ELEMENTS_X]);
-        residual_bf[i] = __float2bfloat16(residual[i % TOTAL_UNIQUE_ELEMENTS_X]);
+    for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {
+        x_bf[i] = __float2bfloat16(x[i % TOTAL_ELEMENTS_X]);
+        residual_bf[i] = __float2bfloat16(residual[i % TOTAL_ELEMENTS_X]);
     }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) { norm_weight_bf[i] = __float2bfloat16(norm_weight[i]); }
     for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) { norm_bias_bf[i]   = __float2bfloat16(norm_bias[i]); }
@@ -177,11 +175,11 @@ int main(int argc, char **argv) {
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
     std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
-    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_O << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
-            o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+        float diff = o[i] - o_ref[i % TOTAL_ELEMENTS_O];
+        if(i < TOTAL_ELEMENTS_O) {
+            o_ref_file << o_ref[i % TOTAL_ELEMENTS_O] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
             if (i % 1024 == 1023) {
@@ -192,9 +190,8 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.1 || isnan(diff)) {
             if (good == true) { 
-                printf("i: %d\n", i);
+                printf("i: %d, %f\n", i, diff);
             }
-            // printf("diff: %f\n", diff);
             good = false;
         }
     }
@@ -209,12 +206,12 @@ int main(int argc, char **argv) {
     std::ofstream o_resid_file("printouts/resid.txt");
     std::ofstream resid_diff_file("printouts/resid_diff.txt");
     std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
-    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_O << std::endl;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_O; i++) {
-        float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O];
-        if(i < TOTAL_UNIQUE_ELEMENTS_O) {
+    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_ELEMENTS_O];
+        if(i < TOTAL_ELEMENTS_O) {
             
-            o_resid_ref_file << o_resid_ref[i % TOTAL_UNIQUE_ELEMENTS_O] << ' ';
+            o_resid_ref_file << o_resid_ref[i % TOTAL_ELEMENTS_O] << ' ';
             o_resid_file << o_resid[i] << ' ';
             resid_diff_file << resid_diff << ' ';
             if (i % 1024 == 1023) {
@@ -225,7 +222,7 @@ int main(int argc, char **argv) {
         }
         if(abs(resid_diff) > 0.1 || isnan(resid_diff)) {
             if (good_resid == true) { 
-                printf("i: %d\n", i);
+                printf("i: %d, %f\n", i, resid_diff);
             }
             good_resid = false;
         }

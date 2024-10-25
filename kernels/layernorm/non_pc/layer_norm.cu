@@ -83,18 +83,13 @@ template<int _d_model> struct norm_globals {
 
 template<int D>
 __global__ __launch_bounds__(NUM_THREADS, 1)
-void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
+void layernorm_tk(const __grid_constant__ norm_globals<D> g, int n_per_tile) {
 
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
-    // int batch     = blockIdx.x / g.n_tile_size;
-    // int seq_start = 2 * ( blockIdx.x % g.n_tile_size );
-    // int batch     = blockIdx.x;
-    // int seq_start = blockIdx.z*2;
-
     int batch = blockIdx.y;
-    int seq_start = blockIdx.x *2;
+    int seq_start = blockIdx.x*2;
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
@@ -111,10 +106,6 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
 
     // pipelining
     int tic = 0, toc = 1;
-    auto block = cooperative_groups::this_thread_block();
-     __shared__ cuda::semaphore<cuda::thread_scope::thread_scope_block> semaphore_cheat;
-    if (threadIdx.x == 0) {init(&semaphore_cheat, block.size());}
-    block.sync(); // Need to make sure none calls before setup.
 
     // global loads
     if (warpid == 0) { 
@@ -131,7 +122,6 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
     
     int n_blocks = g.n_per_tile/NUM_WORKERS; 
     for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) {
-        semaphore_cheat.arrive_and_wait();  
         auto cur_idx  = (block + 0)*NUM_WORKERS + warpid;
         auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
 
@@ -140,11 +130,13 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
             load_async(       x_s[warpid][toc], g.x,        {batch, 0, seq_start+next_idx, 0});
             load_async(residual_s[warpid][toc], g.residual, {batch, 0, seq_start+next_idx, 0});
         }
+        load_async_wait();
+        __syncwarp(); 
 
         dropout_mask(x_s[warpid][tic], g.dropout_p); 
         add(residual_s[warpid][tic], residual_s[warpid][tic], x_s[warpid][tic]);         
         store(g.o_resid, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
-        __syncthreads();
+        __syncwarp();
 
         sum(mean, residual_s[warpid][tic]);
         mean = mean / __float2bfloat16(d_model);
@@ -158,6 +150,7 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g) {
         div(residual_s[warpid][tic], residual_s[warpid][tic], var);
         mul(residual_s[warpid][tic], residual_s[warpid][tic], norm_weight_s); 
         add(residual_s[warpid][tic], residual_s[warpid][tic], norm_bias_s);
+        __syncwarp();
 
         // save output
         store(g.o, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
@@ -196,7 +189,7 @@ void dispatch_layernorm(
     residual_gl  residual_arg{d_residual_bf, B, 1, N, D};
     o_gl  o_arg{d_o, B, 1, N, D};
     o_resid_gl  o_resid_arg{d_o_resid, B, 1, N, D};
-    norm_weight_gl norm_weight_arg{d_norm_weight_bf, 1, 1,      1, D};
+    norm_weight_gl norm_weight_arg{d_norm_weight_bf, 1, 1, 1, D};
     norm_bias_gl norm_bias_arg{d_norm_bias_bf, 1, 1, 1, D};
 
     const int n_tile_size = N / 2;
@@ -211,9 +204,8 @@ void dispatch_layernorm(
         mem_size
     );
 
-    // dim3 grid(B*n_tile_size, 1, 1);
     dim3 grid(n_tile_size, B, 1);
-    layernorm_tk<D><<<grid,NUM_THREADS,mem_size>>>(g);
+    layernorm_tk<D><<<grid,NUM_THREADS,mem_size>>>(g, n_per_tile);
     cudaDeviceSynchronize();
 }
 

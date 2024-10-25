@@ -5,9 +5,8 @@ import numpy as np
 import sys
 import math
 
-B = 1
-# H = 16
-N = 2048
+B = 4
+N = 1024
 D = 64*16
 
 TESTNAME = sys.argv[1]

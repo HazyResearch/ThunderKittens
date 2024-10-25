@@ -190,7 +190,6 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
                 size_bytes<typeof(v_s[0])>*3
             );
 
-            int next_tile_idx = (blockIdx.x * n_blocks) + block + 1;
             tma::load_async(q_s[toc], g.q, {batch, head, block+1, 0}, bar);
             tma::load_async(k_s[toc], g.k, {batch, head, block+1, 0}, bar);
             tma::load_async(v_s[toc], g.v, {batch, head, block+1, 0}, bar);
@@ -200,15 +199,18 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
         // we start by doing the very local computations. Then, we'll follow up later with the rest.
         warpgroup::mma_fence(local_attn); // qk matmul fence
+
+        // note that local_attn rt shape is 1x4 since it's done by a warpgroup. 
+        // even though you might think 4x4 since q_s x k_s is (4x1) x (1x4).
         warpgroup::mm_ABt(local_attn, q_s[tic], k_s[tic]); // clear registers -- note mm_ABt, not mma_ABt.
         warpgroup::mma_commit_group(); // dew it
         warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
 
         // temperature scaling; divide a1 term by sqrt(d)
         mul(local_attn, local_attn, 0.25f);
-
         // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
         copy(temp_attn_accum, local_attn);
+
         mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it
         mul(temp_attn_accum, temp_attn_accum, 0.5f); // divide by 2
         add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
@@ -260,6 +262,10 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
             warpgroup::mma_fence(a2[t]); // av matmul fence
             warpgroup::mma_AB(o, q, a2_s); // incorporate a1 onto o
             warpgroup::mma_commit_group(); // dew it
+
+            // Note: we originally have k_src_tmp and transpose it (line 283 above)
+            // this is becuase AtB function is only usable if A is in SMEM. 
+            // but we'd like to keep k in register, so we just transpose it upfront
             warpgroup::mma_AB(a2[t], k, v_s[tic]); // incorporate KtV onto a2
             warpgroup::mma_commit_group(); // dew it
             warpgroup::mma_async_wait(); // ding dong! o matmuls have now arrived, too.
@@ -293,15 +299,15 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         if (warpid == 0) { // go get the next K from HBM
             tma::store_async(g.o, o_s[tic], {batch, head, block, 0});
         }
+        tma::store_async_wait();
     }
-    tma::store_async_wait();
 
     // save the KV state (A2)
     for (int rt = 0; rt < 4; rt++) {
         // reinterpret_cast doesn’t change the bits or memory layout of the variable a2_s. 
         // it tells the compiler to treat a2_s as a reference to the type we've specified.
         auto &kv_smem_2 = reinterpret_cast<st_bf<4*16,4*16>&>(a2_s); // this layout is better for global HBM stores so we cast.
-        mul(a2[rt], a2[rt], (0.70710678118*0.70710678118*0.25*1.41421)); // divides by math.sqrt(math.sqrt(D_QK))
+        mul(a2[rt], a2[rt], (0.70710678118*0.70710678118*0.25*1.4142135624)); // divides by math.sqrt(math.sqrt(D_QK))
         warpgroup::store(kv_smem_2, a2[rt]); 
         __syncthreads();
         if (warpid == 0) {
@@ -395,6 +401,7 @@ void dispatch_based(
 
     // launch
     unsigned long mem_size = 98000;
+    cudaDeviceSynchronize();
     cudaFuncSetAttribute(
         based_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -403,6 +410,7 @@ void dispatch_based(
     dim3 grid(ATTN_H, ATTN_B);
     based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g);
     CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
 }
 
 std::tuple<torch::Tensor, torch::Tensor> based(
@@ -455,10 +463,11 @@ std::tuple<torch::Tensor, torch::Tensor> based(
     );
 
     kv_a1 = kv_a1.transpose(2, 3);
-    torch::Tensor kv_concat = torch::cat({kv_a2, kv_a1, kv_a0}, /*dim=*/2);
+    torch::Tensor kv_concat = torch::cat({kv_a0, kv_a1, kv_a2}, /*dim=*/2);
 
     CHECK_CUDA_ERROR(cudaGetLastError());
     return std::make_tuple(out, kv_concat);
+    cudaDeviceSynchronize();
 }
 #else
 #include "harness.impl"
