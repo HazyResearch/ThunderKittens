@@ -4,7 +4,7 @@
 
 #define ATTN_B 16
 #define ATTN_H 16
-#define ATTN_N 2048
+#define ATTN_N 1024
 #define ATTN_D 64 // hardcoded into this kernel
 #define ATTN_D_SMALL 16 // hardcoded into this kernel
 
