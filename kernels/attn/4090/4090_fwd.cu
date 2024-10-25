@@ -2,7 +2,7 @@
 
 using namespace kittens;
 
-constexpr int NUM_WORKERS = 8; // This kernel uses 8 worker warps per block, and just one block per SM.
+constexpr int NUM_WORKERS = 4; // This kernel uses 4 worker warps per block, and 2 blocks per SM.
 template<int D> constexpr size_t ROWS = 16*(128/D); // height of each worker tile (rows)
 template<int D, typename T=bf16, typename L=row_l> using qkvo_tile = rt<T, ROWS<D>, D, L>;
 template<int D, typename T=float> using attn_tile = rt<T, ROWS<D>, ROWS<D>>;
