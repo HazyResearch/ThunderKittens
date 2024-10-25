@@ -5,7 +5,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from einops import rearrange, repeat
-from baselines.triton_rotary import apply_rotary
+from .triton_rotary import apply_rotary
 
 def rotate_half(x, interleaved=False):
     if not interleaved:

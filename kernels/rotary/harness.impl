@@ -36,7 +36,7 @@ long long flops(int batch, int seqlen, int headdim, int nheads) {
     long long f = batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
     f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
     f += batch * static_cast<long long>(seqlen) * nheads * (headdim / 2);
-    return f*2; // for q and k
+    return f;
 }
 
 // Function to calculate the efficiency in teraflops

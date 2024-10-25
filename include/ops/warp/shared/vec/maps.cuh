@@ -155,6 +155,17 @@ __device__ static inline void log(T &dst, const T &src) {
     unary_op<base_ops::log, T>(dst, src);
 }
 /**
+ * @brief Applies the logarithm base 2 function element-wise to a shared vector.
+ *
+ * @tparam T Shared vector type.
+ * @param dst[out] Destination vector where the logarithm base 2 values will be stored.
+ * @param src[in] Source vector to apply the logarithm base 2 function to.
+ */
+template<ducks::sv::all T>
+__device__ static inline void log2(T &dst, const T &src) {
+    unary_op<base_ops::log2, T>(dst, src);
+}
+/**
  * @brief Applies the absolute value function element-wise to a shared vector.
  *
  * @tparam T Shared vector type.

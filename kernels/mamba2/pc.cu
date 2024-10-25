@@ -87,10 +87,12 @@ struct mamba2_fwd_template {
             zero(args.state.kv);
 		}
 		__device__ static bool compute(consumer_compute_args<layout> args) {
+            int warpgroupid = warpgroup::warpid()/kittens::WARPGROUP_WARPS;
+
             // Start by doing cumsum into shared memory
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid + 4);
             warpgroup::copy(args.scratch.a_cumsum, args.input.a);
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid + 4);
             if(warpid() <= 1) {
                 // Perform the prefix sum (Hillis-Steele scan)
                 for (int offset = 1; offset < 64; offset *= 2) {
@@ -100,7 +102,7 @@ struct mamba2_fwd_template {
                     group<2>::sync(14);
                 }
             }
-            warpgroup::sync(); // cumulative sum done
+            warpgroup::sync(warpgroupid + 4); // cumulative sum done
             // Calculate decays
             #pragma unroll
             for(int i = 0; i < 4; i++) {
@@ -149,11 +151,11 @@ struct mamba2_fwd_template {
                 }
             }
             warpgroup::store(args.scratch.kv, args.state.kv);
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid + 4);
             warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv);
             warpgroup::mma_async_wait();
             warpgroup::store(args.output.o, args.state.o_reg);
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid + 4);
             float last_decay = args.scratch.a_cumsum[args.scratch.a_cumsum.length-1]; // last element
             float total_decay = expf(last_decay);
             mul(args.state.kv, args.state.kv, total_decay); // decay kv
@@ -175,7 +177,7 @@ struct mamba2_fwd_template {
                 }
             }
             warpgroup::store(args.scratch.k, args.state.k_reg); // using as dummy memory
-            warpgroup::sync();
+            warpgroup::sync(warpgroupid + 4);
             warpgroup::mma_AtB(args.state.kv, args.scratch.k, args.input.v);
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.outputs_arrived);
@@ -196,23 +198,27 @@ void dispatch_mamba2(
     int B, int H, int N
 ){
 
-    mamba2_fwd_template::layout::q_global Qg(d_q, B, H, N, nullptr);
+    mamba2_fwd_template::layout::q_global Qg(d_q, B, 1, N, nullptr);
+    mamba2_fwd_template::layout::k_global Kg(d_k, B, 1, N, nullptr);
     mamba2_fwd_template::layout::a_global Ag(d_a, B, H, nullptr, N);
-    mamba2_fwd_template::layout::k_global Kg(d_k, B, H, N, nullptr);
     mamba2_fwd_template::layout::v_global Vg(d_v, B, H, N, nullptr);
     mamba2_fwd_template::layout::o_global Og(d_o, B, H, N, nullptr);
+
     mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
     
     // launch setup
-    unsigned long mem_size = MAX_SHARED_MEMORY;
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048;
+    
     cudaFuncSetAttribute(
-        prototype::pc<mamba2_fwd_template>,
+        prototype::lcsf::kernel<mamba2_fwd_template>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
-    dim3 grid(132, 1, 1);
-    constexpr int BLOCK_SIZE = prototype::num_threads<mamba2_fwd_template>;
-    prototype::pc<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+
+    dim3 grid(264, 1, 1);
+
+    constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
+    prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
 }
 
 

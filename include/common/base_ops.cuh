@@ -124,6 +124,24 @@ template<> __device__ inline bf16_2 log::op<bf16_2>(const bf16_2 &x) { return h2
 template<> __device__ inline half   log::op<half>  (const half &x  ) { return hlog(x);                          }
 template<> __device__ inline half_2 log::op<half_2>(const half_2 &x) { return h2log(x);                         }
 /**
+ * @brief Logarithm base 2 operation.
+ *
+ * This operation calculates the logarithm base 2 of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The logarithm base 2 of the input value.
+ */
+struct log2 {
+    template<typename T> static __device__ inline T op(const T &x) { return log2(x); }
+};
+template<> __device__ inline float  log2::op<float> (const float &x ) { return __log2f(x);                        }
+template<> __device__ inline float2 log2::op<float2>(const float2 &x) { return float2{__log2f(x.x), __log2f(x.y)}; }
+template<> __device__ inline bf16   log2::op<bf16>  (const bf16 &x  ) { return hlog2(x);                          }
+template<> __device__ inline bf16_2 log2::op<bf16_2>(const bf16_2 &x) { return h2log2(x);                         }
+template<> __device__ inline half   log2::op<half>  (const half &x  ) { return hlog2(x);                          }
+template<> __device__ inline half_2 log2::op<half_2>(const half_2 &x) { return h2log2(x);                         }
+/**
  * @brief Absolute value operation.
  *
  * This operation calculates the absolute value of the input.
