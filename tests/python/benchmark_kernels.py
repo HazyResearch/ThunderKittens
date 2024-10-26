@@ -36,7 +36,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     n_warmup = 10
     method2timing = defaultdict(dict)
 
-    b = 16
+    b = 64
     h = 16
     dv = 64
     if verbose:
@@ -51,28 +51,14 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     else:
         flops = mod.get_flops(b, n, dv, h)
 
-    try:
-        for _ in range(n_warmup):
-            _ = method(dt, b, h, n, dv)
-    except Exception as e:
-        if verbose:
-            print(f"Error: {e}")
-        return -1, -1
+    outputs, times = method(dt, b, h, n, dv, verbose=verbose)
+    times = times * 1000
 
-    try:
-        lst = [method(dt, b, h, n, dv, verbose=verbose) for _ in range(num_iters)]
-        lst_time = [x[-1] for x in lst]
-        _time = np.mean(lst_time) * 1000
-    except:
-        if verbose:
-            print(f"Error: {sys.exc_info()[0]}")
-        _time = -1
-
-    eff = efficiency(flops, _time)
+    eff = efficiency(flops, times)
     if verbose:
-        print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {_time:.4f} s and FLOPS: {flops:.2f}")
+        print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {times:.4f} s and FLOPS: {flops:.2f}")
     torch.cuda.empty_cache()
-    return eff, _time
+    return eff, times
 
 if __name__ == "__main__":
     print("Benchmarking the kernels...")
@@ -111,8 +97,8 @@ if __name__ == "__main__":
                     1024, 
                     2048, 
                     4096,
-                    # 8192,
-                    # 16384
+                    8192,
+                    16384
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
                         continue
