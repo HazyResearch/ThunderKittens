@@ -192,11 +192,25 @@ struct mamba2_fwd_template {
 #ifdef TK_COMPILE_MAMBA2
 #include "common/pyutils/torch_helpers.cuh"
 #include <iostream>
+#include <ATen/cuda/CUDAContext.h> 
+
 void dispatch_mamba2(
     bf16 *d_q, bf16 *d_k, bf16 *d_v, 
     bf16 *d_o, float *d_a,
     int B, int H, int N
 ){
+    // Add input validation
+    if (!d_q || !d_k || !d_v || !d_o || !d_a) {
+        throw std::runtime_error("Null pointer passed to dispatch_mamba2");
+    }
+
+    // printf("B %d, H %d, N %d\n", B, H, N);
+
+    // Verify data before kernel
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error before layout setup: %s\n", cudaGetErrorString(err));
+    }
 
     mamba2_fwd_template::layout::q_global Qg(d_q, B, 1, N, nullptr);
     mamba2_fwd_template::layout::k_global Kg(d_k, B, 1, N, nullptr);
@@ -209,6 +223,16 @@ void dispatch_mamba2(
     // launch setup
     unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048;
     
+    // Get current stream early
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    
+    // Synchronize and check for errors
+    cudaStreamSynchronize(stream);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error after stream sync: %s\n", cudaGetErrorString(err));
+    }
+    
     cudaFuncSetAttribute(
         prototype::lcsf::kernel<mamba2_fwd_template>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -216,11 +240,34 @@ void dispatch_mamba2(
     );
 
     dim3 grid(264, 1, 1);
-
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
-    prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
-}
+    
+    // Record event before kernel
+    // cudaEvent_t start, end;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&end);
+    // cudaEventRecord(start, stream);
 
+    prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);
+
+    // Record end event and check timing
+    // cudaEventRecord(end, stream);
+    cudaStreamSynchronize(stream);
+    
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, end);
+    // printf("Kernel execution time: %f ms\n", milliseconds);
+    
+    // Clean up events
+    // cudaEventDestroy(start);
+    // cudaEventDestroy(end);
+
+    // Final error check
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error after kernel: %s\n", cudaGetErrorString(err));
+    }
+}
 
 torch::Tensor mamba2(
     const torch::Tensor q,
@@ -233,48 +280,79 @@ torch::Tensor mamba2(
     CHECK_INPUT(v);
     CHECK_INPUT(a);
 
+    // Verify tensors are contiguous
+    TORCH_CHECK(q.is_contiguous(), "q must be contiguous");
+    TORCH_CHECK(k.is_contiguous(), "k must be contiguous");
+    TORCH_CHECK(v.is_contiguous(), "v must be contiguous");
+    TORCH_CHECK(a.is_contiguous(), "a must be contiguous");
+
     int B = v.size(0);
     int H = v.size(1);
     int N = v.size(2);
     int D = v.size(3);
     
-    // checks
+    // Enhanced input validation
     TORCH_CHECK(q.size(0) == B, "q has incompatible batch");
-    // TORCH_CHECK(q.size(1) == H, "q has incompatible heads");
+    TORCH_CHECK(q.size(1) == 1, "q has incompatible heads");
     TORCH_CHECK(q.size(2) == N, "q has incompatible sequence shape");
+    TORCH_CHECK(q.size(3) == D, "q has incompatible dimension");
 
     TORCH_CHECK(k.size(0) == B, "k has incompatible batch");
-    // TORCH_CHECK(k.size(1) == H, "k has incompatible heads");
+    TORCH_CHECK(k.size(1) == 1, "k has incompatible heads");
     TORCH_CHECK(k.size(2) == N, "k has incompatible sequence");
+    TORCH_CHECK(k.size(3) == D, "k has incompatible dimension");
 
-    TORCH_CHECK(v.size(0) == B, "v has incompatible dim");
-    // TORCH_CHECK(v.size(1) == H, "v has incompatible heads");
+    TORCH_CHECK(v.size(0) == B, "v has incompatible batch");
+    TORCH_CHECK(v.size(1) == H, "v has incompatible heads");
     TORCH_CHECK(v.size(2) == N, "v has incompatible sequence");
+    TORCH_CHECK(v.size(3) == D, "v has incompatible dimension");
 
-    torch::Tensor out = torch::empty({B, H, N, D}, q.options());
+    TORCH_CHECK(a.size(0) == B, "a has incompatible batch");
+    // TORCH_CHECK(a.size(1) == N, "a has incompatible sequence length");
+    TORCH_CHECK(a.size(1) == H, "a has incompatible heads");
 
-    // convert to bf16
-    c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *k_bf16 = k.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *v_bf16 = v.data_ptr<c10::BFloat16>();
-    // float for a
-    float *a_bf16 = a.data_ptr<float>();
+    // Create output tensor
+    auto options = torch::TensorOptions()
+        .dtype(q.dtype())
+        .device(q.device())
+        .requires_grad(q.requires_grad());
+    torch::Tensor out = torch::empty({B, H, N, D}, options);
 
-    bf16 *d_q = reinterpret_cast<bf16*>(q_bf16);
-    bf16 *d_k = reinterpret_cast<bf16*>(k_bf16);
-    bf16 *d_v = reinterpret_cast<bf16*>(v_bf16);
-    float *d_a = reinterpret_cast<float*>(a_bf16);
-    bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+    // Verify output tensor
+    TORCH_CHECK(out.is_contiguous(), "Output tensor must be contiguous");
+
+    // Get data pointers with safety checks
+    auto q_ptr = q.data_ptr<c10::BFloat16>();
+    auto k_ptr = k.data_ptr<c10::BFloat16>();
+    auto v_ptr = v.data_ptr<c10::BFloat16>();
+    auto a_ptr = a.data_ptr<float>();
+    auto out_ptr = out.data_ptr<c10::BFloat16>();
+
+    TORCH_CHECK(q_ptr != nullptr, "q data pointer is null");
+    TORCH_CHECK(k_ptr != nullptr, "k data pointer is null");
+    TORCH_CHECK(v_ptr != nullptr, "v data pointer is null");
+    TORCH_CHECK(a_ptr != nullptr, "a data pointer is null");
+    TORCH_CHECK(out_ptr != nullptr, "output data pointer is null");
+
+    // Safe pointer casting
+    bf16 *d_q = reinterpret_cast<bf16*>(q_ptr);
+    bf16 *d_k = reinterpret_cast<bf16*>(k_ptr);
+    bf16 *d_v = reinterpret_cast<bf16*>(v_ptr);
+    float *d_a = a_ptr;  // No need to reinterpret cast for float
+    bf16 *d_o = reinterpret_cast<bf16*>(out_ptr);
+
+    // Synchronize before dispatch
+    cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
     
-    dispatch_mamba2(
-        d_q, d_k, d_v, d_o, d_a,
-        B, H, N
-    );
-
+    dispatch_mamba2(d_q, d_k, d_v, d_o, d_a, B, H, N);
+    
+    // Synchronize after dispatch
+    cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
+    
     CHECK_CUDA_ERROR(cudaGetLastError());
+    
     return out;
 }
 #else
-#include "harness.impl"
+#include "harness2.impl"
 #endif
-

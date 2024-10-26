@@ -69,15 +69,14 @@ def ssd_minimal_discrete(X, A, B, C, block_len, initial_states=None):
 
 torch.manual_seed(0)
 
-batch = 4
-dim = 4*64
+batch = 16
+n_heads = 16
 
-length     = 2048 #int(sys.argv[1])
+length     = 1024 # 2048 # int(sys.argv[1])
 chunk_size = 64
 num_chunks = length // chunk_size
 
 d_head  = 64
-n_heads = dim // d_head
 d_state = 64
 ngroups = 1
 
@@ -151,7 +150,7 @@ with open(filename, 'w') as f:
     # print(torch.exp(segsum(A[0,0])))
 
     for i in trange(X.shape[0] * X.shape[1] * X.shape[2] * X.shape[3]):
-        f.write(repr(xf[i])) # Q
+        f.write(repr(xf[i])) # V
         f.write(' ')
     for i in trange(A.shape[0] * A.shape[1] * A.shape[2]):
         f.write(repr(Af[i])) # A
@@ -160,10 +159,10 @@ with open(filename, 'w') as f:
         f.write(repr(Bf[i])) # K
         f.write(' ')
     for i in trange(C.shape[0] * C.shape[1] * C.shape[2] * C.shape[3]):
-        f.write(repr(Cf[i])) # V
+        f.write(repr(Cf[i])) # Q
         f.write(' ')
     for i in trange(y_ref.shape[0] * y_ref.shape[1] * y_ref.shape[2] * y_ref.shape[3]):
-        f.write(repr(yf[i]))
+        f.write(repr(yf[i])) # O
         f.write(' ')
 
 
