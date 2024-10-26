@@ -49,7 +49,7 @@ struct mamba2_fwd_layout {
 };
 struct mamba2_fwd_template {
 	static constexpr int NUM_CONSUMER_WARPS = 4, NUM_BLOCKS=2,
-        OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
+        OUTPUT_PIPE_STAGES=1, INPUT_PIPE_STAGES=1; //, DEBUG=1;
 	using layout = mamba2_fwd_layout;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         int task_id = args.task_iter * gridDim.x + blockIdx.x;
@@ -63,21 +63,23 @@ struct mamba2_fwd_template {
 			warpgroup::producer_registers();
 		}
 		__device__ static void load(producer_load_args<layout> args) {
-			if(warpgroup::warpid() == 0) {
+			if(warpgroup::warpid() == args.iter%4) {
                 tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v, args.input.a);
                 tma::load_async(args.input.q, args.globals.Q, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.k, args.globals.K, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.v, args.globals.V, {args.common.batch,  args.common.head, args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.a, args.globals.A, {args.common.batch,  args.common.head, 0, args.iter}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                __syncwarp();
             }
 		}
         __device__ static void store(producer_store_args<layout> args) {
-            if(warpgroup::warpid() == 0) {;
+            if(warpgroup::warpid() == args.iter%4) {
                 tma::store_async(args.globals.O, args.output.o, {args.common.batch, args.common.head, args.iter, 0});
                 tma::store_async_read_wait();
                 __syncwarp();
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
+                __syncwarp();
             }
         }
 	};
@@ -182,12 +184,15 @@ struct mamba2_fwd_template {
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.outputs_arrived);
             if(laneid() == 0) arrive(args.inputs_finished);
+            __syncwarp();
 		}
         __device__ static void finish(consumer_finish_args<layout> args) {
             if(laneid() == 0) arrive(args.finish_finished);
+            __syncwarp();
         }
 	};
 };
+
 
 #ifdef TK_COMPILE_MAMBA2
 #include "common/pyutils/torch_helpers.cuh"
@@ -241,27 +246,11 @@ void dispatch_mamba2(
 
     dim3 grid(264, 1, 1);
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
-    
-    // Record event before kernel
-    // cudaEvent_t start, end;
-    // cudaEventCreate(&start);
-    // cudaEventCreate(&end);
-    // cudaEventRecord(start, stream);
 
     prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);
 
-    // Record end event and check timing
-    // cudaEventRecord(end, stream);
     cudaStreamSynchronize(stream);
     
-    // float milliseconds = 0;
-    // cudaEventElapsedTime(&milliseconds, start, end);
-    // printf("Kernel execution time: %f ms\n", milliseconds);
-    
-    // Clean up events
-    // cudaEventDestroy(start);
-    // cudaEventDestroy(end);
-
     // Final error check
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -354,5 +343,5 @@ torch::Tensor mamba2(
     return out;
 }
 #else
-#include "harness2.impl"
+#include "harness3.impl"
 #endif

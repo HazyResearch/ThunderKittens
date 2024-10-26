@@ -149,11 +149,12 @@ def run_torch(dt, b, h, n, dv, verbose=True, **kwargs):
     end_events[0].record()
     torch.cuda.synchronize()
     tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+    
     return y_min, tot
 
 
 def run_tk(dtype: torch.dtype, b: int, h: int, n: int, dv: int, 
-           verbose: bool = True, num_warmup: int = 3, num_repeats: int = 100):
+           verbose: bool = True, num_warmup: int = 3, num_repeats: int = 1000):
     """Run Thunderkittens implementation with timing.
     
     Args:
@@ -167,43 +168,48 @@ def run_tk(dtype: torch.dtype, b: int, h: int, n: int, dv: int,
         Tuple of (output tensor, average runtime in ms)
     """
     torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+
+    time.sleep(1)
 
     x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
     q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous()
+    a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
+
+    print(f"{torch.isnan(q).any(), torch.isnan(k).any(), torch.isnan(v).any(), torch.isnan(a).any()}\n")
     
     # Warmup runs
     for _ in range(num_warmup):
         torch.cuda.synchronize()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
         
-        start.record()
         with torch.no_grad():
             out_warmup = tk.mamba2(q, k, v, a)
-        end.record()
         torch.cuda.synchronize()
 
         # Verify output
-        if torch.isnan(out_warmup).any() or torch.isinf(out_warmup).any():
+        vals_gt_1e15 = torch.sum(out_warmup > 1e15)
+        if torch.isnan(out_warmup).any() or torch.isinf(out_warmup).any() or vals_gt_1e15 > 0:
             num_nans = torch.sum(torch.isnan(out_warmup))
-            print("Warmup issue!")
-            # modification
+            print(f"Invalid values detected in warmup output, num_nans={num_nans}, vals_gt_1e15={vals_gt_1e15}")
+        else: 
+            print(f"out_warmup mean: {out_warmup.mean()}") #-- {q.mean()} -- {k.mean()} -- {v.mean()} -- {a.mean()}")
+
+    print("\nWarmup complete\n")
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
             
     # Timed runs
     times = []
     for i in range(num_repeats):
-        # if verbose and i % 5 == 0:
-        #     print(f"Running iteration {i+1}/{num_repeats}")
 
-        # modification 
+        # # modification 
         # x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
         # q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
         # k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
         # v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-        # a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous()
+        # a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
             
         torch.cuda.synchronize()
         start = torch.cuda.Event(enable_timing=True)
@@ -218,14 +224,19 @@ def run_tk(dtype: torch.dtype, b: int, h: int, n: int, dv: int,
         times.append(start.elapsed_time(end))
         
         # Verify output
-        if torch.isnan(output).any() or torch.isinf(output).any():
+        vals_gt_1e15 = torch.sum(output > 1e15)
+        if torch.isnan(output).any() or torch.isinf(output).any() or vals_gt_1e15 > 0:
             num_nans = torch.sum(torch.isnan(output))
-            raise RuntimeError(f"Invalid values detected in output at iteration {i}, num_nans={num_nans}")
+            raise RuntimeError(f"Invalid values detected in output at iteration {i}, num_nans={num_nans}, vals_gt_1e15={vals_gt_1e15}")
             breakpoint()
+
+    torch.cuda.empty_cache()
     
     avg_time = np.mean(times)
     if verbose:
         print(f"Average runtime out of {len(times)}: {avg_time:.2f} ms")
+
+    print("-----------" * 10)
     
     return output, avg_time
 

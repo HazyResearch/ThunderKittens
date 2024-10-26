@@ -36,7 +36,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     n_warmup = 10
     method2timing = defaultdict(dict)
 
-    b = 64
+    b = 16
     h = 16
     dv = 64
     if verbose:
@@ -56,7 +56,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
 
     eff = efficiency(flops, times)
     if verbose:
-        print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {times:.4f} s and FLOPS: {flops:.2f}")
+        print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {times:.4f} us and FLOPS: {flops:.2f}")
     torch.cuda.empty_cache()
     return eff, times
 

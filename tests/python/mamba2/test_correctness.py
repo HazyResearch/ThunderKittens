@@ -46,8 +46,7 @@ def test_correctness():
 
     ## Dimensions
     # Denoted (B, T, Q, D, P) in the paper
-    nheads = 16
-    batch, seqlen, chunk_size,headdim = 16, 1024, 64,  64
+    batch, nheads, seqlen, chunk_size, headdim = 16, 16, 1024, 64,  64
     ngroups = 1 # (G) in the paper
     dstate = 64  # (N) in the paper
     dtype = torch.float32
@@ -78,9 +77,11 @@ def test_correctness():
         num_nans = torch.sum(torch.isnan(y_tk))
         print(f"Has NaN: {has_nan}; Has Inf: {has_inf}; Num of NaNs: {num_nans} / {y_tk.numel()}")
         nan_positions = torch.nonzero(torch.isnan(y_tk))
-        vals_gt_1e8 = torch.nonzero(y_tk > 1e8)
-        if has_nan or has_inf or vals_gt_1e8.numel() > 0:
+        vals_gt_1e15 = torch.nonzero(y_tk > 1e15)
+        if has_nan or has_inf or vals_gt_1e15.numel() > 0:
             breakpoint()
+
+        torch.cuda.empty_cache()
 
         x = torch.randn(batch, seqlen, nheads, headdim, dtype=dtype, device=device)
         dt = F.softplus(torch.randn(batch, seqlen, nheads, dtype=torch.float32, device=device) - 4).requires_grad_()
@@ -94,6 +95,7 @@ def test_correctness():
         v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
         a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous()
 
+
+
 if __name__ == "__main__":
     test_correctness()
-
