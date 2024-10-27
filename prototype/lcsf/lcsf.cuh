@@ -38,7 +38,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     using input_alloc_block   = typename CKL::input_alloc_block_t;
     using output_alloc_block  = typename CKL::output_alloc_block_t;
     using scratch_alloc_block = typename CKL::scratch_alloc_block_t;
-    constexpr int MAX_SHARED_MEMORY   = detail::MAX_SHARED_MEMORY_v<lcsft>;
+    constexpr int MAX_BLOCK_SHARED_MEMORY = detail::MAX_SHARED_MEMORY_v<lcsft>;
     constexpr int OUTPUT_PIPE_STAGES  = detail::OUTPUT_PIPE_STAGES_v<lcsft>;
     static_assert(OUTPUT_PIPE_STAGES >= 1 && OUTPUT_PIPE_STAGES <= 16, "Invalid number of output pipe stages");
     constexpr int INPUT_PIPE_STAGES   = detail::INPUT_PIPE_STAGES_v<lcsft>;
@@ -47,7 +47,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
         INPUT_PIPE_STAGES*sizeof(input_alloc_block) +
         OUTPUT_PIPE_STAGES*sizeof(output_alloc_block) +
         sizeof(scratch_alloc_block)
-        <= MAX_SHARED_MEMORY-1024, "Shared memory usage exceeds limits"
+        <= MAX_BLOCK_SHARED_MEMORY, "Shared memory usage exceeds limits"
     );
     constexpr int NUM_CONSUMER_WARPS = detail::NUM_CONSUMER_WARPS_v<lcsft>;
     constexpr int NUM_PRODUCER_WARPS = detail::NUM_PRODUCER_WARPS_v<lcsft>;
@@ -55,14 +55,22 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
+    scratch_alloc_block (&scratch_smem)                     = alloc.allocate<scratch_alloc_block>();
     input_alloc_block   (&input_smem)  [INPUT_PIPE_STAGES]  = alloc.allocate<input_alloc_block,  INPUT_PIPE_STAGES >();
     output_alloc_block  (&output_smem) [OUTPUT_PIPE_STAGES] = alloc.allocate<output_alloc_block, OUTPUT_PIPE_STAGES>();
-    scratch_alloc_block (&scratch_smem)                     = alloc.allocate<scratch_alloc_block>();
+
+    // zero out the shared memory
+    // for(int i = threadIdx.x; i < MAX_BLOCK_SHARED_MEMORY/sizeof(int); i+=blockDim.x) __shm[i] = 0;
+    // everyone::sync(15);
+    // zero registers
+    // volatile int regs[256];
+    // for(int i = 0; i < 256; i++) regs[i] = 0;
+    // __syncthreads();
     
     // figure out where we're going to put the finish block
-    constexpr int FINISH_BLOCK_OFFSET = (MAX_SHARED_MEMORY-1024)/detail::NUM_BLOCKS_v<lcsft> - sizeof(finish_block);
+    constexpr int FINISH_BLOCK_OFFSET = MAX_BLOCK_SHARED_MEMORY - sizeof(finish_block);
     static_assert(FINISH_BLOCK_OFFSET >= 0, "Finish block is too large for shared memory.");
-    constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024; // including the losses from alignment
+    constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024 - sizeof(scratch_alloc_block); // including the losses from alignment
     constexpr int SAFE_STAGES_BETWEEN_BLOCKS = NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block)<INPUT_PIPE_STAGES?NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block):INPUT_PIPE_STAGES;
     finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)&__shm[0] + FINISH_BLOCK_OFFSET)/1024)*1024); // alignment
 
@@ -100,7 +108,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             printf("        scratch_smem:                      %p\n", (void*)&scratch_smem);
             printf("        finish_smem:                       %p\n", (void*)finish_smem);
             printf("        finish_smem size:                  %llu\n", sizeof(finish_block));
-            printf("        dynamic shared memory usage:       %llu\n", sizeof(scratch_alloc_block) + uint64_t(&scratch_smem) - uint64_t(&__shm[0]));
+            printf("        dynamic shared memory usage:       %llu\n", sizeof(output_smem) + uint64_t(&(*output_smem[OUTPUT_PIPE_STAGES-1])) - uint64_t(&__shm[0]));
         }
         everyone::sync(15);
     }

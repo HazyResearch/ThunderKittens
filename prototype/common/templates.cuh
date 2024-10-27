@@ -42,7 +42,7 @@ FLAG_GETTER(NUM_CONSUMER_WARPS, 8)
 // How many producer warps to run per SM.
 FLAG_GETTER(NUM_PRODUCER_WARPS, 4)
 // Maximum amount of shared memory to use, per SM.
-FLAG_GETTER(MAX_SHARED_MEMORY, kittens::MAX_SHARED_MEMORY)
+FLAG_GETTER(MAX_SHARED_MEMORY, ((kittens::MAX_SHARED_MEMORY/NUM_BLOCKS_v<T>)-512))
 // How many input pipe stages to use, per block.
 FLAG_GETTER(INPUT_PIPE_STAGES, 1)
 // How many output pipe stages to use, per block.
