@@ -65,6 +65,7 @@ __device__ static inline void store_async(const GL &dst, const SV &src, const co
         int32_t crd3 = idx.d;
         int32_t crd4 = idx.b;
         
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
             "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
@@ -98,6 +99,7 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
         int32_t crd3 = idx.d;
         int32_t crd4 = idx.b;
         
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
@@ -132,6 +134,7 @@ __device__ static inline void store_min_async(const GL &dst, const SV &src, cons
         int32_t crd3 = idx.d;
         int32_t crd4 = idx.b;
         
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
@@ -166,6 +169,7 @@ __device__ static inline void store_max_async(const GL &dst, const SV &src, cons
         int32_t crd3 = idx.d;
         int32_t crd4 = idx.b;
         
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
             "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
             " [%0, {%2, %3, %4, %5, %6}], [%1];"

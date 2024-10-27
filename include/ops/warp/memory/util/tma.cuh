@@ -230,6 +230,7 @@ __device__ static inline void store_async(void *dst, void *src, int dst_cta, uin
         
         // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
         // copy src into dst in neighbor's cta
+        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
             "cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
             :
