@@ -156,18 +156,17 @@ torch::Tensor fused_rotary(
     const int B = x.size(0);
     const int H = x.size(1);
     const int N = x.size(2);
-    constexpr int D = 128;
     
     TORCH_CHECK(B == x.size(0), "Batch size mismatch");
     TORCH_CHECK(H == x.size(1), "Head size mismatch");
     TORCH_CHECK(N == x.size(2), "Sequence length mismatch");
-    TORCH_CHECK(D == x.size(3), "Hidden size mismatch");
+    TORCH_CHECK(x.size(3) == 64 || x.size(3) == 128, "Hidden size mismatch");
 
     TORCH_CHECK(x.size(2) % 16 == 0, "Sequence length must be multiple of 16");
     TORCH_CHECK(cos_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
     TORCH_CHECK(sin_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
 
-    torch::Tensor out = torch::empty({B, H, N, D}, x.options());
+    torch::Tensor out = torch::empty({B, H, N, x.size(3)}, x.options());
 
     // convert to bf16
     c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
@@ -180,13 +179,24 @@ torch::Tensor fused_rotary(
     bf16 *d_cos_in = reinterpret_cast<bf16*>(cos_in_bf16);
     bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
 
-    dispatch_fused_rotary<D>(
-        d_out,
-        d_x,
-        d_sin_in,
-        d_cos_in, 
-        B, H, N
-    );
+    if(x.size(3) == 64) {
+        dispatch_fused_rotary<64>(
+            d_out,
+            d_x,
+            d_sin_in,
+            d_cos_in, 
+            B, H, N
+        );
+    }
+    else {
+        dispatch_fused_rotary<128>(
+            d_out,
+            d_x,
+            d_sin_in,
+            d_cos_in, 
+            B, H, N
+        );
+    }
 
     CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
