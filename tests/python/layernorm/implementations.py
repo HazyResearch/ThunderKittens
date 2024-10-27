@@ -67,8 +67,8 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
             dtype = dt
             dropout_p = dropout.p
 
-            try:
-                if method_str == 'pytorch':
+            if True:
+                if method_str == 'pytorch_layernorm':
                     torch.cuda.synchronize()
                     start_events[i].record()
                     with torch.no_grad():
@@ -79,7 +79,7 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                elif method_str == 'triton':
+                elif method_str == 'triton_layernorm':
                     torch.cuda.synchronize()
                     start_events[i].record()
                     with torch.no_grad():
@@ -98,7 +98,7 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
                 
-                elif method_str == 'tk': 
+                elif method_str == 'tk_layernorm': 
                     torch.cuda.synchronize()
                     start_events[i].record()
                     with torch.no_grad():
@@ -113,10 +113,10 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                 else:
                     raise ValueError(f"Unknown method: {method_str}")
 
-            except Exception as e:
-                if verbose:
-                    print(f"Error: {e}")
-                return None, -1
+            # except Exception as e:
+            #     if verbose:
+            #         print(f"Error: {e}")
+            #     return None, -1
 
             torch.cuda.empty_cache()
 
@@ -127,9 +127,9 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
 
 
 IMPLEMENTATIONS = {
-    'pytorch': partial(layernorm_test, causal=True, is_forwards=True, method_str='pytorch'),
-    'triton': partial(layernorm_test, causal=True, is_forwards=True, method_str='triton'),
-    'tk': partial(layernorm_test, causal=True, is_forwards=True, method_str='tk'),
+    'pytorch_layernorm': partial(layernorm_test, causal=True, is_forwards=True, method_str='pytorch_layernorm'),
+    'triton_layernorm': partial(layernorm_test, causal=True, is_forwards=True, method_str='triton_layernorm'),
+    'tk_layernorm': partial(layernorm_test, causal=True, is_forwards=True, method_str='tk_layernorm'),
 }
 
 NAME = "LAYER NORM"

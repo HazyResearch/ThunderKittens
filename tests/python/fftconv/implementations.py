@@ -65,18 +65,18 @@ def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=
                     torch.cuda.synchronize()
 
                 elif method_str == "conv_tk":
+                    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
                     with torch.no_grad():
                         y = tk_fft(x, k)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
                 elif method_str == "conv_flashfft":
+                    conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
                     torch.cuda.synchronize()
                     start_events[i].record() 
-                    conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
                     with torch.no_grad():
                         y = conv_flashfft(x, k)
                     end_events[i].record()

@@ -25,14 +25,11 @@ import layernorm.implementations as layernorm
 
 ############## Efficiency Measurements #############
 
-def measure_efficiency(dt, n, method_name, method, verbose=False):
-    num_iters = 10
-    n_warmup = 10
-    method2timing = defaultdict(dict)
+b = 16
+h = 16
+dv = 64
 
-    b = 32
-    h = 16
-    dv = 64
+def measure_efficiency(dt, n, method_name, method, verbose=False):
     if verbose:
         print(f"{b=}, {n=}, {h=}, {dv=}")
 
@@ -90,17 +87,21 @@ if __name__ == "__main__":
                 if verbose:
                     print(f"Method: {m}")
                 for n in [
-                    1024, 
-                    2048, 
-                    # 4096,
-                    # 8192,
-                    # 16384
+                    1024 if 'attn' not in m else 768, 
+                    2048 if 'attn' not in m else 1536, 
+                    # 4096 if 'attn' in m else 3072,
+                    # 8192 if 'attn' in m else 6144,
+                    # 16384 if 'attn' in m else 12288
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
                         # restrict to sizes we have implemented
                         continue
                     if "mamba2_triton" in m and n not in [1024, 2048, 4096, 8192]:
                         # the kernel results in DEVICE_SIDE_ASSERTS
+                        continue
+                    if "layernorm" in m and dv*h != 1024:
+                        # restrict to sizes we have implemented
+                        print('skipping layernorm due to incompatible model dim')
                         continue
                     if verbose:
                         print(f"Sequence Length: {n}")
