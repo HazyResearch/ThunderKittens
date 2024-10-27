@@ -30,7 +30,7 @@ After successful compilation, run the tests using:
 mkdir outputs
 ./unit_tests printout
 ```
-This will execute the compiled unit tests and dump results of any failed tests to the `outputs/` folder.
+This will execute the compiled unit tests and dump results of any failed tests to the `outputs/` folder. As a quick note, it is expected for mma tests to occasionally fail. Careful inspection of the output will usually show just a single element differing by a small amount, which we think is due to how floating-point arithmetic is implemented within the tensor cores.
 
 ### Cleaning the Build
 To clean the build directory and remove the compiled binary, run:
