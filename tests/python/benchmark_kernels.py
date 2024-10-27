@@ -102,7 +102,6 @@ if __name__ == "__main__":
                     if "layernorm" in m and dv*h != 1024:
                         # restrict to sizes we have implemented
                         print('skipping layernorm due to incompatible model dim')
-                        continue
                     if verbose:
                         print(f"Sequence Length: {n}")
                     tflops, timing = measure_efficiency(torch.bfloat16, n, m, method, verbose=verbose)

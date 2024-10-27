@@ -4,7 +4,7 @@ from baselines.rotary import RotaryEmbedding
 import thunderkittens as tk
 
 
-head_dim = 128
+head_dim = 64
 rotary_emb_fraction = 1
 rotary_emb_dim = head_dim * rotary_emb_fraction
 rotary_emb_base = 10000

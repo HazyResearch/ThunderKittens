@@ -32,7 +32,7 @@ def get_flops(batch, seqlen, headdim, nheads):
 
 def get_rotary_inputs(b, h, n, dv, dt):
     d_model = h * dv
-    head_dim = 128
+    head_dim = dv
     rotary_emb_fraction = 1
     rotary_emb_dim = head_dim * rotary_emb_fraction
     rotary_emb_base = 10000
