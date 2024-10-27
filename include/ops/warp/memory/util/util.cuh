@@ -24,12 +24,10 @@ template<> struct move<bf16> {
         asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "r"(dst));
     }
     __device__ static inline void ldg(bf16& dst, bf16* src) {
-        dst = *src;
-        // asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
     }
     __device__ static inline void stg(bf16* dst, const bf16& src) {
-        *dst = src;
-        // asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+        asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
     }
 };
 template<> struct move<half> {
@@ -40,12 +38,10 @@ template<> struct move<half> {
         asm volatile("st.shared.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "r"(dst));
     }
     __device__ static inline void ldg(half& dst, half* src) {
-        dst = *src;
-        // asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
+        asm volatile("ld.global.b16 %0, [%1];\n" : "=h"(*(uint16_t*)&dst) : "l"(src));
     }
     __device__ static inline void stg(half* dst, const half& src) {
-        *dst = src;
-        // asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
+        asm volatile("st.global.b16 [%1], %0;\n" : : "h"(*(uint16_t*)&src), "l"(dst));
     }
 };
 template<> struct move<float> {
@@ -56,12 +52,10 @@ template<> struct move<float> {
         asm volatile("st.shared.f32 [%1], %0;\n" : : "f"(src), "r"(dst));
     }
     __device__ static inline void ldg(float& dst, float* src) {
-        dst = *src;
-        // asm volatile("ld.global.f32 %0, [%1];\n" : "=f"(dst) : "l"(src));
+        asm volatile("ld.global.f32 %0, [%1];\n" : "=f"(dst) : "l"(src));
     }
     __device__ static inline void stg(float* dst, const float& src) {
-        *dst = src;
-        // asm volatile("st.global.f32 [%1], %0;\n" : : "f"(src), "l"(dst));
+        asm volatile("st.global.f32 [%1], %0;\n" : : "f"(src), "l"(dst));
     }
 };
 // packed types
@@ -73,12 +67,10 @@ template<> struct move<bf16_2> {
         asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "r"(dst));
     }
     __device__ static inline void ldg(bf16_2& dst, bf16_2* src) {
-        dst = *src;
-        // asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+        asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
     }
     __device__ static inline void stg(bf16_2* dst, const bf16_2& src) {
-        *dst = src;
-        // asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+        asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
     }
     __device__ static inline void ldsm4(bf16_2& dst1, bf16_2& dst2, bf16_2& dst3, bf16_2& dst4, uint32_t src) {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, %3}, [%4];\n" :
@@ -105,12 +97,10 @@ template<> struct move<half_2> {
         asm volatile("st.shared.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "r"(dst));
     }
     __device__ static inline void ldg(half_2& dst, half_2* src) {
-        dst = *src;
-        // asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
+        asm volatile("ld.global.b32 %0, [%1];\n" : "=r"(*(uint32_t*)&dst) : "l"(src));
     }
     __device__ static inline void stg(half_2* dst, const half_2& src) {
-        *dst = src;
-        // asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
+        asm volatile("st.global.b32 [%1], %0;\n" : : "r"(*(uint32_t*)&src), "l"(dst));
     }
     __device__ static inline void ldsm4(half_2& dst1, half_2& dst2, half_2& dst3, half_2& dst4, uint32_t src) {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, %3}, [%4];\n" :
@@ -137,12 +127,10 @@ template<> struct move<float2> {
         asm volatile("st.shared.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "r"(dst));
     }
     __device__ static inline void ldg(float2& dst, float2* src) {
-        dst = *src;
-        // asm volatile("ld.global.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src));
+        asm volatile("ld.global.v2.f32 {%0, %1}, [%2];\n" : "=f"(dst.x), "=f"(dst.y) : "l"(src));
     }
     __device__ static inline void stg(float2* dst, const float2& src) {
-        *dst = src;
-        // asm volatile("st.global.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst));
+        asm volatile("st.global.v2.f32 [%2], {%0, %1};\n" : : "f"(src.x), "f"(src.y), "l"(dst));
     }
 };
 template<> struct move<float4> {
@@ -153,12 +141,10 @@ template<> struct move<float4> {
         asm volatile("st.shared.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "r"(dst));
     }
     __device__ static inline void ldg(float4& dst, float4* src) {
-        dst = *src;
-        // asm volatile("ld.global.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src));
+        asm volatile("ld.global.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(dst.x), "=f"(dst.y), "=f"(dst.z), "=f"(dst.w) : "l"(src));
     }
     __device__ static inline void stg(float4* dst, const float4& src) {
-        *dst = src;
-        // asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst));
+        asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst));
     }
 };
 
