@@ -136,6 +136,9 @@ def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, 
                     end_events[i].record()
                     torch.cuda.synchronize()
 
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+
             except Exception as e:
                 if verbose:
                     print(f"Error in rotary_test: {e}")
@@ -144,8 +147,8 @@ def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, 
             torch.cuda.empty_cache()
 
     tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
-    assert not np.isnan(y.float().cpu()).any(), "NaN values detected in output 'out'"
-    assert not np.isinf(y.float().cpu()).any(), "Inf values detected in output 'out'"
+    assert not np.isnan(y.detach().float().cpu()).any(), "NaN values detected in output 'out'"
+    assert not np.isinf(y.detach().float().cpu()).any(), "Inf values detected in output 'out'"
     return y, tot
 
 

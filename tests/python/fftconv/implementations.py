@@ -82,6 +82,9 @@ def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=
                     end_events[i].record()
                     torch.cuda.synchronize()
 
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+
             except Exception as e:
                 return None, -1
 
@@ -94,9 +97,9 @@ def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=
 
 
 IMPLEMENTATIONS = {
-    "conv_torch": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="torch"),
-    "conv_tk": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="tk"),
-    "conv_flashfft": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="flashfft"),
+    "conv_torch": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_torch"),
+    "conv_tk": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_tk"),
+    "conv_flashfft": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_flashfft"),
 }
 
 NAME = "FFTCONV"

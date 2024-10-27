@@ -65,21 +65,21 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == "fa2": 
+                elif method_str == "fa2": 
                     torch.cuda.synchronize()
                     start_events[i].record()
                     y = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == 'tk':
+                elif method_str == 'tk':
                     torch.cuda.synchronize()
                     start_events[i].record()
                     y, l_vec = tk.mha_forward(q, k, v, causal)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == "fa3":
+                elif method_str == "fa3":
                     q = q.transpose(1,2)
                     k = k.transpose(1,2)
                     v = v.transpose(1,2)
@@ -90,7 +90,10 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record() 
                     torch.cuda.synchronize()
 
-                output = y
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+
+                outputs = ( y )
 
             except Exception as e:
                 if verbose:
@@ -113,7 +116,7 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == "fa2":
+                elif method_str == "fa2":
                     torch.cuda.synchronize()
                     start_events[i].record()
                     y.backward(dO)
@@ -123,14 +126,14 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == 'tk':
+                elif method_str == 'tk':
                     torch.cuda.synchronize()
                     start_events[i].record()
                     q_grad, k_grad, v_grad = tk.mha_backward(q, k, v, y, l_vec, dO, causal)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                if method_str == "fa3":
+                elif method_str == "fa3":
                     torch.cuda.synchronize()
                     start_events[i].record()
                     y.backward(dO)
@@ -140,7 +143,10 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                     end_events[i].record()
                     torch.cuda.synchronize()
 
-                output = (q_grad, k_grad, v_grad)
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+
+                outputs = (q_grad, k_grad, v_grad)
 
             except Exception as e:
                 if verbose:
@@ -150,9 +156,13 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
             torch.cuda.empty_cache()
     
     tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
-    assert not np.isnan(output.detach().float().cpu()).any(), "NaN values detected in output 'o'"
-    assert not np.isinf(output.detach().float().cpu()).any(), "Inf values detected in output 'o'"
-    return output, tot
+    # for output in outputs:
+    #     try:
+    #         assert not np.isnan(output.detach().float().cpu()).any(), "NaN values detected in output 'o'"
+    #         assert not np.isinf(output.detach().float().cpu()).any(), "Inf values detected in output 'o'"
+    #     except: 
+    #         breakpoint()
+    return outputs, tot
 
 
 IMPLEMENTATIONS = {

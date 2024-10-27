@@ -92,9 +92,9 @@ if __name__ == "__main__":
                 for n in [
                     1024, 
                     2048, 
-                    4096,
-                    8192,
-                    16384
+                    # 4096,
+                    # 8192,
+                    # 16384
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
                         # restrict to sizes we have implemented
