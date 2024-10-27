@@ -1,8 +1,8 @@
 import torch 
-import time
 import torch.nn.functional as F
 from einops import rearrange
 import numpy as np
+from functools import partial
 
 try:
     from mamba2.baselines.ssd_minimal import ssd_minimal_discrete 
@@ -118,132 +118,53 @@ def get_inputs_mamba(dtype: torch.dtype, b: int, h: int, n: int, dv: int, verbos
     return x, dt, A, B, C, D, chunk_size, torch.float32
 
 
-def run_triton(dt, b, h, n, dv, verbose=True, **kwargs):
-    x, dt, A, B, C, D, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
     
-    torch.cuda.synchronize()
-    start_events[0].record()
+    for stage in ['warmup', 'timed']:
 
-    y = mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=None)
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+        for i in range(num_iters):
+
+            x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
+            q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+            k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+            v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
+            a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
+
+            try:
+                if method_str == "mamba2_tk": 
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = tk.mamba2(q, k, v, a)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+                elif method_str == "mamba2_triton":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=None)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+            except Exception as e:
+                if verbose:
+                    print(f"Error: {e}")
+                return None, -1
+
+            torch.cuda.empty_cache()
+
+    assert not np.isnan(y.detach().float().cpu()).any(), "NaN values detected in output 'o'"
+    assert not np.isinf(y.detach().float().cpu()).any(), "Inf values detected in output 'o'"
+    tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
     return y, tot
-
-
-def run_torch(dt, b, h, n, dv, verbose=True, **kwargs):
-    x, dt, A, B, C, D, chunk_size, dtype = get_inputs_mamba(dt, b, h, n, dv)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    y_min, _ = ssd_minimal_discrete(x*dt.unsqueeze(-1), A*dt, B, C, block_len=chunk_size)
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-    
-    return y_min, tot
-
-
-def run_tk(dtype: torch.dtype, b: int, h: int, n: int, dv: int, 
-           verbose: bool = True, num_warmup: int = 3, num_repeats: int = 1000):
-    """Run Thunderkittens implementation with timing.
-    
-    Args:
-        dtype: Data type for computation
-        b, h, n, dv: Dimension parameters
-        verbose: Whether to print progress
-        num_warmup: Number of warmup runs
-        num_repeats: Number of timed runs
-    
-    Returns:
-        Tuple of (output tensor, average runtime in ms)
-    """
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-
-    time.sleep(1)
-
-    x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
-    q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
-
-    print(f"{torch.isnan(q).any(), torch.isnan(k).any(), torch.isnan(v).any(), torch.isnan(a).any()}\n")
-    
-    # Warmup runs
-    for _ in range(num_warmup):
-        torch.cuda.synchronize()
-        
-        with torch.no_grad():
-            out_warmup = tk.mamba2(q, k, v, a)
-        torch.cuda.synchronize()
-
-        # Verify output
-        vals_gt_1e15 = torch.sum(out_warmup > 1e15)
-        if torch.isnan(out_warmup).any() or torch.isinf(out_warmup).any() or vals_gt_1e15 > 0:
-            num_nans = torch.sum(torch.isnan(out_warmup))
-            print(f"Invalid values detected in warmup output, num_nans={num_nans}, vals_gt_1e15={vals_gt_1e15}")
-        else: 
-            print(f"out_warmup mean: {out_warmup.mean()}") #-- {q.mean()} -- {k.mean()} -- {v.mean()} -- {a.mean()}")
-
-    print("\nWarmup complete\n")
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-            
-    # Timed runs
-    times = []
-    for i in range(num_repeats):
-
-        # # modification 
-        # x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
-        # q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-        # k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-        # v = rearrange(x*dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-        # a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
-            
-        torch.cuda.synchronize()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        
-        start.record()
-        with torch.no_grad():
-            output = tk.mamba2(q, k, v, a)
-        end.record()
-        
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-        
-        # Verify output
-        vals_gt_1e15 = torch.sum(output > 1e15)
-        if torch.isnan(output).any() or torch.isinf(output).any() or vals_gt_1e15 > 0:
-            num_nans = torch.sum(torch.isnan(output))
-            raise RuntimeError(f"Invalid values detected in output at iteration {i}, num_nans={num_nans}, vals_gt_1e15={vals_gt_1e15}")
-            breakpoint()
-
-    torch.cuda.empty_cache()
-    
-    avg_time = np.mean(times)
-    if verbose:
-        print(f"Average runtime out of {len(times)}: {avg_time:.2f} ms")
-
-    print("-----------" * 10)
-    
-    return output, avg_time
 
     
 IMPLEMENTATIONS = {
-    # "mamba2_triton": run_triton,
-    # "mamba2_torch": run_torch,
-    "mamba2_tk": run_tk,
+    "mamba2_triton": partial(mamba2_test, causal=True, is_forwards=True, method_str="mamba2_triton"),
+    "mamba2_tk": partial(mamba2_test, causal=True, is_forwards=True, method_str="mamba2_tk"),
 }
+
+NAME = "MAMBA 2"
 

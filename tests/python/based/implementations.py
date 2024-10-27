@@ -1,18 +1,11 @@
-import sys
 import os
-import time
-import argparse
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
 import numpy as np
 import math
-
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
+from functools import partial
 
 try:
     import thunderkittens as tk
@@ -30,22 +23,20 @@ except:
 
 try:
     from fla.ops.based import fused_chunk_based, parallel_based
-    from fla.ops.based.naive import naive_parallel_based
-    from fla.ops.gla import chunk_gla, fused_chunk_gla, fused_recurrent_gla
     from fla.ops.linear_attn import fused_chunk_linear_attn
     print(f"Successfully imported flash_linear_attention")
 except:
-    fused_chunk_based, parallel_based, naive_parallel_based = None, None
-    chunk_gla, fused_chunk_gla, fused_recurrent_gla = None, None, None
+    fused_chunk_based, parallel_based = None, None
     print("Could not import flash_linear_attention. pip install -U git+https://github.com/sustcsonglin/flash-linear-attention")
 
 
 ################ Based ################
 
+FEATURE_DIM = 16
+
 
 def get_flops(batch, seqlen, headdim, nheads):
-    featuredim = 16
-    expanded_dim = featuredim * featuredim + featuredim + 1
+    expanded_dim = FEATURE_DIM * FEATURE_DIM + FEATURE_DIM + 1
     f = 2 * batch * seqlen * nheads * expanded_dim # compute feature map on q and k
     f += batch * seqlen * nheads * headdim * expanded_dim # (k * v)
     f += batch * seqlen * nheads * headdim * expanded_dim # (cumsum)
@@ -56,10 +47,8 @@ def get_flops(batch, seqlen, headdim, nheads):
 
 def get_based_inputs(b, h, n, dv, dt, seed=42):
     torch.manual_seed(seed)
-
-    feature_dim = 16
-    Q   = torch.randn((b,h,n,feature_dim), dtype=dt, device='cuda') / feature_dim
-    K   = torch.randn((b,h,n,feature_dim), dtype=dt, device='cuda') / feature_dim
+    Q   = torch.randn((b,h,n,FEATURE_DIM), dtype=dt, device='cuda') / FEATURE_DIM
+    K   = torch.randn((b,h,n,FEATURE_DIM), dtype=dt, device='cuda') / FEATURE_DIM
     V   = torch.randn((b,h,n,dv), dtype=dt, device='cuda') / dv
     return Q, K, V
 
@@ -90,110 +79,73 @@ class TaylorExp(nn.Module):
         return torch.cat(terms_list, dim=self.head_dim_idx)
 
 
-def pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    Q, K, v = get_based_inputs(b, h, n, dv, dt)
-    d = 16
-    feature_map = TaylorExp(input_dim=d)
+def based_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
+    for stage in ['warmup', 'timed']:
 
-        q, k = feature_map(Q), feature_map(K)
-        q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
-        kv_state = (k * v).cumsum(dim=2)  # causal 
-        # k_state = k.cumsum(dim=2)
-        y = ((q * kv_state).sum(dim=-1)) 
-        
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
-    except Exception as e:
-        tot = -1
-        y= None
+        for i in range(num_iters):
+            try:
+                q, k, v = get_based_inputs(b, h, n, dv, dt)
+                feature_map = TaylorExp(input_dim=FEATURE_DIM)
+
+                if method_str == "pytorch":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    q, k = feature_map(q), feature_map(k)
+                    q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
+                    kv_state = (k * v).cumsum(dim=2) 
+                    y = ((q * kv_state).sum(dim=-1)) 
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+
+                elif method_str == "fast_transformers": 
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    q, k = feature_map(q), feature_map(k)
+                    y = causal_dot_product(
+                        q.contiguous().to(dtype=torch.float32), 
+                        k.contiguous().to(dtype=torch.float32),
+                        v.contiguous().to(dtype=torch.float32),
+                    )
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+
+                elif method_str == "fla_triton_based":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = parallel_based(q, k, v, False, False)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+
+                elif method_str == "tk":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y, kv_state = tk.based( q, k, v )
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+
+                else:
+                    assert False, f"Unknown method: {method_str}"
+            
+            except Exception as e:
+                return None, -1
+
+            torch.cuda.empty_cache()
+
+    assert not np.isnan(y.float().cpu()).any(), "NaN values detected in output 'y'"
+    assert not np.isinf(y.float().cpu()).any(), "Inf values detected in output 'y'"
+    tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
     return y, tot
 
 
-def fast_transformer_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    q, k, v = get_based_inputs(b, h, n, dv, dt)
-    feature_map = TaylorExp(input_dim=d)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
-
-        q, k = feature_map(q), feature_map(k)
-        v = causal_dot_product(
-            q.contiguous().to(dtype=torch.float32), 
-            k.contiguous().to(dtype=torch.float32),
-            v.contiguous().to(dtype=torch.float32),
-        )
-        y = v 
-        
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-
-    except Exception as e:
-        tot = -1
-        y = None
-    return y, tot
-
-
-def fla_parallel_based_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    q, k, v = get_based_inputs(b, h, n, dv, dt)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
-
-        y = parallel_based(q, k, v, False, False)
-        
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-    except Exception as e:
-        tot = -1
-        y = None
-    return y, tot
-
-
-def based_kernel_test(dt, b, h, n, dv, verbose=True, device='4090'):
-    Q, K, V = get_based_inputs(b, h, n, dv, dt)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
-
-        o, kv_state = tk.based( Q, K, V )
-        
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-        assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
-        assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
-    except Exception as e:
-        tot = -1
-        o = None
-    return (o, kv_state), tot
-
-    
 IMPLEMENTATIONS = {
-    "torch_based": pytorch_test,
-    # "fast_transformer": fast_transformer_test,
-    "fla_triton_based": fla_parallel_based_test,
-    "tk_based": based_kernel_test,
+    "pytorch": partial(based_test, causal=True, is_forwards=True, method_str="pytorch"),
+    # "fast_transformers": partial(based_test, causal=True, is_forwards=True, method_str="fast_transformers"),
+    "fla_triton_based": partial(based_test, causal=True, is_forwards=True, method_str="fla_triton_based"),
+    "tk": partial(based_test, causal=True, is_forwards=True, method_str="tk"),
 }
+
+NAME = "BASED"

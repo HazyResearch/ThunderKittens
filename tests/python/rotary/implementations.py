@@ -1,16 +1,10 @@
-import torch
-import sys
 import os
-import time
-import argparse
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
+from functools import partial
 
 try:
     import thunderkittens as tk
@@ -66,41 +60,8 @@ def get_rotary_inputs(b, h, n, dv, dt):
     return qkv, cos, sin, rotary_max_seqlen, rotary_emb
 
 
-def apply_flash_rotary(dt, b, h, n, dv, verbose=False):
+def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
     # Reference: https://github.com/Dao-AILab/flash-attention/blob/898dd4bbf237b24ed8fd2a3d13ee33bd156bfb23/flash_attn/modules/mha.py#L957
-
-    qkv, cos, sin, rotary_max_seqlen, rotary_emb  = get_rotary_inputs(b, h, n, dv, dt)
-    q = qkv[:,:,0]
-    k = qkv[:,:,1]
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    qkv_emb_flash = apply_rotary_emb(
-        q, cos, sin
-    )
-
-    qkv_emb_flash = apply_rotary_emb(
-        k, cos, sin
-    )
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-
-    return qkv_emb_flash, tot
-
-
-def apply_rotary_emb_torch(dt, b, h, n, dv, verbose=False):
-    """
-    x: (batch_size, seqlen, nheads, headdim)
-    cos, sin: (seqlen, rotary_dim / 2) or (batch_size, seqlen, rotary_dim / 2)
-    """
-
-    qkv, cos, sin, rotary_max_seqlen, rotary_emb = get_rotary_inputs(b, h, n, dv, dt)
 
     def rotate_half(x, interleaved=False):
         if not interleaved:
@@ -110,71 +71,91 @@ def apply_rotary_emb_torch(dt, b, h, n, dv, verbose=False):
             x1, x2 = x[..., ::2], x[..., 1::2]
             return rearrange(torch.stack((-x2, x1), dim=-1), "... d two -> ... (d two)", two=2)
 
-    o_dt = qkv.dtype
-    ro_dim = cos.shape[-1] * 2
-    assert ro_dim <= qkv.shape[-1]
-    interleaved = False
-    q = qkv[:, :, 0]
-    k = qkv[:, :, 1]
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    # for q
-    cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-    sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-    out =  torch.cat(
-        [q[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(q[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), q[..., ro_dim:].to(dt)],
-        dim=-1,
-    ).to(o_dt)
-
-    # for k 
-    out =  torch.cat(
-        [k[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(k[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), k[..., ro_dim:].to(dt)],
-        dim=-1,
-    ).to(o_dt)
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-
-    return out, tot
-
-
-def apply_rotary_emb_tk(dt, b, h, n, dv, verbose=False):
+    for stage in ['warmup', 'timed']:
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
-    qkv, cos, sin, rotary_max_seqlen, rotary_emb = get_rotary_inputs(b, h, n, dv, dt)
-    q = qkv[:,:,0].transpose(1,2).clone()   # torch.Size([b, n, 3, h, dv])
-    k = qkv[:,:,1].transpose(1,2).clone()
+        for i in range(num_iters):
+            qkv, cos, sin, rotary_max_seqlen, rotary_emb = get_rotary_inputs(b, h, n, dv, dt)
 
-    cos = cos.contiguous()
-    sin = sin.contiguous()
-    q = q.contiguous()
-    k = k.contiguous()
+            try:
+                if method_str == "flash_triton":
+                    q = qkv[:,:,0]
+                    k = qkv[:,:,1]
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = apply_rotary_emb(
+                        q, cos, sin
+                    )
+                    y = apply_rotary_emb(
+                        k, cos, sin
+                    )
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-    torch.cuda.synchronize()
-    start_events[0].record()
+                elif method_str == "torch":
+                    o_dt = qkv.dtype
+                    ro_dim = cos.shape[-1] * 2
+                    assert ro_dim <= qkv.shape[-1]
+                    interleaved = False
+                    q = qkv[:, :, 0]
+                    k = qkv[:, :, 1]
 
-    out = tk.fused_rotary(q, cos, sin)
-    out = tk.fused_rotary(k, cos, sin)
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    
+                    # for q
+                    cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+                    sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+                    y =  torch.cat(
+                        [q[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(q[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), q[..., ro_dim:].to(dt)],
+                        dim=-1,
+                    ).to(o_dt)
 
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+                    # for k 
+                    y =  torch.cat(
+                        [k[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(k[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), k[..., ro_dim:].to(dt)],
+                        dim=-1,
+                    ).to(o_dt)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-    assert not np.isnan(out.float().cpu()).any(), "NaN values detected in output 'out'"
-    assert not np.isinf(out.float().cpu()).any(), "Inf values detected in output 'out'"
-    return out, tot
+                elif method_str == "tk":
+                    q = qkv[:,:,0].transpose(1,2).clone()   # torch.Size([b, n, 3, h, dv])
+                    k = qkv[:,:,1].transpose(1,2).clone()
+                    cos = cos.contiguous()
+                    sin = sin.contiguous()
+                    q = q.contiguous()
+                    k = k.contiguous()
+
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = tk.fused_rotary(q, cos, sin)
+                    y = tk.fused_rotary(k, cos, sin)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+
+                else:
+                    assert 0, f"Unknown method: {method_str}"
+
+            except Exception as e:
+                if verbose:
+                    print(f"Error in rotary_test: {e}")
+                return None, -1
+
+            torch.cuda.empty_cache()
+
+    tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
+    assert not np.isnan(y.detach().float().cpu()).any(), "NaN values detected in output 'out'"
+    assert not np.isinf(y.detach().float().cpu()).any(), "Inf values detected in output 'out'"
+    return y, tot
 
 
 IMPLEMENTATIONS = {
-    'flash_triton_rotary': apply_flash_rotary,
-    'torch_rotary': apply_rotary_emb_torch,
-    'tk_rotary': apply_rotary_emb_tk
+    "flash_triton": partial(rotary_test, causal=True, is_forwards=True, method_str="flash_triton"),
+    "torch": partial(rotary_test, causal=True, is_forwards=True, method_str="torch"),
+    "tk": partial(rotary_test, causal=True, is_forwards=True, method_str="tk"),
 }
+
+NAME = "ROTARY"

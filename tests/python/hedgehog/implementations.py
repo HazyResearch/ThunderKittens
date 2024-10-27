@@ -1,22 +1,16 @@
-import torch
-import sys
 import os
-import time
-import argparse
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange, repeat
+from functools import partial
 
 try:
     import thunderkittens as tk
     print(f"Successfully imported thunderkittens")
 except:
     print("Could not import thunderkittens")
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
-import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat
 
 try:
     # To compare to Faster Transformers
@@ -27,14 +21,9 @@ except:
     print("Could not import causal_attention_cuda")
 
 try:
-    from fla.ops.based import fused_chunk_based, parallel_based
-    from fla.ops.based.naive import naive_parallel_based
-    from fla.ops.gla import chunk_gla, fused_chunk_gla, fused_recurrent_gla
     from fla.ops.linear_attn import fused_chunk_linear_attn
     print(f"Successfully imported flash_linear_attention")
 except:
-    fused_chunk_based, parallel_based, naive_parallel_based = None, None
-    chunk_gla, fused_chunk_gla, fused_recurrent_gla = None, None, None
     print("Could not import flash_linear_attention. Install from https://github.com/sustcsonglin/flash-linear-attention")
 
 
@@ -98,52 +87,15 @@ def get_flops(batch, seqlen, headdim, nheads):
 def generate_inputs(testname, B, H, N):
     alphas = torch.rand((H,), dtype=torch.float32, device='cuda')*3
     betas = torch.rand((H,), dtype=torch.float32, device='cuda')
-    if testname == 'randn':
-        q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-        k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
-        v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
-        qmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
-        kmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
-    elif testname == 'ones':
-        q = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        k = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        v = (torch.ones((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
-        qmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-        kmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-    elif testname == 'qk_test': # this test breaks if sequence length is set <128
-        q = torch.eye(D_QK).reshape((1,1,D_QK,D_QK)).repeat(B, H, N//D_QK, 1)*10
-        q = q.to(dtype=torch.bfloat16, device='cuda')
-        k = torch.eye(D_QK).reshape((1,1,D_QK,D_QK)).repeat(B, H, N//D_QK, 1)*10
-        k = k.to(dtype=torch.bfloat16, device='cuda')
-        v = torch.eye(D_VO).reshape((1,1,D_VO,D_VO)).repeat(B, H, N//D_VO, 1)*10
-        v = v.to(dtype=torch.bfloat16, device='cuda')
-        qmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-        kmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-    elif testname == 'v_or':
-        q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        v = (torch.arange(D_VO*2, dtype=torch.bfloat16, device='cuda')/D_VO).reshape((1,1,2,-1)).repeat(B, H, N//2, 1) / 5
-        qmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-        kmap = (torch.ones((H, D_QK, 64), dtype=torch.bfloat16, device='cuda')) / 20
-    elif testname == 'dbg':
-        q = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        k = (torch.ones((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda')) / 5
-        v = (torch.ones((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 10
-        qmap = (torch.eye(64, dtype=torch.bfloat16, device='cuda')).repeat((H,2,1))
-        kmap = (torch.eye(64, dtype=torch.bfloat16, device='cuda')).repeat((H,2,1))
-    else:
-        print('bad testname')
-        sys.exit(0)
+    q = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    k = (torch.randn((B, H, N, D_QK), dtype=torch.bfloat16, device='cuda'))
+    v = (torch.randn((B, H, N, D_VO), dtype=torch.bfloat16, device='cuda')) / 5
+    qmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
+    kmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
     return q, k, v, qmap, kmap, alphas, betas
 
 
-def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    Q, K, V, Qmap, Kmap, alphas, betas = generate_inputs('randn', b, h, n)
-    generator_mat = torch.block_diag(*[torch.ones((64,64), device='cuda')]*256) # 16384 x 16384 should be big enough
-    generator_mat += torch.roll(generator_mat, -64, -1) # this adds the terracing
-    lin_mask = torch.tril(1-generator_mat).reshape((1,1,16384,16384))
-    exp_mask = torch.tril(generator_mat).reshape((1,1,16384,16384))
-    exp_mask = 10000*exp_mask - 10000 
+def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
 
     def pytorch_softmax_gt(x, map_mat, label=None):
 
@@ -171,124 +123,79 @@ def hedgehog_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
         
         return x
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+    for stage in ['warmup', 'timed']:
+
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
+        for i in range(num_iters):
+            Q, K, V, Qmap, Kmap, alphas, betas = generate_inputs('randn', b, h, n)
+            generator_mat = torch.block_diag(*[torch.ones((64,64), device='cuda')]*256) # 16384 x 16384 should be big enough
+            generator_mat += torch.roll(generator_mat, -64, -1) # this adds the terracing
+            lin_mask = torch.tril(1-generator_mat).reshape((1,1,16384,16384))
+            exp_mask = torch.tril(generator_mat).reshape((1,1,16384,16384))
+            exp_mask = 10000*exp_mask - 10000 
 
-        Qs = pytorch_softmax_gt(Q, Qmap)
-        Ks = pytorch_softmax_gt(K, Kmap)
-        a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
-        a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
-        # mask
-        a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # zero out unwanted entries
-        a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity off of unwanted entries
-        a_exp -= a_exp.amax(dim=-1, keepdim=True)
-        a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
+            try:
+                if method_str == 'pytorch':
+                    torch.cuda.synchronize()
+                    start_events[i].record()
 
-        a = a_exp + a_lin
-        a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
-        
-        out = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
-        kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
-        k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
+                    Qs = pytorch_softmax_gt(Q, Qmap)
+                    Ks = pytorch_softmax_gt(K, Kmap)
+                    a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
+                    a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
+                    a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # mask
+                    a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity
+                    a_exp -= a_exp.amax(dim=-1, keepdim=True)
+                    a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
 
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
+                    a = a_exp + a_lin
+                    a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
+                    
+                    o = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
+                    kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
+                    k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
 
-    except:
-        tot = -1
-        out = None
-        kv_state = None
-        k_state = None
-    # state_size = kv_state.numel()
-    # print(f"state_size: {state_size}")
-    
-    return (out, kv_state, k_state), tot
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
+                elif method_str == 'fla_triton_hedgehog':
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    Q = pytorch_softmax_gt(Q, Qmap)
+                    K = pytorch_softmax_gt(Q, Kmap)
+                    o, _ = fused_chunk_linear_attn(Q, K, V, scale=False, normalize=False)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-def profile_tk_hedgehog(dt, b, h, n, dv, verbose=True, **kwargs):
-    q, k, v, qmap, kmap, alphas, betas =  generate_inputs('randn', b, h, n)
+                elif method_str == 'tk_hedgehog':
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    o, kv_state, k_state = tk.hedgehog(Q, K, V, Qmap, Kmap, alphas, betas)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+                else:
+                    assert False, f"Unknown method: {method_str}"
 
-    try:
-        torch.cuda.synchronize()
-        start_events[0].record()
+            except Exception as e:
+                if verbose:
+                    print(f"Error in {method_str}")    
+                return None, -1
 
-        o, kv_state, k_state = tk.hedgehog(q, k, v, qmap, kmap, alphas, betas)
-        
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-        assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
-        assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
-    except Exception as e:
-        print(e)
-        tot = -1
-        o = None
-
-    return (o, kv_state, k_state), tot
-
-
-def profile_hedgehog_fla(dt, b, h, n, dv, verbose=True, **kwargs):
-    q, k, v, qmap, kmap, alphas, betas =  generate_inputs('randn', b, h, n)
-
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    def pytorch_softmax_gt(x, map_mat, label=None):
-
-        x = torch.einsum('bhmd,hdn->bhmn', x, map_mat)
-
-        x_pos = x
-        x_neg = -x
-
-        x_pos_max = torch.amax(x_pos, dim=-1, keepdim=True)
-        x_neg_max = torch.amax(x_neg, dim=-1, keepdim=True)
-        
-        x_pos = x_pos - x_pos_max
-        x_neg = x_neg - x_neg_max
-        
-        x_pos_num = torch.exp(x_pos)
-        x_pos_den = torch.sum(torch.exp(x_pos), dim=-1, keepdim=True)
-        
-        x_neg_num = torch.exp(x_neg)
-        x_neg_den = torch.sum(torch.exp(x_neg), dim=-1, keepdim=True)
-        
-        x_pos = x_pos_num / x_pos_den
-        x_neg = x_neg_num / x_neg_den
-        
-        x = torch.cat([x_pos, x_neg], dim=-1).clamp(min=1e-6)
-        
-        return x
-
-    value_dim = dv
-    expand_k_factor = 1
-    key_dim = int(expand_k_factor * dv)
-    state_size = b* key_dim * value_dim * h
-    # print("state_size", state_size)
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    q = pytorch_softmax_gt(q, qmap)
-    k = pytorch_softmax_gt(k, kmap)
-    o, _ = fused_chunk_linear_attn(q, k, v, scale=False, normalize=False)
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-    return o, tot
+            torch.cuda.empty_cache()
+            
+    assert not np.isnan(o.float().cpu()).any(), "NaN values detected in output 'o'"
+    assert not np.isinf(o.float().cpu()).any(), "Inf values detected in output 'o'"
+    tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
+    return (o), tot
 
 
 IMPLEMENTATIONS = {
-    "torch_hedgehog": hedgehog_pytorch_test,
-    "fla_triton_hedgehog": profile_hedgehog_fla,
-    "tk_hedgehog": profile_tk_hedgehog,
+    "pytorch": partial(hedgehog_test, causal=True, is_forwards=True, method_str="pytorch"),
+    "fla_triton_hedgehog": partial(hedgehog_test, causal=True, is_forwards=True, method_str="fla_triton_hedgehog"),
+    "tk_hedgehog": partial(hedgehog_test, causal=True, is_forwards=True, method_str="tk_hedgehog"),
 }
 
+NAME = "HEDGEHOG"

@@ -1,13 +1,9 @@
-import torch
-import sys
-import os
-import time
-import argparse
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
+import os    
+import pandas as pd
 import numpy as np
+from collections import defaultdict
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
@@ -16,9 +12,8 @@ import warnings
 warnings.filterwarnings("ignore", message=".*not a leaf Tensor is being accessed.*")
 warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 
-
+############## Our Imports #############
 from utils import efficiency
-
 import attention.implementations as attention
 import hedgehog.implementations as hedgehog
 import based.implementations as based
@@ -28,7 +23,6 @@ import fftconv.implementations as fftconv
 import layernorm.implementations as layernorm
 
 
-
 ############## Efficiency Measurements #############
 
 def measure_efficiency(dt, n, method_name, method, verbose=False):
@@ -36,7 +30,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     n_warmup = 10
     method2timing = defaultdict(dict)
 
-    b = 16
+    b = 32
     h = 16
     dv = 64
     if verbose:
@@ -62,22 +56,24 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
 
 if __name__ == "__main__":
     print("Benchmarking the kernels...")
-    print("============" * 8)
 
-    verbose = True
+    verbose = False
 
     for mod in [
-        # based, 
-        # attention, 
-        # rotary,
-        # hedgehog, 
-        # fftconv, 
-        # layernorm, 
+        attention, 
+        based, 
+        rotary,
+        hedgehog, 
+        layernorm, 
         mamba2, 
+        fftconv, 
+        
     ]:
         implementations_list = []
         implementations_fwd = mod.IMPLEMENTATIONS
         implementations_list.append(implementations_fwd)
+        name = mod.NAME
+        print("============" * 4, name, "============" * 4)
 
         try:
             implementations_bwd = mod.IMPLEMENTATIONS_BWD
@@ -96,11 +92,15 @@ if __name__ == "__main__":
                 for n in [
                     1024, 
                     2048, 
-                    4096,
-                    8192,
-                    16384
+                    # 4096,
+                    # 8192,
+                    # 16384
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
+                        # restrict to sizes we have implemented
+                        continue
+                    if "mamba2_triton" in m and n not in [1024, 2048, 4096, 8192]:
+                        # the kernel results in DEVICE_SIDE_ASSERTS
                         continue
                     if verbose:
                         print(f"Sequence Length: {n}")
@@ -111,9 +111,6 @@ if __name__ == "__main__":
                 method2tflops[m] = flops_result
                 method2timing[m] = timing_result
 
-            # print table pretty
-            import pandas as pd
+            # print table
             df = pd.DataFrame(method2tflops).replace(np.nan, 'OOM', regex=True)
             print(df)
-            print("============" * 8)
-    

@@ -1,24 +1,17 @@
-import torch
-import sys
 import os
-import time
-import argparse
 import math
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange, repeat
+from functools import partial
 
 try:
     import thunderkittens as tk
     print(f"Successfully imported thunderkittens")
 except:
     print("Could not import thunderkittens")
-    
-from collections import defaultdict
-import matplotlib.pyplot as plt
-from statistics import median
-import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat
-
 
 try:
     from flashfftconv import FlashFFTConv
@@ -39,9 +32,8 @@ except:
 ################ FFT Convolution ################
 
 
-def get_flops(batch, seqlen, headdim, nheads):
-    d_model = headdim * nheads
-    flops = 2 * (10 * seqlen * math.log(seqlen, 2) * d_model * batch)
+def get_flops(b: int, n: int, dv: int, h: int, causal: bool = False):
+    flops = 2 * (10 * n * math.log(n, 2) * (h * dv) * b)
     return flops 
 
 
@@ -52,89 +44,63 @@ def get_fft_inputs(dt, b, h, n, dv):
     return u, k
 
 
-def fftconv_tk_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    if n not in [1024, 4096]:
-        print(f"Sequence length {n} not supported by TKFFTConv")
-        return None, -1
+def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
     
-    x, k = get_fft_inputs(dt, b, h, n, dv)
-    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
+    for stage in ['warmup', 'timed']:
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    y_tk = tk_fft(x, k)
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-
-    assert not np.isnan(y_tk.float().cpu()).any(), "NaN values detected in output 'y_tk'"
-    assert not np.isinf(y_tk.float().cpu()).any(), "Inf values detected in output 'y_tk'"
-
-    y_ref = ref_fftconv(x, k, n)
-    max_diff = torch.abs(y_tk - y_ref).max().item()
-    mean_diff = torch.abs(y_tk - y_ref).mean().item()
-    print(f"tk-torch {max_diff=}, {mean_diff=}")
-
-    return y_tk, tot
-
-
-def fftconv_cutlass_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    if n not in [1024, 4096]:
-        print(f"Sequence length {n} not supported by TKFFTConv")
-        return None, -1
+        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
+        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
-    u, k = get_fft_inputs(dt, b, h, n, dv)
+        for i in range(num_iters):
+            x, k = get_fft_inputs(dt, b, h, n, dv)
+            
+            try:
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
+                if method_str == "conv_torch":
+                    torch.cuda.synchronize()
+                    start_events[i].record() 
+                    with torch.no_grad():
+                        y = ref_fftconv(x, k, n)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-    try:
-        conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
-        
-        torch.cuda.synchronize()
-        start_events[0].record()
+                elif method_str == "conv_tk":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    tk_fft = TKFFTConv(k, seqlen=n, H=(h*dv), dtype=x.dtype).to(x.device)
+                    with torch.no_grad():
+                        y = tk_fft(x, k)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-        y_flashfft = conv_flashfft(u, k)
+                elif method_str == "conv_flashfft":
+                    torch.cuda.synchronize()
+                    start_events[i].record() 
+                    conv_flashfft = FlashFFTConv(n, dtype=u.dtype).to(u.device)
+                    with torch.no_grad():
+                        y = conv_flashfft(x, k)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
 
-        end_events[0].record()
-        torch.cuda.synchronize()
-        tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-    except:
-        print(f"Error: {sys.exc_info()[0]}")
-        return None, -1
+                else:
+                    assert 0, f"Unknown method: {method_str}"
 
-    return y_flashfft, tot
+            except Exception as e:
+                return None, -1
 
+            torch.cuda.empty_cache()
 
-def fftconv_pytorch_test(dt, b, h, n, dv, verbose=True, **kwargs):
-    if n not in [1024, 4096]:
-        print(f"Sequence length {n} not supported by TKFFTConv")
-        return None, -1
-    
-    x, k = get_fft_inputs(dt, b, h, n, dv)
+    tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
+    assert not np.isnan(y.float().cpu()).any(), "NaN values detected in output 'y'"
+    assert not np.isinf(y.float().cpu()).any(), "Inf values detected in output 'y'"
+    return y, tot
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(1)]
-
-    torch.cuda.synchronize()
-    start_events[0].record()
-
-    x = ref_fftconv(x, k, n)
-
-    end_events[0].record()
-    torch.cuda.synchronize()
-    tot = [s.elapsed_time(e) for s, e in zip(start_events, end_events)][0]
-
-    return x, tot
 
 IMPLEMENTATIONS = {
-    "pytorch_conv": fftconv_pytorch_test,
-    "tk_fftconv": fftconv_tk_test,
-    "flashfft_conv": fftconv_cutlass_test
+    "conv_torch": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_torch"),
+    "conv_tk": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_tk"),
+    "conv_flashfft": partial(fftconv_tk_test, causal=True, is_forwards=True, method_str="conv_flashfft"),
 }
+
+NAME = "FFTCONV"
 

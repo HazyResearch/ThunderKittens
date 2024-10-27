@@ -173,6 +173,7 @@ class TKFFTConv(torch.nn.Module):
         B, H, L = u.shape
         assert L == self.N
         u_real = u.real.reshape(B, H, self.N1, self.N1).to(self.dtype).contiguous()
+
         out = tk.fftconv(
             u_real, 
             self.kfT_real, self.kfT_imag, 
@@ -182,6 +183,7 @@ class TKFFTConv(torch.nn.Module):
             self.twinv_real, self.twinv_imag,
             B, self.H, self.N, self.N1
         )
+        
         return out.reshape(B, self.H, self.N).contiguous()
 
         
