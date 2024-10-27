@@ -23,17 +23,17 @@ struct mamba2_fwd_layout {
 	struct input_block    { 
         q_tile q;
         k_tile k;
-        v_tile v;
-        a_vec  a;
-        a_vec  padding[7];
+        v_tile v[2];
+        a_vec  a[2];
+        a_vec  padding[6];
     };
     struct output_block {
-        o_tile o;
+        o_tile o[2];
     };
 	struct scratch_block  { 
-        st_bf<64, 64> kv, k;
-        a_vec         a_cumsum;
-        a_vec         padding[7];
+        st_bf<64, 64> kv[2], k[2];
+        a_vec         a_cumsum[2];
+        a_vec         padding[6];
     };
     struct common_state {
         int batch, head;
@@ -48,14 +48,16 @@ struct mamba2_fwd_layout {
 	};
 };
 struct mamba2_fwd_template {
-	static constexpr int NUM_CONSUMER_WARPS = 4, NUM_BLOCKS=2,
-        OUTPUT_PIPE_STAGES=1, INPUT_PIPE_STAGES=1; //, DEBUG=1;
+	static constexpr int NUM_CONSUMER_WARPS=8, OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2, PRODUCER_BARRIER_ARRIVALS=1, CONSUMER_BARRIER_ARRIVALS=NUM_CONSUMER_WARPS/4;
 	using layout = mamba2_fwd_layout;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
+        // args.common.batch = blockIdx.y;
+		// args.common.head = blockIdx.x*NUM_CONSUMER_WARPS/4; // stride 2 on heads
+		// args.num_iters = args.task_iter == 0 ? args.globals.K.rows/layout::k_tile::rows : -1;
         int task_id = args.task_iter * gridDim.x + blockIdx.x;
-		args.common.batch = task_id / args.globals.V.depth; // batch = id / heads.
-		task_id -= args.common.batch*args.globals.V.depth;
-		args.common.head = task_id;
+		args.common.batch = task_id / (args.globals.V.depth/(NUM_CONSUMER_WARPS/4)); // batch = id / heads.
+		task_id -= args.common.batch*(args.globals.V.depth/(NUM_CONSUMER_WARPS/4));
+		args.common.head = task_id*2; // stride 2 on heads
 		args.num_iters = args.common.batch < args.globals.Q.batch ? args.globals.K.rows/layout::k_tile::rows : -1;
     }
 	struct producer {
@@ -64,60 +66,65 @@ struct mamba2_fwd_template {
 		}
 		__device__ static void load(producer_load_args<layout> args) {
 			if(warpgroup::warpid() == args.iter%4) {
-                tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v, args.input.a);
-                tma::load_async(args.input.q, args.globals.Q, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.k, args.globals.K, {args.common.batch,                 0, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.v, args.globals.V, {args.common.batch,  args.common.head, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.a, args.globals.A, {args.common.batch,  args.common.head, 0, args.iter}, args.inputs_arrived);
-                if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v[0], args.input.a[0], args.input.v[1], args.input.a[1]);
+                tma::load_async(args.input.q, args.globals.Q, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
+                tma::load_async(args.input.k, args.globals.K, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
+                #pragma unroll
+                for(int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
+                    tma::load_async(args.input.v[i], args.globals.V, {args.common.batch,  args.common.head+i, args.iter, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.a[i], args.globals.A, {args.common.batch,  args.common.head+i, 0, args.iter}, args.inputs_arrived);
+                }
                 __syncwarp();
             }
 		}
         __device__ static void store(producer_store_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
-                tma::store_async(args.globals.O, args.output.o, {args.common.batch, args.common.head, args.iter, 0});
+                #pragma unroll
+                for(int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
+                    tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head+i, args.iter, 0});
+                }
                 tma::store_async_read_wait();
                 __syncwarp();
-                if(laneid() == 0) arrive(args.outputs_finished, 4);
+                if(laneid() == 0) arrive(args.outputs_finished);
                 __syncwarp();
             }
         }
 	};
 	struct consumer {
 		__device__ static void setup(consumer_setup_args<layout> args) {
-			warpgroup::increase_registers<224>();
+			warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
             zero(args.state.kv);
 		}
 		__device__ static bool compute(consumer_compute_args<layout> args) {
-            int warpgroupid = warpgroup::warpid()/kittens::WARPGROUP_WARPS;
-
+            int warpgroupid = warpgroup::groupid();
             // Start by doing cumsum into shared memory
-            warpgroup::sync(warpgroupid + 4);
-            warpgroup::copy(args.scratch.a_cumsum, args.input.a);
-            warpgroup::sync(warpgroupid + 4);
-            if(warpid() <= 1) {
+            warpgroup::sync(warpgroupid);
+            warpgroup::copy(args.scratch.a_cumsum[warpgroupid], args.input.a[warpgroupid]);
+            warpgroup::sync(warpgroupid);
+            if(warpgroup::warpid() <= 1) {
+                int tid = warpgroup::laneid();
                 // Perform the prefix sum (Hillis-Steele scan)
                 for (int offset = 1; offset < 64; offset *= 2) {
-                    float temp = (threadIdx.x >= offset) ? args.scratch.a_cumsum[threadIdx.x - offset] : 0.0f;
-                    group<2>::sync(3);
-                    args.scratch.a_cumsum[threadIdx.x] += temp;
-                    group<2>::sync(3);
+                    float temp = (tid >= offset) ? args.scratch.a_cumsum[warpgroupid][tid - offset] : 0.0f;
+                    group<2>::sync(warpgroupid+2);
+                    args.scratch.a_cumsum[warpgroupid][tid] += temp;
+                    group<2>::sync(warpgroupid+2);
                 }
             }
-            warpgroup::sync(warpgroupid + 4); // cumulative sum done
+            warpgroup::sync(warpgroupid); // cumulative sum done
             // Calculate decays
             #pragma unroll
             for(int i = 0; i < 4; i++) {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
                 int base_col = i*16 + (laneid()%4)*2;
-                args.state.local_decay.tiles[0][i].data[0].x = args.scratch.a_cumsum[base_row + 0] - args.scratch.a_cumsum[base_col + 0];
-                args.state.local_decay.tiles[0][i].data[0].y = args.scratch.a_cumsum[base_row + 0] - args.scratch.a_cumsum[base_col + 1];
-                args.state.local_decay.tiles[0][i].data[1].x = args.scratch.a_cumsum[base_row + 8] - args.scratch.a_cumsum[base_col + 0];
-                args.state.local_decay.tiles[0][i].data[1].y = args.scratch.a_cumsum[base_row + 8] - args.scratch.a_cumsum[base_col + 1];
-                args.state.local_decay.tiles[0][i].data[2].x = args.scratch.a_cumsum[base_row + 0] - args.scratch.a_cumsum[base_col + 8];
-                args.state.local_decay.tiles[0][i].data[2].y = args.scratch.a_cumsum[base_row + 0] - args.scratch.a_cumsum[base_col + 9];
-                args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[base_row + 8] - args.scratch.a_cumsum[base_col + 8];
-                args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[base_row + 8] - args.scratch.a_cumsum[base_col + 9];
+                args.state.local_decay.tiles[0][i].data[0].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                args.state.local_decay.tiles[0][i].data[0].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                args.state.local_decay.tiles[0][i].data[1].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                args.state.local_decay.tiles[0][i].data[1].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                args.state.local_decay.tiles[0][i].data[2].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                args.state.local_decay.tiles[0][i].data[2].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
+                args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
             }
             exp(args.state.local_decay, args.state.local_decay);
             // causal mask
@@ -133,13 +140,13 @@ struct mamba2_fwd_template {
 			warpgroup::mma_async_wait();
             mul(args.state.att_block, args.state.att_block, args.state.local_decay);
             copy(args.state.att_block_mma, args.state.att_block);
-            warpgroup::mm_AB(args.state.o_reg, args.state.att_block_mma, args.input.v);
+            warpgroup::mm_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
             warpgroup::mma_async_wait();
             // // multiply q by decays
             {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
-                bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[base_row + 0]));
-                bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[base_row +8]));
+                bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row +8]));
                 #pragma unroll
                 for(int i = 0; i < 4; i++) {
                     args.state.q_reg.tiles[0][i].data[0].x *= top;
@@ -152,20 +159,20 @@ struct mamba2_fwd_template {
                     args.state.q_reg.tiles[0][i].data[3].y *= bottom;
                 }
             }
-            warpgroup::store(args.scratch.kv, args.state.kv);
-            warpgroup::sync(warpgroupid + 4);
-            warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv);
+            warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
+            warpgroup::sync(warpgroupid);
+            warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
             warpgroup::mma_async_wait();
-            warpgroup::store(args.output.o, args.state.o_reg);
-            warpgroup::sync(warpgroupid + 4);
-            float last_decay = args.scratch.a_cumsum[args.scratch.a_cumsum.length-1]; // last element
+            warpgroup::store(args.output.o[warpgroupid], args.state.o_reg);
+            warpgroup::sync(warpgroupid);
+            float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length-1]; // last element
             float total_decay = expf(last_decay);
             mul(args.state.kv, args.state.kv, total_decay); // decay kv
             warpgroup::load(args.state.k_reg, args.input.k); // multiply k's by decays
             {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
-                bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[base_row + 0]));
-                bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[base_row +8]));
+                bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row +8]));
                 #pragma unroll
                 for(int i = 0; i < 4; i++) {
                     args.state.k_reg.tiles[0][i].data[0].x *= top;
@@ -178,16 +185,18 @@ struct mamba2_fwd_template {
                     args.state.k_reg.tiles[0][i].data[3].y *= bottom;
                 }
             }
-            warpgroup::store(args.scratch.k, args.state.k_reg); // using as dummy memory
-            warpgroup::sync(warpgroupid + 4);
-            warpgroup::mma_AtB(args.state.kv, args.scratch.k, args.input.v);
+            warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg); // using as dummy memory
+            warpgroup::sync(warpgroupid);
+            warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.outputs_arrived);
-            if(laneid() == 0) arrive(args.inputs_finished);
+            if(warpgroup::laneid() == 0) {
+                arrive(args.outputs_arrived);
+                arrive(args.inputs_finished);
+            }
             __syncwarp();
 		}
         __device__ static void finish(consumer_finish_args<layout> args) {
-            if(laneid() == 0) arrive(args.finish_finished);
+            if(warpgroup::laneid() == 0) arrive(args.finish_finished);
             __syncwarp();
         }
 	};
@@ -226,7 +235,7 @@ void dispatch_mamba2(
     mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
     
     // launch setup
-    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048;
+    unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba2_fwd_template>;
     
     // Get current stream early
     auto stream = at::cuda::getCurrentCUDAStream().stream();
@@ -244,7 +253,8 @@ void dispatch_mamba2(
         mem_size
     );
 
-    dim3 grid(264, 1, 1);
+    // dim3 grid(H/2, B, 1);
+    dim3 grid(132, 1, 1);
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
 
     prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);

@@ -58,18 +58,10 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     scratch_alloc_block (&scratch_smem)                     = alloc.allocate<scratch_alloc_block>();
     input_alloc_block   (&input_smem)  [INPUT_PIPE_STAGES]  = alloc.allocate<input_alloc_block,  INPUT_PIPE_STAGES >();
     output_alloc_block  (&output_smem) [OUTPUT_PIPE_STAGES] = alloc.allocate<output_alloc_block, OUTPUT_PIPE_STAGES>();
-
-    // zero out the shared memory
-    // for(int i = threadIdx.x; i < MAX_BLOCK_SHARED_MEMORY/sizeof(int); i+=blockDim.x) __shm[i] = 0;
-    // everyone::sync(15);
-    // zero registers
-    // volatile int regs[256];
-    // for(int i = 0; i < 256; i++) regs[i] = 0;
-    // __syncthreads();
     
     // figure out where we're going to put the finish block
     constexpr int FINISH_BLOCK_OFFSET = MAX_BLOCK_SHARED_MEMORY - sizeof(finish_block);
-    static_assert(FINISH_BLOCK_OFFSET >= 0, "Finish block is too large for shared memory.");
+    static_assert(sizeof(scratch_alloc_block) + sizeof(finish_block) <= MAX_BLOCK_SHARED_MEMORY, "Finish block is too large for shared memory.");
     constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024 - sizeof(scratch_alloc_block); // including the losses from alignment
     constexpr int SAFE_STAGES_BETWEEN_BLOCKS = NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block)<INPUT_PIPE_STAGES?NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block):INPUT_PIPE_STAGES;
     finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)&__shm[0] + FINISH_BLOCK_OFFSET)/1024)*1024); // alignment
@@ -108,7 +100,7 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
             printf("        scratch_smem:                      %p\n", (void*)&scratch_smem);
             printf("        finish_smem:                       %p\n", (void*)finish_smem);
             printf("        finish_smem size:                  %llu\n", sizeof(finish_block));
-            printf("        dynamic shared memory usage:       %llu\n", sizeof(output_smem) + uint64_t(&(*output_smem[OUTPUT_PIPE_STAGES-1])) - uint64_t(&__shm[0]));
+            printf("        dynamic shared memory usage:       %llu\n", sizeof(output_block) + uint64_t(&(*output_smem[OUTPUT_PIPE_STAGES-1])) - uint64_t(&__shm[0]));
         }
         everyone::sync(15);
     }
@@ -120,26 +112,30 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
     common_state common;
 
+    if (threadIdx.x == 0) { // a single warp (in fact a single thread) does these.
+        for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
+            init_semaphore(inputs_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on each producer warp
+            init_semaphore(inputs_finished[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on one thread from each consumer warp
+        }
+        for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
+            init_semaphore(outputs_arrived[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on one thread from each consumer warp
+            init_semaphore(outputs_finished[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on each producer warp
+        }
+        init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // consumer warps must say they are done with the finish block
+    }
+    everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+
     if(warpid() >= NUM_CONSUMER_WARPS) { // code path for producer warps
         using producers = group<NUM_PRODUCER_WARPS>;
-        if (warpid() == NUM_CONSUMER_WARPS) { // a single warp (in fact a single thread) does these.
-            for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
-                init_semaphore(inputs_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on each producer warp
-                init_semaphore(inputs_finished[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on one thread from each consumer warp
-            }
-            for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
-                init_semaphore(outputs_arrived[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on one thread from each consumer warp
-                init_semaphore(outputs_finished[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcsft>, 0); // needs to wait on each producer warp
-            }
-            init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcsft>, 0); // consumer warps must say they are done with the finish block
-        }
-        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
             common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
             lcsft::common_setup(unif);
-            if(num_iters <= 0) return; // no work to do
+            if(num_iters <= 0) {
+                __syncthreads();
+                return; // no work to do
+            }
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             int load_iter, store_iter = 0;
@@ -178,13 +174,15 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     } // producer warpgroup
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
-        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
             common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
             lcsft::common_setup(unif);
-            if(num_iters <= 0) return; // no work to do
+            if(num_iters <= 0) {
+                __syncthreads();
+                return; // no work to do
+            }
             int input_ring  = 0; // tracking which input block is being loaded
             int output_ring = 0; // tracking which output block is being written
             lcsft::consumer::setup({c_state, unif});
@@ -201,11 +199,9 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
                 output_ring=ring_advance<OUTPUT_PIPE_STAGES>(output_ring);
             } // compute loop
             // ensure the outputs are all written before overwriting that memory
-            if(warpid() == 0) {
-                #pragma unroll
-                for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
-                    wait(outputs_finished[i], get_phasebit<1>(semaphore_bitfield, i));
-                }
+            #pragma unroll
+            for(int i = 0; i < OUTPUT_PIPE_STAGES; i++) {
+                wait(outputs_finished[i], get_phasebit<1>(semaphore_bitfield, i));
             }
             // no need to update phase bit, as nothing is actually changing before the next wait starts.
             consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.

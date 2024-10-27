@@ -340,6 +340,10 @@ template<int SEQ> typename fft_template<SEQ>::layout::globals setup_templates(
     return G;
 }
 
+#ifdef TK_COMPILE_FFTCONV
+#include <ATen/cuda/CUDAContext.h> 
+#endif
+
 template<int SEQ>
 void launch(typename fft_template<SEQ>::layout::globals G) {
     using fftst = fft_template<SEQ>;
@@ -351,7 +355,12 @@ void launch(typename fft_template<SEQ>::layout::globals G) {
     );
     dim3 grid(132);
     dim3 block(prototype::detail::NUM_THREADS_v<fftst>);
+#ifdef TK_COMPILE_FFTCONV
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    prototype::lcsf::kernel<fftst><<<grid, block, mem_size, stream>>>(G);
+#else
     prototype::lcsf::kernel<fftst><<<grid, block, mem_size>>>(G);
+#endif
 }
 
 #ifdef TK_COMPILE_FFTCONV
