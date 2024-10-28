@@ -78,7 +78,7 @@ struct matmul_template {
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
-            warpgroup::sync();
+            warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
                                              {args.common.coord.x, args.common.coord.y+i});

@@ -100,64 +100,60 @@ def pytorch_test(u, k, TESTNAME='all'):
 
 u_real, u_imag, kfT_real, kfT_imag, f_real, f_imag, finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, o_real = pytorch_test(u, k, TESTNAME=TESTNAME)
 
-# # debug
-# f_real = torch.ones_like(f_real)
-# f_imag = torch.zeros_like(f_imag)
-
 
 with open(f'{TESTNAME}.txt', 'w') as f:
-    u_real_f = u_real.to(torch.float32).flatten().cpu().numpy()
-    u_imag_f = u_imag.to(torch.float32).flatten().cpu().numpy()
-    kfT_real_f = kfT_real.to(torch.float32).flatten().cpu().numpy()
-    kfT_imag_f = kfT_imag.to(torch.float32).flatten().cpu().numpy()
-    f_real_f = f_real.to(torch.float32).flatten().cpu().numpy()
-    f_imag_f = f_imag.to(torch.float32).flatten().cpu().numpy()
-    finv_real_f = finv_real.to(torch.float32).flatten().cpu().numpy()
-    finv_imag_f = finv_imag.to(torch.float32).flatten().cpu().numpy()
-    tw_real_f = tw_real.to(torch.float32).flatten().cpu().numpy()
-    print(kfT_real_f.tolist()[:256])
-    tw_imag_f = tw_imag.to(torch.float32).flatten().cpu().numpy()
-    twinv_real_f = twinv_real.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy()
-    twinv_imag_f = twinv_imag.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy()
-    o_real_f = o_real.to(torch.float32).flatten().cpu().numpy()
+    u_real_f = u_real.to(torch.float32).flatten().cpu().numpy().tolist()
+    u_imag_f = u_imag.to(torch.float32).flatten().cpu().numpy().tolist()
+    kfT_real_f = kfT_real.to(torch.float32).flatten().cpu().numpy().tolist()
+    kfT_imag_f = kfT_imag.to(torch.float32).flatten().cpu().numpy().tolist()
+    f_real_f = f_real.to(torch.float32).flatten().cpu().numpy().tolist()
+    f_imag_f = f_imag.to(torch.float32).flatten().cpu().numpy().tolist()
+    finv_real_f = finv_real.to(torch.float32).flatten().cpu().numpy().tolist()
+    finv_imag_f = finv_imag.to(torch.float32).flatten().cpu().numpy().tolist()
+    tw_real_f = tw_real.to(torch.float32).flatten().cpu().numpy().tolist()
+    print(kfT_real_f[:256])
+    tw_imag_f = tw_imag.to(torch.float32).flatten().cpu().numpy().tolist()
+    twinv_real_f = twinv_real.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy().tolist()
+    twinv_imag_f = twinv_imag.to(torch.float32).reshape(-1, N1, N1).transpose(-1, -2).flatten().cpu().numpy().tolist()
+    o_real_f = o_real.to(torch.float32).flatten().cpu().numpy().tolist()
 
-    for i in trange(u_real_f.shape[0]):
+    for i in trange(len(u_real_f)):
         f.write(repr(u_real_f[i]))
         f.write(' ')
-    for i in trange(u_imag_f.shape[0]):
+    for i in trange(len(u_imag_f)):
         f.write(repr(u_imag_f[i]))
         f.write(' ')
-    for i in trange(kfT_real_f.shape[0]):
+    for i in trange(len(kfT_real_f)):
         f.write(repr(kfT_real_f[i]))
         f.write(' ')
-    for i in trange(kfT_imag_f.shape[0]):
+    for i in trange(len(kfT_imag_f)):
         f.write(repr(kfT_imag_f[i]))
         f.write(' ')
-    for i in trange(f_real_f.shape[0]):
+    for i in trange(len(f_real_f)):
         f.write(repr(f_real_f[i]))
         f.write(' ')
-    for i in trange(f_imag_f.shape[0]):
+    for i in trange(len(f_imag_f)):
         f.write(repr(f_imag_f[i]))
         f.write(' ')
-    for i in trange(finv_real_f.shape[0]):
+    for i in trange(len(finv_real_f)):
         f.write(repr(finv_real_f[i]))
         f.write(' ')
-    for i in trange(finv_imag_f.shape[0]):
+    for i in trange(len(finv_imag_f)):
         f.write(repr(finv_imag_f[i]))
         f.write(' ')
-    for i in trange(tw_real_f.shape[0]):
+    for i in trange(len(tw_real_f)):
         f.write(repr(tw_real_f[i]))
         f.write(' ')
-    for i in trange(tw_imag_f.shape[0]):
+    for i in trange(len(tw_imag_f)):
         f.write(repr(tw_imag_f[i]))
         f.write(' ')
-    for i in trange(twinv_real_f.shape[0]):
+    for i in trange(len(twinv_real_f)):
         f.write(repr(twinv_real_f[i]))
         f.write(' ')
-    for i in trange(twinv_imag_f.shape[0]):
+    for i in trange(len(twinv_imag_f)):
         f.write(repr(twinv_imag_f[i]))
         f.write(' ')
-    for i in trange(o_real_f.shape[0]):
+    for i in trange(len(o_real_f)):
         f.write(repr(o_real_f[i]))
         f.write(' ')
     
