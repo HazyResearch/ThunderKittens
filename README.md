@@ -126,7 +126,7 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
 }
 ```
 
-Altogether, this is about 100 lines of code, and achieves about 155 TFLOPs on an RTX 4090. (93% of theoretical max.) We’ll go through some of these primitives more carefully in the next section, the ThunderKittens manual.
+Altogether, this is less than 100 lines of code, and achieves about 155 TFLOPs on an RTX 4090. (93% of theoretical max.) We’ll go through some of these primitives more carefully in the next section, the ThunderKittens manual.
 
 ## Installation
 
