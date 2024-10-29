@@ -170,10 +170,16 @@ To compile examples, run `source env.src` from the root directory before going i
 python setup.py install
 ```
 
-**Demos**: We've included a few demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/tk2/demos) folder. Check it out to run your Llamas and LoLCATS with TK kernels!
-
 Finally, thanks to Jordan Juravskey for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
 
+### Demos
+
+We've included a set of starter demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/main/demos) folder, showing how to use TK kernels for training and LLM inference (Qwens, Llamas, LoLCATS LLMs, etc.)! 
+
+We are excited to feature any demos you build, please link PRs! Potential contributions:
+- New kernels: attention decoding, parallel scan, training long convolutions 
+- New features: converting PyTorch to TK code, supporting new hardware (AMD?)
+- Anything else that comes to mind!
 
 ## Tests
 
@@ -223,3 +229,10 @@ However, not all ThunderKittens functions operate at the warp level. Many import
 ### Other Restrictions
 
 Most operations in ThunderKittens are pure functional. However, some operations _do_ have special restrictions; ThunderKittens tries to warn you by giving them names that stand out. For example, a register tile transpose needs separable arguments: if it is given the same underlying registers as both source and destination, it will silently fail. Consequently, it is named `transpose_sep`.
+
+
+## Learn more and get involved
+
+Learn more about ThunderKittens and how GPUs work by checking out:
+- [Paper, Oct. 2024](https://arxiv.org/abs/2410.20399)
+- [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)

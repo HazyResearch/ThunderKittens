@@ -65,5 +65,9 @@ LLM inference integration:
 
 
 
-**Try it out!** If you have any demos, please reach out / make a PR! We'd love to feature it!!
+### Your Demos!
+
+If you use TK to build any demos, please reach out / make a PR! We'd love to feature it here!!
+
+- DeltaNet: https://github.com/proger/accelerated-scan/tree/delta
 
