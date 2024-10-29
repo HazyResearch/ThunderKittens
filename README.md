@@ -172,7 +172,7 @@ To compile examples, run `source env.src` from the root directory before going i
 python setup.py install
 ```
 
-Finally, thanks to Jordan Juravskey for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+Finally, thanks to Jordan Juravsky for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
 
 ### Demos
 
