@@ -142,12 +142,12 @@ But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive
 
 ```bash
 sudo apt update
-sudo apt install gcc-10 g++-10
+sudo apt install gcc-11 g++-11
 
-sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 --slave /usr/bin/g++ g++ /usr/bin/g++-11
 
 sudo apt update
-sudo apt install clang-10
+sudo apt install clang-11
 ```
 
 If you can't find nvcc, or you experience issues where your environment is pointing to the wrong CUDA version:
