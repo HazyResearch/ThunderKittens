@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
 
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_H*ATTN_N*ATTN_D;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS];
@@ -89,10 +89,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_N, ATTN_H, nullptr);
     globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
     unsigned long mem_size = (kittens::MAX_SHARED_MEMORY-1000) / 2; // have the flag tell us
@@ -116,6 +116,12 @@ int main(int argc, char **argv) {
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cout << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+        return 1;
+    }
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
