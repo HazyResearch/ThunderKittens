@@ -103,17 +103,26 @@ struct gl {
     __device__ inline const T& operator[](const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    template<detail::tile TILE>__device__ inline T& get(const coord &idx) {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
+    template<detail::tile TILE, int axis> __device__ inline T& get(const coord &idx) {
+        static_assert(axis==0 || axis==1 || axis==2, "Row axis must be 0, 1, or 2.");
+        if constexpr (axis==0) {
+            return raw_ptr[((idx.b*depth*TILE::rows + idx.d)*rows + idx.r)*cols + idx.c*TILE::cols];
+        } else if constexpr (axis==1) {
+            return raw_ptr[((idx.b*depth + idx.d*TILE::rows)*rows + idx.r)*cols + idx.c*TILE::cols];
+        } else if constexpr (axis==2) {
+            return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
+        }
     }
-    template<detail::tile TILE> __device__ inline const T& get(const coord &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
+    template<detail::tile TILE, int axis> __device__ inline const T& get(const coord &idx) const {
+        // We const_cast away the constness of 'this' to call the non-const version,
+        // then the reference returned is made const again by the return type 'const T&'
+        return const_cast<gl*>(this)->template get<TILE,axis>(idx);
     }
     template<detail::vec VEC>__device__ inline T& get(const coord &idx) {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
     template<detail::vec VEC>__device__ inline const T& get(const coord &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
+        return const_cast<gl*>(this)->template get<VEC>(idx);
     }
     template<int axis> __device__ inline size_t stride() const { 
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");

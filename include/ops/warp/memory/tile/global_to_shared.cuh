@@ -21,8 +21,8 @@ namespace kittens {
  * @param row_stride[in] The stride between rows in the source array.
  */
 template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
-__device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
+__device__ static inline void load(ST &dst, const GL &src, const coord &idx, int load_rows=ST::rows) {//, ST::dtype fill_value=0) {
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST, axis>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.template stride<axis>();
     
@@ -35,7 +35,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
     // we can handle this many rows each time we run a memcpy_async
     int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
+    int total_calls = load_rows*dst.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -49,6 +49,13 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
         move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
         move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
     }
+    // if(load_rows != ST::rows) {
+    //     int fill_calls = (ST::rows - load_rows)*dst.width * TILE_DIM*TILE_DIM;
+    //     #pragma unroll
+    //     for(int i = 0; i < fill_calls; i++) {
+    //         move<float4>::sts(dst.idx(dst_ptr, {row, col}), fill_value);
+    //     }
+    // }
 }
 /**
  * @brief Stores data from a shared memory tile into global memory.
@@ -60,7 +67,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
  */
 template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
 __device__ static inline void store(const GL &dst, const ST &src, const coord &idx) {
-    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST, axis>(idx);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     const int row_stride = dst.template stride<axis>();
 
@@ -96,7 +103,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
  */
 template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
 __device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST, axis>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.template stride<axis>();
 

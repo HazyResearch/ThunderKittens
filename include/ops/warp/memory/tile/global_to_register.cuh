@@ -23,7 +23,7 @@ template<ducks::rt::row_layout RT, ducks::gl::all GL, int axis=2>
 __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT>(idx);
+    U *src_ptr = (U*)&src.template get<RT, axis>(idx);
     const int row_stride = src.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
@@ -67,7 +67,7 @@ template<ducks::rt::col_layout RT, ducks::gl::all GL, int axis=2>
 __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT>(idx);
+    U *src_ptr = (U*)&src.template get<RT, axis>(idx);
     const int row_stride = src.template stride<axis>();
     int laneid = threadIdx.x % 32;
     #pragma unroll
@@ -113,7 +113,7 @@ template<ducks::rt::row_layout RT, ducks::gl::all GL, int axis=2>
 __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT>(idx);
+    U *dst_ptr = (U*)&dst.template get<RT, axis>(idx);
     const int row_stride = dst.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
@@ -158,7 +158,7 @@ template<ducks::rt::col_layout RT, ducks::gl::all GL, int axis=2>
 __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT>(idx);
+    U *dst_ptr = (U*)&dst.template get<RT, axis>(idx);
     const int row_stride = dst.template stride<axis>();
     int laneid = threadIdx.x % 32;
     #pragma unroll

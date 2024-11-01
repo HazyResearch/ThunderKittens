@@ -17,7 +17,7 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
     using MEGA_RT = rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>; // the megatile for the original coord.
-    U *src_ptr = (U*)&src.template get<MEGA_RT>(idx);
+    U *src_ptr = (U*)&src.template get<MEGA_RT, axis>(idx);
     const int row_stride = src.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -53,7 +53,7 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using T = typename RT::T;
     using U = typename GL::dtype;
     using MEGA_RT = rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>; // the megatile for the original coord.
-    U *src_ptr = (U*)&src.template get<MEGA_RT>(idx);
+    U *src_ptr = (U*)&src.template get<MEGA_RT, axis>(idx);
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = dst.rows*warpid();
@@ -102,7 +102,7 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
     using MEGA_RT = rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>; // the megatile for the original coord.
-    U *dst_ptr = (U*)&dst.template get<MEGA_RT>(idx);
+    U *dst_ptr = (U*)&dst.template get<MEGA_RT, axis>(idx);
     const int row_stride = dst.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % 32;
@@ -138,7 +138,7 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
     using MEGA_RT = rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>; // the megatile for the original coord.
-    U *dst_ptr = (U*)&dst.template get<MEGA_RT>(idx);
+    U *dst_ptr = (U*)&dst.template get<MEGA_RT, axis>(idx);
     const int row_stride = dst.template stride<axis>();
     int warp_laneid = threadIdx.x % 32;
     const int row_offset = src.rows*warpid();
