@@ -51,7 +51,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx, int
     }
 }
 template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
-__device__ static inline void store(GL &dst, const ST &src, const coord &idx, int store_rows=ST::rows) {
+__device__ static inline void store(const GL &dst, const ST &src, const coord &idx, int store_rows=ST::rows) {
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST, axis>(idx);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     const int row_stride = dst.template stride<axis>();
