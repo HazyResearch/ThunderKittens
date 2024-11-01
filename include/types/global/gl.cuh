@@ -115,7 +115,13 @@ struct gl {
     template<detail::vec VEC>__device__ inline const T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
-    __device__ inline size_t row_stride() const { return cols; }
+    template<int axis> __device__ inline size_t stride() const { 
+        static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");
+        if      constexpr (axis==0) { return depth*rows*cols; }
+        else if constexpr (axis==1) { return rows*cols; }
+        else if constexpr (axis==2) { return cols; }
+        else if constexpr (axis==3) { return 1; }
+    }
 };
 
 namespace ducks {

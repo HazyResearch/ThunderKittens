@@ -20,11 +20,11 @@ namespace kittens {
  * @param[in] src The source global memory array.
  * @param row_stride[in] The stride between rows in the source array.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
+template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
 __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
-    const int row_stride = src.row_stride();
+    const int row_stride = src.template stride<axis>();
     
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
@@ -58,11 +58,11 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
+template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
 __device__ static inline void store(const GL &dst, const ST &src, const coord &idx) {
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
-    const int row_stride = dst.row_stride();
+    const int row_stride = dst.template stride<axis>();
 
     int laneid = threadIdx.x % 32;
 
@@ -94,11 +94,11 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
+template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
 __device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
-    const int row_stride = src.row_stride();
+    const int row_stride = src.template stride<axis>();
 
     // each thread needs to do 1 call per width*height
     // attempting to improve striping into dram
