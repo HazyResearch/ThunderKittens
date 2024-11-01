@@ -3,11 +3,11 @@
  * @brief Group (collaborative warp) ops for loading shared tiles from and storing to global memory. 
  */
 
-template<ducks::st::all ST, ducks::gt::l::all GTL>
+template<ducks::st::all ST, ducks::gt::l::all GTL, int axis=2>
 __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
     ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
-    const int row_stride = src.row_stride();
+    const int row_stride = src.stride<axis>();
     
     // each thread needs to do 1 call per width*height / N_WARPS
     // attempting to improve striping into dram
@@ -35,11 +35,11 @@ __device__ static inline void load(ST &dst, const GTL &src, const index &idx) {
         }
     }
 }
-template<ducks::st::all ST, ducks::gt::l::all GTL>
+template<ducks::st::all ST, ducks::gt::l::all GTL, int axis=2>
 __device__ static inline void store(GTL &dst, const ST &src, const index &idx) {
     ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     typename GTL::dtype *dst_ptr = (typename GTL::dtype*)&dst[idx];
-    const int row_stride = dst.row_stride();
+    const int row_stride = dst.stride<axis>();
 
     int laneid = threadIdx.x % GROUP_THREADS;
 
@@ -64,11 +64,11 @@ __device__ static inline void store(GTL &dst, const ST &src, const index &idx) {
     }
 }
 
-template<ducks::st::all ST, ducks::gt::l::all GTL>
+template<ducks::st::all ST, ducks::gt::l::all GTL, int axis=2>
 __device__ static inline void load_async(ST &dst, const GTL &src, const index &idx) {
     ducks::g::check_raw<GTL, ST>{}; // GTL must include a raw pointer to use non-TMA loads and stores
     typename GTL::dtype *src_ptr = (typename GTL::dtype*)&src[idx];
-    const int row_stride = src.row_stride();
+    const int row_stride = src.stride<axis>();
 
     // each thread needs to do 1 call per width*height / N_WARPS
     // attempting to improve striping into dram
