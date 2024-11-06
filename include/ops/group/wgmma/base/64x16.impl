@@ -9,7 +9,8 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, half>) ||
-            (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>),
+            (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>) ||
+            (std::is_same_v<T_D, float>  && std::is_same_v<T_AB, fp8e4m3>),
             "Invalid type combination for WGMMA."
         );
         static_assert(scale_b==1 || scale_b==-1, "Invalid scale B (invert) option");
@@ -84,6 +85,31 @@ struct base<T_D, T_AB, 16, trans_a, trans_b> {
 
             :   "r"(*(uint32_t*)&a_rt.data[0]), "r"(*(uint32_t*)&a_rt.data[1]),
                 "r"(*(uint32_t*)&a_rt.data[2]), "r"(*(uint32_t*)&a_rt.data[3]),
+                
+                "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
+            );
+        }
+        // ----- FP8,FP8 -> FP32 ----- //
+        else if constexpr (std::is_same_v<T_D, float> && std::is_same_v<T_AB, fp8e4m3>) {
+            asm volatile (
+                "{\n"
+                ".reg .pred p;\n" \
+                "setp.ne.b32 p, %9, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n16k32.f32.e4m3.e4m3 " \
+                "{%0, %1, %2, %3}, " \
+                "{%4, %5, %6, %7}, " \
+                "%8, " \
+                "p, 1, %11, %10;\n" \
+                "}\n"
+                // a_regs, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-b
+
+            :   "+f"(dst.tiles[0][0].data[0].x), "+f"(dst.tiles[0][0].data[0].y),
+                "+f"(dst.tiles[0][0].data[1].x), "+f"(dst.tiles[0][0].data[1].y),
+                "+f"(dst.tiles[0][0].data[2].x), "+f"(dst.tiles[0][0].data[2].y),
+                "+f"(dst.tiles[0][0].data[3].x), "+f"(dst.tiles[0][0].data[3].y)
+
+            :   "r"(*(uint32_t*)&a_rt.data[0].__x), "r"(*(uint32_t*)&a_rt.data[1].__x),
+                "r"(*(uint32_t*)&a_rt.data[2].__x), "r"(*(uint32_t*)&a_rt.data[3].__x),
                 
                 "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
             );
