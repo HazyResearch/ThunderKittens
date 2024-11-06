@@ -124,5 +124,5 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float, _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16,  _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half,  _r, _c, layout>;
-
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl8 = rt<fp8e4m3,  _r, _c, layout>;
 } // namespace kittens

@@ -51,6 +51,7 @@ struct load_store {
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "reg_loadstore_gmem=half" :
+                                                    //   std::is_same_v<T, kittens::fp8e4m3> ? "reg_loadstore_gmem=fp8e4m3" :
                                                                                          "reg_loadstore_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -77,6 +78,8 @@ void warp::memory::tile::global_to_register::tests(test_data &results) {
     g2r_sweep_size_2d_warp<load_store<kittens::bf16>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
     g2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
     g2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // g2r_sweep_size_2d_warp<load_store<kittens::fp8e4m3>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // g2r_sweep_size_2d_warp<load_store<kittens::fp8e4m3>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 }
 
 #endif

@@ -157,8 +157,8 @@ template<> __device__ inline float  abs::op<float> (const float &x ) { return fa
 template<> __device__ inline float2 abs::op<float2>(const float2 &x) { return float2{fabsf(x.x), fabsf(x.y)}; }
 template<> __device__ inline bf16   abs::op<bf16>  (const bf16 &x  ) { return __habs(x);                      }
 template<> __device__ inline bf16_2 abs::op<bf16_2>(const bf16_2 &x) { return __habs2(x);                     }
-template<> __device__ inline half   abs::op<half>  (const half &x  ) { return __habs(x);                        }
-template<> __device__ inline half_2 abs::op<half_2>(const half_2 &x) { return __habs2(x);                       }
+template<> __device__ inline half   abs::op<half>  (const half &x  ) { return __habs(x);                      }
+template<> __device__ inline half_2 abs::op<half_2>(const half_2 &x) { return __habs2(x);                     }
 /**
  * @brief Rectified Linear Unit (ReLU) operation.
  *

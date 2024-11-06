@@ -13,8 +13,29 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
+#include <cuda_fp8.h>
+
 #include <string>
 #include <bit>
+
+// #include "base_type_fp8.cuh"
+
+// FP8 types are available starting CUDA 11.8+
+#if (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
+#define CUDA_FP8_ENABLED 1
+#endif
+
+#if defined(__CUDA_ARCH__)
+#  if (__CUDA_ARCH__ >= 900)
+#    if (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
+#      define CUDA_PTX_FP8_CVT_ENABLED 1
+#    endif // (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
+#  elif (__CUDA_ARCH__ == 890)
+#    if (__CUDACC_VER_MAJOR__ > 12) || ((__CUDACC_VER_MAJOR__ == 12) && (__CUDACC_VER_MINOR__ >= 1))
+#      define CUDA_PTX_FP8_CVT_ENABLED 1
+#    endif // (__CUDACC_VER_MAJOR__ > 12) || ((__CUDACC_VER_MAJOR__ == 12) && (__CUDACC_VER_MINOR__ >= 1))
+#  endif // (__CUDA_ARCH__ >= 900)
+#endif // defined(__CUDA_ARCH__)
 
 namespace kittens {
 
@@ -34,6 +55,20 @@ using bf16_2 = __nv_bfloat162;
  * @brief Packed word of two half-precision floating-point values.
  */
 using half_2 = __half2;
+// #ifdef KITTENS_HOPPER
+/**
+ * @brief float8 floating-point type.
+ */
+using fp8e4m3 = __nv_fp8_e4m3;
+/**
+ * @brief 2-packed float8 floating-point type.
+ */
+using fp8e4m3_2 = __nv_fp8x2_e4m3;
+/**
+ * @brief 4-packed float8 floating-point type.
+ */
+using fp8e4m3_4 = __nv_fp8x4_e4m3;
+// #endif
 
 namespace ducks {
 /**
@@ -44,9 +79,9 @@ namespace ducks {
 namespace base_types {
 
 template<typename T>
-concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>; // could add half_2 later if implemented.
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4>; // could add half_2 later if implemented.
 template<typename T>
-concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half>; // could add half_2 later if implemented.
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3>; // could add half_2 later if implemented.
 
 } // namespace base_types
 } // namespace ducks
@@ -115,6 +150,21 @@ template<> struct constants<half_2> {
     static __device__ inline constexpr half_2 pos_infty() { return half_2{constants<half>::pos_infty(), constants<half>::pos_infty()}; }
     static __device__ inline constexpr half_2 neg_infty() { return half_2{constants<half>::neg_infty(), constants<half>::neg_infty()}; }
 };
+#ifdef KITTENS_HOPPER
+template<> struct constants<fp8e4m3> {
+    static __device__ inline constexpr fp8e4m3 zero() { return std::bit_cast<__nv_fp8_e4m3>(uint8_t(0x00)); }
+    static __device__ inline constexpr fp8e4m3 one() { return std::bit_cast<__nv_fp8_e4m3>(uint8_t(0x3C)); }
+};
+template<> struct constants<fp8e4m3_2> {
+    static __device__ inline constexpr fp8e4m3_2 zero() { return std::bit_cast<fp8e4m3_2>(uint16_t(0x0000)); }
+    static __device__ inline constexpr fp8e4m3_2 one() { return std::bit_cast<fp8e4m3_2>(uint16_t(0x3C3C)); }
+};
+template<> struct constants<fp8e4m3_4> {
+    static __device__ inline constexpr fp8e4m3_4 zero() { return std::bit_cast<fp8e4m3_4>(uint32_t(0x00000000)); }
+    static __device__ inline constexpr fp8e4m3_4 one() { return std::bit_cast<fp8e4m3_4>(uint32_t(0x3C3C3C3C)); }
+};
+#endif
+
 
 /**
  * @brief Provides information about packing of elements for a given type.
@@ -181,6 +231,19 @@ template<> struct packing<float4> {
 template<> struct packing<int4> {
     static __device__ inline constexpr int num() { return 4; }
 };
+#ifdef KITTENS_HOPPER
+template<> struct packing<fp8e4m3> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = fp8e4m3;
+    using packed_type = fp8e4m3_4;
+};
+template<> struct packing<fp8e4m3_4> {
+    static __device__ inline constexpr int num() { return 4; }
+    using unpacked_type = fp8e4m3;
+    using packed_type = fp8e4m3_4;
+};
+#endif
+
 
 /**
  * @brief Provides templated functionality to convert between different types.
@@ -195,71 +258,84 @@ template<typename T, typename U> struct convertor {
      * @param u[in] The value of type U to convert.
      * @return T The converted value of type T.
      */
-    static __device__ inline T convert(const U & u) {
+    static __host__ __device__ inline T convert(const U & u) {
         return (T)u;
     }
 };
 template<> struct convertor<float, bf16> {
-    static __device__ inline float convert(const bf16 & u) {
+    static __host__ __device__ inline float convert(const bf16 & u) {
         return 	__bfloat162float(u);
     }
 };
 template<> struct convertor<bf16, float> {
-    static __device__ inline bf16 convert(const float & u) {
+    static __host__ __device__ inline bf16 convert(const float & u) {
         return 	__float2bfloat16_rn(u);
     }
 };
 template<> struct convertor<float2, bf16_2> {
-    static __device__ inline float2 convert(const bf16_2 & u) {
+    static __host__ __device__ inline float2 convert(const bf16_2 & u) {
         return 	__bfloat1622float2(u);
     }
 };
 template<> struct convertor<bf16_2, float2> {
-    static __device__ inline bf16_2 convert(const float2 & u) {
+    static __host__ __device__ inline bf16_2 convert(const float2 & u) {
         return 	__float22bfloat162_rn(u);
     }
 };
 template<> struct convertor<float, half> {
-    static __device__ inline float convert(const half & u) {
+    static __host__ __device__ inline float convert(const half & u) {
         return __half2float(u);
     }
 };
 template<> struct convertor<half, float> {
-    static __device__ inline half convert(const float & u) {
+    static __host__ __device__ inline half convert(const float & u) {
         return __float2half(u);
     }
 };
 template<> struct convertor<float2, half_2> {
-    static __device__ inline float2 convert(const half_2 & u) {
+    static __host__ __device__ inline float2 convert(const half_2 & u) {
         return __half22float2(u);
     }
 };
 template<> struct convertor<half_2, float2> {
-    static __device__ inline half_2 convert(const float2 & u) {
+    static __host__ __device__ inline half_2 convert(const float2 & u) {
         return __float22half2_rn(u);
     }
 };
 template<> struct convertor<bf16, half> {
-    static __device__ inline bf16 convert(const half & u) {
+    static __host__ __device__ inline bf16 convert(const half & u) {
         return __float2bfloat16_rn(__half2float(u));
     }
 };
 template<> struct convertor<half, bf16> {
-    static __device__ inline half convert(const bf16 & u) {
+    static __host__ __device__ inline half convert(const bf16 & u) {
         return __float2half(__bfloat162float(u));
     }
 };
 template<> struct convertor<bf16_2, half_2> {
-    static __device__ inline bf16_2 convert(const half_2 & u) {
+    static __host__ __device__ inline bf16_2 convert(const half_2 & u) {
         return __float22bfloat162_rn(__half22float2(u));
     }
 };
 template<> struct convertor<half_2, bf16_2> {
-    static __device__ inline half_2 convert(const bf16_2 & u) {
+    static __host__ __device__ inline half_2 convert(const bf16_2 & u) {
         return __float22half2_rn(__bfloat1622float2(u));
     }
 };
-
-
+template<> struct convertor<fp8e4m3_4, float4> {
+    static __host__ __device__ inline fp8e4m3_4 convert(const float4& u) {
+        return __nv_fp8x4_e4m3(u);  // Uses built-in constructor
+    }
+};
+template<> struct convertor<fp8e4m3, float> {
+    static __host__ __device__ inline fp8e4m3 convert(const float & u) {
+        return __nv_fp8_e4m3(u);
+    }
+};
+template<> struct convertor<float, fp8e4m3> {
+    static __host__ __device__ inline float convert(const fp8e4m3 & u) {
+        return float(u);
+    }
+};
 }
 }
