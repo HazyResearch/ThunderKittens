@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
         }
         if(abs(diff) > 0.1 || isnan(diff)) {
             if (good == true) { 
-                printf("i: %d, %f\n", i, diff);
+                printf("i: %d, pred: %f, ref: %f, diff: %f\n", i, o[i], o_ref[i], diff);
             }
             good = false;
         }
