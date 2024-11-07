@@ -11,43 +11,73 @@ struct micro_globals {
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void micro_tk(const __grid_constant__ micro_globals g) {
+    // extern __shared__ alignment_dummy __shm[];
+    // shared_allocator al((int*)&__shm[0]);
+    // st_fl<16, 16> (&x_s) = al.allocate<st_fl<16, 16>>();
+    // __syncthreads();
+    // st_fl8<16, 16> (&x_fp8_s) = al.allocate<st_fl8<16, 16>>();
+    // __syncthreads();
+
     extern __shared__ alignment_dummy __shm[];
-    shared_allocator al((int*)&__shm[0]);
-    st_fl<16, 16> (&x_s) = al.allocate<st_fl<16, 16>>();
-    st_fl8<16, 16> (&x_fp8_s) = al.allocate<st_fl8<16, 16>>();
-    st_hf<16, 16> (&x_hf_s) = al.allocate<st_hf<16, 16>>();
-    
-    // register
-    rt_fl<16, 16> x_reg;
-    rt_fl8<16, 16> x_fp8_reg;
-    
-    __syncthreads();
-    load( x_s, g.x, {0, 0, 0, 0});
-    load( x_reg, x_s );
-    zero(x_reg);
-    add(x_reg, x_reg, 2.0f);
+    shared_allocator<1024> al((int*)&__shm[0]);
 
-    __syncthreads();
-    copy(x_fp8_reg, x_reg); // Convert float to FP8
-    one(x_fp8_reg);
     if (threadIdx.x == 0) {
-        __nv_fp8_e4m3 *values = reinterpret_cast<__nv_fp8_e4m3*>(&(x_fp8_reg.tiles[0][0].data[0]));
-        printf("Individual values: %f %f\n", 
-               float(values[0]), 
-               float(values[1]));
+        printf("Initial shm addr: %p\n", (void*)&__shm[0]);
     }
-    copy(x_reg, x_fp8_reg); // Convert FP8 to float
-    __syncthreads();
-
-    // tests
-    if (threadIdx.x == 0) {
-        printf("After conversion to float: %f %f\n", 
-           x_reg.tiles[0][0].data[0],    // Should be 1.0
-           x_reg.tiles[0][1].data[0]);
+        
+    st_fl<32, 32> (&x_s) = al.allocate<st_fl<32, 32>>();
+    if (threadIdx.x == 0) {printf("x_s addr: %p (offset: %ld)\n", (void*)&x_s, 
+            (char*)&x_s - (char*)&__shm[0]);
+    }
+        
+    st_fl8<32, 32> (&x_fp8_s) = al.allocate<st_fl8<32, 32>>();
+    if (threadIdx.x == 0) { 
+        printf("x_fp8_s addr: %p (offset: %ld)\n", (void*)&x_fp8_s,
+            (char*)&x_fp8_s - (char*)&__shm[0]);
     }
 
+    if (threadIdx.x == 0) {
+        // Print swizzle parameters for both types
+        printf("float swizzle_bytes: %d\n", st_fl<32,32>::swizzle_bytes);
+        printf("fp8 swizzle_bytes: %d\n", st_fl8<32,32>::swizzle_bytes);
+    }
+
+    // // Shared copies
+    load( x_s, g.x, {0, 0, 0, 0} );
     __syncthreads();
-    store(x_s, x_reg);
+    copy( x_fp8_s, x_s );
+    // one( x_fp8_s );
+    copy( x_s, x_fp8_s );
+    __syncthreads();
+    
+    // Registers 
+    // rt_fl<16, 16> x_reg;
+    // rt_fl8<16, 16> x_fp8_reg;
+    // __syncthreads();
+    // load( x_s, g.x, {0, 0, 0, 0});
+    // load( x_reg, x_s );
+    // zero(x_reg);
+    // add(x_reg, x_reg, 2.0f);
+    // __syncthreads();
+    // copy(x_fp8_reg, x_reg); // Convert float to FP8
+    // one(x_fp8_reg);
+    // if (threadIdx.x == 0) {
+    //     __nv_fp8_e4m3 *values = reinterpret_cast<__nv_fp8_e4m3*>(&(x_fp8_reg.tiles[0][0].data[0]));
+    //     printf("Individual values: %f %f\n", 
+    //            float(values[0]), 
+    //            float(values[1]));
+    // }
+    // copy(x_reg, x_fp8_reg); // Convert FP8 to float
+    // __syncthreads();
+    // // tests
+    // if (threadIdx.x == 0) {
+    //     printf("After conversion to float: %f %f\n", 
+    //        x_reg.tiles[0][0].data[0],    // Should be 1.0
+    //        x_reg.tiles[0][1].data[0]);
+    // }
+    // __syncthreads();
+    // store(x_s, x_reg);
+
     if (threadIdx.x == 0) { printf("End\n"); } 
     __syncthreads();
     store(g.o, x_s, {0, 0, 0, 0});

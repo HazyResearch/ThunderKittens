@@ -70,6 +70,9 @@ struct KITTENS_DEFAULT_ALIGN st {
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (
+        sizeof(dtype) == 1 ? (  // Add FP8 case
+            32 // TODO: add some static asserts on minimum tile size
+        ) :
         sizeof(dtype) == 2 ? (
             underlying_width%4 == 0 ? 128 :
             underlying_width%2 == 0 ?  64 : 32
