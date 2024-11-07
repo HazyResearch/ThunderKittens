@@ -237,7 +237,62 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            copy(dst.tiles[i][j], src.tiles[i][j]);
+            if constexpr (std::is_same_v<T2, fp8e4m3> && std::is_same_v<U2, float>) { 
+                
+                
+                
+                
+                
+                // Convert float to FP8  ( putting 4 floats into one FP8 )
+                // Our rt_fl has single floats but rt_fl8 has 4 FP8  
+                
+                // float4 combined = make_float4(
+                //     src.tiles[i][j].data->x,      
+                //     src.tiles[i][j+1].data->x,    
+                //     src.tiles[i][j+2].data->x,     
+                //     src.tiles[i][j+3].data->x     
+                // );
+                
+                // // Create individual FP8 values
+                // __nv_fp8_e4m3 fp8_vals[4];
+                // fp8_vals[0] = __nv_fp8_e4m3(combined.x);
+                // fp8_vals[1] = __nv_fp8_e4m3(combined.y);
+                // fp8_vals[2] = __nv_fp8_e4m3(combined.z);
+                // fp8_vals[3] = __nv_fp8_e4m3(combined.w);
+                
+                // // Manually construct the 32-bit value
+                // uint32_t packed = 0;
+                // packed |= (uint32_t)(reinterpret_cast<uint8_t&>(fp8_vals[0])) << 0;
+                // packed |= (uint32_t)(reinterpret_cast<uint8_t&>(fp8_vals[1])) << 8;
+                // packed |= (uint32_t)(reinterpret_cast<uint8_t&>(fp8_vals[2])) << 16;
+                // packed |= (uint32_t)(reinterpret_cast<uint8_t&>(fp8_vals[3])) << 24;
+                
+                // // Store the packed value
+                // dst.tiles[i][j].data[0].__x = packed;
+                
+                // // // Print for debugging
+                // // if ( threadIdx.x == 0 ) {
+                // //     printf("Raw packed value: 0x%08X\n", packed);
+                // //     printf("Stored value: 0x%08X\n", dst.tiles[i][j].data[0].__x);
+                // // }
+
+                // j += 3;
+
+
+            } else if constexpr (std::is_same_v<T2, float> && std::is_same_v<U2, fp8e4m3>) {
+                // Convert FP8 to float4
+                // float combined = float(src.tiles[i][j]);
+                
+                // float2 result;
+                // result.x = float(fp8_val);  // First FP8 value
+                // result.y = float(fp8_val);  // Second FP8 value
+                
+                // dst.tiles[i][j].data->x = result.x;
+                // dst.tiles[i][j].data->y = result.y;
+                // j += 1;
+            } else {
+                copy(dst.tiles[i][j], src.tiles[i][j]);
+            }
         }
     }
 }

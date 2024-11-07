@@ -1,4 +1,5 @@
 #include "kittens.cuh"
+#include "cuda_fp8.h"
 
 using namespace kittens;
 #define NUM_THREADS (kittens::WARP_THREADS)
@@ -23,12 +24,36 @@ void micro_tk(const __grid_constant__ micro_globals g) {
     __syncthreads();
     load( x_s, g.x, {0, 0, 0, 0});
     load( x_reg, x_s );
-    add(x_reg, x_reg, 1.0f);
+    zero(x_reg);
+    add(x_reg, x_reg, 2.0f);
+
+    copy(x_fp8_reg, x_reg); // Convert float to FP8
+    // one(x_fp8_reg);
+    //tests
+    if (threadIdx.x == 0) {
+        __nv_fp8_e4m3 *values = reinterpret_cast<__nv_fp8_e4m3*>(&(x_fp8_reg.tiles[0][0].data[16]));
+        printf("Individual values: %f %f %f %f\n", 
+               float(values[0]), 
+               float(values[1]), 
+               float(values[2]), 
+               float(values[3]));
+    }
+    // __syncthreads();
+    // copy(x_reg, x_fp8_reg); // Convert FP8 to float
+
+    // // tests
+    // if (threadIdx.x == 0) {
+    //     printf("After conversion: %f\n", x_reg.tiles[0][0].data[0]);
+    //     __nv_fp8_e4m3 one_fp8(1.0f);
+    //     printf("Reference one: %f\n", float(one_fp8));
+    //     uint8_t bits;
+    //     memcpy(&bits, &one_fp8, sizeof(uint8_t));
+    //     printf("Correct bit pattern for 1.0: 0x%02X\n", bits);
+    // }
+
     __syncthreads();
-    copy(x_fp8_reg, x_reg);
-    copy(x_reg, x_fp8_reg);
-    // copy(x_fp8_s, x_s);
-    printf("3");
+    store(x_s, x_reg);
+    if (threadIdx.x == 0) { printf("End\n"); } 
     __syncthreads();
     store(g.o, x_s, {0, 0, 0, 0});
     __syncthreads();
@@ -57,7 +82,19 @@ void dispatch_micro( float *d_x, float *d_o ) {
 //     float t = *a;
 //     __nv_fp8_e4m3 fp8(t);
 //     *b = float(fp8);
+
+//     float4 f4 = make_float4(1.0f, 2.0f, 3.0f, 4.0f);
+//     __nv_fp8x4_e4m3 fp8_4(f4);
+//     printf("Raw storage: %u\n", fp8_4.__x);
+//     __nv_fp8_e4m3 *values = reinterpret_cast<__nv_fp8_e4m3*>(&fp8_4);
+//     printf("Individual values: %f %f %f %f\n", 
+//            float(values[0]), 
+//            float(values[1]), 
+//            float(values[2]), 
+//            float(values[3]));
 // }
+
+
 // int main() {
 //     float *a, *b;
 //     cudaMalloc(&a, sizeof(float));
