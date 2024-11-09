@@ -1,6 +1,5 @@
 #pragma once
 
-#include "util.cuh"
 #include <torch/extension.h>
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")

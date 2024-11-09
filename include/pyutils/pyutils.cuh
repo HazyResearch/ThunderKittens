@@ -80,6 +80,11 @@ template<ducks::gl::all GL> struct from_object<GL> {
         globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
         kernel<<<__g__.grid(), __g__.block()>>>(__g__); \
     });
+#define BIND_FUNCTION(module, function, globals_struct, ...) \
+    module.def(#function, [](pybind11::args args) { \
+        globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
+        function(__g__); \
+    });
 
 } // namespace py
 } // namespace kittens
