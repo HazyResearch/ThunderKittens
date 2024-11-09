@@ -7,18 +7,27 @@ import math
 
 B = 1
 N = 16
-D = 16
+D = 32
 
 TESTNAME = sys.argv[1]
 
 if TESTNAME == 'ones':
-    x = torch.zeros((B, N, D), dtype=torch.bfloat16, device='cuda')
+    x = torch.ones((B, N, D), dtype=torch.bfloat16, device='cuda')
+elif TESTNAME == 'randn':
+    x = torch.randn((B, N, D), dtype=torch.bfloat16, device='cuda')
+elif TESTNAME == "arange":
+    x = torch.arange(B*N*D, dtype=torch.bfloat16, device='cuda').reshape(B, N, D)
 else:
     print('Invalid test name')
     sys.exit(0)
 
 def get_output(x):
+    # TEST 1: add
     o = x + 1
+
+    # TEST 2: warp-multiply
+    # o = torch.matmul(x, x.transpose(1, 2))
+
     return o
 o = get_output(x)
 

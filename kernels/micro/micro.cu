@@ -4,51 +4,58 @@
 using namespace kittens;
 #define NUM_THREADS (kittens::WARP_THREADS)
 
+#define row 16
+#define col 32
+
 struct micro_globals {
-    using x_gl  = gl<float, -1, -1, -1, -1, st_fl<16, 16>>;
+    using x_gl  = gl<float, -1, -1, -1, -1, st_fl<row, col>>;
     x_gl x, o;
 };
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void micro_tk(const __grid_constant__ micro_globals g) {
-    // extern __shared__ alignment_dummy __shm[];
-    // shared_allocator al((int*)&__shm[0]);
-    // st_fl<16, 16> (&x_s) = al.allocate<st_fl<16, 16>>();
-    // __syncthreads();
-    // st_fl8<16, 16> (&x_fp8_s) = al.allocate<st_fl8<16, 16>>();
-    // __syncthreads();
-
     extern __shared__ alignment_dummy __shm[];
-    shared_allocator<1024> al((int*)&__shm[0]);
+    shared_allocator al((int*)&__shm[0]);
+    st_fl<row, col> (&x_s) = al.allocate<st_fl<row, col>>();
+    st_fl8<row, col> (&x_fp8_s) = al.allocate<st_fl8<row, col>>();
 
-    if (threadIdx.x == 0) {
-        printf("Initial shm addr: %p\n", (void*)&__shm[0]);
-    }
-        
-    st_fl<32, 32> (&x_s) = al.allocate<st_fl<32, 32>>();
-    if (threadIdx.x == 0) {printf("x_s addr: %p (offset: %ld)\n", (void*)&x_s, 
-            (char*)&x_s - (char*)&__shm[0]);
-    }
-        
-    st_fl8<32, 32> (&x_fp8_s) = al.allocate<st_fl8<32, 32>>();
-    if (threadIdx.x == 0) { 
-        printf("x_fp8_s addr: %p (offset: %ld)\n", (void*)&x_fp8_s,
-            (char*)&x_fp8_s - (char*)&__shm[0]);
-    }
+    // Warp-level MMA
+    rt_fl<row, col> x_reg_fl;
+    rt_fl8<row, col> x_fp8_reg;  // fp8x4 ( 4 floats ) per element 
+    rt_fl <row, col> att_block;  // float2 (2 floats ) per element
 
-    if (threadIdx.x == 0) {
-        // Print swizzle parameters for both types
-        printf("float swizzle_bytes: %d\n", st_fl<32,32>::swizzle_bytes);
-        printf("fp8 swizzle_bytes: %d\n", st_fl8<32,32>::swizzle_bytes);
-    }
 
-    // // Shared copies
-    load( x_s, g.x, {0, 0, 0, 0} );
+    // zero(att_block);
+    load(x_s, g.x, {0, 0, 0, 0});
     __syncthreads();
-    copy( x_fp8_s, x_s );
+    load(x_reg_fl, x_s);
+    zero(x_reg_fl);
+    __syncthreads();
+    // one(x_reg_fl);
+
+    // // now do the matmul in fp8
+    copy(x_fp8_reg, x_reg_fl);
+    one(x_fp8_reg);
+    __syncthreads();
+    copy(x_reg_fl, x_fp8_reg);
+    __syncthreads();
+    store(x_s, x_reg_fl);
+    __syncthreads();
+    // mma_ABt(att_block, x_fp8_reg, x_fp8_reg, att_block); // o = torch.matmul(x, x.transpose(1, 2))
+    // __syncthreads();
+    // store(x_s, att_block);
+
+
+
+
+
+    // Shared copies
+    // load( x_s, g.x, {0, 0, 0, 0} );
+    // __syncthreads();
+    // copy( x_fp8_s, x_s );
     // one( x_fp8_s );
-    copy( x_s, x_fp8_s );
-    __syncthreads();
+    // copy( x_s, x_fp8_s );
+    // __syncthreads();
     
     // Registers 
     // rt_fl<16, 16> x_reg;
@@ -85,10 +92,10 @@ void micro_tk(const __grid_constant__ micro_globals g) {
 }
 
 void dispatch_micro( float *d_x, float *d_o ) {
-    using x_gl = gl<float, -1, -1, -1, -1, st_fl<16, 16>>;
+    using x_gl = gl<float, -1, -1, -1, -1, st_fl<row, col>>;
     using globals = micro_globals;
-    x_gl  x_arg{d_x, 1, 1, 16, 16};
-    x_gl  o_arg{d_o, 1, 1, 16, 16};
+    x_gl  x_arg{d_x, 1, 1, row, col};
+    x_gl  o_arg{d_o, 1, 1, row, col};
     globals g{x_arg, o_arg};
     unsigned long mem_size = 50480; 
     cudaFuncSetAttribute(

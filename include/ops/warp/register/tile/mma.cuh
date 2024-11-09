@@ -98,6 +98,54 @@ __device__ static inline void hmma16816(      half_2 &d0,       half_2 &d1,
         "r"(*(uint32_t*)(&c0)), "r"(*(uint32_t*)(&c1))
     );
 }
+
+/**
+* @brief Perform the HMMA.16816 operation for FP8 using fp8e4m3_2.
+*
+* Using mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 instruction
+* but with fp8e4m3_2 (2 FP8 values) instead of fp8e4m3_4
+*/
+/**
+ * @brief Perform the HMMA.16816 operation for FP8.
+ *
+ * This function performs the fp8-precision matrix multiply-accumulate operation
+ * using the `mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32` instruction.
+ *
+ * @param[out] d0 The first half of the output float2 accumulator.
+ * @param[out] d1 The second half of the output float2 accumulator.
+ * @param[in] a0,a1,a2,a3 Input FP8 matrix A values
+ * @param[in] b0,b1 Input FP8 matrix B values
+ * @param[in] c0,c1 Input float2 accumulator matrix C values
+ */
+__device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
+                                       const fp8e4m3_4 &a0, const fp8e4m3_4 &a1, 
+                                       const fp8e4m3_4 &a2, const fp8e4m3_4 &a3,
+                                       const fp8e4m3_4 &b0, const fp8e4m3_4 &b1,
+                                       const float2 &c0, const float2 &c1) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 "
+        "{%0, %1, %2, %3}, "
+        "{%4, %5, %6, %7}, "
+        "{%8, %9}, "
+        "{%10, %11, %12, %13};"
+        
+        // D matrix (output)
+        : "+f"(d0.x), "+f"(d0.y),
+          "+f"(d1.x), "+f"(d1.y)
+        
+        // A matrix
+        : "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+          "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+        
+        // B matrix
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+        
+        // C matrix
+        "f"(c0.x), "f"(c0.y),
+        "f"(c1.x), "f"(c1.y)
+    );
+}
+
 /**
  * @brief Base matrix multiply-accumulate operation for row layout.
  *
@@ -315,7 +363,9 @@ __device__ static inline void mma_ABt(D &d,
         (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, bf16> &&
             std::is_same_v<typename B::T, bf16> && std::is_same_v<typename C::T, float>) ||
         (std::is_same_v<typename D::T, half> && std::is_same_v<typename A::T, half> &&
-            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)
+            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)  ||
+        (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, fp8e4m3> &&
+            std::is_same_v<typename B::T, fp8e4m3> && std::is_same_v<typename C::T, float>)
     );
     #pragma unroll
     for(int n = 0; n < D::height; n++) {

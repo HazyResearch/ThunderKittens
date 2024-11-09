@@ -4,7 +4,7 @@
 
 #define ATTN_B 1
 #define ATTN_N 16
-#define ATTN_D 16
+#define ATTN_D 32
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {

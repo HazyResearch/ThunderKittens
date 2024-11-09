@@ -52,17 +52,18 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using dtype = T2; ///< Data type of the matrix elements
 
     static_assert(
-        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2> || std::is_same_v<dtype, fp8e4m3_2>,
+        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2> || std::is_same_v<dtype, fp8e4m3_4>,
         "rt_base was provided an unsupported type."
     );
 
-    static constexpr int tile_size            = 16; ///< Tile size is a constant 16.
-    static constexpr int rows                 = tile_size; ///< Number of rows.
-    static constexpr int cols                 = tile_size; ///< Number of cols.
-    static constexpr int num_elements         = rows*cols; // 256
-    static constexpr int elements_per_thread  = num_elements / 32; // 8
+    static constexpr int tile_size_row        = 16; // < Tile size is a constant 16 for everyone
+    static constexpr int tile_size_col        = std::is_same_v<T, fp8e4m3> ? 32 : 16; // < Tile size is a constant 16 for everyone but float8
+    static constexpr int rows                 = tile_size_row; ///< Number of rows.
+    static constexpr int cols                 = tile_size_col; ///< Number of cols.
+    static constexpr int num_elements         = rows*cols; // 256 (64 for fp8e4m3)
+    static constexpr int elements_per_thread  = num_elements / 32; // 8 (2 for fp8e4m3)
 
-    static constexpr int packed_per_thread    = elements_per_thread / base_types::packing<dtype>::num(); // 4
+    static constexpr int packed_per_thread    = (elements_per_thread / base_types::packing<dtype>::num()) ; // 4
     static constexpr int registers_per_thread = packed_per_thread * sizeof(dtype) / 4; // 4 or 8, registers are 32-bit words
 
     using row_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::align, ducks::rv_layout::ortho>; // for holding column reductions
@@ -70,6 +71,10 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
 
     dtype data[packed_per_thread]; ///< The actual storage for the base tile
 };
+
+// rt_base is 2x the number of elements for fp8e4m3
+// then when we convert a 16x16 of float2, we have 512 elements in the tile
+// and with fp8e4m3x4 packed type, we have 16x32x4=2048 elements in the tile
 
 /* ----------  CONCEPTS  ---------- */
 
@@ -93,5 +98,5 @@ template<typename T> concept all = requires {
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float, L>;
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16, L>;
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half, L>;
-
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl8 = rt_base<fp8e4m3, L>;
 }

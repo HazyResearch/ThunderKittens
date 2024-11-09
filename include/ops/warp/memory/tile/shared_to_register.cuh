@@ -48,8 +48,8 @@ __device__ inline static void load(RT &dst, const ST &src) {
             if constexpr (sizeof(typename ST::dtype) == 2) {
                 // handle 16-bit types
                 U2 tmp[4];
-                int row = i*dst.tile_size + (laneid % 16);
-                int col = j*dst.tile_size + (laneid / 16) * 8;
+                int row = i*dst.tile_size_row + (laneid % 16);
+                int col = j*dst.tile_size_col + (laneid / 16) * 8;
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                     move<U2>::ldsm4(tmp[0], tmp[1], tmp[2], tmp[3], src.idx(shared_addr, {row, col}));
                 }
@@ -65,12 +65,12 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 // handle the row-major layout for 32-bit types
                 int row, col;
                 if constexpr (ST::rows == ST::underlying_rows && ST::cols == ST::underlying_cols) {
-                    row = i*dst.tile_size + (laneid / 4);
-                    col = j*dst.tile_size + 2*(laneid % 4);
+                    row = i*dst.tile_size_row + (laneid / 4);
+                    col = j*dst.tile_size_col + 2*(laneid % 4);
                 }
                 else {
-                    row = i*dst.tile_size + (laneid / 4)   + src.row_offset;
-                    col = j*dst.tile_size + 2*(laneid % 4) + src.col_offset;
+                    row = i*dst.tile_size_row + (laneid / 4)   + src.row_offset;
+                    col = j*dst.tile_size_col + 2*(laneid % 4) + src.col_offset;
                 }
                 int blit = sizeof(typename ST::dtype)*((laneid%4)/2);
                 U2 tmp[4];
@@ -103,8 +103,8 @@ __device__ inline static void load(RT &dst, const ST &src) {
             else {
                 // handle the column-major layout
                 U2 tmp[4];
-                int row = i*dst.tile_size + 2*(laneid % 4);
-                int col = j*dst.tile_size + (laneid / 4);
+                int row = i*dst.tile_size_row + 2*(laneid % 4);
+                int col = j*dst.tile_size_col + (laneid / 4);
                 move<U>::lds(tmp[0].x, src.idx(shared_addr, {row+0, col+0}));
                 move<U>::lds(tmp[0].y, src.idx(shared_addr, {row+1, col+0}));
                 move<U>::lds(tmp[1].x, src.idx(shared_addr, {row+0, col+8}));
@@ -159,8 +159,8 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
                 tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
 #ifdef KITTENS_HOPPER
-                int row = i*src.tile_size + (laneid % 16);
-                int col = j*src.tile_size + (laneid / 16) * 8;
+                int row = i*src.tile_size_row + (laneid % 16);
+                int col = j*src.tile_size_col + (laneid / 16) * 8;
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                     move<U2>::stsm4(dst.idx(shared_addr, {row, col}), tmp[0], tmp[1], tmp[2], tmp[3]);
                 }
@@ -169,16 +169,16 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 }
 #else
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
-                    int row = i*src.tile_size + (laneid / 4);
-                    int col = j*src.tile_size + 2*(laneid % 4);
+                    int row = i*src.tile_size_row + (laneid / 4);
+                    int col = j*src.tile_size_col + 2*(laneid % 4);
                     move<U2>::sts(dst.idx(shared_addr, {row+0, col+0}), tmp[0]);
                     move<U2>::sts(dst.idx(shared_addr, {row+8, col+0}), tmp[1]);
                     move<U2>::sts(dst.idx(shared_addr, {row+0, col+8}), tmp[2]);
                     move<U2>::sts(dst.idx(shared_addr, {row+8, col+8}), tmp[3]);
                 }
                 else {
-                    int row = i*src.tile_size + 2*(laneid % 4);
-                    int col = j*src.tile_size + (laneid / 4);
+                    int row = i*src.tile_size_row + 2*(laneid % 4);
+                    int col = j*src.tile_size_col + (laneid / 4);
                     move<U>::sts(dst.idx(shared_addr, {row+0, col+0}), tmp[0].x);
                     move<U>::sts(dst.idx(shared_addr, {row+1, col+0}), tmp[0].y);
                     move<U>::sts(dst.idx(shared_addr, {row+0, col+8}), tmp[1].x);
@@ -194,12 +194,12 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 // handle the row-major layout for 32-bit types
                 int row, col;
                 if constexpr (ST::rows == ST::underlying_rows && ST::cols == ST::underlying_cols) {
-                    row = i*src.tile_size + (laneid / 4);
-                    col = j*src.tile_size + 2*(laneid % 4);
+                    row = i*src.tile_size_row + (laneid / 4);
+                    col = j*src.tile_size_col + 2*(laneid % 4);
                 }
                 else {
-                    row = i*src.tile_size + (laneid / 4)   + dst.row_offset;
-                    col = j*src.tile_size + 2*(laneid % 4) + dst.col_offset;
+                    row = i*src.tile_size_row + (laneid / 4)   + dst.row_offset;
+                    col = j*src.tile_size_col + 2*(laneid % 4) + dst.col_offset;
                 }
                 int blit = sizeof(typename ST::dtype)*((laneid%4) / 2);
                 T2 reg_tmp[4];
@@ -238,8 +238,8 @@ __device__ inline static void store(ST &dst, const RT &src) {
             }
             else {
                 // handle the column-major layout
-                int row = i*src.tile_size + 2*(laneid % 4);
-                int col = j*src.tile_size + (laneid / 4);
+                int row = i*src.tile_size_row + 2*(laneid % 4);
+                int col = j*src.tile_size_col + (laneid / 4);
                 U2 tmp[4];
                 tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
                 tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);

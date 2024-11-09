@@ -61,12 +61,13 @@ struct rt {
     using dtype = T2; ///< Data type of the matrix elements
 
     static constexpr int rows                = _rows; ///< Total number of rows.
-    static_assert(rows % rt_base<T, layout>::tile_size == 0, "Rows must be divisible by the tile size");
+    static_assert(rows % rt_base<T, layout>::tile_size_row == 0, "Rows must be divisible by the tile size");
     static constexpr int cols                = _cols; ///< Total number of columns.
-    static_assert(cols % rt_base<T, layout>::tile_size == 0, "Columns must be divisible by the tile size");
-    static constexpr int height              = rows / rt_base<T, layout>::tile_size; ///< Height in subtiles.
-    static constexpr int width               = cols / rt_base<T, layout>::tile_size; ///< Width in subtiles.
-    static constexpr int tile_size           = rt_base<T, layout>::tile_size; ///< Size of the base tile.
+    static_assert(cols % rt_base<T, layout>::tile_size_col == 0, "Columns must be divisible by the tile size");
+    static constexpr int height              = rows / rt_base<T, layout>::tile_size_row; ///< Height in subtiles.
+    static constexpr int width               = cols / rt_base<T, layout>::tile_size_col; ///< Width in subtiles.
+    static constexpr int tile_size_row        = rt_base<T, layout>::tile_size_row;        ///< Size of the base tile.
+    static constexpr int tile_size_col        = rt_base<T, layout>::tile_size_col;        ///< Size of the base tile.
     static constexpr int num_elements        = rt_base<T, layout>::num_elements        * width * height; ///< Total number of elements.
     static constexpr int elements_per_thread = rt_base<T, layout>::elements_per_thread * width * height; ///< Elements handled per thread.
     static constexpr int packed_per_thread   = rt_base<T, layout>::packed_per_thread   * width * height; ///< Packed elements per thread.

@@ -235,12 +235,12 @@ template<> struct packing<int4> {
 template<> struct packing<fp8e4m3> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = fp8e4m3;
-    using packed_type = fp8e4m3_2;
+    using packed_type = fp8e4m3_4;
 };
-template<> struct packing<fp8e4m3_2> {
-    static __device__ inline constexpr int num() { return 2; }
+template<> struct packing<fp8e4m3_4> {
+    static __device__ inline constexpr int num() { return 4; }
     using unpacked_type = fp8e4m3;
-    using packed_type = fp8e4m3_2;
+    using packed_type = fp8e4m3_4;
 };
 #endif
 
@@ -327,6 +327,12 @@ template<> struct convertor<fp8e4m3_4, float4> {
         return __nv_fp8x4_e4m3(u); 
     }
 };
+template<> struct convertor<float4, fp8e4m3_4> {
+    static __host__ __device__ inline float4 convert(const fp8e4m3_4& u) {
+        __nv_fp8_e4m3 *vals = reinterpret_cast<__nv_fp8_e4m3*>(const_cast<__nv_fp8x4_e4m3*>(&u));
+        return make_float4(float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]));
+    }
+};
 template<> struct convertor<fp8e4m3_2, float2> {
     static __host__ __device__ inline fp8e4m3_2 convert(const float2& u) {
         return __nv_fp8x2_e4m3(u); 
@@ -346,6 +352,26 @@ template<> struct convertor<fp8e4m3, float> {
 template<> struct convertor<float, fp8e4m3> {
     static __host__ __device__ inline float convert(const fp8e4m3 & u) {
         return float(u);
+    }
+};
+// Float -> FP8: one float2 (2 values) should expand to fill eight fp8s (needs 2 fp8e4m3_4s to store)
+template<> struct convertor<fp8e4m3_4, float2> {
+    static __host__ __device__ inline fp8e4m3_4 convert(const float2& u) {
+        __nv_fp8_e4m3 vals[4];
+        // Each float value gets duplicated once in the fp8x4
+        vals[0] = __nv_fp8_e4m3(u.x);
+        vals[1] = __nv_fp8_e4m3(u.x);
+        vals[2] = __nv_fp8_e4m3(u.y);
+        vals[3] = __nv_fp8_e4m3(u.y);
+        return *reinterpret_cast<__nv_fp8x4_e4m3*>(vals);
+    }
+};
+
+// FP8 -> Float: two fp8e4m3_4s (8 values) combine into one float2 (2 values)
+template<> struct convertor<float2, fp8e4m3_4> {
+    static __host__ __device__ inline float2 convert(const fp8e4m3_4& u) {
+        __nv_fp8_e4m3 *vals = reinterpret_cast<__nv_fp8_e4m3*>(const_cast<__nv_fp8x4_e4m3*>(&u));
+        return make_float2(float(vals[0]), float(vals[2]));
     }
 };
 }
