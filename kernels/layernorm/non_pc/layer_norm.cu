@@ -211,7 +211,7 @@ void dispatch_layernorm(
 
 
 #ifdef TK_COMPILE_FUSED_LAYERNORM
-#include "common/pyutils/torch_helpers.cuh"
+#include "pyutils/torch_helpers.cuh"
 #include <iostream>
 std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     const torch::Tensor x, 
