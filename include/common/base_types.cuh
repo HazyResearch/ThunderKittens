@@ -18,24 +18,6 @@
 #include <string>
 #include <bit>
 
-// #include "base_type_fp8.cuh"
-
-// FP8 types are available starting CUDA 11.8+
-#if (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
-#define CUDA_FP8_ENABLED 1
-#endif
-
-#if defined(__CUDA_ARCH__)
-#  if (__CUDA_ARCH__ >= 900)
-#    if (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
-#      define CUDA_PTX_FP8_CVT_ENABLED 1
-#    endif // (__CUDACC_VER_MAJOR__ >= 12) || ((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 8))
-#  elif (__CUDA_ARCH__ == 890)
-#    if (__CUDACC_VER_MAJOR__ > 12) || ((__CUDACC_VER_MAJOR__ == 12) && (__CUDACC_VER_MINOR__ >= 1))
-#      define CUDA_PTX_FP8_CVT_ENABLED 1
-#    endif // (__CUDACC_VER_MAJOR__ > 12) || ((__CUDACC_VER_MAJOR__ == 12) && (__CUDACC_VER_MINOR__ >= 1))
-#  endif // (__CUDA_ARCH__ >= 900)
-#endif // defined(__CUDA_ARCH__)
 
 namespace kittens {
 
@@ -55,7 +37,7 @@ using bf16_2 = __nv_bfloat162;
  * @brief Packed word of two half-precision floating-point values.
  */
 using half_2 = __half2;
-// #ifdef KITTENS_HOPPER
+#ifdef KITTENS_HOPPER
 /**
  * @brief float8 floating-point type.
  */
@@ -68,7 +50,7 @@ using fp8e4m3_2 = __nv_fp8x2_e4m3;
  * @brief 4-packed float8 floating-point type.
  */
 using fp8e4m3_4 = __nv_fp8x4_e4m3;
-// #endif
+#endif
 
 namespace ducks {
 /**
@@ -322,6 +304,7 @@ template<> struct convertor<half_2, bf16_2> {
         return __float22half2_rn(__bfloat1622float2(u));
     }
 };
+#ifdef KITTENS_HOPPER
 template<> struct convertor<fp8e4m3_4, float4> {
     static __host__ __device__ inline fp8e4m3_4 convert(const float4& u) {
         return __nv_fp8x4_e4m3(u); 
@@ -354,25 +337,6 @@ template<> struct convertor<float, fp8e4m3> {
         return float(u);
     }
 };
-// Float -> FP8: one float2 (2 values) should expand to fill eight fp8s (needs 2 fp8e4m3_4s to store)
-template<> struct convertor<fp8e4m3_4, float2> {
-    static __host__ __device__ inline fp8e4m3_4 convert(const float2& u) {
-        __nv_fp8_e4m3 vals[4];
-        // Each float value gets duplicated once in the fp8x4
-        vals[0] = __nv_fp8_e4m3(u.x);
-        vals[1] = __nv_fp8_e4m3(u.x);
-        vals[2] = __nv_fp8_e4m3(u.y);
-        vals[3] = __nv_fp8_e4m3(u.y);
-        return *reinterpret_cast<__nv_fp8x4_e4m3*>(vals);
-    }
-};
-
-// FP8 -> Float: two fp8e4m3_4s (8 values) combine into one float2 (2 values)
-template<> struct convertor<float2, fp8e4m3_4> {
-    static __host__ __device__ inline float2 convert(const fp8e4m3_4& u) {
-        __nv_fp8_e4m3 *vals = reinterpret_cast<__nv_fp8_e4m3*>(const_cast<__nv_fp8x4_e4m3*>(&u));
-        return make_float2(float(vals[0]), float(vals[2]));
-    }
-};
+#endif
 }
 }
