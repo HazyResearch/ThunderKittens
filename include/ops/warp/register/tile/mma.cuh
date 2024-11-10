@@ -180,6 +180,34 @@ __device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::row> 
  * This function performs the base matrix multiply-accumulate operation
  * using the `hmma16816` function for matrices in row layout.
  *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<fp8e4m3, row_layout> matrix.
+ * @param[in] b The second input rt_base<fp8e4m3, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                    const rt_base<fp8e4m3,  ducks::rt_layout::row> &a,
+                                    const rt_base<fp8e4m3,  ducks::rt_layout::col> &b, // in col-major mode
+                                    const rt_base<float, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
  * @param[out] d The output rt_base<half_2, row_layout> accumulator.
  * @param[in] a The first input rt_base<half_2, row_layout> matrix.
  * @param[in] b The second input rt_base<half_2, col_layout> matrix in column-major mode.
@@ -231,6 +259,37 @@ __device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::row>
     );
 }
 /**
+ * @brief Base dot product operation for row layout.
+ *
+ * This function performs the base dot product operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<fp8e4m3x4, row_layout> matrix.
+ * @param[in] b The second input rt_base<fp8e4m3x4, row_layout> matrix in row-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<fp8e4m3,  ducks::rt_layout::row> &a,
+                                     const rt_base<fp8e4m3,  ducks::rt_layout::row> &b, // in row-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2], // for some reason this one seems to need to be backwards
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3], // for some reason this one seems to need to be backwards
+        c.data[2], c.data[3]
+    );
+}
+
+
+
+/**
  * @brief Base matrix multiply-accumulate operation for row layout with transposed A.
  *
  * This function performs the base matrix multiply-accumulate operation
@@ -259,6 +318,35 @@ __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::row>
     );
 }
 /**
+ * @brief Base matrix multiply-accumulate operation for row layout with transposed A.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<fp8e4m3x4, col_layout> matrix.
+ * @param[in] b The second input rt_base<fp8e4m3x4, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::row> &d,
+                                     const rt_base<fp8e4m3,  ducks::rt_layout::col> &a,
+                                     const rt_base<fp8e4m3,  ducks::rt_layout::col> &b, // in col-major mode
+                                     const rt_base<float, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+
+/**
  * @brief Base matrix multiply-accumulate operation for row layout with transposed A and B.
  *
  * This function performs the base matrix multiply-accumulate operation
@@ -272,6 +360,34 @@ __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::row>
 __device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::row> &d,
                                       const rt_base<bf16,  ducks::rt_layout::col> &a,
                                       const rt_base<bf16,  ducks::rt_layout::row> &b, // in col-major mode
+                                      const rt_base<float, ducks::rt_layout::row> &c) {
+    hmma16816(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        c.data[0], c.data[1]
+    );
+    hmma16816(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        c.data[2], c.data[3]
+    );
+}
+/**
+ * @brief Base matrix multiply-accumulate operation for row layout with transposed A and B.
+ *
+ * This function performs the base matrix multiply-accumulate operation
+ * using the `hmma16816` function for matrices in row layout.
+ *
+ * @param[out] d The output rt_base<float2, row_layout> accumulator.
+ * @param[in] a The first input rt_base<fp8e4m3x4, col_layout> matrix.
+ * @param[in] b The second input rt_base<fp8e4m3x4, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
+ */
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::row> &d,
+                                      const rt_base<fp8e4m3,  ducks::rt_layout::col> &a,
+                                      const rt_base<fp8e4m3,  ducks::rt_layout::row> &b, // in col-major mode
                                       const rt_base<float, ducks::rt_layout::row> &c) {
     hmma16816(
         d.data[0], d.data[1],
@@ -313,7 +429,9 @@ __device__ static inline void mma_AB(D &d,
         (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, bf16> &&
             std::is_same_v<typename B::T, bf16> && std::is_same_v<typename C::T, float>) ||
         (std::is_same_v<typename D::T, half> && std::is_same_v<typename A::T, half> &&
-            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)
+            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)   ||
+        (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, fp8e4m3> &&
+            std::is_same_v<typename B::T, fp8e4m3> && std::is_same_v<typename C::T, float>)
     );
     #pragma unroll
     for(int n = 0; n < D::height; n++) {
@@ -415,7 +533,9 @@ __device__ static inline void mma_AtB(D &d,
         (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, bf16> &&
             std::is_same_v<typename B::T, bf16> && std::is_same_v<typename C::T, float>) ||
         (std::is_same_v<typename D::T, half> && std::is_same_v<typename A::T, half> &&
-            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)
+            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)   ||
+        (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, fp8e4m3> &&
+            std::is_same_v<typename B::T, fp8e4m3> && std::is_same_v<typename C::T, float>)
     );
     #pragma unroll
     for(int n = 0; n < D::height; n++) {
@@ -465,7 +585,9 @@ __device__ static inline void mma_AtBt(D &d,
         (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, bf16> &&
             std::is_same_v<typename B::T, bf16> && std::is_same_v<typename C::T, float>) ||
         (std::is_same_v<typename D::T, half> && std::is_same_v<typename A::T, half> &&
-            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)
+            std::is_same_v<typename B::T, half> && std::is_same_v<typename C::T, half>)   ||
+        (std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, fp8e4m3> &&
+            std::is_same_v<typename B::T, fp8e4m3> && std::is_same_v<typename C::T, float>)
     );
     #pragma unroll
     for(int n = 0; n < D::height; n++) {
