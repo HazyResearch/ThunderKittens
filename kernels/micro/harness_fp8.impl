@@ -23,23 +23,24 @@ inline void __cudaCheckError( const char *file, const int line ) {
 int main(int argc, char **argv) {
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS_X = ATTN_B*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_O = ATTN_B*ATTN_N*ATTN_N;
     float *x     = new float[TOTAL_ELEMENTS_X];
-    float *o     = new float[TOTAL_ELEMENTS_X];
-    float *o_ref = new float[TOTAL_ELEMENTS_X];
+    float *o     = new float[TOTAL_ELEMENTS_O];
+    float *o_ref = new float[TOTAL_ELEMENTS_O];
 
     if(argc > 1) {
         std::ifstream infile(argv[1]);
         for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {   infile >> x[i];    }
-        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {   infile >> o_ref[i];  }
+        for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {   infile >> o_ref[i];  }
         std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
     }
 
     // set the inputs
     float *d_x, *d_o;
     cudaMalloc(&d_x, TOTAL_ELEMENTS_X * sizeof(float));
-    cudaMalloc(&d_o, TOTAL_ELEMENTS_X * sizeof(float));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS_O * sizeof(float));
     cudaMemcpy(d_x, x, TOTAL_ELEMENTS_X * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_o, o, TOTAL_ELEMENTS_X * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_o, o, TOTAL_ELEMENTS_O * sizeof(float), cudaMemcpyHostToDevice);
 
     std::cout << "Starting kernel\n";
     cudaDeviceSynchronize();
@@ -50,19 +51,19 @@ int main(int argc, char **argv) {
     std::cout << "Finished kernel\n";
     
     // check correctness
-    cudaMemcpy(o, d_o, TOTAL_ELEMENTS_X * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(o, d_o, TOTAL_ELEMENTS_O * sizeof(float), cudaMemcpyDeviceToHost);
     bool good = true;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
-    std::cout << "Total elements: " << TOTAL_ELEMENTS_X << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
         float diff = o[i] - o_ref[i];
-        if(i < TOTAL_ELEMENTS_X) {
+        if(i < TOTAL_ELEMENTS_O) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
-            if (i % 1024 == 1023) {
+            if (i % 16 == 15) {
                 o_ref_file << std::endl;
                 o_file << std::endl;
                 diff_file << std::endl;

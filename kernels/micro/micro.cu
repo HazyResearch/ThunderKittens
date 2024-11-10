@@ -4,98 +4,66 @@
 using namespace kittens;
 #define NUM_THREADS (kittens::WARP_THREADS)
 
-#define row 16
-#define col 32
+#define _row 16
+#define _col 32
 
 struct micro_globals {
-    using x_gl  = gl<float, -1, -1, -1, -1, st_fl<row, col>>;
-    x_gl x, o;
+    using x_gl  = gl<float, -1, -1, -1, -1, st_fl<_row, _col>>;
+    using o_gl  = gl<float, -1, -1, -1, -1, st_fl<_row, _row>>;
+    x_gl x;
+    o_gl o;
 };
 
 __global__ __launch_bounds__(NUM_THREADS, 1)
 void micro_tk(const __grid_constant__ micro_globals g) {
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
-    st_fl<row, col> (&x_s) = al.allocate<st_fl<row, col>>();
-    st_fl8<row, col> (&x_fp8_s) = al.allocate<st_fl8<row, col>>();
+    st_fl<_row, _col> (&x_s) = al.allocate<st_fl<_row, _col>>();
+    st_fl<_row, _row> (&o_s) = al.allocate<st_fl<_row, _row>>();
+    st_fl8<_row, _col> (&x_fp8_s) = al.allocate<st_fl8<_row, _col>>();
 
     // Warp-level MMA
-    rt_fl<row, col> x_reg_fl;
-    rt_fl8<row, col> x_fp8_reg;  // fp8x4 ( 4 floats ) per element 
-    rt_fl <row, col> att_block;  // float2 (2 floats ) per element
+    rt_fl<_row, _col> x_reg_fl;
+    rt_fl<_row, _col, ducks::rt_layout::col> x_reg_fl_col;
+    rt_fl8<_row, _col> x_fp8_reg;  // fp8x4 ( 4 floats ) per element 
+    rt_fl8<_row, _col, ducks::rt_layout::col> x_fp8_reg_col;  // fp8x4 ( 4 floats ) per element
+    rt_fl <_row, _row> att_block;  // float2 (2 floats ) per element
 
 
     // zero(att_block);
     load(x_s, g.x, {0, 0, 0, 0});
     __syncthreads();
     load(x_reg_fl, x_s);
-    zero(x_reg_fl);
+    // swap_layout(x_reg_fl_col, x_reg_fl);
     __syncthreads();
-    // one(x_reg_fl);
 
     // // now do the matmul in fp8
     copy(x_fp8_reg, x_reg_fl);
-    one(x_fp8_reg);
+    // copy(x_fp8_reg_col, x_reg_fl_col);
     __syncthreads();
-    copy(x_reg_fl, x_fp8_reg);
+    if (threadIdx.x == 0) { 
+        printf("In mma_ABt\n");
+        printf("D: %d %d\n", att_block.rows, att_block.cols);
+        printf("A: %d %d\n", x_fp8_reg.rows, x_fp8_reg.cols);
+        printf("B: %d %d\n", x_fp8_reg.rows, x_fp8_reg.cols);
+        printf("C: %d %d\n", att_block.rows, att_block.cols);
+    }
+    mma_ABt(att_block, x_fp8_reg, x_fp8_reg, att_block); // o = torch.matmul(x, x.transpose(1, 2))
     __syncthreads();
-    store(x_s, x_reg_fl);
-    __syncthreads();
-    // mma_ABt(att_block, x_fp8_reg, x_fp8_reg, att_block); // o = torch.matmul(x, x.transpose(1, 2))
-    // __syncthreads();
-    // store(x_s, att_block);
-
-
-
-
-
-    // Shared copies
-    // load( x_s, g.x, {0, 0, 0, 0} );
-    // __syncthreads();
-    // copy( x_fp8_s, x_s );
-    // one( x_fp8_s );
-    // copy( x_s, x_fp8_s );
-    // __syncthreads();
-    
-    // Registers 
-    // rt_fl<16, 16> x_reg;
-    // rt_fl8<16, 16> x_fp8_reg;
-    // __syncthreads();
-    // load( x_s, g.x, {0, 0, 0, 0});
-    // load( x_reg, x_s );
-    // zero(x_reg);
-    // add(x_reg, x_reg, 2.0f);
-    // __syncthreads();
-    // copy(x_fp8_reg, x_reg); // Convert float to FP8
-    // one(x_fp8_reg);
-    // if (threadIdx.x == 0) {
-    //     __nv_fp8_e4m3 *values = reinterpret_cast<__nv_fp8_e4m3*>(&(x_fp8_reg.tiles[0][0].data[0]));
-    //     printf("Individual values: %f %f\n", 
-    //            float(values[0]), 
-    //            float(values[1]));
-    // }
-    // copy(x_reg, x_fp8_reg); // Convert FP8 to float
-    // __syncthreads();
-    // // tests
-    // if (threadIdx.x == 0) {
-    //     printf("After conversion to float: %f %f\n", 
-    //        x_reg.tiles[0][0].data[0],    // Should be 1.0
-    //        x_reg.tiles[0][1].data[0]);
-    // }
-    // __syncthreads();
-    // store(x_s, x_reg);
+    store(o_s, att_block);
 
     if (threadIdx.x == 0) { printf("End\n"); } 
     __syncthreads();
-    store(g.o, x_s, {0, 0, 0, 0});
+    store(g.o, o_s, {0, 0, 0, 0});
     __syncthreads();
 }
 
 void dispatch_micro( float *d_x, float *d_o ) {
-    using x_gl = gl<float, -1, -1, -1, -1, st_fl<row, col>>;
+    using x_gl = gl<float, -1, -1, -1, -1, st_fl<_row, _col>>;
+    using o_gl = gl<float, -1, -1, -1, -1, st_fl<_row, _row>>;
     using globals = micro_globals;
-    x_gl  x_arg{d_x, 1, 1, row, col};
-    x_gl  o_arg{d_o, 1, 1, row, col};
+    x_gl  x_arg{d_x, 1, 1, _row, _col};
+    o_gl  o_arg{d_o, 1, 1, _row, _row};
     globals g{x_arg, o_arg};
     unsigned long mem_size = 50480; 
     cudaFuncSetAttribute(
@@ -107,6 +75,11 @@ void dispatch_micro( float *d_x, float *d_o ) {
     cudaDeviceSynchronize();
 }
 #include "harness_fp8.impl"
+
+
+
+
+
 
 // #include "cuda_fp8.h"
 // #include <cstdio>
