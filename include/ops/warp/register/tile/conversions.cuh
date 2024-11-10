@@ -244,6 +244,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
             printf("src.packed_per_thread: %d\n", src.tiles[0][0].packed_per_thread);
         }
 
+        int print_tdix = 4;
         int laneid = threadIdx.x % 32;
 
         #pragma unroll
@@ -265,7 +266,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                         val1 = src.tiles[i][2*j + 1].data[k];
                         val2 = src.tiles[i][2*j].data[k];
                     }
-                    if (threadIdx.x < 4 || threadIdx.x == 31) {
+                    if (threadIdx.x < print_tdix || threadIdx.x == 31) {
                         printf("- before val1 thread %d [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, i, j, k, val1.x,  val1.y);
                         printf("- before val2 thread %d [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, i, j, k, val2.x,  val2.y);
                     }
@@ -299,17 +300,20 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     }
                     __syncthreads();
 
-                    if (threadIdx.x < 4 || threadIdx.x == 31) {
+                    if (threadIdx.x < print_tdix || threadIdx.x == 31) {
                         printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f4.x,  f4.y, f4.z,  f4.w);
-                        float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4_fp8);
-                        printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f4_f.x,  f4_f.y, f4_f.z,  f4_f.w);
+                        // float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4_fp8);
+                        // printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f4_f.x,  f4_f.y, f4_f.z,  f4_f.w);
+                    }
+                    if (threadIdx.x == 0) { 
+                        printf("\n");
                     }
                 }
             }
         }
 
-        if (threadIdx.x < 4 || threadIdx.x == 31) {
-            fp8e4m3_4 f4 = dst.tiles[0][0].data[3];
+        if (threadIdx.x < print_tdix || threadIdx.x == 31) {
+            fp8e4m3_4 f4 = dst.tiles[0][0].data[0];
             float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4);
             printf("- tidx %d - final: %f %f %f %f\n", threadIdx.x, f4_f.x,  f4_f.y, f4_f.z,  f4_f.w);
         }
@@ -326,6 +330,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
             printf("src.packed_per_thread: %d\n", src.tiles[0][0].packed_per_thread);
         }
 
+        int print_tdix = 4;
         int laneid = threadIdx.x % 32;
 
         #pragma unroll
@@ -341,13 +346,16 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     fp8e4m3_4 val = src.tiles[i][j].data[k];
                     float4 f4 = base_types::convertor<float4, fp8e4m3_4>::convert(val);
                     float2 f2_0, f2_1;
-                    if ( laneid % 2 == 0 ) { // 0 and 2
+                    if ( laneid % 4 < 2 ) { // src 0 and 1 should put up .x and .y first
                         f2_0 = make_float2(f4.x, f4.y);
                         f2_1 = make_float2(f4.z, f4.w);
                     }
-                    else { // 1 and 3
+                    else { // src 2 and 3 should put up .z and .w first
                         f2_0 = make_float2(f4.z, f4.w);
                         f2_1 = make_float2(f4.x, f4.y);
+                    }
+                    if (threadIdx.x < print_tdix || threadIdx.x == 31) {
+                        printf("- before thread %d [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f2_0.x,  f2_0.y, f2_1.x,  f2_1.y);
                     }
 
                     // Shuffle f2_0
@@ -359,8 +367,19 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
                     // Shuffle f2_1
                     int src_offset2 = (laneid % 2 == 0 ) ? row_offset + 2 : (row_offset - 1); 
-                    float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, src_offset);
+                    float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, src_offset2);
                     dst.tiles[i][dst_j^1].data[k] = f2_1_shfl;
+
+                    if (threadIdx.x < print_tdix || threadIdx.x == 31) {
+                        float2 f0 = dst.tiles[i][0].data[k];
+                        float2 f1 = dst.tiles[i][1].data[k];
+                        printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, 0, 1, k, f0.x,  f0.y);
+                        // float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4_fp8);
+                        printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, 0, 1, k, f1.x,  f1.y);
+                    }
+                    if (threadIdx.x == 0) { 
+                        printf("\n");
+                    }
                 }
             }
         }
