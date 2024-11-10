@@ -23,7 +23,7 @@ else:
 
 def get_output(x):
     # TEST 1: add
-    o = x + 1
+    o = x #+ 1
 
     # TEST 2: warp-multiply
     # o = torch.matmul(x, x.transpose(1, 2))

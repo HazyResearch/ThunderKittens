@@ -233,11 +233,147 @@ __device__ static inline void copy(rt_base<T, layout> &dst, const rt_base<U, lay
  */
 template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
 __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
-    #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+
+    if constexpr (std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3>) {
+        // FLOAT (SRC -- 1H x 2W) to FP8 (DST -- 1H x 1W)
+        // An element of SRC is a float (UT) and an element of DST is a fp8e4m3 (T2)
+
+        if (threadIdx.x == 0) {
+            printf("FLOAT to FP8\n");
+            printf("dst.packed_per_thread: %d\n", dst.tiles[0][0].packed_per_thread);
+            printf("src.packed_per_thread: %d\n", src.tiles[0][0].packed_per_thread);
+        }
+
+        int laneid = threadIdx.x % 32;
+
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
-            copy(dst.tiles[i][j], src.tiles[i][j]);
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                if (threadIdx.x == 0) { printf("\ni=%d j=%d\n", i, j); }
+                #pragma unroll
+                for(int k = 0; k < dst.tiles[0][0].packed_per_thread; k++) {
+
+                    // Put something up for adoption
+                    float2 val1, val2;
+                    if (laneid % 2 == 0) { 
+                        // put up src left core matrix first as 0, 2
+                        val1 = src.tiles[i][2*j].data[k];
+                        val2 = src.tiles[i][2*j + 1].data[k];
+                    } else { 
+                        // put up src right core matrix first as 1, 3
+                        val1 = src.tiles[i][2*j + 1].data[k];
+                        val2 = src.tiles[i][2*j].data[k];
+                    }
+                    if (threadIdx.x < 4 || threadIdx.x == 31) {
+                        printf("- before val1 thread %d [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, i, j, k, val1.x,  val1.y);
+                        printf("- before val2 thread %d [i=%d][j=%d][k=%d]: %f %f\n", threadIdx.x, i, j, k, val2.x,  val2.y);
+                    }
+
+                    // Shuffle first 4 floats
+                    int row_mask = 4 * ( laneid / 4 );
+                    int row_offset = row_mask + ( (laneid-row_mask) / 2 ) + ( laneid % 2 );
+                    int src_offset = (laneid % 2 == 0 ) ? row_offset + 0 : ( row_offset + 1 );
+                    float2 val01 = packed_shfl_sync(MASK_ALL, val1, src_offset);  // Get from even thread
+
+                    int src_offset2 = (laneid % 4 < 2 ) ? src_offset + 1 : (src_offset - 1);
+                    float2 val23 = packed_shfl_sync(MASK_ALL, val2, src_offset2);  // Get from odd thread
+                    
+                    // Convert to fp8e4m3_4
+                    float4 f4;
+                    fp8e4m3_4 f4_fp8;
+                    if ( laneid % 4 < 2 ) { 
+                        f4.x = val01.x;  // Thread 2N's first value
+                        f4.y = val01.y;  // Thread 2N's second value
+                        f4.z = val23.x;  // Thread 2N+1's first value
+                        f4.w = val23.y;  // Thread 2N+1's second value
+                        f4_fp8 = base_types::convertor<fp8e4m3_4, float4>::convert(f4);
+                        dst.tiles[i][j].data[k] = f4_fp8;
+                    } else {
+                        f4.x = val23.x;  // Thread 2N+1's first value
+                        f4.y = val23.y;  // Thread 2N+1's second value
+                        f4.z = val01.x;  // Thread 2N's first value
+                        f4.w = val01.y;  // Thread 2N's second value
+                        f4_fp8 = base_types::convertor<fp8e4m3_4, float4>::convert(f4);
+                        dst.tiles[i][j].data[k] = f4_fp8;
+                    }
+                    __syncthreads();
+
+                    if (threadIdx.x < 4 || threadIdx.x == 31) {
+                        printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f4.x,  f4.y, f4.z,  f4.w);
+                        float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4_fp8);
+                        printf("- tidx %d - adding floats [i=%d][j=%d][k=%d]: %f %f %f %f\n", threadIdx.x, i, j, k, f4_f.x,  f4_f.y, f4_f.z,  f4_f.w);
+                    }
+                }
+            }
+        }
+
+        if (threadIdx.x < 4 || threadIdx.x == 31) {
+            fp8e4m3_4 f4 = dst.tiles[0][0].data[3];
+            float4 f4_f = base_types::convertor<float4, fp8e4m3_4>::convert(f4);
+            printf("- tidx %d - final: %f %f %f %f\n", threadIdx.x, f4_f.x,  f4_f.y, f4_f.z,  f4_f.w);
+        }
+    }
+    
+
+    else if constexpr (std::is_same_v<U2, fp8e4m3> && std::is_same_v<T2, float>) {
+        // FP8 (SRC -- 1H x 1W) to FLOAT (DST -- 1H x 2W)
+        // An element of SRC is a fp8e4m3 (UT) and an element of DST is a float (T2)
+
+        if (threadIdx.x == 0) {
+            printf("FP8 to FLOAT\n");
+            printf("dst.packed_per_thread: %d\n", dst.tiles[0][0].packed_per_thread);
+            printf("src.packed_per_thread: %d\n", src.tiles[0][0].packed_per_thread);
+        }
+
+        int laneid = threadIdx.x % 32;
+
+        #pragma unroll
+        for(int i = 0; i < src.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < src.width; j++) {
+                #pragma unroll
+                for(int k = 0; k < src.tiles[0][0].packed_per_thread; k++) {
+
+                    int dst_j = (laneid % 2 == 0) ? 2*j : 2*j + 1;
+
+                    // Put something up for adoption
+                    fp8e4m3_4 val = src.tiles[i][j].data[k];
+                    float4 f4 = base_types::convertor<float4, fp8e4m3_4>::convert(val);
+                    float2 f2_0, f2_1;
+                    if ( laneid % 2 == 0 ) { // 0 and 2
+                        f2_0 = make_float2(f4.x, f4.y);
+                        f2_1 = make_float2(f4.z, f4.w);
+                    }
+                    else { // 1 and 3
+                        f2_0 = make_float2(f4.z, f4.w);
+                        f2_1 = make_float2(f4.x, f4.y);
+                    }
+
+                    // Shuffle f2_0
+                    int row_mask = 4 * ( laneid / 4 );
+                    int row_offset = row_mask + ( (laneid-row_mask) / 2 ) + ( laneid % 2 );
+                    int src_offset = (laneid % 2 == 0 ) ? row_offset + 0 : ( row_offset + 1 );
+                    float2 f2_0_shfl = packed_shfl_sync(MASK_ALL, f2_0, src_offset);
+                    dst.tiles[i][dst_j].data[k] = f2_0_shfl;
+
+                    // Shuffle f2_1
+                    int src_offset2 = (laneid % 2 == 0 ) ? row_offset + 2 : (row_offset - 1); 
+                    float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, src_offset);
+                    dst.tiles[i][dst_j^1].data[k] = f2_1_shfl;
+                }
+            }
+        }
+    }
+
+    // default case where the layouts map 1:1 in thread ownership logic
+    else {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                copy(dst.tiles[i][j], src.tiles[i][j]);
+            }
         }
     }
 }
