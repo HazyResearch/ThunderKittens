@@ -1163,6 +1163,6 @@ attention_backward(torch::Tensor q,
 
 #else
 
-#include "harness.impl"
+#include "h100_harness.impl"
 
 #endif
