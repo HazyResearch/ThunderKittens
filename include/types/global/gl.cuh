@@ -99,22 +99,13 @@ struct gl {
         return tma_descs.template get<U>();
     }
 #endif
-    __device__ inline T& operator[](const coord &idx) {
+    __device__ inline T& operator[](const coord &idx) const { // yes I am abusing the const qualifier here a bit.
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    __device__ inline const T& operator[](const coord &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
-    }
-    template<detail::tile TILE>__device__ inline T& get(const coord &idx) {
+    template<detail::tile TILE>__device__ inline T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
     }
-    template<detail::tile TILE> __device__ inline const T& get(const coord &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
-    }
-    template<detail::vec VEC>__device__ inline T& get(const coord &idx) {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
-    }
-    template<detail::vec VEC>__device__ inline const T& get(const coord &idx) const {
+    template<detail::vec VEC>__device__ inline T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
     __device__ inline size_t row_stride() const { return cols; }

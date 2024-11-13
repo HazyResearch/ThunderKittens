@@ -75,13 +75,13 @@ template<ducks::gl::all GL> struct from_object<GL> {
         }; \
     }
 
-#define BIND_KERNEL(module, kernel, globals_struct, ...) \
-    module.def(#kernel, [](pybind11::args args) { \
+#define BIND_KERNEL(module, name, kernel, globals_struct, ...) \
+    module.def(name, [](pybind11::args args) { \
         globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
         kernel<<<__g__.grid(), __g__.block()>>>(__g__); \
     });
-#define BIND_FUNCTION(module, function, globals_struct, ...) \
-    module.def(#function, [](pybind11::args args) { \
+#define BIND_FUNCTION(module, name, function, globals_struct, ...) \
+    module.def(name, [](pybind11::args args) { \
         globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
         function(__g__); \
     });
