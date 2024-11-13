@@ -56,7 +56,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int underlying_rows          = _rows;
     static constexpr int underlying_cols          = _cols;
     static constexpr int underlying_height        = _rows / kittens::TILE_DIM;
-    static constexpr int underlying_width         = _cols / kittens::TILE_DIM;
+    static constexpr int underlying_width         = _cols / (std::is_same_v<T, fp8e4m3> ? kittens::TILE_DIM * 2 : kittens::TILE_DIM);
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int rows                = _rows; ///< Total number of rows in the tile.
@@ -64,14 +64,15 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int cols                = _cols; ///< Total number of cols in the tile.
     static_assert(cols % TILE_DIM == 0, "Cols must be divisible by the tile dimension");
     static constexpr int height              = _rows / kittens::TILE_DIM; ///< Height of the tile in terms of 16-element subtiles.
-    static constexpr int width               = _cols / kittens::TILE_DIM; ///< Width of the tile in terms of 16-element subtiles.
+    static constexpr int width               = _cols / (std::is_same_v<T, fp8e4m3> ? kittens::TILE_DIM * 2 : kittens::TILE_DIM); ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 1 ? (  // Add FP8 case
-            32 // TODO: add some static asserts on minimum tile size
+            underlying_width%4 == 0 ? 128 :
+            underlying_width%2 == 0 ?  64 : 32
         ) :
         sizeof(dtype) == 2 ? (
             underlying_width%4 == 0 ? 128 :

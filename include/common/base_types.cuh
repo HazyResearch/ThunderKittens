@@ -337,6 +337,21 @@ template<> struct convertor<float, fp8e4m3> {
         return float(u);
     }
 };
+template<> struct convertor<bf16_2, fp8e4m3_4> {
+    static __host__ __device__ inline bf16_2 convert(const fp8e4m3_4 & u) {
+        float4 f4 = convertor<float4, fp8e4m3_4>::convert(u);
+        float2 f2 = make_float2(f4.x, f4.y);
+        return __float22bfloat162_rn(f2);
+    }
+};
+template<> struct convertor<fp8e4m3_4, bf16_2> {
+    static __host__ __device__ inline fp8e4m3_4 convert(const bf16_2 & u) {
+        float2 f2 = __bfloat1622float2(u);
+        float4 f4 = make_float4(f2.x, f2.y, 0.0f, 0.0f);
+        return __nv_fp8x4_e4m3(f4);
+    }
+};
+
 #endif
 }
 }

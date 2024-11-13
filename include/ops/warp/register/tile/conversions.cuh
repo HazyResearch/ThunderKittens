@@ -237,8 +237,6 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
     if constexpr (std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3>) {
         // FLOAT (SRC -- 1H x 2W) to FP8 (DST -- 1H x 1W)
-        // An element of SRC is a float (UT) and an element of DST is a fp8e4m3 (T2)
-
         int laneid = threadIdx.x % 32;
 
         #pragma unroll

@@ -45,18 +45,18 @@ struct descriptor {
         }
         else { // normal mode
             if constexpr (ST::width%4 == 0) {
-                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-                base_desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;   // this line doesn't matter
+                base_desc |= matrix_descriptor_encode((uint64_t)1024) << 32; // 128 byte swizzle x 8 for core matrix rows
                 base_desc |= 1llu << 62; // set wgmma_swizzle mode
             }
             else if constexpr (ST::width%2 == 0) {
-                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-                base_desc |= matrix_descriptor_encode((uint64_t)512) << 32;
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;  // this line doesn't matter
+                base_desc |= matrix_descriptor_encode((uint64_t)512) << 32; // 64 byte swizzle x 8 for core matrix rows
                 base_desc |= 2llu << 62; // set wgmma_swizzle mode
             }
             else {
-                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;
-                base_desc |= matrix_descriptor_encode((uint64_t)256) << 32;
+                base_desc |= matrix_descriptor_encode((uint64_t)16) << 16;  // this line doesn't matter
+                base_desc |= matrix_descriptor_encode((uint64_t)256) << 32; // 32 byte swizzle x 8 for core matrix rows
                 base_desc |= 3llu << 62; // set wgmma_swizzle mode
             }
         }
