@@ -125,6 +125,7 @@ struct base<T_D, T_AB, 64, trans_a, trans_b> {
                 "l"(b_st_desc), "r"(scale_d), "n"(trans_b), "n"(scale_b)
             );
         }
+        // ----- FP8,FP8 -> FP32 ----- //
         else if constexpr (std::is_same_v<T_D, float> && std::is_same_v<T_AB, fp8e4m3>) {
             asm volatile (
                 "{\n"

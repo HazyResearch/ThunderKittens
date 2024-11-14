@@ -110,7 +110,8 @@ struct base<T_D, T_AB, 32, trans_a, trans_b> {
         static_assert(
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, bf16>) ||
             (std::is_same_v<T_D, float> && std::is_same_v<T_AB, half>) ||
-            (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>),
+            (std::is_same_v<T_D, half>  && std::is_same_v<T_AB, half>) ||
+            (std::is_same_v<T_D, float> && std::is_same_v<T_AB, fp8e4m3>),
             "Invalid type combination for WGMMA."
         );
         static_assert(scale_b==1 || scale_b==-1, "Invalid scale B (invert) option");
@@ -207,6 +208,38 @@ struct base<T_D, T_AB, 32, trans_a, trans_b> {
                 "r"(scale_d),
                 "n"(trans_a),
                 "n"(trans_b),
+                "n"(scale_b)
+            );
+        }
+        // ----- FP8,FP8 -> FP32 ----- //
+        else if constexpr (std::is_same_v<T_D, float> && std::is_same_v<T_AB, fp8e4m3>) {
+            asm volatile (
+                "{\n"
+                ".reg .pred p;\n" \
+                "setp.ne.b32 p, %18, 0;\n" \
+                "wgmma.mma_async.sync.aligned.m64n32k32.f32.e4m3.e4m3 " \
+                "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15}, " \
+                "%16, " \
+                "%17, " \
+                "p, 1, %19;\n" \
+                "}\n"
+                // a_mat descriptor, b_mat descriptor, scale-d, imm-scale-a, imm-scale-b, im-trans-a, imm-trans-b
+
+            :   "+f"(dst.tiles[0][0].data[0].x), "+f"(dst.tiles[0][0].data[0].y),
+                "+f"(dst.tiles[0][0].data[1].x), "+f"(dst.tiles[0][0].data[1].y),
+                "+f"(dst.tiles[0][0].data[2].x), "+f"(dst.tiles[0][0].data[2].y),
+                "+f"(dst.tiles[0][0].data[3].x), "+f"(dst.tiles[0][0].data[3].y),
+                "+f"(dst.tiles[0][1].data[0].x), "+f"(dst.tiles[0][1].data[0].y),
+                "+f"(dst.tiles[0][1].data[1].x), "+f"(dst.tiles[0][1].data[1].y),
+                "+f"(dst.tiles[0][1].data[2].x), "+f"(dst.tiles[0][1].data[2].y),
+                "+f"(dst.tiles[0][1].data[3].x), "+f"(dst.tiles[0][1].data[3].y)
+
+            :   "l"(a_st_desc),
+                "l"(b_st_desc),
+            
+                "r"(scale_d),
+                // "n"(trans_a),
+                // "n"(trans_b),
                 "n"(scale_b)
             );
         }
