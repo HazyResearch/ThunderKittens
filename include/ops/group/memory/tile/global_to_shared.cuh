@@ -5,6 +5,7 @@
 
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
+    using T = typename ST::dtype;
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.row_stride();
@@ -16,9 +17,9 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(T);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
+    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -37,6 +38,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx) {
 }
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void store(GL &dst, const ST &src, const coord &idx) {
+    using T = typename ST::dtype;
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST>(idx);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     const int row_stride = dst.row_stride();
@@ -44,9 +46,9 @@ __device__ static inline void store(GL &dst, const ST &src, const coord &idx) {
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(T);
     int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = ((src.height * src.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
+    int total_calls = ((src.height * src.width + (N_WARPS-1))) * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
@@ -66,6 +68,7 @@ __device__ static inline void store(GL &dst, const ST &src, const coord &idx) {
 
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void load_async(ST &dst, const GL &src, const coord &idx) {
+    using T = typename ST::dtype;
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     const int row_stride = src.row_stride();
@@ -77,9 +80,9 @@ __device__ static inline void load_async(ST &dst, const GL &src, const coord &id
     int laneid = threadIdx.x % GROUP_THREADS;
 
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    int elem_per_memcpy = sizeof(float4)/sizeof(T);
     int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * TILE_DIM*TILE_DIM / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
+    int total_calls = ((dst.height * dst.width + (N_WARPS-1))) * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> / (N_WARPS*WARP_THREADS*elem_per_memcpy); // round up
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
