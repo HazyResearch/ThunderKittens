@@ -641,7 +641,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
 #ifdef TORCH_COMPILE
 
-#include "common/pyutils/torch_helpers.cuh"
+#include "pyutils/torch_helpers.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <iostream>
 

@@ -364,7 +364,7 @@ void launch(typename fft_template<SEQ>::layout::globals G) {
 }
 
 #ifdef TK_COMPILE_FFTCONV
-#include "common/pyutils/torch_helpers.cuh"
+#include "pyutils/torch_helpers.cuh"
 #include <iostream>
 void dispatch_fft_conv( 
     bf16 *u, 

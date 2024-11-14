@@ -204,7 +204,7 @@ struct mamba2_fwd_template {
 
 
 #ifdef TK_COMPILE_MAMBA2
-#include "common/pyutils/torch_helpers.cuh"
+#include "pyutils/torch_helpers.cuh"
 #include <iostream>
 #include <ATen/cuda/CUDAContext.h> 
 
