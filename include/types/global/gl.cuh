@@ -99,10 +99,10 @@ struct gl {
         return tma_descs.template get<U>();
     }
 #endif
-    __device__ inline T& operator[](const coord &idx) const { // yes I am abusing the const qualifier here a bit.
+    __device__ inline T& operator[](const coord<> &idx) const { // yes I am abusing the const qualifier here a bit.
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    template<detail::tile TILE, int axis> __device__ inline T& get(const coord &idx) const {
+    template<detail::tile TILE, int axis> __device__ inline T& get(const coord<TILE> &idx) const {
         static_assert(axis==0 || axis==1 || axis==2, "Row axis must be 0, 1, or 2.");
         if constexpr (axis==0) {
             return raw_ptr[((idx.b*depth*TILE::rows + idx.d)*rows + idx.r)*cols + idx.c*TILE::cols];
@@ -112,8 +112,15 @@ struct gl {
             return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
         }
     }
-    template<detail::vec VEC>__device__ inline T& get(const coord &idx) const {
+    template<detail::vec VEC>__device__ inline T& get(const coord<VEC> &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
+    }
+    template<int axis> __device__ inline size_t shape() const {
+        static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");
+        if constexpr (axis==0) { return size_t(batch); }
+        else if constexpr (axis==1) { return size_t(depth); }
+        else if constexpr (axis==2) { return size_t(rows); }
+        else if constexpr (axis==3) { return size_t(cols); }
     }
     template<int axis> __device__ inline size_t stride() const { 
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");

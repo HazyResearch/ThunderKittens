@@ -18,55 +18,51 @@ namespace kittens {
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination shared memory tile.
  * @param[in] src The source global memory array.
- * @param row_stride[in] The stride between rows in the source array.
+ * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<ducks::st::all ST, ducks::gl::all GL, int axis=2, int N_THREADS=WARP_THREADS>
-__device__ static inline void load(ST &dst, const GL &src, const coord &idx, int load_rows=ST::rows, typename ST::dtype fill_value=0) {
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST, axis>(idx);
-    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+__device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
-    
-    // each thread needs to do 1 call per width*height
-    // attempting to improve striping into dram
-    // each lane of the warp should store sequential into dram
-
-    int laneid = threadIdx.x % 32;
-
     // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
+    constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    float4 packed_fill; // create a coalesced fill value to store repeatedly with minimal address calculation / STS instructions
-    if (load_rows != ST::rows) {
-        // Fill in a static array of size float4 that we can store repeatedly, to save address calculations
-        static constexpr int fill_size = sizeof(float4)/sizeof(typename ST::dtype);
-        typename ST::dtype fill_array[fill_size];
-        #pragma unroll
-        for (int i = 0; i < fill_size; i++) {
-            fill_array[i] = fill_value;
-        }
-        packed_fill = *reinterpret_cast<float4*>(fill_array);
-    }
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<typename COORD::BASE, axis>(idx);
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
+    int laneid = threadIdx.x % N_THREADS;
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * 32 + laneid;
+        int idx = i * N_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
-        if ((load_rows == ST::rows) || (row < load_rows)) {
+        if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
             move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
         }
         else {
-            move<float4>::sts(dst.idx(dst_ptr, {row, col}), packed_fill); // use the default value
+            if (row + idx.dim<axis>() < src.shape<axis>()) {
+                float4 tmp;
+                move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
+                move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
+            }
+            else {
+                float4 zeros = {0.f,0.f,0.f,0.f};
+                move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
+            }
         }
     }
 }
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void load(ST &dst, const GL &src, const coord<ST> &idx) {
+    load<2, false, ST, GL, coord<ST>, WARP_THREADS>(dst, src, idx);
+}
+
 /**
  * @brief Stores data from a shared memory tile into global memory.
  *
@@ -75,33 +71,43 @@ __device__ static inline void load(ST &dst, const GL &src, const coord &idx, int
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
  */
-template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
-__device__ static inline void store(const GL &dst, const ST &src, const coord &idx, int store_rows=ST::rows) {
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+__device__ static inline void store(const GL &dst, const ST &src, const COORD &idx) {
+    const int row_stride = dst.template stride<axis>();
+    // we can handle this many rows each time we run a memcpy_async
+    constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
+    constexpr int total_calls = (src.height*src.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST, axis>(idx);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
-    const int row_stride = dst.template stride<axis>();
-
-    int laneid = threadIdx.x % 32;
-
-    // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    int memcpy_per_row = src.cols / elem_per_memcpy;
-    int total_calls = src.height*src.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
+    int laneid = threadIdx.x % N_THREADS;
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * 32 + laneid;
+        int idx = i * N_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % src.cols;
 
-        if ((store_rows == ST::rows) || (row < store_rows)) {
+        if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
             move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
         }
+        else {
+            if (row + idx.dim<axis>() < dst.shape<axis>()) {
+                float4 tmp;
+                move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
+                move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
+            }
+        }
     }
+}
+template<ducks::st::all ST, ducks::gl::all GL>
+__device__ static inline void store(const GL &dst, const ST &src, const coord<ST> &idx) {
+    store<2, false, ST, GL, coord<ST>, WARP_THREADS>(dst, src, idx);
 }
 
 /**
@@ -113,44 +119,27 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord &i
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::st::all ST, ducks::gl::all GL, int axis=2>
-__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, int load_rows=ST::rows, typename ST::dtype fill_value=0) {
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
+    const int row_stride = src.template stride<axis>();
+    // we can handle this many rows each time we run a memcpy_async
+    constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
+    constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
+    constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST, axis>(idx);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
-    const int row_stride = src.template stride<axis>();
-
-    // each thread needs to do 1 call per width*height
-    // attempting to improve striping into dram
-    // each lane of the warp should store sequential into dram
-
-    int laneid = threadIdx.x % 32;
-
-    // we can handle this many rows each time we run a memcpy_async
-    int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    int memcpy_per_row = dst.cols / elem_per_memcpy;
-    int total_calls = dst.height*dst.width * TILE_DIM*TILE_DIM / (WARP_THREADS*elem_per_memcpy);
-
-    float4 packed_fill; // create a coalesced fill value to store repeatedly with minimal address calculation / STS instructions
-    if (load_rows != ST::rows) {
-        // Fill in a static array of size float4 that we can store repeatedly, to save address calculations
-        static constexpr int fill_size = sizeof(float4)/sizeof(typename ST::dtype);
-        typename ST::dtype fill_array[fill_size];
-        #pragma unroll
-        for (int i = 0; i < fill_size; i++) {
-            fill_array[i] = fill_value;
-        }
-        packed_fill = *reinterpret_cast<float4*>(fill_array);
-    }
+    int laneid = threadIdx.x % N_THREADS;
 
     #pragma unroll
     for(int i = 0; i < total_calls; i++) {
 
-        int idx = i * 32 + laneid;
+        int idx = i * N_THREADS + laneid;
         
         int row = idx / memcpy_per_row;
         int col = (idx*elem_per_memcpy) % dst.cols;
 
-        if ((load_rows == ST::rows) || (row < load_rows)) {
+        if constexpr (assume_aligned) {
             asm volatile(
                 "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
                 :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
@@ -158,7 +147,17 @@ __device__ static inline void load_async(ST &dst, const GL &src, const coord &id
             );
         }
         else {
-            move<float4>::sts(dst.idx(dst_ptr, {row, col}), packed_fill); // use the default value
+            if (row + idx.dim<axis>() < src.shape<axis>()) {
+                asm volatile(
+                    "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
+                    :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
+                    : "memory"
+                );
+            }
+            else {
+                float4 zeros = {0.f,0.f,0.f,0.f};
+                move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
+            }
         }
     }
     asm volatile("cp.async.commit_group;\n" ::: "memory");

@@ -12,11 +12,16 @@
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::crt::row_layout CRT, ducks::cgl::all CGL>
-__device__ inline static void load(CRT &dst, const CGL &src, const coord &idx) {
-    load(dst.real, src.real, idx);
-    load(dst.imag, src.imag, idx);
+template<int axis, ducks::crt::row_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord<CRT> &idx) {
+    load<axis, CRT::component, CGL::component>(dst.real, src.real, coord<typename CRT::component>(idx));
+    load<axis, CRT::component, CGL::component>(dst.imag, src.imag, coord<typename CRT::component>(idx));
 }
+template<ducks::crt::row_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord<CRT> &idx) {
+    load<2, CRT, CGL>(dst, src, idx);
+}
+
 /**
  * @brief Collaboratively loads data from a source array into column-major layout tiles.
  *
@@ -26,10 +31,14 @@ __device__ inline static void load(CRT &dst, const CGL &src, const coord &idx) {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::crt::col_layout RT, ducks::cgl::all GL>
-__device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
-    load(dst.real, src.real, idx);
-    load(dst.imag, src.imag, idx);
+template<int axis, ducks::crt::col_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord<CRT> &idx) {
+    load<axis, typename CRT::component, typename CGL::component>(dst.real, src.real, coord<typename CRT::component>(idx));
+    load<axis, typename CRT::component, typename CGL::component>(dst.imag, src.imag, coord<typename CRT::component>(idx));
+}
+template<ducks::crt::col_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord<CRT> &idx) {
+    load<2, CRT, CGL>(dst, src, idx);
 }
 
 
@@ -57,8 +66,12 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::crt::col_layout RT, ducks::cgl::all GL>
-__device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
-    store(dst.real, src.real, idx);
-    store(dst.imag, src.imag, idx);
+template<int axis, ducks::crt::col_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void store(CGL &dst, const CRT &src, const coord<CRT> &idx) {
+    store<axis, typename CRT::component, typename CGL::component>(dst.real, src.real, idx);
+    store<axis, typename CRT::component, typename CGL::component>(dst.imag, src.imag, idx);
+}
+template<ducks::crt::col_layout CRT, ducks::cgl::all CGL>
+__device__ inline static void store(CGL &dst, const CRT &src, const coord<CRT> &idx) {
+    store<2, CRT, CGL>(dst, src, idx);
 }
