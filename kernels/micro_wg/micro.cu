@@ -2,7 +2,7 @@
 #include "cuda_fp8.h"
 
 using namespace kittens;
-#define NUM_WORKERS (1)
+#define NUM_WORKERS (4)
 #define NUM_THREADS ( NUM_WORKERS * kittens::WARP_THREADS)
 
 #define _row 64
@@ -35,10 +35,11 @@ void micro_tk(const __grid_constant__ micro_globals g) {
 
     // loads
     zero(att_block);
-    load(x_fp8_reg, x_s_fp8);
+    // load(x_fp8_reg, x_s_fp8);
+    __syncthreads();
     // matmul from registers
-    // warpgroup::load(x_fp8_reg, x_s_fp8);
-    // warpgroup::mma_ABt(att_block, x_fp8_reg, x_s_fp8); // o = torch.matmul(x, x.transpose(1, 2))
+    warpgroup::load(x_fp8_reg, x_s_fp8);
+    warpgroup::mma_ABt(att_block, x_fp8_reg, x_s_fp8); // o = torch.matmul(x, x.transpose(1, 2))
     // mma_ABt(att_block, x_fp8_reg, x_fp8_reg, att_block); // o = torch.matmul(x, x.transpose(1, 2))
 
     // matmul from shared

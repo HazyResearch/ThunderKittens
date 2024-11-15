@@ -46,6 +46,27 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
+
+            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 1) {
+                U2 tmp[4];
+
+                int warp_group_16 = (warp_laneid / 16);  // divide each warp into two groups of 16 threads
+                int lane_in_16 = warp_laneid % 16;       // position in group of 16 threads
+                int row = (local_warpid*warp_height + i)*dst.tile_size_row + (lane_in_16 % 16); // find base row for warp in warpgroup and then distribute the 16 threads in the warp across the rows
+                int col = j*dst.tile_size_col + warp_group_16 * 16; // find base column and then *16 for second half of the warp
+
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
+                    move<U2>::ldsm4(tmp[0], tmp[1], tmp[2], tmp[3], src.idx(shared_addr, {row, col}));
+                }
+                else {
+                    move<U2>::ldsm4t(tmp[0], tmp[2], tmp[1], tmp[3], src.idx(shared_addr, {row, col}));
+                }
+                dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+                dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+                dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+                dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+            }
+
             else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
                 // handle the row-major layout for 32-bit types
                 int row = (local_warpid*warp_height + i)*dst.tile_size_row + (warp_laneid / 4);
