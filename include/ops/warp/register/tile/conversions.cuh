@@ -389,7 +389,7 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
                 const int thread_col_x = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2); 
                 const int thread_col_y = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2) + 1; 
                 
-                if (thread_col_x >= col_idx) { dst.tiles[i][j].data[k].x = val;}
+                if (thread_col_x >= col_idx) { dst.tiles[i][j].data[k].x = val; }
                 else                         { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
                 
                 if (thread_col_y >= col_idx) { dst.tiles[i][j].data[k].y = val; }
