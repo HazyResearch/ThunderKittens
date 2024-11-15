@@ -3,7 +3,7 @@
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
 # GPU Selection: Set to either 4090 or H100
-GPU_TARGET=H100
+GPU_TARGET=4090
 COMP_LEVEL=fast
 
 # Compiler

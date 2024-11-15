@@ -75,6 +75,8 @@ struct gl {
 
     T* raw_ptr;
 
+    static constexpr int __b__ = b, __d__ = d, __r__ = r, __c__ = c; // Not to be touched by the user.
+
     ducks::g::make_dim_t<b> batch;
     ducks::g::make_dim_t<d> depth;
     ducks::g::make_dim_t<r> rows;
@@ -97,13 +99,10 @@ struct gl {
         return tma_descs.template get<U>();
     }
 #endif
-    __device__ inline T& operator[](const coord &idx) {
+    __device__ inline T& operator[](const coord &idx) const { // yes I am abusing the const qualifier here a bit.
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
     }
-    __device__ inline const T& operator[](const coord &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
-    }
-    template<detail::tile TILE, int axis> __device__ inline T& get(const coord &idx) {
+    template<detail::tile TILE, int axis> __device__ inline T& get(const coord &idx) const {
         static_assert(axis==0 || axis==1 || axis==2, "Row axis must be 0, 1, or 2.");
         if constexpr (axis==0) {
             return raw_ptr[((idx.b*depth*TILE::rows + idx.d)*rows + idx.r)*cols + idx.c*TILE::cols];
@@ -113,16 +112,8 @@ struct gl {
             return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
         }
     }
-    template<detail::tile TILE, int axis> __device__ inline const T& get(const coord &idx) const {
-        // We const_cast away the constness of 'this' to call the non-const version,
-        // then the reference returned is made const again by the return type 'const T&'
-        return const_cast<gl*>(this)->template get<TILE,axis>(idx);
-    }
-    template<detail::vec VEC>__device__ inline T& get(const coord &idx) {
+    template<detail::vec VEC>__device__ inline T& get(const coord &idx) const {
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
-    }
-    template<detail::vec VEC>__device__ inline const T& get(const coord &idx) const {
-        return const_cast<gl*>(this)->template get<VEC>(idx);
     }
     template<int axis> __device__ inline size_t stride() const { 
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");
@@ -148,4 +139,38 @@ template<typename T> concept all = requires {
 }
 }
 
+// Structs for initializing global layouts automatically.
+// struct unsafe_gl {
+//     uint64_t data;
+//     int b, d, r, c;
+//     unsafe_gl(uint64_t data, int b, int d, int r, int c) : data(data), b(b), d(d), r(r), c(c) {}
+// };
+template<int N> auto make_unsafe_gl_arg(int param) { // typename std::conditional_t<(N < 0), std::nullptr_t, int>
+    if constexpr (N > 0) { return nullptr; }
+    else                 { return param;   }
 }
+template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t data, int b, int d, int r, int c) {
+    if constexpr (safe) {
+        if(GL::__b__ > 0 && b != GL::__b__) {
+            throw std::runtime_error("Batch dimension mismatch.");
+        }
+        if(GL::__d__ > 0 && d != GL::__d__) {
+            throw std::runtime_error("Depth dimension mismatch.");
+        }
+        if(GL::__r__ > 0 && r != GL::__r__) {
+            throw std::runtime_error("Row dimension mismatch.");
+        }
+        if(GL::__c__ > 0 && c != GL::__c__) {
+            throw std::runtime_error("Column dimension mismatch.");
+        }
+    }
+    return GL(
+        reinterpret_cast<typename GL::dtype*>(data),
+        make_unsafe_gl_arg<GL::__b__>(b),
+        make_unsafe_gl_arg<GL::__d__>(d),
+        make_unsafe_gl_arg<GL::__r__>(r),
+        make_unsafe_gl_arg<GL::__c__>(c)
+    );
+}
+
+} // namespace kittens

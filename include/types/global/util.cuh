@@ -33,7 +33,7 @@ struct coord { // essentially a named int4 for tensor coordinates.
     __device__ inline coord(                        int _c) : b( 0), d( 0), r( 0), c(_c) {}
     __device__ inline coord(                              ) : b( 0), d( 0), r( 0), c( 0) {}
     __device__ inline coord(const coord &other) : b(other.b), d(other.d), r(other.r), c(other.c) {}
-    __device__ inline coord(const int4 &other) : b(other.x), d(other.y), r(other.z), c(other.w) {}
+    __device__ inline coord(const int4 &other)  : b(other.x), d(other.y), r(other.z), c(other.w) {}
     __device__ inline operator int4() const { return int4(b, d, r, c); }
 };
 }
