@@ -386,14 +386,12 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
         for(int j = 0; j < dst.width; j++) {
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
-                const int thread_col_x = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2); 
-                const int thread_col_y = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2) + 1; 
-                
-                if (thread_col_x >= col_idx) { dst.tiles[i][j].data[k].x = val; }
-                else                         { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                
-                if (thread_col_y >= col_idx) { dst.tiles[i][j].data[k].y = val; }
-                else                         { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                const int col_idx_x = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                const int col_idx_y = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                if (col_idx_x >= col_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (col_idx_y >= col_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
             }
         }
         __syncwarp();
@@ -417,17 +415,15 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
         for(int j = 0; j < dst.width; j++) {
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
-                const int thread_col_x = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2); 
-                const int thread_col_y = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() % 4) * 2) + 1; 
-
-                if (thread_col_x <= col_idx) { dst.tiles[i][j].data[k].x = val; }
-                else                         { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-
-                if (thread_col_y <= col_idx) { dst.tiles[i][j].data[k].y = val; }
-                else                         { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                const int col_idx_x = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                const int col_idx_y = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                if (col_idx_x <= col_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (col_idx_y <= col_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
             }
-            __syncwarp();
         }
+        __syncwarp();
     }
 }
 
@@ -450,13 +446,12 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
         for(int j = 0; j < dst.width; j++) {
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
-                const int thread_row = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() / 4)); 
-
-                if (thread_row <= row_idx) { dst.tiles[i][j].data[k] = packed_val; }
-                else                       { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
+                const int thread_row = (i * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
+                if (thread_row <= row_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
-            __syncwarp();
         }
+        __syncwarp();
     }
 }
 
@@ -479,13 +474,12 @@ __device__ static inline void lower_fill(RT &dst, const RT &src, const int row_i
         for(int j = 0; j < dst.width; j++) {
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
-                const int thread_row = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() / 4)); 
-
-                if (thread_row >= row_idx) { dst.tiles[i][j].data[k] = packed_val; }
-                else                       { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
+                const int thread_row = (i * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
+                if (thread_row >= row_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
-            __syncwarp();
         }
+        __syncwarp();
     }
 }
 
