@@ -45,7 +45,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-            if constexpr (sizeof(typename ST::dtype) == 2) {
+            if constexpr (sizeof(typename ST::dtype) == 2) { // half and bfloat16
                 // handle 16-bit types
                 U2 tmp[4];
                 int row = i*dst.tile_size_row + (laneid % 16);
@@ -61,7 +61,24 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
-            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+            else if (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 1) { 
+                // ldmatrix operates on 16-bits
+                // handle the fp8 by hacking with fp8x2 16-bit types
+                U2 tmp[4];
+                int row = i*dst.tile_size_row + (laneid % 16);
+                int col = j*dst.tile_size_col + (laneid / 16) * 16;
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
+                    move<U2>::ldsm4(tmp[0], tmp[1], tmp[2], tmp[3], src.idx(shared_addr, {row, col}));
+                }
+                else {
+                    move<U2>::ldsm4t(tmp[0], tmp[2], tmp[1], tmp[3], src.idx(shared_addr, {row, col}));
+                }
+                dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+                dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+                dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+                dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+            } 
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) { // float32
                 // handle the row-major layout for 32-bit types
                 int row, col;
                 if constexpr (ST::rows == ST::underlying_rows && ST::cols == ST::underlying_cols) {
@@ -100,7 +117,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
                     }
                 }
             }
-            else {
+            else if constexpr (sizeof(typename ST::dtype) != 1) {
                 // handle the column-major layout
                 U2 tmp[4];
                 int row = i*dst.tile_size_row + 2*(laneid % 4);
@@ -117,7 +134,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
-            }
+            } 
         }
     }
 }
@@ -190,7 +207,24 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 }
 #endif
             }
-            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
+            if constexpr (sizeof(typename ST::dtype) == 1) {
+                // ldmatrix operates on 16-bits
+                // handle the fp8 by hacking with fp8x2 16-bit types
+                U2 tmp[4];
+                tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+                tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+                tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+                tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+                int row = i*src.tile_size_row + (laneid % 16);
+                int col = j*src.tile_size_col + (laneid / 16) * 16;
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
+                    move<U2>::stsm4(dst.idx(shared_addr, {row, col}), tmp[0], tmp[1], tmp[2], tmp[3]);
+                }
+                else {
+                    move<U2>::stsm4t(dst.idx(shared_addr, {row, col}), tmp[0], tmp[2], tmp[1], tmp[3]);
+                }
+                
+            } else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 4) {
                 // handle the row-major layout for 32-bit types
                 int row, col;
                 if constexpr (ST::rows == ST::underlying_rows && ST::cols == ST::underlying_cols) {
@@ -236,7 +270,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 move<U>::sts((addr_2+32)^swizzle_2, tmp[3].x);
                 move<U>::sts((addr_2+36)^swizzle_2, tmp[3].y);
             }
-            else {
+            else if constexpr (sizeof(typename ST::dtype) != 1) {
                 // handle the column-major layout
                 int row = i*src.tile_size_row + 2*(laneid % 4);
                 int col = j*src.tile_size_col + (laneid / 4);

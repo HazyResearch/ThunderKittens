@@ -179,9 +179,9 @@ struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
  * @tparam default_alignment The default alignment this allocator will enforce. If <=0 (default -1) it will not align.
  */
 #ifdef KITTENS_HOPPER
-template<int default_alignment=1024> // 
+template<int default_alignment=1024> 
 #else
-template<int default_alignment=16> // 
+template<int default_alignment=16> 
 #endif
 struct shared_allocator {
     int *ptr;
@@ -198,7 +198,8 @@ struct shared_allocator {
         struct variadic_array<A> {
             using type = A;
         };
-        template<typename A, size_t... dims> using variadic_array_t = typename variadic_array<A, dims...>::type;
+        template<typename A, size_t... dims> 
+        using variadic_array_t = typename variadic_array<A, dims...>::type;
 
         template<int alignment>
         __device__ inline void align_ptr() {
