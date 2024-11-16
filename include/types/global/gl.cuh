@@ -60,11 +60,6 @@ struct identifier {};
 }
 }
 
-namespace detail {
-template<typename T> concept tile = ducks::st::all<T> || ducks::rt::all<T> || ducks::cst::all<T> || ducks::crt::all<T>;
-template<typename T> concept vec  = ducks::sv::all<T> || ducks::rv::all<T> || ducks::csv::all<T> || ducks::crv::all<T>;
-}
-
 template<typename _T, int b, int d, int r, int c, typename... TMA_Types>
 struct gl {
     using identifier = ducks::gl::identifier;
@@ -77,18 +72,18 @@ struct gl {
 
     static constexpr int __b__ = b, __d__ = d, __r__ = r, __c__ = c; // Not to be touched by the user.
 
-    ducks::g::make_dim_t<b> batch;
-    ducks::g::make_dim_t<d> depth;
-    ducks::g::make_dim_t<r> rows;
-    ducks::g::make_dim_t<c> cols;
+    ducks::gl::make_dim_t<b> batch;
+    ducks::gl::make_dim_t<d> depth;
+    ducks::gl::make_dim_t<r> rows;
+    ducks::gl::make_dim_t<c> cols;
 
     detail::descriptor_dict<TMA_Types...> tma_descs;
 
     __host__ inline gl(T *_data,
-                        ducks::g::make_arg_t<b> _batch,
-                        ducks::g::make_arg_t<d> _depth,
-                        ducks::g::make_arg_t<r> _rows,
-                        ducks::g::make_arg_t<c> _cols) :
+                        ducks::gl::make_arg_t<b> _batch,
+                        ducks::gl::make_arg_t<d> _depth,
+                        ducks::gl::make_arg_t<r> _rows,
+                        ducks::gl::make_arg_t<c> _cols) :
             raw_ptr(_data), batch(_batch), depth(_depth), rows(_rows), cols(_cols) {
         tma_descs = detail::descriptor_dict<TMA_Types...>(raw_ptr, batch, depth, rows, cols);
     }
@@ -99,21 +94,8 @@ struct gl {
         return tma_descs.template get<U>();
     }
 #endif
-    __device__ inline T& operator[](const coord<> &idx) const { // yes I am abusing the const qualifier here a bit.
+    __device__ inline T& operator[](const coord<ducks::default_type> &idx) const { // yes I am abusing the const qualifier here a bit.
         return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c];
-    }
-    template<detail::tile TILE, int axis> __device__ inline T& get(const coord<TILE> &idx) const {
-        static_assert(axis==0 || axis==1 || axis==2, "Row axis must be 0, 1, or 2.");
-        if constexpr (axis==0) {
-            return raw_ptr[((idx.b*depth*TILE::rows + idx.d)*rows + idx.r)*cols + idx.c*TILE::cols];
-        } else if constexpr (axis==1) {
-            return raw_ptr[((idx.b*depth + idx.d*TILE::rows)*rows + idx.r)*cols + idx.c*TILE::cols];
-        } else if constexpr (axis==2) {
-            return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r*TILE::rows)*cols + idx.c*TILE::cols];
-        }
-    }
-    template<detail::vec VEC>__device__ inline T& get(const coord<VEC> &idx) const {
-        return raw_ptr[((idx.b*depth + idx.d)*rows + idx.r)*cols + idx.c*VEC::length];
     }
     template<int axis> __device__ inline size_t shape() const {
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");

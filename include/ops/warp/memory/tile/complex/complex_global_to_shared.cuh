@@ -13,53 +13,64 @@
 namespace kittens {
 
 /**
- * @brief Loads data from global memory into a complex shared memory tile with a row layout.
+ * @brief Loads data from global memory into a complex shared memory tile.
  *
- * @tparam CST The type of the complex shared tile.
+ * @tparam CST The complex shared tile type.
+ * @tparam CGL The complex global array type.
+ * @tparam COORD The coordinate type.
  * @param[out] dst The destination complex shared memory tile.
- * @param[in] resrc The source global memory array for the real component.
- * @param[in] imsrc The source global memory array for the imaginary component.
- * @param re_row_stride[in] The stride between rows in the source real component array.
- * @param im_row_stride[in] The stride between rows in the source imaginary component array.
+ * @param[in] src The source complex global memory array.
+ * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<ducks::cst::all CST, ducks::cgl::all CGL>
-__device__ static inline void load(CST &dst, const CGL &src, const coord &idx) {
-    load(dst.real, src.real, idx);
-    load(dst.imag, src.imag, idx);
+template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void load(CST &dst, const CGL &src, const COORD &idx) {
+    load<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    load<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+}
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void load(CST &dst, const CGL &src, const COORD &idx) {
+    load<2, CST, CGL, COORD>(dst, src, idx);
 }
 
 /**
- * @brief Stores bf16 data from a complex shared memory tile with a row layout into global memory.
+ * @brief Stores data from a complex shared memory tile into global memory.
  *
- * @tparam CST The type of the complex shared tile.
- * @param[out] redst The destination global memory array for the real component.
- * @param[out] imdst The destination global memory array for the imaginary component.
+ * @tparam CST The complex shared tile type.
+ * @tparam CGL The complex global array type.
+ * @tparam COORD The coordinate type.
+ * @param[out] dst The destination complex global memory array.
  * @param[in] src The source complex shared memory tile.
- * @param re_row_stride[in] The stride between rows in the destination real component array.
- * @param im_row_stride[in] The stride between rows in the destination imaginary component array.
+ * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<ducks::cst::all CST, ducks::cgl::all CGL>
-__device__ static inline void store(const CGL &dst, CST &src, const coord &idx) {
-    store(dst.real, src.real, idx);
-    store(dst.imag, src.imag, idx);
+template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void store(const CGL &dst, CST &src, const COORD &idx) {
+    store<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    store<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+}
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void store(const CGL &dst, CST &src, const COORD &idx) {
+    store<2, CST, CGL, COORD>(dst, src, idx);
 }
 
 /**
- * @brief Asynchronously loads data from global memory into a complex shared memory tile with a row layout using CUDA semaphores.
+ * @brief Asynchronously loads data from global memory into a complex shared memory tile.
  *
- * @tparam ST The type of the shared tile.
- * @param[out] dst The destination shared memory tile.
- * @param[in] resrc The source global memory array for the real component.
- * @param[in] imsrc The source global memory array for the imaginary component.
- * @param re_row_stride[in] The stride between rows in the real component source array.
- * @param im_row_stride[in] The stride between rows in the imaginary component source array.
- * @param semaphore[in,out] The CUDA semaphore used for synchronization.
+ * @tparam CST The complex shared tile type.
+ * @tparam CGL The complex global array type.
+ * @tparam COORD The coordinate type.
+ * @param[out] dst The destination complex shared memory tile.
+ * @param[in] src The source complex global memory array.
+ * @param[in] idx The coordinate of the tile in the global memory array.
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<ducks::cst::all CST, ducks::cgl::all CGL>
-__device__ static inline void load_async(CST &dst, const CGL &src, const coord &idx) {
-    load_async(dst.real, src.real, idx);
-    load_async(dst.imag, src.imag, idx);
+template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx) {
+    load_async<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    load_async<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+}
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx) {
+    load_async<2, CST, CGL, COORD>(dst, src, idx);
 }
 }

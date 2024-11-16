@@ -23,11 +23,15 @@ namespace kittens {
  * @param re_row_stride[in] The stride in elements between rows in the real component source array.
  * @param im_row_stride[in] The stride in elements between rows in the imaginary component source array.
  */
- template<ducks::crt::all CRT, ducks::cgl::all CGL>
-__device__ inline static void load(CRT &dst, const CGL &src, const coord &idx) {
+ template<int axis, ducks::crt::all CRT, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ inline static void load(CRT &dst, const CGL &src, const COORD &idx) {
     // Internally will use the correct load() method for row and column types
-    load(dst.real, src.real, idx);
-    load(dst.imag, src.imag, idx);
+    load<axis, CRT, CGL, COORD>(dst.real, src.real, idx);
+    load<axis, CRT, CGL, COORD>(dst.imag, src.imag, idx);
+}
+template<ducks::crt::all CRT, ducks::cgl::all CGL>
+__device__ inline static void load(CRT &dst, const CGL &src, const coord<CRT> &idx) {
+    load<2, CRT, CGL, coord<CRT>>(dst, src, idx);
 }
 
 /**
@@ -41,10 +45,14 @@ __device__ inline static void load(CRT &dst, const CGL &src, const coord &idx) {
  * @param re_row_stride[in] The stride in elements between rows in the real component destination array.
  * @param im_row_stride[in] The stride in elements between rows in the imaginary component destination array.
  */
-template<ducks::crt::all CRT, ducks::cgl::all CGL>
-__device__ inline static void store(CGL &dst, const CRT &src, const coord &idx) {
+template<int axis, ducks::crt::all CRT, ducks::cgl::all CGL, ducks::coord::tile COORD>
+__device__ inline static void store(CGL &dst, const CRT &src, const COORD &idx) {
     // Internally will use the correct load() method for row and column types
-    store(dst.real, src.real, idx);
-    store(dst.imag, src.imag, idx);
+    store<axis, CGL, CRT, COORD>(dst.real, src.real, idx);
+    store<axis, CGL, CRT, COORD>(dst.imag, src.imag, idx);
+}
+template<ducks::crt::all CRT, ducks::cgl::all CGL>
+__device__ inline static void store(CGL &dst, const CRT &src, const coord<CRT> &idx) {
+    store<2, CGL, CRT, coord<CRT>>(dst, src, idx);
 }
 }

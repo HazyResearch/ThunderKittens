@@ -20,7 +20,7 @@ namespace kittens {
  * @param[in] src The source global memory array.
  * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD, int N_THREADS=WARP_THREADS>
 __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
@@ -28,7 +28,7 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<typename COORD::BASE, axis>(idx);
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[idx.unit_coord<axis, 3>()];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -71,7 +71,7 @@ __device__ static inline void load(ST &dst, const GL &src, const coord<ST> &idx)
  * @param[in] src The source shared memory tile.
  * @param row_stride[in] The stride between rows in the destination array.
  */
-template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD, int N_THREADS=WARP_THREADS>
 __device__ static inline void store(const GL &dst, const ST &src, const COORD &idx) {
     const int row_stride = dst.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
@@ -79,7 +79,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
     constexpr int total_calls = (src.height*src.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<ST, axis>(idx);
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[idx.unit_coord<axis, 3>()];
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -119,7 +119,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const coord<ST
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::st COORD, int N_THREADS=WARP_THREADS>
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD, int N_THREADS=WARP_THREADS>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
@@ -127,7 +127,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<ST, axis>(idx);
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[idx.unit_coord<axis, 3>()];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 

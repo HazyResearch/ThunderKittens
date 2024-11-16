@@ -19,11 +19,11 @@ namespace kittens {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::row_layout RT, ducks::gl::all GL, int axis=2>
-__device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT, axis>(idx);
+    U *src_ptr = (U*)&src[idx.unit_coord<axis, 3>()];
     const int row_stride = src.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
@@ -63,11 +63,11 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<ducks::rt::col_layout RT, ducks::gl::all GL, int axis=2>
-__device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src.template get<RT, axis>(idx);
+    U *src_ptr = (U*)&src[idx.unit_coord<axis, 3>()];
     const int row_stride = src.template stride<axis>();
     int laneid = threadIdx.x % 32;
     #pragma unroll
@@ -99,6 +99,10 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
         }
     }
 }
+template<ducks::rt::all RT, ducks::gl::all GL>
+__device__ inline static void load(RT &dst, const GL &src, const coord<RT> &idx) {
+    load<2, RT, GL>(dst, src, idx);
+}
 
 /**
  * @brief Store data from a register tile to a destination array in global memory with a row-major layout.
@@ -109,11 +113,11 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::row_layout RT, ducks::gl::all GL, int axis=2>
-__device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT, axis>(idx);
+    U *dst_ptr = (U*)&dst[idx.unit_coord<axis, 3>()];
     const int row_stride = dst.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
@@ -154,11 +158,11 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<ducks::rt::col_layout RT, ducks::gl::all GL, int axis=2>
-__device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ inline static void store(GL &dst, const RT &src, const COORD &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst.template get<RT, axis>(idx);
+    U *dst_ptr = (U*)&dst[idx.unit_coord<axis, 3>()];
     const int row_stride = dst.template stride<axis>();
     int laneid = threadIdx.x % 32;
     #pragma unroll
@@ -189,6 +193,10 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
             dst_ptr[(row+9)*row_stride + (col+8)] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[3].y);
         }
     }
+}
+template<ducks::rt::all RT, ducks::gl::all GL>
+__device__ inline static void store(const GL &dst, const RT &src, const coord<RT> &idx) {
+    store<2, RT, GL>(dst, src, idx);
 }
 
 }

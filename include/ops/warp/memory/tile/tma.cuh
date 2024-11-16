@@ -21,22 +21,19 @@ namespace tma {
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void prefetch(ST &dst, const GL &src, const coord &idx) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile (
             "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
             " [%0, {%1, %2, %3, %4, %5}];"
             :
             : "l"(tma_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -55,16 +52,13 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const coord &idx)
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void store_async(const GL &dst, const ST &src, const coord &idx) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -72,7 +66,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const co
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -92,16 +86,13 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const co
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void store_add_async(const GL &dst, const ST &src, const coord &idx) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -109,7 +100,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -127,17 +118,14 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void store_min_async(const GL &dst, const ST &src, const coord &idx) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -145,7 +133,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -163,17 +151,14 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void store_max_async(const GL &dst, const ST &src, const coord &idx) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -181,7 +166,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -200,24 +185,21 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, semaphore& bar) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
             " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
             : "memory"
         );
     }
@@ -238,24 +220,21 @@ namespace cluster {
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::st::all ST, ducks::gl::all GL>
-__device__ static inline void load_async(ST &dst, const GL &src, const coord &idx, semaphore& bar, uint16_t cluster_mask) {
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-        int32_t crd0 = 0;
-        int32_t crd1 = idx.r * (ST::rows);
-        int32_t crd2 = idx.c * (ST::cols / (ST::swizzle_bytes / sizeof(typename ST::dtype)));
-        int32_t crd3 = idx.d;
-        int32_t crd4 = idx.b;
+        coord<ducks::default_type> unit_coord = idx.unit_coord<2,3>(); // convert to unit coordinates
+        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
             " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(crd0), "r"(crd1), "r"(crd2), "r"(crd3), "r"(crd4), "h"(cluster_mask)
+            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b), "h"(cluster_mask)
             : "memory"
         );
     }

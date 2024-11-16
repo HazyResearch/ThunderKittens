@@ -12,9 +12,9 @@
  * @param[in] src The source array in global memory to load data from.
  */
 template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
+__device__ inline static void load(RV &dst, const GL &src, const coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>> &idx) {
     // Call warp level load
-    ::kittens::load(dst, src, {idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()});
+    ::kittens::load(dst, src, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }
 /**
  * @brief Collaboratively stores data from register vectors to a destination array in global memory.
@@ -25,7 +25,7 @@ __device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
  * @param[in] src The source register vector to store data from.
  */
 template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RV &src, const coord &idx) {
+__device__ inline static void store(GL &dst, const RV &src, const coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>> &idx) {
     // Call warp level store
-    ::kittens::store(dst, src, {idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()});
+    ::kittens::store(dst, src, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }

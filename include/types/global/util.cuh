@@ -5,7 +5,7 @@
 
 namespace kittens {
 namespace ducks {
-namespace g {
+namespace gl {
 
 template<int d> concept cdim = (d > 0); // represents a compile-time dimension
 template<int d> concept rdim = (d == -1); // represents a runtime dimension
@@ -25,6 +25,11 @@ template<int d> using make_arg_t = std::conditional_t<rdim<d>, size_t, std::null
 }
 }
 
+namespace detail {
+template<typename T> concept tile = ducks::st::all<T> || ducks::rt::all<T> || ducks::cst::all<T> || ducks::crt::all<T>;
+template<typename T> concept vec  = ducks::sv::all<T> || ducks::rv::all<T> || ducks::csv::all<T> || ducks::crv::all<T>;
+}
+
 namespace ducks {
 namespace coord {
 struct identifier {};
@@ -33,6 +38,7 @@ struct identifier {};
 template<typename _T=ducks::default_type> struct coord { // essentially a named int4 for tensor coordinates.
     using identifier = ducks::coord::identifier;
     using BASE = _T; // in units of what type?
+    static_assert(std::is_same_v<BASE, ducks::default_type> || detail::tile<BASE> || detail::vec<BASE>); // ensure BASE is a valid type
     int b, d, r, c;
     __device__ inline coord(int _b, int _d, int _r, int _c) : b(_b), d(_d), r(_r), c(_c) {}
     __device__ inline coord(        int _d, int _r, int _c) : b( 0), d(_d), r(_r), c(_c) {}
@@ -42,7 +48,36 @@ template<typename _T=ducks::default_type> struct coord { // essentially a named 
     template<typename U> __device__ inline coord(const coord<U> &other) : b(other.b), d(other.d), r(other.r), c(other.c) {}
     __device__ inline coord(const int4 &other)  : b(other.x), d(other.y), r(other.z), c(other.w) {}
     __device__ inline operator int4() const { return int4(b, d, r, c); }
-    template<int axis> __device__ inline int dim() const { return (axis == 0) ? b : (axis == 1) ? d : (axis == 2) ? r : c; }
+    template<int row_axis, int col_axis> __device__ inline coord<ducks::default_type> unit_coord() {
+        if constexpr (detail::tile<BASE>) {
+            static_assert(row_axis != col_axis, "row and column axes must be different");
+            static_assert(row_axis >= 0 && row_axis <= 3, "row axis must be between 0 and 3");
+            static_assert(col_axis >= 0 && col_axis <= 3, "column axis must be between 0 and 3");
+            static_assert(col_axis == 3, "for now, column axis must be 3");
+            return coord(
+                row_axis == 0 ? b*BASE::rows : b,
+                row_axis == 1 ? d*BASE::rows : d,
+                row_axis == 2 ? r*BASE::rows : r,
+                c*BASE::cols
+            );
+        }
+        else if constexpr (detail::vec<BASE>) {
+            static_assert(row_axis == -1, "row axis must be be -1 for a vector coordinate to be converted to a unit coordinate");
+            static_assert(col_axis >= 0 && col_axis <= 3, "column axis must be between 0 and 3");
+            static_assert(col_axis == 3, "for now, column axis must be 3");
+            return coord(b, d, r, c*BASE::length);
+        }
+        else {
+            return *this;
+        }
+    }
+    template<int axis> __device__ inline int dim() const {
+        static_assert(axis >= 0 && axis <= 3, "axis must be between 0 and 3");
+        if constexpr      (axis == 0) { return b; }
+        else if constexpr (axis == 1) { return d; }
+        else if constexpr (axis == 2) { return r; }
+        else                          { return c; }
+    }
 };
 namespace ducks {
 namespace coord {
@@ -56,14 +91,8 @@ namespace coord {
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::coord::identifier
-template<typename T> concept st  = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::st::all <typename T::BASE>);
-template<typename T> concept rt  = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::rt::all <typename T::BASE>);
-template<typename T> concept cst = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::cst::all<typename T::BASE>);
-template<typename T> concept crt = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::crt::all<typename T::BASE>);
-template<typename T> concept sv  = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::sv::all <typename T::BASE>);
-template<typename T> concept rv  = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::rv::all <typename T::BASE>);
-template<typename T> concept csv = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::csv::all<typename T::BASE>);
-template<typename T> concept crv = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || ducks::crv::all<typename T::BASE>);
+template<typename T> concept tile = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || detail::tile<typename T::BASE>);
+template<typename T> concept vec  = all<T> && (std::is_same_v<typename T::BASE, ducks::default_type> || detail::vec<typename T::BASE>);
 }
 }
 }
