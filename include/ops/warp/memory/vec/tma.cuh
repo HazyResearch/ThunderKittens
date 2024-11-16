@@ -20,10 +20,10 @@ namespace tma {
  * @param[in] src_tma_map The source tensormap address in global memory
  * @param[in] vec_idx The coord of the requested vector.
  */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void prefetch(SV &dst, const GL &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV, -1>());
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
         unit_coord.c *= detail::sv_tma_dim2<SV>;
 
@@ -49,10 +49,10 @@ __device__ static inline void prefetch(SV &dst, const GL &src, const COORD &idx)
  * @param[in] src The source shared memory vector.
  * @param[in] vec_idx The coord of the vector destination.
  */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_async(const GL &dst, const SV &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
         unit_coord.c *= detail::sv_tma_dim2<SV>;
@@ -79,10 +79,10 @@ __device__ static inline void store_async(const GL &dst, const SV &src, const CO
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The coord of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_add_async(const GL &dst, const SV &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
         unit_coord.c *= detail::sv_tma_dim2<SV>;
@@ -109,11 +109,11 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The coord of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_min_async(const GL &dst, const SV &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
         unit_coord.c *= detail::sv_tma_dim2<SV>;
@@ -140,11 +140,11 @@ __device__ static inline void store_min_async(const GL &dst, const SV &src, cons
 * @param[in] src The source shared memory vector.
 * @param[in] vec_idx The coord of the vector destination.
 */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_max_async(const GL &dst, const SV &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
         unit_coord.c *= detail::sv_tma_dim2<SV>;
@@ -172,10 +172,10 @@ __device__ static inline void store_max_async(const GL &dst, const SV &src, cons
  * @param[in] vec_idx The coord of the requested vector.
  * @param[in,out] bar The semaphore used for synchronization of the asynchronous copy.
  */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV, -1>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
@@ -205,10 +205,10 @@ namespace cluster {
  * @param[in] vec_idx The coord of the requested vector.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV>());
+        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV, -1>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
         coord<ducks::default_type> unit_coord(idx); // convert to unit coordinates WITHOUT multiplying -- just copy.
