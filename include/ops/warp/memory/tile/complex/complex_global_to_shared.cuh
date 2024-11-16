@@ -22,14 +22,14 @@ namespace kittens {
  * @param[in] src The source complex global memory array.
  * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<int axis, bool assume_aligned, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void load(CST &dst, const CGL &src, const COORD &idx) {
-    load<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
-    load<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+    load<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    load<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
 }
-template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void load(CST &dst, const CGL &src, const COORD &idx) {
-    load<2, CST, CGL, COORD>(dst, src, idx);
+    load<2, false, CST, CGL, COORD>(dst, src, idx);
 }
 
 /**
@@ -42,14 +42,14 @@ __device__ static inline void load(CST &dst, const CGL &src, const COORD &idx) {
  * @param[in] src The source complex shared memory tile.
  * @param[in] idx The coordinate of the tile in the global memory array.
  */
-template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<int axis, bool assume_aligned, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void store(const CGL &dst, CST &src, const COORD &idx) {
-    store<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
-    store<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+    store<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    store<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
 }
-template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void store(const CGL &dst, CST &src, const COORD &idx) {
-    store<2, CST, CGL, COORD>(dst, src, idx);
+    store<2, false, CST, CGL, COORD>(dst, src, idx);
 }
 
 /**
@@ -64,13 +64,13 @@ __device__ static inline void store(const CGL &dst, CST &src, const COORD &idx) 
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<int axis, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<int axis, bool assume_aligned, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx) {
-    load_async<axis, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
-    load_async<axis, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
+    load_async<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.real, src.real, idx);
+    load_async<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx);
 }
-template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD>
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
 __device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx) {
-    load_async<2, CST, CGL, COORD>(dst, src, idx);
+    load_async<2, false, CST, CGL, COORD>(dst, src, idx);
 }
 }

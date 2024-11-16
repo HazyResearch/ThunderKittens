@@ -18,14 +18,14 @@ namespace kittens {
  * @param[out] dst The destination register vector to load data into.
  * @param[in] src The source array in global memory to load data from.
  */
-template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
+template<ducks::rv::all RV, ducks::gl::all GL, ducks::coord::vec COORD=coord<RV>>
+__device__ inline static void load(RV &dst, const GL &src, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename GL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    U *src_ptr = (U*)&src.template get<RV>(idx);
+    U *src_ptr = (U*)&src[(idx.template unit_coord<-1, 3>())];
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -86,14 +86,14 @@ __device__ inline static void load(RV &dst, const GL &src, const coord &idx) {
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register vector to store data from.
  */
-template<ducks::rv::all RV, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RV &src, const coord &idx) {
+template<ducks::rv::all RV, ducks::gl::all GL, ducks::coord::vec COORD=coord<RV>>
+__device__ inline static void store(const GL &dst, const RV &src, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename GL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_ptr = (U*)&dst.template get<RV>(idx);
+    U *dst_ptr = (U*)&dst[(idx.template unit_coord<-1, 3>())];
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -133,4 +133,4 @@ __device__ inline static void store(GL &dst, const RV &src, const coord &idx) {
     }
 }
 
-}
+} // namespace kittens

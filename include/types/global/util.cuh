@@ -48,13 +48,13 @@ template<typename _T=ducks::default_type> struct coord { // essentially a named 
     template<typename U> __device__ inline coord(const coord<U> &other) : b(other.b), d(other.d), r(other.r), c(other.c) {}
     __device__ inline coord(const int4 &other)  : b(other.x), d(other.y), r(other.z), c(other.w) {}
     __device__ inline operator int4() const { return int4(b, d, r, c); }
-    template<int row_axis, int col_axis> __device__ inline coord<ducks::default_type> unit_coord() {
+    template<int row_axis, int col_axis> __device__ inline coord<ducks::default_type> unit_coord() const {
         if constexpr (detail::tile<BASE>) {
             static_assert(row_axis != col_axis, "row and column axes must be different");
             static_assert(row_axis >= 0 && row_axis <= 3, "row axis must be between 0 and 3");
             static_assert(col_axis >= 0 && col_axis <= 3, "column axis must be between 0 and 3");
             static_assert(col_axis == 3, "for now, column axis must be 3");
-            return coord(
+            return coord<ducks::default_type>(
                 row_axis == 0 ? b*BASE::rows : b,
                 row_axis == 1 ? d*BASE::rows : d,
                 row_axis == 2 ? r*BASE::rows : r,
@@ -65,10 +65,10 @@ template<typename _T=ducks::default_type> struct coord { // essentially a named 
             static_assert(row_axis == -1, "row axis must be be -1 for a vector coordinate to be converted to a unit coordinate");
             static_assert(col_axis >= 0 && col_axis <= 3, "column axis must be between 0 and 3");
             static_assert(col_axis == 3, "for now, column axis must be 3");
-            return coord(b, d, r, c*BASE::length);
+            return coord<ducks::default_type>(b, d, r, c*BASE::length);
         }
         else {
-            return *this;
+            return coord<ducks::default_type>(*this);
         }
     }
     template<int axis> __device__ inline int dim() const {

@@ -68,7 +68,8 @@ struct st_load_store {
     template<int H, int W, int NW, kittens::ducks::gl::all GL, typename axis> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
-        kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
+        using ST = kittens::st<T, 16*H, 16*W>;
+        ST &shared_tile = al.allocate<ST>();
         int num_batches = axis::value==0?((int)input.batch/shared_tile.rows):(int)input.batch;
         int num_depths = axis::value==1?((int)input.depth/shared_tile.rows):(int)input.depth;
         int num_rows = axis::value==2?((int)input.rows/shared_tile.rows):(int)input.rows;
@@ -76,8 +77,8 @@ struct st_load_store {
             for(int j = 0; j < num_depths; j++)
                 for(int k = 0; k < num_rows; k++)
                     for(int l = 0; l < (input.cols/shared_tile.cols); l++) {
-            kittens::load <kittens::st<T, 16*H, 16*W>, GL, axis::value>(shared_tile,  input, {i, j, k, l});
-            kittens::store<kittens::st<T, 16*H, 16*W>, GL, axis::value>(output, shared_tile, {i, j, k, l});
+            kittens::load <axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile,  input, {i, j, k, l});
+            kittens::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
         }
     }
 };
@@ -95,7 +96,8 @@ struct st_load_store_async {
     template<int H, int W, int NW, kittens::ducks::gl::all GL, typename axis> __device__ static void device_func(const GL input, const GL output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
-        kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
+        using ST = kittens::st<T, 16*H, 16*W>;
+        ST &shared_tile = al.allocate<ST>();
         int num_batches = axis::value==0?((int)input.batch/shared_tile.rows):(int)input.batch;
         int num_depths = axis::value==1?((int)input.depth/shared_tile.rows):(int)input.depth;
         int num_rows = axis::value==2?((int)input.rows/shared_tile.rows):(int)input.rows;
@@ -103,9 +105,9 @@ struct st_load_store_async {
             for(int j = 0; j < num_depths; j++)
                 for(int k = 0; k < num_rows; k++)
                     for(int l = 0; l < (input.cols/shared_tile.cols); l++) {
-            kittens::load_async<kittens::st<T, 16*H, 16*W>, GL, axis::value>(shared_tile, input, {i, j, k, l});
+            kittens::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l});
             kittens::load_async_wait();
-            kittens::store<kittens::st<T, 16*H, 16*W>, GL, axis::value>(output, shared_tile, {i, j, k, l});
+            kittens::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
         }
     }
 };

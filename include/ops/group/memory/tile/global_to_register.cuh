@@ -12,11 +12,11 @@
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src[idx.unit_coord<axis, 3>()];
+    U *src_ptr = (U*)&src[(idx.template unit_coord<axis, 3>())];
     const int row_stride = src.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
@@ -47,11 +47,11 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T = typename RT::T;
     using U = typename GL::dtype;
-    U *src_ptr = (U*)&src[idx.unit_coord<axis, 3>()];
+    U *src_ptr = (U*)&src[(idx.template unit_coord<axis, 3>())];
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = dst.rows*warpid();
@@ -84,8 +84,8 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
         }
     }
 }
-template<ducks::rt::all RT, ducks::gl::all GL>
-__device__ inline static void load(RT &dst, const GL &src, const coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>> &idx) {
+template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     load<2>(dst, src, idx);
 }
 /**
@@ -97,11 +97,11 @@ __device__ inline static void load(RT &dst, const GL &src, const coord<rt<typena
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
-__device__ inline static void store(GL &dst, const RT &src, const COORD &idx) {
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst[idx.unit_coord<axis, 3>()];
+    U *dst_ptr = (U*)&dst[(idx.template unit_coord<axis, 3>())];
     const int row_stride = dst.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
@@ -132,11 +132,11 @@ __device__ inline static void store(GL &dst, const RT &src, const COORD &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD>
-__device__ inline static void store(GL &dst, const RT &src, const COORD &idx) {
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
-    U *dst_ptr = (U*)&dst[idx.unit_coord<axis, 3>()];
+    U *dst_ptr = (U*)&dst[(idx.template unit_coord<axis, 3>())];
     const int row_stride = dst.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = src.rows*warpid();
@@ -169,7 +169,7 @@ __device__ inline static void store(GL &dst, const RT &src, const COORD &idx) {
         }
     }
 }
-template<ducks::rt::all RT, ducks::gl::all GL>
-__device__ inline static void store(GL &dst, const RT &src, const coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>> &idx) {
+template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     store<2>(dst, src, idx);
 }
