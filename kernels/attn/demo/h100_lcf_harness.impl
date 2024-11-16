@@ -4,7 +4,7 @@
 
 constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 3072; // 768*2; // 4096;
+constexpr int ATTN_N = 768*4; 
 constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ITER   = 5;
 
@@ -45,10 +45,10 @@ int main(int argc, char **argv) {
     constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
     constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
 
-    float *q = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *k = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *v = new float[TOTAL_UNIQUE_ELEMENTS];
-    float *o_ref = new float[TOTAL_UNIQUE_ELEMENTS];
+    float *q = new float[TOTAL_ELEMENTS];
+    float *k = new float[TOTAL_ELEMENTS];
+    float *v = new float[TOTAL_ELEMENTS];
+    float *o_ref = new float[TOTAL_ELEMENTS];
 
     bf16 *q_bf = new bf16[TOTAL_ELEMENTS];
     bf16 *k_bf = new bf16[TOTAL_ELEMENTS];
@@ -60,22 +60,22 @@ int main(int argc, char **argv) {
 
     std::cout << "Starting to enter!" << std::endl;
 
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> q[i];
+    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> q[i];
     std::cout << "Finished loading Q" << std::endl;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> k[i];
+    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> k[i];
     std::cout << "Finished loading K" << std::endl;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> v[i];
+    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> v[i];
     std::cout << "Finished loading V" << std::endl;
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) infile >> o_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> o_ref[i];
     std::cout << "Finished loading O_REF" << std::endl;
 
     std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
 
-    // replicate into heads
+    // replicate into batch elements
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        q_bf[i] = __float2bfloat16(q[i % TOTAL_UNIQUE_ELEMENTS]);
-        k_bf[i] = __float2bfloat16(k[i % TOTAL_UNIQUE_ELEMENTS]);
-        v_bf[i] = __float2bfloat16(v[i % TOTAL_UNIQUE_ELEMENTS]);
+        q_bf[i] = __float2bfloat16(q[i % (TOTAL_ELEMENTS/ATTN_B)]);
+        k_bf[i] = __float2bfloat16(k[i % (TOTAL_ELEMENTS/ATTN_B)]);
+        v_bf[i] = __float2bfloat16(v[i % (TOTAL_ELEMENTS/ATTN_B)]);
     }
 
     bf16 *d_q, *d_k, *d_v, *d_o;
@@ -107,9 +107,6 @@ int main(int argc, char **argv) {
     constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<ker_template>;
     dim3 grid((ATTN_N + ker_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (ker_template::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<ker_template>;
-    // dim3 grid(132, 1, 1);
-    // dim3 bad_grid(grid.z, grid.y, grid.x);
-    std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
     // warmup
     for(int j = 0; j < ITER; j++)
         prototype::lcf::kernel<ker_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
@@ -126,7 +123,7 @@ int main(int argc, char **argv) {
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
 
@@ -134,12 +131,19 @@ int main(int argc, char **argv) {
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS; i++) {
-        float diff = o[i] - o_ref[i % TOTAL_UNIQUE_ELEMENTS];
-        o_ref_file << o_ref[i % TOTAL_UNIQUE_ELEMENTS] << ' ';
-        o_file << o[i] << ' ';
-        diff_file << diff << ' ';
-        if(i % 64 == 63) {
+
+    float total_diff = 0;
+    float max_error = 0; 
+
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) {
+        float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS/ATTN_B)];
+
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i % (TOTAL_ELEMENTS/ATTN_B)] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if (i % ATTN_D == ATTN_D-1) {
             o_ref_file << '\n';
             o_file << '\n';
             diff_file << '\n';
@@ -147,15 +151,27 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+
+        total_diff += abs(diff);
+        if (abs(diff) > max_error) {
+            max_error = abs(diff);
+        }
     }
 
-    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
-    if(good) std::cout << "Correct :)\n";
-    else std::cout << "Incorrect :(\n";
+    // print average difference
+    std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS << std::endl;
+    std::cout << "Max     o difference: " << max_error << std::endl;
+    if (abs(total_diff / TOTAL_ELEMENTS) < 1e-3) {
+        good = true;
+    }
+
+    std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    if(good) std::cout << "FWD Correct :)\n";
+    else std::cout << "FWD Incorrect :(\n";
     // Compute and print average TFLOPs achieved
     double avg_time_s = (double)(std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()) / (ITER * 1e6);
     double avg_tflops = (ATTN_FLOPS / avg_time_s) / 1e12;
-    std::cout << "Average TFLOPs achieved: " << avg_tflops << std::endl;
+    std::cout << "Efficiency: " << avg_tflops << " TFLOPS\n\n\n" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);
