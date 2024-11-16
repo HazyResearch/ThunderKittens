@@ -397,6 +397,24 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
         __syncwarp();
     }
 }
+template<ducks::rt::col_layout RT>
+__device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for (int k = 0; k < dst.packed_per_tile; k++) {
+                const int t_col_idx = (j * dst.tile_size) + ((k % 2) * 8) + (laneid() / 4); 
+                if (t_col_idx >= col_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                else                       { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
+            }
+        }
+        __syncwarp();
+    }
+}
 
 /**
  * @brief Makes a register tile left filled with a given value.
@@ -421,6 +439,24 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
                 else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
                 if (col_idx_y <= col_idx)  { dst.tiles[i][j].data[k].y = val; }
                 else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+            }
+        }
+        __syncwarp();
+    }
+}
+template<ducks::rt::col_layout RT>
+__device__ static inline void left_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for (int k = 0; k < dst.packed_per_tile; k++) {
+                const int thread_col = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
+                if (thread_col <= col_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
         }
         __syncwarp();
@@ -454,6 +490,24 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
         __syncwarp();
     }
 }
+template<ducks::rt::col_layout RT>
+__device__ static inline void upper_fill(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for (int k = 0; k < dst.packed_per_tile; k++) {
+                const int row_idx_x = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                const int row_idx_y = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                if (row_idx_x <= row_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (row_idx_y <= row_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+            }
+        }
+    }
+}
 
 /**
  * @brief Makes a register tile lower filled with a given value.
@@ -480,6 +534,25 @@ __device__ static inline void lower_fill(RT &dst, const RT &src, const int row_i
             }
         }
         __syncwarp();
+    }
+}
+
+template<ducks::rt::col_layout RT>
+__device__ static inline void lower_fill(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            #pragma unroll
+            for (int k = 0; k < dst.packed_per_tile; k++) {
+                const int row_idx_x = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                const int row_idx_y = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                if (row_idx_x >= row_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (row_idx_y >= row_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+            }
+        }
     }
 }
 
