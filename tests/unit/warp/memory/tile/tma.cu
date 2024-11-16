@@ -35,6 +35,49 @@ struct test_load { // load with TMA, write out normally
 };
 
 template<typename T>
+struct test_load_oob { // load oob memory via TMA
+    using dtype = T;
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_oob_gmem=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "tma_load_oob_gmem=half" :
+                                                                                         "tma_load_oob_gmem=float";
+    template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // everything should be zero
+        for (int i = 0; i < o_ref.size(); i++) {
+            o_ref[i] = 0;
+        }
+    }
+    template<int H, int W, int NW, kittens::ducks::gl::all GL>
+    __device__ static void device_func(const GL &input, const GL &output) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
+
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>(); // assuming compile-time known dimensions
+
+        for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) {
+            kittens::rt<T, 16*H, 16*W> reg_tile;
+            kittens::one(reg_tile);
+            kittens::store(shared_tile[i][j], reg_tile);
+        }
+        __syncthreads(); 
+        
+        __shared__ kittens::semaphore smem_semaphore; 
+        kittens::init_semaphore(smem_semaphore, 0, 1);
+        __syncwarp();
+        for(int a = 0; a < input.batch; a++) for(int b = 0; b < input.depth; b++) {
+            kittens::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
+            for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+                kittens::tma::load_async(shared_tile[i][j], input, {input.batch + a, input.depth + b, i + 2, j + 2}, smem_semaphore);
+            }
+            kittens::wait(smem_semaphore, (a*input.depth+b)%2);
+            for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
+                kittens::store(output, shared_tile[i][j], {a, b, i, j});
+            }
+        }
+    }
+};
+
+template<typename T>
 struct test_store { // load normally, store with TMA
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
@@ -227,6 +270,7 @@ void warp::memory::tile::tma::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     tma_sweep_gmem_type_2d<test_load,             SIZE, SIZE>::run(results);
+    tma_sweep_gmem_type_2d<test_load_oob,         SIZE, SIZE>::run(results);
     tma_sweep_gmem_type_2d<test_store,            SIZE, SIZE>::run(results);
     tma_sweep_gmem_type_2d<test_store_add_reduce, SIZE, SIZE>::run(results);
     tma_sweep_gmem_type_2d<test_store_min_reduce, SIZE, SIZE>::run(results);
