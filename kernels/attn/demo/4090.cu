@@ -20,6 +20,7 @@ template<int D> struct globals { global_layout<D> Qg, Kg, Vg, Og; };
 
 template<int D> __launch_bounds__(NUM_WORKERS*WARP_THREADS, 1)
 __global__ void attend_ker(const __grid_constant__ globals<D> g) {
+    
     using load_group = kittens::group<2>; // pairs of workers collaboratively load k, v tiles
     int loadid = load_group::groupid(), workerid = kittens::warpid(); // which worker am I?
     constexpr int LOAD_BLOCKS = NUM_WORKERS / load_group::GROUP_WARPS;
