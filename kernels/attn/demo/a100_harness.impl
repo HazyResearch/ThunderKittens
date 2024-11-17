@@ -2,10 +2,10 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 8;
-constexpr int ATTN_H = 8;
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16;
 constexpr int ATTN_N = 1024;
-constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ATTN_D = 128; // hardcoded into this kernel
 constexpr int ITER   = 10;
 
 #define BLOCK_SIZE (32*NUM_WORKERS)
@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
     globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
-    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY-1000) / 2; // have the flag tell us
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY)/2; // have the flag tell us
     std::cout << "Max shared memory size: " << mem_size << std::endl;
     
     cudaFuncSetAttribute(
@@ -103,6 +103,12 @@ int main(int argc, char **argv) {
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         mem_size
     );
+
+    // cudaFuncSetAttribute(
+    //     attend_ker<ATTN_D>,
+    //     cudaFuncAttributePreferredSharedMemoryCarveout,
+    //     80
+    // ); 
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
