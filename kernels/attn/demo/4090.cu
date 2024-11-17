@@ -8,7 +8,9 @@ constexpr int ITER   = 10;
 
 using namespace kittens;
 
-constexpr int NUM_WORKERS = 4; // This kernel uses 4 worker warps per block, and 2 blocks per SM.
+constexpr int NUM_WORKERS = 4;
+constexpr int PIPE_STAGES = 3; 
+
 template<int D> constexpr size_t ROWS = 16*(128/D); // height of each worker tile (rows)
 template<int D, typename T=bf16, typename L=row_l> using qkvo_tile = rt<T, ROWS<D>, D, L>;
 template<int D, typename T=float> using attn_tile = rt<T, ROWS<D>, ROWS<D>>;
@@ -26,8 +28,8 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
     shared_allocator al((int*)&__shm[0]);
     // K and V live in shared memory. Here, we instantiate three tiles for a 3-stage pipeline.
-    shared_tile<D> (&k_smem)[LOAD_BLOCKS][3] = al.allocate<shared_tile<D>, LOAD_BLOCKS, 3>();
-    shared_tile<D> (&v_smem)[LOAD_BLOCKS][3] = al.allocate<shared_tile<D>, LOAD_BLOCKS, 3>();
+    shared_tile<D> (&k_smem)[LOAD_BLOCKS][PIPE_STAGES] = al.allocate<shared_tile<D>, LOAD_BLOCKS, PIPE_STAGES>();
+    shared_tile<D> (&v_smem)[LOAD_BLOCKS][PIPE_STAGES] = al.allocate<shared_tile<D>, LOAD_BLOCKS, PIPE_STAGES>();
     // We also reuse this memory to improve coalescing of DRAM reads and writes.
     shared_tile<D> (&qo_smem)[NUM_WORKERS] = reinterpret_cast<shared_tile<D>(&)[NUM_WORKERS]>(k_smem);
     // Initialize all of the register tiles.
@@ -56,10 +58,10 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     load_group::load_async(k_smem[loadid][0], g.Kg, {batch, head, loadid, 0});
     load_group::load_async(v_smem[loadid][0], g.Vg, {batch, head, loadid, 0});
     // iterate over k, v for these q's that have been loaded
-    for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=(tic+1)%3) {
+    for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=(tic+1)%PIPE_STAGES) {
         int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
         if(next_load_idx*ROWS<D> < g.Kg.rows) {
-            int next_tic = (tic+1)%3;
+            int next_tic = (tic+1)%PIPE_STAGES;
             load_group::load_async(k_smem[loadid][next_tic], g.Kg, {batch, head, next_load_idx, 0});
             load_group::load_async(v_smem[loadid][next_tic], g.Vg, {batch, head, next_load_idx, 0});
             load_async_wait<2>(); // next k, v can stay in flight.

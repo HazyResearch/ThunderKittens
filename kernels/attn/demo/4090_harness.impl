@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
     global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
     globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
-    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY-1000) / 2; // have the flag tell us
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY) / 2; // have the flag tell us
     std::cout << "Max shared memory size: " << mem_size << std::endl;
     
     cudaFuncSetAttribute(
