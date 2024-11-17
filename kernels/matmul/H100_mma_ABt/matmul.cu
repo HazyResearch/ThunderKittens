@@ -12,7 +12,7 @@ struct matmul_layout {
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
     struct common_state   { int2 coord; };
-    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+    struct consumer_state { rt_fl<16, 64> accum[N_BLOCK]; };
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
@@ -64,31 +64,38 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            zero(args.state.accum);
+            for (int n = 0; n < N_BLOCK; n++) 
+                zero(args.state.accum[n]);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            // if ( threadIdx.x == 0 ) { 
-            //     printf("A::height: %d, width: %d\n", args.input.a[warpgroup::groupid()].rows, args.input.a[warpgroup::groupid()].cols);
-            //     printf("B::height: %d, width: %d\n", reinterpret_cast<wide_tile&>(args.input.b).rows, reinterpret_cast<wide_tile&>(args.input.b).cols);
-            // }
-
-            warpgroup::mma_ABt(
-                args.state.accum, // dest registers
-                args.input.a[warpgroup::groupid()], // A matrix
-                reinterpret_cast<wide_tile&>(args.input.b) // B matrix
-            );
+            for(int n = 0; n < N_BLOCK; n++) {
+                warpgroup::mma_ABt(
+                    args.state.accum[n],
+                    args.input.a[warpgroup::groupid()],
+                    args.input.b[n]
+                );
+            }
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
-            warpgroup::sync(warpgroup::groupid()+4);
-            if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
-                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-                                             {args.common.coord.x, args.common.coord.y+i});
-                tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
+            for(int n = 0; n < N_BLOCK; n++) {
+                warpgroup::store(args.finish.c[warpgroup::groupid()][n], args.state.accum[n]);
             }
-            zero(args.state.accum);
+            warpgroup::sync(warpgroup::groupid()+4);
+            
+            if(warpgroup::warpid() == 0) {
+                for(int i = 0; i < N_BLOCK; i++) {
+                    tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
+                                   {args.common.coord.x, args.common.coord.y+i});
+                    tma::store_async_read_wait();
+                }
+            }
+
+            // Zero the accumulators
+            for(int n = 0; n < N_BLOCK; n++) {
+                zero(args.state.accum[n]);
+            }
             if(laneid() == 0) arrive(args.finish_finished);
         }
     };
@@ -253,6 +260,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
         max_error = std::max(max_error, error);
     }
 
+    std::cout << "Total elements: " << M*N << std::endl;
     std::cout << "Max error: " << max_error << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
@@ -274,6 +282,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 int main() {
     int N;
     N = 4096;
-    run_benchmark<matmul_template<1,1,1>>(N, N, N);
+    run_benchmark<matmul_template<2,4,8>>(N, N, N);
     return 0;
 }
