@@ -1,5 +1,11 @@
 #include "kittens.cuh"
 
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16;
+constexpr int ATTN_N = 1024;
+constexpr int ATTN_D = 64;
+constexpr int ITER   = 10;
+
 using namespace kittens;
 
 constexpr int NUM_WORKERS = 4; // This kernel uses 4 worker warps per block, and 2 blocks per SM.

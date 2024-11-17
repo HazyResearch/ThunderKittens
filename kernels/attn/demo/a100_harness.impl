@@ -2,12 +2,6 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024;
-constexpr int ATTN_D = 128; // hardcoded into this kernel
-constexpr int ITER   = 10;
-
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
