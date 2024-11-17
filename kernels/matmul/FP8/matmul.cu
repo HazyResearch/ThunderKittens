@@ -12,7 +12,10 @@ struct matmul_layout {
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
     struct common_state   { int2 coord; };
-    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+    struct consumer_state { 
+        rt_fl<16, 64> accum[N_BLOCK]; 
+        rt_fl8<16, 64> accum_fp8[N_BLOCK];
+    };
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
@@ -20,12 +23,11 @@ struct matmul_template {
     using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
     using wide_tile = st_fl8<64, 64*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
-
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
-      // ThunderKittens template functions
+    // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
@@ -33,8 +35,7 @@ struct matmul_template {
             super_repeat = SUPER_M*Cblocks;
         int task_id = args.task_iter*gridDim.x + blockIdx.x;
         if (task_id < super_rows * Cblocks)
-            args.common.coord = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M,
-                           (task_id%super_repeat)/SUPER_M };
+            args.common.coord = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M, (task_id%super_repeat)/SUPER_M };
         else if (task_id < Rblocks*Cblocks) {
             int remainder_id = task_id - super_rows*Cblocks;
             args.common.coord = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
@@ -61,7 +62,7 @@ struct matmul_template {
                 }
                 for(int i = 0; i < N_BLOCK; i++)
                     tma::load_async(args.input.b[i], args.globals.B,
-                                    {args.iter, args.common.coord.y+i}, args.inputs_arrived);
+                                    {args.common.coord.y+i, args.iter}, args.inputs_arrived);
             }
         }
     };
@@ -69,36 +70,44 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            zero(args.state.accum);
+            for (int n = 0; n < N_BLOCK; n++) 
+                zero(args.state.accum[n]);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            // warpgroup::mma_ABt(
-            //     args.state.accum, // dest registers
-            //     args.input.a[warpgroup::groupid()], // A matrix
-            //     reinterpret_cast<wide_tile&>(args.input.b) // B matrix
-            // );
+            for(int n = 0; n < N_BLOCK; n++) {
+                warpgroup::mma_ABt(
+                    args.state.accum[n],
+                    args.input.a[warpgroup::groupid()],
+                    args.input.b[n]
+                );
+            }
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            // warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
-            warpgroup::sync(warpgroup::groupid()+4);
-            if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
-                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-                                             {args.common.coord.x, args.common.coord.y+i});
-                tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
+            for(int n = 0; n < N_BLOCK; n++) {
+                copy(args.state.accum_fp8[n], args.state.accum[n]);
+                warpgroup::store(args.finish.c[warpgroup::groupid()][n], args.state.accum_fp8[n]);
             }
-            zero(args.state.accum);
+            warpgroup::sync(warpgroup::groupid()+4);
+            
+            if(warpgroup::warpid() == 0) {
+                for(int i = 0; i < N_BLOCK; i++) {
+                    tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
+                                   {args.common.coord.x, args.common.coord.y+i});
+                    tma::store_async_read_wait();
+                }
+            }
+
+            // Zero the accumulators
+            for(int n = 0; n < N_BLOCK; n++) {
+                zero(args.state.accum[n]);
+            }
             if(laneid() == 0) arrive(args.finish_finished);
         }
     };
 };
 
-
-
-
-
-constexpr bool NCU = false;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
@@ -111,7 +120,8 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
         for (int j = 0; j < N; j++) {
             float sum = 0.0f;
             for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[k * N + j];
+                sum += a[i * K + k] * b[j * K + k];
+                // sum += a[i * K + k] * b[k * N + j];
             }
             c[i * N + j] = sum;
         }
@@ -151,8 +161,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::uniform_real_distribution<> dis(-0.5, 0.5);
 
     // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen);
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
+    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 0.1f;
+    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 0.1f;
 
     std::cout << "Initialized matrices" << std::endl;
 
@@ -183,8 +193,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * K; ++i) h_A_fp8[i] = __nv_fp8_e4m3(h_A[i]);
     for (int i = 0; i < K * N; ++i) h_B_fp8[i] = __nv_fp8_e4m3(h_B[i]);
 
-    cudaMemcpy(d_A, h_A_fp8, M*K*2, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B_fp8, K*N*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
 
     std::cout << "Copied matrices to device" << std::endl;
 
@@ -195,7 +205,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     dim3 grid(mmt::grid(M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
+    for(int i = 0; i < ( 2 ); i++) { // warmup
         inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
     }
 
@@ -204,7 +214,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     auto start = std::chrono::high_resolution_clock::now();
 
-    constexpr int ITERS = (NCU ? 1 : 10);
+    constexpr int ITERS = ( 10 );
     for(int i = 0; i < ITERS; i++) {
         inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
     }
@@ -234,14 +244,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     __nv_fp8_e4m3 *h_C_fp8 = new __nv_fp8_e4m3[M * N];
-    cudaMemcpy(h_C_fp8, d_C, M*N*2, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_fp8, d_C, M*N*sizeof(fp8e4m3), cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
     for (int i = 0; i < M * N; ++i) {
         h_C[i] = float(h_C_fp8[i]);
-        // printf("%f %f\n", h_C[i], h_C_ref[i]);
     }
 
     std::cout << "Converted result back to float" << std::endl;
@@ -252,10 +261,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if(error > 1.0) { // large because of fp8 vs fp32 numerics
-            if(error_count < 5) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-            else if(error_count == 5) std::cout << "Too many errors to show them all.\n";
+            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+            else if(error_count == 20) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
+        // if (error > max_error) printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
         max_error = std::max(max_error, error);
     }
 
@@ -278,42 +288,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 }
 
 int main() {
-    // int Cblocks = 22, Rblocks = 24;
-    // int Cblocks192 = 20, Rblocks192 = 16;
-    // run_benchmark<matmul_template<4>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
-    // run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
-    // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     int N;
     N = 4096;
     run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // N = 3072;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
-    // N = 4096;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // N = 6144;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
-    // N = 8192;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // N = 12288;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
-    // N = 16384;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<2,4,12>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,12>>(192*12, 192*11, 8192);
-    // run_benchmark<matmul_template<2,4,11>>(128*22, 256* 6, 8192);
-    // run_benchmark<matmul_template<2,4,1>>(128 * 132, 256, 256);
-    // run_benchmark<matmul_template<2,4,1>>(128 * 133, 256, 256);
-    // run_benchmark<matmul_template<2,4,1>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,8>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,12>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,128>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 8192);
-    // run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 16384);
-    // run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192);
-    // run_benchmark<matmul_template<3,3,12>>(192*12*2, 192*11*2, 8192*2);
-    // run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192*2);
     return 0;
 }
+
