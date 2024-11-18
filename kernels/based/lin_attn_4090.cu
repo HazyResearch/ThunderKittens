@@ -282,6 +282,89 @@ based_globals based_init(
     return g;
 }
 
+#ifdef TK_COMPILE_BASED
+#include "pyutils/torch_helpers.cuh"
+#include <iostream>
+void dispatch_based( 
+    bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
+    int ATTN_B, int ATTN_H, int ATTN_N
+){
+    based_globals g = based_init(
+        d_q, d_k, d_v, d_o,
+        ATTN_B, ATTN_H, ATTN_N
+    );
+
+    // launch
+    unsigned long mem_size = 100000; // 4090
+    cudaDeviceSynchronize();
+    cudaFuncSetAttribute(
+        based_linear_attention,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    dim3 grid(ATTN_H, ATTN_B);
+    based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g);
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    cudaDeviceSynchronize();
+}
+
+std::tuple<torch::Tensor, torch::Tensor> based(
+    const torch::Tensor q, 
+    const torch::Tensor k,
+    const torch::Tensor v
+) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(k);
+    CHECK_INPUT(v);
+
+    int B = q.size(0);
+    int H = q.size(1);
+    int DV = v.size(3);
+    int N  = q.size(2);
+    int FD = k.size(3);
+
+    // checks
+    TORCH_CHECK(k.size(0) == B, "k batch?");
+    TORCH_CHECK(k.size(1) == H, "k heads?");
+    TORCH_CHECK(k.size(2) == N, "k length?");
+
+    TORCH_CHECK(v.size(0) == B, "v batch?");
+    TORCH_CHECK(v.size(1) == H, "v heads?");
+    TORCH_CHECK(v.size(2) == N, "v length?");
+
+    // allocate output
+    torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
+    torch::Tensor kv_a0 = torch::empty({B, H, 1,  DV}, v.options());
+    torch::Tensor kv_a1 = torch::empty({B, H, DV, FD}, v.options());
+    torch::Tensor kv_a2 = torch::empty({B, H, FD*FD, DV}, v.options());
+
+    // convert to bf16
+    c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *k_bf16 = k.data_ptr<c10::BFloat16>();
+    c10::BFloat16 *v_bf16 = v.data_ptr<c10::BFloat16>();
+    
+    bf16 *d_q = reinterpret_cast<bf16*>(q_bf16);
+    bf16 *d_k = reinterpret_cast<bf16*>(k_bf16);
+    bf16 *d_v = reinterpret_cast<bf16*>(v_bf16);
+    bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a0 = reinterpret_cast<bf16*>(kv_a0.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a1 = reinterpret_cast<bf16*>(kv_a1.data_ptr<c10::BFloat16>());
+    bf16 *d_kv_a2 = reinterpret_cast<bf16*>(kv_a2.data_ptr<c10::BFloat16>());
+
+    dispatch_based(
+        d_q, d_k, d_v, d_o,
+        B, H, N
+    );
+
+    kv_a1 = kv_a1.transpose(2, 3);
+    torch::Tensor kv_concat = torch::cat({kv_a0, kv_a1, kv_a2}, /*dim=*/2);
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return std::make_tuple(out, kv_concat);
+    cudaDeviceSynchronize();
+}
+#else
 #include "harness_4090.impl"
+#endif
 
 
