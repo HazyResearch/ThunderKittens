@@ -124,15 +124,15 @@ int main(int argc, char **argv) {
         v_bf[i] = __float2bfloat16(v[i]);
     }
 
-    bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_a2, *d_kv_a1, *d_kv_a0;
+    bf16 *d_q, *d_k, *d_v, *d_o; 
     cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));
     cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
     cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
-    // kv state
-    cudaMalloc(&d_kv_a2, TOTAL_ELEMENTS_KV_A2 * sizeof(bf16));
-    cudaMalloc(&d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16));
-    cudaMalloc(&d_kv_a0, TOTAL_ELEMENTS_KV_A0 * sizeof(bf16));
+    // // kv state
+    // cudaMalloc(&d_kv_a2, TOTAL_ELEMENTS_KV_A2 * sizeof(bf16));
+    // cudaMalloc(&d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16));
+    // cudaMalloc(&d_kv_a0, TOTAL_ELEMENTS_KV_A0 * sizeof(bf16));
 
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -191,6 +191,9 @@ int main(int argc, char **argv) {
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
 
+    float max_diff = 0; 
+    float avg_diff = 0; 
+
     std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
     std::cout << "Total unique elements: " << TOTAL_ELEMENTS_VO << std::endl;
     for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
@@ -203,7 +206,12 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.05 || isnan(diff)) {
             good = false;
         }
+        max_diff = std::max(max_diff, abs(diff));
+        avg_diff += abs(diff);
     }
+    avg_diff /= TOTAL_ELEMENTS_VO;
+    std::cout << "Max diff: " << max_diff << std::endl;
+    std::cout << "Avg diff: " << avg_diff << std::endl;
     if(good) std::cout << "Correct output :)\n";
     else std::cout << "Incorrect output :(\n";
 

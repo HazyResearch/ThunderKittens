@@ -24,37 +24,29 @@ struct based_globals {
     using k_tile = st_bf<16, fd>;
     using v_tile = st_bf<16, dv>;
     using o_tile = st_bf<16, dv>;
-    // using kv_a0_tile = sv_bf<dv>; // kv state
-    // using kv_a1_tile = st_bf<dv, fd>; 
-    // using kv_a2_tile = st_bf<dv, 4*fd>;
 
     // global layouts
     using q_gl     = gl<bf16,  -1, -1, -1, fd, q_tile>;
     using k_gl     = gl<bf16,  -1, -1, -1, fd, k_tile>;
     using v_gl     = gl<bf16,  -1, -1, -1, dv, v_tile>;
     using o_gl     = gl<bf16,  -1, -1, -1, dv, o_tile>;
-    // using kv_a0_gl = gl<bf16,  -1, -1,  1, dv, kv_a0_tile>;
-    // using kv_a1_gl = gl<bf16,  -1, -1, dv, fd, kv_a1_tile>;
-    // using kv_a2_gl = gl<bf16,  -1, -1, fd*fd, dv, kv_a2_tile>;
 
     // pointers
     q_gl q;
     k_gl k;
     v_gl v;
     o_gl o;
-    // kv_a0_gl kv_a0;
-    // kv_a1_gl kv_a1;
-    // kv_a2_gl kv_a2;
+
     int n;
 };
 
 template<kittens::ducks::st::all ST, int N_TILES>
-__device__ void accumulate_a0(ST (&o)[N_TILES], sv_bf<ST::cols> &running_sum, const ST (&v)[N_TILES]) {
+__device__ void accumulate_a0(ST (&o)[N_TILES], sv_fl<ST::cols> &running_sum, const ST (&v)[N_TILES]) {
     float acc;
 
     if(threadIdx.x < ST::cols) {
         int col = threadIdx.x;
-        acc = __bfloat162float(running_sum[col]);
+        acc = running_sum[col]; 
         #pragma unroll
         for(int t = 0; t < N_TILES; t++) {
             #pragma unroll
@@ -63,7 +55,7 @@ __device__ void accumulate_a0(ST (&o)[N_TILES], sv_bf<ST::cols> &running_sum, co
                 o[t][int2{i, col}] += __float2bfloat16(acc);
             }
         }
-        running_sum[col] = __float2bfloat16(acc);
+        running_sum[col] = acc;
     }
 }
 
@@ -149,12 +141,12 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
     rt_fl<16,64> a2; 
 
-    sv_bf<64> &a0_total = al.allocate<sv_bf<64>>();
+    sv_fl<64> &a0_total = al.allocate<sv_fl<64>>();
 
     if (warpid == 0) {
         zero(a0_total);
     }
-    else {
+    if (warpid < ACTIVE_TILES + 1) {
         zero(a1_s[warpid]);
     }
     zero(a2); 
@@ -174,7 +166,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
             load(k_s[warpid], g.k, {batch, head, cur_idx, 0});
         }
         else {
-            cur_idx = block*ACTIVE_TILES + warpid - 8;
+            cur_idx = block*ACTIVE_TILES + warpid - ACTIVE_TILES;
             load(v_s[warpid-8], g.v, {batch, head, cur_idx, 0});
         }
         __syncthreads();
@@ -213,11 +205,11 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
         if(warpid < ACTIVE_TILES) {
             rt_bf<16, 64> a1;
-            load(q, q_s[warpid]); // load q again
+            load(q, q_s[warpid]); 
             load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
-            auto &a1_col = swap_layout_inplace(a1); // prepare for MMA
-            mma_AB(o, q, a1_col, o); // mma_AB onto O in registers
-            store(o_s[warpid], o); // store current o to shared memory
+            auto &a1_col = swap_layout_inplace(a1);
+            mma_AB(o, q, a1_col, o); 
+            store(o_s[warpid], o);
         }
         total_block_idx = (total_block_idx+ACTIVE_TILES)%(ACTIVE_TILES+1); // count backwards on the ring
         __syncthreads();
@@ -272,30 +264,20 @@ based_globals based_init(
     using k_tile     = globals::k_tile;
     using v_tile     = globals::v_tile;
     using o_tile     = globals::o_tile;
-    // using kv_a0_tile = globals::kv_a0_tile; // kv state
-    // using kv_a1_tile = globals::kv_a1_tile; 
-    // using kv_a2_tile = globals::kv_a2_tile;
 
     // global layouts
     using q_gl     = globals::q_gl;
     using k_gl     = globals::k_gl;
     using v_gl     = globals::v_gl;
     using o_gl     = globals::o_gl;
-    // using kv_a0_gl = globals::kv_a0_gl;
-    // using kv_a1_gl = globals::kv_a1_gl;
-    // using kv_a2_gl = globals::kv_a2_gl;
 
     q_gl     q_arg{d_q, ATTN_B, ATTN_H, ATTN_N, nullptr};
     k_gl     k_arg{d_k, ATTN_B, ATTN_H, ATTN_N, nullptr};
     v_gl     v_arg{d_v, ATTN_B, ATTN_H, ATTN_N, nullptr};
     o_gl     o_arg{d_o, ATTN_B, ATTN_H, ATTN_N, nullptr};
-    // kv_a0_gl kv_a0{d_kv_a0, ATTN_B, ATTN_H, nullptr, nullptr};
-    // kv_a1_gl kv_a1{d_kv_a1, ATTN_B, ATTN_H, nullptr, nullptr};
-    // kv_a2_gl kv_a2{d_kv_a2, ATTN_B, ATTN_H, nullptr, nullptr};
 
     globals g{
         q_arg, k_arg, v_arg, o_arg, ATTN_N
-        // kv_a0, kv_a1, kv_a2, ATTN_N
     };
     return g;
 }
