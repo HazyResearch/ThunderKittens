@@ -7,8 +7,8 @@ import math
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
-B = 16
-H = 16
+B = 1
+H = 1
 N = 1024
 D = 16
 DV = 64
