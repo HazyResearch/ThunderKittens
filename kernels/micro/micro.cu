@@ -20,13 +20,13 @@ void micro_tk(const __grid_constant__ micro_globals g) {
     shared_allocator al((int*)&__shm[0]);
     st_fl<_row, _col> (&x_s) = al.allocate<st_fl<_row, _col>>();
     st_fl<_row, _row> (&o_s) = al.allocate<st_fl<_row, _row>>();
-    st_fl8<_row, _col> (&x_fp8_s) = al.allocate<st_fl8<_row, _col>>();
+    st_fl8_e4m3<_row, _col> (&x_fp8_s) = al.allocate<st_fl8_e4m3<_row, _col>>();
 
     // Warp-level MMA
     rt_fl<_row, _col> x_reg_fl;
     rt_fl<_row, _col, ducks::rt_layout::col> x_reg_fl_col;
-    rt_fl8<_row, _col> x_fp8_reg;  // fp8x4 ( 4 floats ) per element 
-    rt_fl8<_row, _col, ducks::rt_layout::col> x_fp8_reg_col;  // fp8x4 ( 4 floats ) per element
+    rt_fl8_e4m3<_row, _col> x_fp8_reg;  // fp8x4 ( 4 floats ) per element 
+    rt_fl8_e4m3<_row, _col, ducks::rt_layout::col> x_fp8_reg_col;  // fp8x4 ( 4 floats ) per element
     rt_fl <_row, _row> att_block;  // float2 (2 floats ) per element
 
 

@@ -235,7 +235,10 @@ __device__ static inline void copy(rt_base<T, layout> &dst, const rt_base<U, lay
 template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::all layout>
 __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
 
-    if constexpr (std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3>) {
+    if constexpr (
+        std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3> ||
+        std::is_same_v<U2, float> && std::is_same_v<T2, fp8e5m2>
+    ) {
         // FLOAT (SRC -- 1H x 2W) to FP8 (DST -- 1H x 1W)
         int laneid = threadIdx.x % 32;
 
@@ -289,8 +292,10 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
         }
     }
     
-
-    else if constexpr (std::is_same_v<U2, fp8e4m3> && std::is_same_v<T2, float>) {
+    else if constexpr (
+        std::is_same_v<U2, fp8e4m3> && std::is_same_v<T2, float> ||
+        std::is_same_v<U2, fp8e5m2> && std::is_same_v<T2, float>
+    ) {
         // FP8 (SRC -- 1H x 1W) to FLOAT (DST -- 1H x 2W)
         int laneid = threadIdx.x % 32;
 
@@ -333,6 +338,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
 
     // default case where the layouts map 1:1 in thread ownership logic
     else {
+        if constexpr (std::is_same_v<U2, fp8e4m3> || std::is_same_v<T2, fp8e4m3>) { printf("else case\n"); }
         #pragma unroll
         for(int i = 0; i < dst.height; i++) {
             #pragma unroll

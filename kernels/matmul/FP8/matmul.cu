@@ -6,7 +6,7 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
-    using  base_tile      = st_fl8<64, 64>;
+    using  base_tile      = st_fl8_e4m3<64, 64>;
     using  global_layout  = gl<fp8e4m3, 1, 1, -1, -1, base_tile>;
     struct globals        { global_layout A, B, C; };
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
@@ -14,14 +14,14 @@ struct matmul_layout {
     struct common_state   { int2 coord; };
     struct consumer_state { 
         rt_fl<16, 64> accum[N_BLOCK]; 
-        rt_fl8<16, 64> accum_fp8[N_BLOCK];
+        rt_fl8_e4m3<16, 64> accum_fp8[N_BLOCK];
     };
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
-    using wide_tile = st_fl8<64, 64*N_BLOCK>;
+    using wide_tile = st_fl8_e4m3<64, 64*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
