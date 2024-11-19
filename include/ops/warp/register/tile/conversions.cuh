@@ -236,8 +236,8 @@ template<typename T2, typename U2, int _height, int _width, ducks::rt_layout::al
 __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const rt<U2, _height, _width, layout> &src) {
 
     if constexpr (
-        std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3> ||
-        std::is_same_v<U2, float> && std::is_same_v<T2, fp8e5m2>
+        (std::is_same_v<U2, float> && std::is_same_v<T2, fp8e4m3>) ||
+        (std::is_same_v<U2, float> && std::is_same_v<T2, fp8e5m2>)
     ) {
         // FLOAT (SRC -- 1H x 2W) to FP8 (DST -- 1H x 1W)
         int laneid = threadIdx.x % 32;
@@ -271,20 +271,21 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     
                     // Convert to fp8e4m3_4
                     float4 f4;
-                    fp8e4m3_4 f4_fp8;
+                    using fp8_4_t = std::conditional_t<std::is_same_v<T2, fp8e4m3>, fp8e4m3_4, fp8e5m2_4>;
+                    fp8_4_t f4_fp8;
                     if ( laneid % 4 < 2 ) { 
                         f4.x = val01.x;  // Thread 2N's first value
                         f4.y = val01.y;  // Thread 2N's second value
                         f4.z = val23.x;  // Thread 2N+1's first value
                         f4.w = val23.y;  // Thread 2N+1's second value
-                        f4_fp8 = base_types::convertor<fp8e4m3_4, float4>::convert(f4);
+                        f4_fp8 = base_types::convertor<fp8_4_t, float4>::convert(f4);
                         dst.tiles[i][j].data[k] = f4_fp8;
                     } else {
                         f4.x = val23.x;  // Thread 2N+1's first value
                         f4.y = val23.y;  // Thread 2N+1's second value
                         f4.z = val01.x;  // Thread 2N's first value
                         f4.w = val01.y;  // Thread 2N's second value
-                        f4_fp8 = base_types::convertor<fp8e4m3_4, float4>::convert(f4);
+                        f4_fp8 = base_types::convertor<fp8_4_t, float4>::convert(f4);
                         dst.tiles[i][j].data[k] = f4_fp8;
                     }
                 }
@@ -293,8 +294,8 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
     }
     
     else if constexpr (
-        std::is_same_v<U2, fp8e4m3> && std::is_same_v<T2, float> ||
-        std::is_same_v<U2, fp8e5m2> && std::is_same_v<T2, float>
+        (std::is_same_v<U2, fp8e4m3> && std::is_same_v<T2, float>) ||
+        (std::is_same_v<U2, fp8e5m2> && std::is_same_v<T2, float>)
     ) {
         // FP8 (SRC -- 1H x 1W) to FLOAT (DST -- 1H x 2W)
         int laneid = threadIdx.x % 32;
@@ -308,8 +309,9 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     int dst_j = (laneid % 2 == 0) ? 2*j : 2*j + 1;
 
                     // Put something up for adoption
-                    fp8e4m3_4 val = src.tiles[i][j].data[k];
-                    float4 f4 = base_types::convertor<float4, fp8e4m3_4>::convert(val);
+                    using fp8_4_t = std::conditional_t<std::is_same_v<U2, fp8e4m3>, fp8e4m3_4, fp8e5m2_4>;
+                    fp8_4_t val = src.tiles[i][j].data[k];
+                    float4 f4 = base_types::convertor<float4, fp8_4_t>::convert(val);
                     float2 f2_0, f2_1;
                     if ( laneid % 4 < 2 ) { // src 0 and 1 should put up .x and .y first
                         f2_0 = make_float2(f4.x, f4.y);

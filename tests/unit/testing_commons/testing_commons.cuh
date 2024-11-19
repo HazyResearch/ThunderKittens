@@ -94,9 +94,13 @@ template<int H, int W, int NW, kittens::ducks::base_types::T1 T2, kittens::ducks
     std::string label = generate_test_name<H,W,NW>(test_id);
     if constexpr (std::is_same_v<U2, float>) label += "_[float->";
     else if constexpr (std::is_same_v<U2, kittens::bf16>) label += "_[bf16->";
+    else if constexpr (std::is_same_v<U2, kittens::fp8e4m3>) label += "_[e4m3->";
+    else if constexpr (std::is_same_v<U2, kittens::fp8e5m2>) label += "_[e5m2->";
     else label += "_[half->";
     if constexpr (std::is_same_v<T2, float>) label += "float]";
     else if constexpr (std::is_same_v<T2, kittens::bf16>) label += "bf16]";
+    else if constexpr (std::is_same_v<T2, kittens::fp8e4m3>) label += "e4m3]";
+    else if constexpr (std::is_same_v<T2, kittens::fp8e5m2>) label += "e5m2]";
     else label += "half]";
     return label;
 }
@@ -174,6 +178,9 @@ struct sweep_gmem_type_1d {
         sweep_size_1d<test<float>, MAX_S, NUM_WORKERS, args...>::run(results);
         sweep_size_1d<test<kittens::bf16>, MAX_S, NUM_WORKERS, args...>::run(results);
         sweep_size_1d<test<kittens::half>, MAX_S, NUM_WORKERS, args...>::run(results);
+        #ifdef KITTENS_HOPPER
+        sweep_size_1d<test<kittens::fp8e4m3>, MAX_S, NUM_WORKERS, args...>::run(results);
+        #endif
     }
 };
 template<template<typename> typename test, int MAX_S=8, typename... args> using sweep_gmem_type_1d_warp = sweep_gmem_type_1d<test, MAX_S, 1, args...>;
@@ -196,6 +203,7 @@ struct wrapper_2d {
             dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
+            printf("Initializing\n");
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
             using GL = typename kittens::gl<dtype, 1, 1, H*16, W*16>;
@@ -230,6 +238,9 @@ struct sweep_gmem_type_2d {
         sweep_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         sweep_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        #ifdef KITTENS_HOPPER
+        sweep_size_2d<test<kittens::fp8e4m3>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        #endif
     }
 };
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_gmem_type_2d_warp = sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;

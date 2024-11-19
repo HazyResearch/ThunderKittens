@@ -50,10 +50,12 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using g2s_sw
 template<typename T>
 struct st_load_store {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW> using valid = std::bool_constant< ( NW == 1 && W*H<=64 && ( ( !std::is_same_v<kittens::fp8e4m3, T> ) || W%2 == 0 ))>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_loadstore_gmem=half" :
-                                                                                         "shared_loadstore_gmem=float";
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_gmem=fp8e4m3":
+                                                        std::is_same_v<T, kittens::fp8e5m2> ? "shared_loadstore_gmem=fp8e5m2":
+                                                                                          "shared_loadstore_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
@@ -71,10 +73,12 @@ struct st_load_store {
 template<typename T>
 struct st_load_store_async {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>;
+    template<int H, int W, int NW> using valid = std::bool_constant<(NW == 1 && W*H<=64) && ( ( !std::is_same_v<kittens::fp8e4m3, T> ) || W%2 == 0 )>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_loadstore_async_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_loadstore_async_gmem=half" :
-                                                                                         "shared_loadstore_async_gmem=float";
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_async_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "shared_loadstore_async_gmem=fp8e5m2":
+                                                                                       "shared_loadstore_async_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
@@ -103,5 +107,4 @@ void warp::memory::tile::global_to_shared::tests(test_data &results) {
     std::cout << "done with st_load_store, starting async" << std::endl;
     sweep_gmem_type_2d_warp<st_load_store_async, SIZE, SIZE>::run(results);
 }
-
 #endif
