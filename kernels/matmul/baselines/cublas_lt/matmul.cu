@@ -72,10 +72,13 @@ double benchmark_matmul(int matrix_size) {
     // Set matrix operation parameters
     const float alpha = 1.0f;
     const float beta = 0.0f;
+
+    size_t workspaceSize = 32 * 1024 * 1024;
     
     // Create preference descriptor
     cublasLtMatmulPreference_t preference;
     checkCublas(cublasLtMatmulPreferenceCreate(&preference));
+    checkCublas(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
     
     // Query the best algorithm
     int returnedResults = 0;
@@ -86,7 +89,7 @@ double benchmark_matmul(int matrix_size) {
     std::cout << "Returned results: " << returnedResults << std::endl;
 
     // Warmup iterations
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 10; i++) {
         checkCublas(cublasLtMatmul(
             handle,
             matmulDesc,
@@ -97,7 +100,7 @@ double benchmark_matmul(int matrix_size) {
             d_C, matC,
             d_C, matC,
             &heuristicResult.algo,
-            workspace, 32 * 1024 * 1024,
+            workspace, workspaceSize,
             0
         ));
     }
@@ -106,10 +109,13 @@ double benchmark_matmul(int matrix_size) {
     check(cudaDeviceSynchronize());
     
     // Timing iterations
-    std::vector<double> timings;
-    for (int i = 0; i < 10; i++) {
-        auto start = std::chrono::high_resolution_clock::now();
-        
+    const int NUM_ITERATIONS = 10;
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
         checkCublas(cublasLtMatmul(
             handle,
             matmulDesc,
@@ -120,22 +126,16 @@ double benchmark_matmul(int matrix_size) {
             d_C, matC,
             d_C, matC,
             &heuristicResult.algo,
-            workspace, 32 * 1024 * 1024,
+            workspace, workspaceSize,
             0
         ));
-        
-        check(cudaDeviceSynchronize());
-        auto end = std::chrono::high_resolution_clock::now();
-        double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
-        timings.push_back(time_ms);
     }
-    
-    // Calculate average timing
-    double avg_time = 0.0;
-    for (double t : timings) {
-        avg_time += t;
-    }
-    avg_time /= timings.size();
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    float avg_time = milliseconds / NUM_ITERATIONS;
     
     // Calculate TFLOPS
     double flops = 2.0 * m * n * k; // multiply-add counts as 2 operations
