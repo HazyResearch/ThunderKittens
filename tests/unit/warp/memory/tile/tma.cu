@@ -5,9 +5,13 @@
 template<typename T>
 struct test_load { // load with TMA, write out normally
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant< 
+        ( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 ) && ( ( sizeof(T) != 1 ) || W%2 == 0 ) 
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_load_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                                                          "tma_load_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -37,9 +41,13 @@ struct test_load { // load with TMA, write out normally
 template<typename T>
 struct test_store { // load normally, store with TMA
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant<
+        ( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( ( sizeof(T) != 1 ) || W%2 == 0 ) 
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                                                          "tma_store_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -66,10 +74,15 @@ struct test_store { // load normally, store with TMA
 template<typename T>
 struct test_store_add_reduce {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant<
+        ( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 ) // not supported for fp8 
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_add_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_add_reduce_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                                                          "tma_store_add_reduce_gmem=float";
+
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
         for (int i = 0; i < o_ref.size(); i++) {
@@ -99,9 +112,13 @@ struct test_store_add_reduce {
 template<typename T>
 struct test_store_min_reduce {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant<
+        ( !std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 ) // not supported for fp8 
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                                                          "tma_store_min_reduce_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
@@ -132,9 +149,13 @@ struct test_store_min_reduce {
 template<typename T>
 struct test_store_max_reduce {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<!std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024>;
+    template<int H, int W, int NW> using valid = std::bool_constant<
+        ( !std::is_same_v<T, float> && NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1  ) // not supported for fp8
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                                                          "tma_store_max_reduce_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         // i_ref is reduced onto output
@@ -214,6 +235,7 @@ struct tma_sweep_gmem_type_2d {
         tma_sweep_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         tma_sweep_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         tma_sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        tma_sweep_size_2d<test<kittens::fp8e4m3>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
     }
 };
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using tma_sweep_gmem_type_2d_warp = tma_sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;

@@ -94,6 +94,11 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const co
  */
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const coord &idx) {
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -130,6 +135,11 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const coord &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
@@ -165,7 +175,13 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
  */
 template<ducks::st::all ST, ducks::gl::all GL>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const coord &idx) {
+    
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
