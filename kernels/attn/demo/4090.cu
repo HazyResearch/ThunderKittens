@@ -2,7 +2,7 @@
 
 constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024;
+constexpr int ATTN_N = 1024*16;
 constexpr int ATTN_D = 128;
 constexpr int ITER   = 10;
 

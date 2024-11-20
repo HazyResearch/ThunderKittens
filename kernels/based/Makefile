@@ -1,4 +1,4 @@
-# GPU Selection: 4090, A100, H100
+# GPU Selection: 4090, H100
 GPU_TARGET=4090
 
 # Compiler
