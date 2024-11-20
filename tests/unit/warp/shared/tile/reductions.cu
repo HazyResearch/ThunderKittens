@@ -5,7 +5,7 @@
 template<typename T>
 struct normalize_row {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_norm_row_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_norm_row_gmem=half" :
                                                                                          "shared_norm_row_gmem=float";
@@ -72,7 +72,7 @@ struct normalize_row {
 template<typename T>
 struct normalize_col {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_norm_col_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_norm_col_gmem=half" :
                                                                                          "shared_norm_col_gmem=float";
@@ -139,7 +139,7 @@ struct normalize_col {
 template<typename T>
 struct broadcast_row {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_broadcast_row_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_broadcast_row_gmem=half" :
                                                                                          "shared_broadcast_row_gmem=float";
@@ -203,7 +203,7 @@ struct broadcast_row {
 template<typename T>
 struct broadcast_col {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_broadcast_col_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_broadcast_col_gmem=half" :
                                                                                          "shared_broadcast_col_gmem=float";

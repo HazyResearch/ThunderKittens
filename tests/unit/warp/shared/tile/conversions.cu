@@ -7,9 +7,13 @@
 template<typename T>
 struct test_swap_layout {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<(
+        NW == 1 && W*H<=64 && sizeof(dtype) != 1
+    )>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_swaplayout_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_swaplayout_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_subtile_gmem=fp8e4m3" :
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "shared_subtile_gmem=fp8e5m2" :
                                                                                          "shared_swaplayout_gmem=float";
     template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -28,10 +32,15 @@ struct test_swap_layout {
 template<typename T>
 struct test_subtile {
     using dtype = T;
-    template<int H, int W, int NW, typename _ST_H, typename _ST_W> using valid = std::bool_constant<NW == 1 && W*H<=64
-        && (H % _ST_H::value == 0 && W % _ST_W::value == 0)>;
+    template<int H, int W, int NW, typename _ST_H, typename _ST_W> using valid = std::bool_constant<(
+        NW == 1 && W*H<=64
+        && (H % _ST_H::value == 0 && W % _ST_W::value == 0 ) 
+        && sizeof(dtype) != 1
+    )>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_subtile_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_subtile_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_subtile_gmem=fp8e4m3" :
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "shared_subtile_gmem=fp8e5m2" :
                                                                                          "shared_subtile_gmem=float";
     template<int H, int W, int NW, gl_t GL, typename _ST_H, typename _ST_W> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         constexpr int ST_H = _ST_H::value, ST_W = _ST_W::value;

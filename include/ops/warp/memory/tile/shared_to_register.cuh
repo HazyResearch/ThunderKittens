@@ -61,7 +61,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
-            else if (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 1) { 
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && ( std::is_same_v<typename ST::dtype, fp8e4m3> || std::is_same_v<typename ST::dtype, fp8e5m2> )) {
                 // ldmatrix operates on 16-bits
                 // handle the fp8 by hacking with fp8x2 16-bit types
                 U2 tmp[4];
@@ -206,8 +206,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
                     move<U>::sts(dst.idx(shared_addr, {row+9, col+8}), tmp[3].y);
                 }
 #endif
-            }
-            if constexpr (sizeof(typename ST::dtype) == 1) {
+            } else if constexpr (sizeof(typename ST::dtype) == 1) {
                 // ldmatrix operates on 16-bits
                 // handle the fp8 by hacking with fp8x2 16-bit types
                 U2 tmp[4];

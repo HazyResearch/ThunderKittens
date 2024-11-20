@@ -5,7 +5,7 @@
 template<typename T>
 struct test_exp {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
+    template<int H, int W, int NW> using valid = std::bool_constant<( NW == 1 && W*H<=64 && sizeof(dtype) != 1 )>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_exp_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_exp_gmem=half" :
                                                                                          "shared_exp_gmem=float";
