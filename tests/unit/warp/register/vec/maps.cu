@@ -4,7 +4,7 @@
 
 struct vec_add1 {
     template<int S, int NW, kittens::ducks::rv_layout::all L>
-    using valid = std::bool_constant<NW == 1 && S<=64 && sizeof(dtype) != 1>; // this is warp-level
+    using valid = std::bool_constant<NW == 1 && S<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_vec_add1";
     template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L>
     __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {

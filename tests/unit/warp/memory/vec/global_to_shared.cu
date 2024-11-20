@@ -5,7 +5,8 @@
 template<typename T>
 struct shared_vec_load_store {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>;
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && 
+            ( !std::is_same_v<kittens::fp8e4m3, T> && !std::is_same_v<kittens::fp8e5m2, T>)>;
     static inline const std::string test_identifier = std::is_same_v<dtype, kittens::bf16> ? "shared_vec_loadstore_gmem=bf16" :
                                                       std::is_same_v<dtype, kittens::half> ? "shared_vec_loadstore_gmem=half" :
                                                                                              "shared_vec_loadstore_gmem=float";
@@ -25,7 +26,8 @@ struct shared_vec_load_store {
 template<typename T>
 struct shared_vec_load_store_async {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>;
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && 
+            ( !std::is_same_v<kittens::fp8e4m3, T> && !std::is_same_v<kittens::fp8e5m2, T>)>;
     static inline const std::string test_identifier = std::is_same_v<dtype, kittens::bf16> ? "shared_vec_loadstore_async_gmem=bf16" :
                                                       std::is_same_v<dtype, kittens::half> ? "shared_vec_loadstore_async_gmem=half" :
                                                                                              "shared_vec_loadstore_async_gmem=float";

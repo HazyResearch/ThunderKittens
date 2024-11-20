@@ -5,10 +5,13 @@
 template<typename T>
 struct group_shared_load_store {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<H%NW==0 &&
-        W*H<=64>;
+    template<int H, int W, int NW> using valid = std::bool_constant<
+        (H%NW==0 && W*H<=64) && ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2>) || W%2 == 0 )
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_shared_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "group_shared_loadstore_gmem=half" :
+                                                        std::is_same_v<T, kittens::fp8e4m3> ? "group_shared_loadstore_gmem=fp8e4m3" :
+                                                        std::is_same_v<T, kittens::fp8e5m2> ? "group_shared_loadstore_gmem=fp8e5m2" :
                                                                                          "group_shared_loadstore_gmem=float";
     template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -29,6 +32,8 @@ struct group_shared_load_store_async {
         H*W<=64>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_shared_loadstore_async_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "group_shared_loadstore_async_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "group_shared_loadstore_async_gmem=fp8e4m3" :
+                                                        std::is_same_v<T, kittens::fp8e5m2> ? "group_shared_loadstore_async_gmem=fp8e5m2" :
                                                                                          "group_shared_loadstore_async_gmem=float";
     template<int H, int W, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -74,6 +79,15 @@ void group::memory::tile::global_to_shared::tests(test_data &results) {
     sweep_size_2d<group_shared_load_store_async<kittens::half>, SIZE, SIZE, 2>::run(results);
     sweep_size_2d<group_shared_load_store_async<kittens::half>, SIZE, SIZE, 4>::run(results);
     sweep_size_2d<group_shared_load_store_async<kittens::half>, SIZE, 4, 12>::run(results);
+
+    #ifdef KITTENS_HOPPER
+    sweep_size_2d<group_shared_load_store<kittens::fp8e4m3>, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_shared_load_store<kittens::fp8e4m3>, SIZE, SIZE, 4>::run(results);
+    sweep_size_2d<group_shared_load_store<kittens::fp8e4m3>, SIZE, 4, 12>::run(results);
+    sweep_size_2d<group_shared_load_store<kittens::fp8e5m2>, SIZE, SIZE, 2>::run(results);
+    sweep_size_2d<group_shared_load_store<kittens::fp8e5m2>, SIZE, SIZE, 4>::run(results);
+    sweep_size_2d<group_shared_load_store<kittens::fp8e5m2>, SIZE, 4, 12>::run(results);
+    #endif
 }
 
 #endif

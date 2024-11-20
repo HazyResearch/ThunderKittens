@@ -50,7 +50,9 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using g2s_sw
 template<typename T>
 struct st_load_store {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant< ( NW == 1 && W*H<=64 && ( ( !std::is_same_v<kittens::fp8e4m3, T> ) || W%2 == 0 ))>;
+    template<int H, int W, int NW> using valid = std::bool_constant< 
+        ( NW == 1 && W*H<=64 && ( ( !std::is_same_v<kittens::fp8e4m3, T> && !std::is_same_v<kittens::fp8e5m2, T> ) || W%2 == 0 ))
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_loadstore_gmem=half" :
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_gmem=fp8e4m3":
@@ -73,7 +75,9 @@ struct st_load_store {
 template<typename T>
 struct st_load_store_async {
     using dtype = T;
-    template<int H, int W, int NW> using valid = std::bool_constant<(NW == 1 && W*H<=64) && ( ( !std::is_same_v<kittens::fp8e4m3, T> ) || W%2 == 0 )>;
+    template<int H, int W, int NW> using valid = std::bool_constant<(NW == 1 && W*H<=64) && ( 
+        ( !std::is_same_v<kittens::fp8e4m3, T> && !std::is_same_v<kittens::fp8e5m2, T>) || W%2 == 0 
+    )>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_loadstore_async_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_loadstore_async_gmem=half" :
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_async_gmem=fp8e4m3":
