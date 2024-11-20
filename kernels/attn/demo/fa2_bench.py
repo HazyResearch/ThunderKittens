@@ -104,18 +104,16 @@ if __name__ == "__main__":
     # Example configurations
     configurations = [
         # (Batch, Heads, SeqLen, HeadDim, Causal)
-        # (16, 16, 768, 128, False),
-        # (16, 16, 768*2, 128, False),
-        # (16, 16, 768*4, 128, False),
-        # (16, 16, 768*8, 128, False),
+
         (16, 16, 1024, 64, False), 
-        (16, 16, 1024, 128, False), 
-        # # Add causal versions
-        # (16, 16, 768, 128, True),
-        # (16, 16, 768*2, 128, True),
-        # (16, 16, 768*4, 128, True),
-        # (16, 16, 768*8, 128, True),
-        # (16, 16, 768*16, 128, True),
+        (16, 16, 1024*2, 64, False),
+        (16, 16, 1024*4, 64, False),
+        (16, 16, 1024*8, 64, False),
+        
+        (16, 16, 1024, 128, False),
+        (16, 16, 1024*2, 128, False),
+        (16, 16, 1024*4, 128, False),
+        (16, 16, 1024*8, 128, False),
     ]
     
     # Run benchmarks

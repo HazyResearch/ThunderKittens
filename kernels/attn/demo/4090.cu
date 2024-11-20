@@ -2,7 +2,7 @@
 
 constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024*16;
+constexpr int ATTN_N = 1024*8; 
 constexpr int ATTN_D = 128;
 constexpr int ITER   = 10;
 
@@ -82,7 +82,7 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
             copy(max_vec_last,  max_vec);
             row_max(max_vec, att_block, max_vec); 
             sub_row(att_block, att_block, max_vec); 
-            exp2(att_block, att_block);
+            exp2(att_block, att_block); 
             sub(max_vec_last, max_vec_last, max_vec); 
             exp2(max_vec_last, max_vec_last); 
             mul(norm_vec, norm_vec, max_vec_last); 
