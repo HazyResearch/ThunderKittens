@@ -503,9 +503,10 @@ __device__ static inline void make_causal_t(RT &dst, const RT &src, const typena
 */
 template<int subtile_rows, ducks::rt::all RT>
 __device__ inline rt<typename RT::T, subtile_rows, RT::cols, typename RT::layout> &subtile_inplace(RT & src, int idx) {
-    static_assert(RT::height % (subtile_rows / TILE_DIM) == 0, "subtile height should evenly divide tile height.");
+    using T = typename RT::T;
+    static_assert(RT::height % (subtile_rows / TILE_ROW_DIM<T>) == 0, "subtile height should evenly divide tile height.");
     return reinterpret_cast<rt<typename RT::T, subtile_rows, RT::cols, typename RT::layout>&>(
-        src.tiles[idx*(subtile_rows / TILE_DIM)]
+        src.tiles[idx*(subtile_rows / TILE_ROW_DIM<T>)]
     );
 }
 

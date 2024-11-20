@@ -56,8 +56,8 @@ struct rv {
     using dtype = std::conditional_t<is_naive, T, T2>; ///< Data type of the matrix elements
 
     static constexpr int length = _length; ///< Length in elements.
-    static_assert(length % kittens::TILE_DIM == 0, "Length must be divisible by the tile dimension");
-    static constexpr int tiles  = _length / kittens::TILE_DIM; ///< Length in subtiles, aliased for consistency with sv type
+    static_assert(length % kittens::TILE_ROW_DIM<T> == 0, "Length must be divisible by the tile dimension");
+    static constexpr int tiles  = _length / kittens::TILE_ROW_DIM<T>; ///< Length in subtiles, aliased for consistency with sv type
     static constexpr int inner_dim = layout::inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
     static constexpr int outer_dim = is_naive ? (tiles+1)/2 : tiles; ///< Outer dim (also length in tiles)
 

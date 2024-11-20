@@ -35,7 +35,7 @@ struct identifier {};
  * @brief Shared vector structure.
  *
  * @tparam _T The packed data type used for the vector elements.
- * @tparam _tiles The size of the tile, in units of TILE_DIM (16).
+ * @tparam _tiles The size of the tile, in units of TILE_ROW_DIM (16 for fp16, bf16, fp32).
  *
  * Shared vectors are used to accumulate and map values across shared tiles.
  * Unlike every other structure present in ThunderKittens, these have a simple
@@ -49,8 +49,8 @@ struct KITTENS_DEFAULT_ALIGN sv {
     using dtype = T; ///< Data type of the elements in the tile.
 
     static constexpr int length = _length; ///< Length in elements.
-    static_assert(length % TILE_DIM == 0, "Length must be divisible by the tile dimension");
-    static constexpr int tiles  = length / TILE_DIM; ///< Length in subtiles.
+    static_assert(length % TILE_ROW_DIM<T> == 0, "Length must be divisible by the tile dimension");
+    static constexpr int tiles  = length / TILE_ROW_DIM<T>; ///< Length in subtiles.
 
     dtype data[length]; ///< The actual shared vector data.
 

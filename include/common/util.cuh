@@ -28,7 +28,7 @@ template<typename T> constexpr int TILE_ROW_DIM = 16;
 /**
  * @brief Tile num elements constant calculated as TILE_DIM squared.
  */
-constexpr int TILE_ELEMENTS{TILE_DIM*TILE_DIM};
+template<typename T> constexpr int TILE_ELEMENTS{TILE_COL_DIM<T>*TILE_ROW_DIM<T>};
 /**
  * @brief Constant representing number of threads in a warp.
  */

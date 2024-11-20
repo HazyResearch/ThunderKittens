@@ -73,7 +73,7 @@ __device__ static inline void reduce(
         T accum = src[0][0];
         #pragma unroll
         for(int i = 1; i < src.outer_dim; i++) {
-            if (i < src.outer_dim-1 || i*TILE_DIM*2 + laneid < src.length) {
+            if (i < src.outer_dim-1 || i*kittens::TILE_ROW_DIM<T>*2 + laneid < src.length) {
                 accum = op::template op<T>(accum, src[i][0]);
             }
         }

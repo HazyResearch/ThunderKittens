@@ -50,10 +50,11 @@ __device__ static inline void copy(st<T, _height, _width> &dst, const st<U, _hei
 */
 template<int subtile_rows, int subtile_cols, ducks::st::all ST>
 __device__ inline st_subtile<ST, subtile_rows, subtile_cols> subtile_inplace(ST &src, int2 rowcol) {
-    static_assert(subtile_rows % TILE_DIM == 0);
-    static_assert(subtile_cols % TILE_DIM == 0);
-    static_assert(ST::height % (subtile_rows/TILE_DIM) == 0);
-    static_assert(ST::width % (subtile_cols/TILE_DIM) == 0);
+    using T = typename ST::dtype;
+    static_assert(subtile_rows % TILE_ROW_DIM<T> == 0);
+    static_assert(subtile_cols % TILE_COL_DIM<T> == 0);
+    static_assert(ST::height % (subtile_rows/TILE_ROW_DIM<T>) == 0);
+    static_assert(ST::width % (subtile_cols/TILE_COL_DIM<T>) == 0);
     static_assert(ST::height == ST::underlying_height && ST::width == ST::underlying_width); // must be a real ST, no recursive subtiles.
     return st_subtile<ST, subtile_rows, subtile_cols>(src, rowcol);
 }
