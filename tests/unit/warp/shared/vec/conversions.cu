@@ -5,7 +5,7 @@
 template<typename T>
 struct shared_vec_convert {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64>; // this is warp-level
+    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_vec_convert_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_vec_convert_gmem=half" :
                                                                                          "shared_vec_convert_gmem=float";

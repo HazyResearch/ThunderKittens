@@ -6,7 +6,7 @@ template<typename T>
 struct vec_add1 {
     using dtype = T;
     template<int S, int NW>
-    using valid = std::bool_constant<NW == 1 && S<=64>; // this is warp-level
+    using valid = std::bool_constant<NW == 1 && S<=64 && sizeof(dtype) != 1>; // this is warp-level
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_vec_add1_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_vec_add1_gmem=half" :
                                                                                          "shared_vec_add1_gmem=float";

@@ -5,10 +5,14 @@
 template<typename T>
 struct sharedreg_load_store {
     using dtype = T;
-    template<int H, int W, int NW, kittens::ducks::rt_layout::all RL> using valid = std::bool_constant<NW == 1 &&
-        W*H<=64>;
+    template<int H, int W, int NW, kittens::ducks::rt_layout::all RL> using valid = std::bool_constant<
+      ( NW == 1 && W*H<=64 ) && ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2> ) || W%2==0 ) && 
+      ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2> ) || std::is_same_v<RL, kittens::ducks::rt_layout::row> ) 
+    >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_reg_loadstore_gmem=half" :
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_reg_loadstore_gmem=fp8e4m3" :
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "shared_reg_loadstore_gmem=fp8e5m2" :
                                                                                          "shared_reg_loadstore_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all RL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
@@ -19,7 +23,7 @@ struct sharedreg_load_store {
         kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
         kittens::load(shared_tile, input, {0, 0, 0, 0});
         __syncthreads();
-        kittens::rt_bf<16*H, 16*W, RL> reg_tile;
+        kittens::rt<T, 16*H, 16*W, RL> reg_tile;
         kittens::load(reg_tile, shared_tile);
         __syncthreads();
         kittens::store(shared_tile, reg_tile);
