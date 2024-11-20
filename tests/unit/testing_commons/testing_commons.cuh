@@ -180,6 +180,7 @@ struct sweep_gmem_type_1d {
         sweep_size_1d<test<kittens::half>, MAX_S, NUM_WORKERS, args...>::run(results);
         #ifdef KITTENS_HOPPER
         sweep_size_1d<test<kittens::fp8e4m3>, MAX_S, NUM_WORKERS, args...>::run(results);
+        sweep_size_1d<test<kittens::fp8e5m2>, MAX_S, NUM_WORKERS, args...>::run(results);
         #endif
     }
 };
@@ -203,7 +204,6 @@ struct wrapper_2d {
             dtype *d_i, *d_o;
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
-            printf("Initializing\n");
             initialize(&d_i, &d_o, i_ref, o_ref);
             // make descriptors
             using GL = typename kittens::gl<dtype, 1, 1, H*16, W*16>;
@@ -219,7 +219,9 @@ struct wrapper_2d {
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16);
+
+            int is_fp8 = (this_result.label.find("fp8") != std::string::npos) || (this_result.label.find("e4m3") != std::string::npos) || (this_result.label.find("e5m2") != std::string::npos);
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16, is_fp8 ? 0.1 : 5e-2); // mma's sometimes produce small errors. this appears to be hardware.
         }
         else {
             this_result.result = test_result::INVALID;
@@ -240,6 +242,7 @@ struct sweep_gmem_type_2d {
         sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         #ifdef KITTENS_HOPPER
         sweep_size_2d<test<kittens::fp8e4m3>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
+        sweep_size_2d<test<kittens::fp8e5m2>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         #endif
     }
 };

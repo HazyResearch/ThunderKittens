@@ -89,6 +89,53 @@ struct test_type_convert {
         kittens::store(output, reg_tile_T2, {});
     }
 };
+
+struct test_type_convert_typed { 
+    template<int H, int W, int NW, typename T2, typename U2> using valid = std::bool_constant<NW == 1 && W*H<=32 && (
+        ( ( 
+            !std::is_same_v<kittens::fp8e4m3, T2> && !std::is_same_v<kittens::fp8e4m3, U2> &&
+            !std::is_same_v<kittens::fp8e5m2, T2> && !std::is_same_v<kittens::fp8e5m2, U2>
+        ) || W%2 == 0 )
+    )>; // this is warp-level
+        static inline const std::string test_identifier = "reg_typeconvert";
+        template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        o_ref = i_ref; // overwrite the whole thing
+    }
+    template<int H, int W, int NW, gl_t GL, typename T2, typename U2> __device__ static void device_func(const GL input, const GL output) {
+        if constexpr (std::is_same_v<U2, kittens::fp8e4m3> || std::is_same_v<U2, kittens::fp8e5m2>) { 
+            // fp8 to float
+            extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+            kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+            kittens::st<U2, 16*H, 16*W> &st_tile_U2 = al.allocate<kittens::st<U2, 16*H, 16*W>>(); 
+            kittens::rt<float, 16*H, 16*W> reg_tile_float;                     
+            kittens::rt<U2, 16*H, 16*W> reg_tile_U2;
+            kittens::rt<T2, 16*H, 16*W> reg_tile_T2;
+
+            kittens::load(reg_tile_float, input, {}); // due to lack of direct global to register fp8
+            kittens::copy(reg_tile_U2, reg_tile_float);
+            kittens::copy(reg_tile_T2, reg_tile_U2);
+            kittens::store(output, reg_tile_T2, {});
+
+        } else if constexpr (std::is_same_v<T2, kittens::fp8e4m3> || std::is_same_v<T2, kittens::fp8e5m2>) {
+            // float to fp8
+            // printf("float to fp8\n");
+            extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
+            kittens::tma_swizzle_allocator al((int*)&__shm[0]); 
+            kittens::st<kittens::bf16, 16*H, 16*W> &st_tile_bf = al.allocate<kittens::st<kittens::bf16, 16*H, 16*W>>();   
+            kittens::st<U2, 16*H, 16*W> &st_tile_U2 = al.allocate<kittens::st<U2, 16*H, 16*W>>();    
+            kittens::rt<T2, 16*H, 16*W> reg_tile_T2;
+            kittens::rt<U2, 16*H, 16*W> reg_tile_U2;
+
+            kittens::load(reg_tile_U2, input, {});
+            kittens::copy(reg_tile_T2, reg_tile_U2);
+            kittens::copy(reg_tile_U2, reg_tile_T2);
+            kittens::store(st_tile_U2, reg_tile_U2);
+            kittens::copy(st_tile_bf, st_tile_U2);
+            kittens::store(output, st_tile_bf, {}); // leverage register to global conversions
+        }
+    }
+};
+
 struct test_subtile {
     template<int H, int W, int NW, typename ST_H> using valid = std::bool_constant<NW == 1 && (H%(ST_H::value))==0 && W*H<=64>; // this is warp-level
     static inline const std::string test_identifier = "reg_subtile";
@@ -143,6 +190,10 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, float>::run(results);
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); // fp8 
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, float>::run(results);
 
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
