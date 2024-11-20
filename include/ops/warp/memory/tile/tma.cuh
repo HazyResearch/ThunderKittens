@@ -10,6 +10,15 @@
 namespace kittens {
 namespace tma {
 
+namespace detail {
+template<kittens::ducks::st::all ST, int axis> __device__ inline int4 tma_coords(const coord<ducks::default_type> &unit_coord) {
+    constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(typename ST::dtype);
+    if constexpr      (axis == 2) return {unit_coord.r, unit_coord.c / swizzle_elements, unit_coord.d, unit_coord.b};
+    else if constexpr (axis == 1) return {unit_coord.d, unit_coord.c / swizzle_elements, unit_coord.r, unit_coord.b};
+    else if constexpr (axis == 0) return {unit_coord.b, unit_coord.c / swizzle_elements, unit_coord.r, unit_coord.d};
+}
+}
+
 /* ----------   Prefetch Tensor Map  ---------- */
 
 /**
@@ -25,15 +34,15 @@ template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COOR
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile (
             "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
             " [%0, {%1, %2, %3, %4, %5}];"
             :
             : "l"(tma_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -61,8 +70,8 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -70,7 +79,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -99,8 +108,8 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -108,7 +117,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -136,8 +145,8 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -145,7 +154,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -173,8 +182,8 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         asm volatile (
@@ -182,7 +191,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
             " [%0, {%2, %3, %4, %5, %6}], [%1];"
             :
             : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -211,15 +220,15 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
             " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
             : "memory"
         );
     }
@@ -250,15 +259,15 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<2,3>(); // convert to unit coordinates
-        unit_coord.c /= (ST::swizzle_bytes / sizeof(typename ST::dtype));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
             " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
             :
             : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "n"(0), "r"(unit_coord.r), "r"(unit_coord.c), "r"(unit_coord.d), "r"(unit_coord.b), "h"(cluster_mask)
+            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
             : "memory"
         );
     }

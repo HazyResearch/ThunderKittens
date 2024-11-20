@@ -56,29 +56,53 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     uint32_t smem_shape [5] = {0, 0, 0, 0, 0};
     uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
 
-              uint64_t global_tile_height = (uint64_t)rows;
-              uint64_t global_tile_width  = (uint64_t)cols; 
     constexpr uint64_t shared_tile_height = ST::rows; 
     constexpr uint64_t shared_tile_width  = ST::cols;
 
     constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
 
-    gmem_shape[0] = swizzle_elements;
-    gmem_shape[1] = global_tile_height;
-    gmem_shape[2] = (global_tile_width+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
-    gmem_shape[3] = (uint64_t)depth;
-    gmem_shape[4] = (uint64_t)batch;
+    if constexpr (axis == 2) {
+        gmem_shape[0] = swizzle_elements;
+        gmem_shape[1] = (uint64_t)rows;
+        gmem_shape[2] = (uint64_t)(cols+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
+        gmem_shape[3] = (uint64_t)depth;
+        gmem_shape[4] = (uint64_t)batch;
 
-    gmem_stride[0] = global_tile_width * sizeof(dtype);
-    gmem_stride[1] = ST::swizzle_bytes;
-    gmem_stride[2] = global_tile_height * global_tile_width * sizeof(dtype);
-    gmem_stride[3] = depth * global_tile_height * global_tile_width * sizeof(dtype);
+        gmem_stride[0] = (uint64_t)cols * sizeof(dtype);
+        gmem_stride[1] = ST::swizzle_bytes;
+        gmem_stride[2] = (uint64_t)rows * cols * sizeof(dtype);
+        gmem_stride[3] = (uint64_t)depth * rows * cols * sizeof(dtype);
+    }
+    else if constexpr (axis == 1) {
+        gmem_shape[0] = swizzle_elements;
+        gmem_shape[1] = (uint64_t)depth;
+        gmem_shape[2] = (uint64_t)(cols+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
+        gmem_shape[3] = (uint64_t)rows;
+        gmem_shape[4] = (uint64_t)batch;
 
+        gmem_stride[0] = (uint64_t)rows * cols * sizeof(dtype);
+        gmem_stride[1] = ST::swizzle_bytes;
+        gmem_stride[2] = (uint64_t)cols * sizeof(dtype);
+        gmem_stride[3] = (uint64_t)depth * rows * cols * sizeof(dtype);
+
+    }
+    else {
+        gmem_shape[0] = swizzle_elements;
+        gmem_shape[1] = (uint64_t)batch;
+        gmem_shape[2] = (uint64_t)(cols+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
+        gmem_shape[3] = (uint64_t)rows;
+        gmem_shape[4] = (uint64_t)depth;
+
+        gmem_stride[0] = (uint64_t)depth * rows * cols * sizeof(dtype);
+        gmem_stride[1] = ST::swizzle_bytes;
+        gmem_stride[2] = (uint64_t)cols * sizeof(dtype);
+        gmem_stride[3] = (uint64_t)rows * cols * sizeof(dtype);
+    }
     smem_shape[0] = swizzle_elements;
-    smem_shape[1] = (axis==2) ? shared_tile_height : 1;
+    smem_shape[1] = shared_tile_height;
     smem_shape[2] = shared_tile_width / swizzle_elements;
-    smem_shape[3] = (axis==1) ? shared_tile_height : 1;
-    smem_shape[4] = (axis==0) ? shared_tile_height : 1;
+    smem_shape[3] = 1;
+    smem_shape[4] = 1;
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
@@ -124,7 +148,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         tma_swizzle,
         tma_l2Promotion,
         tma_oobFill);
-
 
     const char *error_string;
     CUresult res = cuGetErrorString(result, &error_string);
