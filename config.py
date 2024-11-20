@@ -14,6 +14,12 @@ sources = {
         'source_files': {
             'h100': [
                 'kernels/based/lin_attn_h100.cu',
+            ],
+            'a100': [
+                'kernels/based/lin_attn_a100.cu',
+            ],
+            '4090': [
+                'kernels/based/lin_attn_4090.cu',
             ]
         }
     },

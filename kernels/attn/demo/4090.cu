@@ -2,8 +2,8 @@
 
 constexpr int ATTN_B = 16;
 constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024;
-constexpr int ATTN_D = 64;
+constexpr int ATTN_N = 1024*8; 
+constexpr int ATTN_D = 128;
 constexpr int ITER   = 10;
 
 using namespace kittens;
@@ -20,6 +20,7 @@ template<int D> struct globals { global_layout<D> Qg, Kg, Vg, Og; };
 
 template<int D> __launch_bounds__(NUM_WORKERS*WARP_THREADS, 1)
 __global__ void attend_ker(const __grid_constant__ globals<D> g) {
+    
     using load_group = kittens::group<2>; // pairs of workers collaboratively load k, v tiles
     int loadid = load_group::groupid(), workerid = kittens::warpid(); // which worker am I?
     constexpr int LOAD_BLOCKS = NUM_WORKERS / load_group::GROUP_WARPS;
@@ -81,7 +82,7 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
             copy(max_vec_last,  max_vec);
             row_max(max_vec, att_block, max_vec); 
             sub_row(att_block, att_block, max_vec); 
-            exp2(att_block, att_block);
+            exp2(att_block, att_block); 
             sub(max_vec_last, max_vec_last, max_vec); 
             exp2(max_vec_last, max_vec_last); 
             mul(norm_vec, norm_vec, max_vec_last); 

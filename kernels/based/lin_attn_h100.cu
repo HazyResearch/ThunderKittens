@@ -421,7 +421,7 @@ std::tuple<torch::Tensor, torch::Tensor> based(
     cudaDeviceSynchronize();
 }
 #else
-#include "harness.impl"
+#include "harness_h100.impl"
 #endif
 
 
