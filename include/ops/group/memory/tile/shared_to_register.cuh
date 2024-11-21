@@ -46,7 +46,7 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
                 dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
             }
-            if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 1) {
+            else if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row> && sizeof(typename ST::dtype) == 1) {
                 // handle the row-major layout for 8-bit types
                 int warp_group_16 = (warp_laneid / 16);  // divide each warp into two groups of 16 threads
                 int lane_in_16 = warp_laneid % 16;       // position in group of 16 threads
