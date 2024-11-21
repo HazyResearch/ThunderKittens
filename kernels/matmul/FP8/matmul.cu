@@ -253,8 +253,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if(error > 0.10) { // large because of fp8 vs fp32 numerics
-            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-            else if(error_count == 20) std::cout << "Too many errors to show them all.\n";
+            if(error_count < 25) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+            else if(error_count == 25) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
         // if (error > max_error) printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
@@ -281,8 +281,25 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
 int main() {
     int N;
-    N = 4096;
+
+    N = 3072;
     run_benchmark<matmul_template<2,2,8>>(N, N, N);
+
+    // N = 4096;
+    // run_benchmark<matmul_template<2,2,8>>(N, N, N);
+
+    // N = 6144;
+    // run_benchmark<matmul_template<2,2,8>>(N, N, N);
+
+    // N = 8192;
+    // run_benchmark<matmul_template<2,2,4>>(N, N, N);
+
+    // N = 12288;
+    // run_benchmark<matmul_template<2,2,8>>(N, N, N);
+
+    // N = 16384;
+    // run_benchmark<matmul_template<2,2,8>>(N, N, N);
+
     return 0;
 }
 
