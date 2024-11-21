@@ -49,22 +49,30 @@ def get_layer_norm_inputs(b, h, n, dv, dt):
     out_resid = torch.zeros_like(x)
     return x, residual, norm_weight, norm_bias, out, out_resid, norm, dropout
 
-
-def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=True, **kwargs):
-    
-    def pytorch_layernorm(x, residual, norm_weight, norm_bias, dropout_p):
+class pytorch_layernorm(torch.nn.Module):
+    def __init__(self, d_model, p):
+        super().__init__()
+        self.dropout = nn.Dropout(p).cuda()
+        self.norm = nn.LayerNorm(d_model).cuda()
+        
+    def forward(self, x, residual, norm_weight, norm_bias, dropout_p):
         with torch.no_grad():
-            dropped = dropout(x) 
+            dropped = self.dropout(x) 
             residual = (residual + dropped ) if residual is not None else dropped
-            y = norm(residual.to(dtype=norm.weight.dtype))
+            y = self.norm(residual.to(dtype=self.norm.weight.dtype))
             residual = residual.to(torch.float32)
         return y, residual
+        
+def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=True, **kwargs):
     
+    pytorch_method = pytorch_layernorm(d_model=h*dv, p=0.1)
     if torch_compile and method_str == "pytorch_layernorm":
-        pytorch_layernorm = torch.compile(pytorch_layernorm)
-                
+        try:
+            pytorch_method = torch.compile(pytorch_method)
+        except Exception as e:
+            print(f"Could not compile pytorch_layernorm: {e}")
+                     
     for stage in ['warmup', 'timed']:
-
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
@@ -82,7 +90,7 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                 if method_str == 'pytorch_layernorm':
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y, residual = pytorch_layernorm(x, residual, norm_weight, norm_bias, dropout_p)
+                    y, residual = pytorch_method(x, residual, norm_weight, norm_bias, dropout_p)
                     end_events[i].record()
                     torch.cuda.synchronize()
 

@@ -117,9 +117,22 @@ def get_inputs_mamba(dtype: torch.dtype, b: int, h: int, n: int, dv: int, verbos
     
     return x, dt, A, B, C, D, chunk_size, torch.float32
 
+class Mamba2Triton(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, x, dt, A, B, C, chunk_size, D=None):
+        return mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=None)
 
-def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
+def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
     
+    triton_method = Mamba2Triton()
+    if torch_compile and method_str == "mamba2_triton":
+        try:
+            triton_method = torch.compile(triton_method)
+        except Exception as e:
+            print(f"Could not compile triton_method: {e}")
+            
     for stage in ['warmup', 'timed']:
 
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
@@ -143,7 +156,7 @@ def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
                 elif method_str == "mamba2_triton":
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=None)
+                    y = triton_method(x, dt, A, B, C, chunk_size, D=None)
                     end_events[i].record()
                     torch.cuda.synchronize()
                 else:

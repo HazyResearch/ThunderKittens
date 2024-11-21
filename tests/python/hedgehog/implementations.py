@@ -83,7 +83,6 @@ def get_flops(batch, seqlen, headdim, nheads):
     f = (attn_flops * pct_swa) + (lin_flops * pct_lin)
     return f
 
-
 def generate_inputs(testname, B, H, N):
     alphas = torch.rand((H,), dtype=torch.float32, device='cuda')*3
     betas = torch.rand((H,), dtype=torch.float32, device='cuda')
@@ -94,45 +93,52 @@ def generate_inputs(testname, B, H, N):
     kmap = (torch.randn((H, D_QK, 64), dtype=torch.bfloat16, device='cuda'))
     return q, k, v, qmap, kmap, alphas, betas
 
+def pytorch_softmax_gt(x, map_mat, label=None):
+    x = torch.einsum('bhmd,hdn->bhmn', x, map_mat)
 
-def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
+    x_pos = x
+    x_neg = -x
 
-    def pytorch_softmax_gt(x, map_mat, label=None):
-
-        x = torch.einsum('bhmd,hdn->bhmn', x, map_mat)
-
-        x_pos = x
-        x_neg = -x
-
-        x_pos_max = torch.amax(x_pos, dim=-1, keepdim=True)
-        x_neg_max = torch.amax(x_neg, dim=-1, keepdim=True)
-        
-        x_pos = x_pos - x_pos_max
-        x_neg = x_neg - x_neg_max
-        
-        x_pos_num = torch.exp(x_pos)
-        x_pos_den = torch.sum(torch.exp(x_pos), dim=-1, keepdim=True)
-        
-        x_neg_num = torch.exp(x_neg)
-        x_neg_den = torch.sum(torch.exp(x_neg), dim=-1, keepdim=True)
-        
-        x_pos = x_pos_num / x_pos_den
-        x_neg = x_neg_num / x_neg_den
-        
-        x = torch.cat([x_pos, x_neg], dim=-1).clamp(min=1e-6)
-        
-        return x
+    x_pos_max = torch.amax(x_pos, dim=-1, keepdim=True)
+    x_neg_max = torch.amax(x_neg, dim=-1, keepdim=True)
     
-    def pytorch_method(Q, K, V, Qmap, Kmap, alphas, betas):
+    x_pos = x_pos - x_pos_max
+    x_neg = x_neg - x_neg_max
+    
+    x_pos_num = torch.exp(x_pos)
+    x_pos_den = torch.sum(torch.exp(x_pos), dim=-1, keepdim=True)
+    
+    x_neg_num = torch.exp(x_neg)
+    x_neg_den = torch.sum(torch.exp(x_neg), dim=-1, keepdim=True)
+    
+    x_pos = x_pos_num / x_pos_den
+    x_neg = x_neg_num / x_neg_den
+    
+    x = torch.cat([x_pos, x_neg], dim=-1).clamp(min=1e-6)
+    
+    return x
+
+class PytorchHH(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.generator_mat = torch.block_diag(*[torch.ones((64,64), device='cuda')]*256) # 16384 x 16384 should be big enough
+        self.generator_mat += torch.roll(self.generator_mat, -64, -1) # this adds the terracing
+        
+        self.lin_mask = torch.tril(1-self.generator_mat).reshape((1,1,16384,16384))
+        self.exp_mask = torch.tril(self.generator_mat).reshape((1,1,16384,16384))
+        self.exp_mask = 10000*self.exp_mask - 10000 
+    
+    def forward(self, Q, K, V, Qmap, Kmap, alphas, betas):
         Qs = pytorch_softmax_gt(Q, Qmap)
         Ks = pytorch_softmax_gt(K, Kmap)
         a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
         a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
-        a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # mask
-        a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity
+        a_lin *= self.lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # mask
+        a_exp += self.exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity
         a_exp -= a_exp.amax(dim=-1, keepdim=True)
         a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
-
+        
         a = a_exp + a_lin
         a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
         
@@ -142,11 +148,16 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
         
         return o, k_state, kv_state
     
+def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
+    
+    pytorch_method = PytorchHH()
     if torch_compile and method_str == "pytorch":
-        pytorch_method = torch.compile(pytorch_method)
-
+        try:
+            pytorch_method = torch.compile(pytorch_method)
+        except Exception as e:
+            print(f"Could not compile pytorch_method: {e}")
+                    
     for stage in ['warmup', 'timed']:
-
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
     
@@ -156,7 +167,7 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
             generator_mat += torch.roll(generator_mat, -64, -1) # this adds the terracing
             lin_mask = torch.tril(1-generator_mat).reshape((1,1,16384,16384))
             exp_mask = torch.tril(generator_mat).reshape((1,1,16384,16384))
-            exp_mask = 10000*exp_mask - 10000 
+            exp_mask = 10000*exp_mask - 10000
 
             try:
                 if method_str == 'pytorch':

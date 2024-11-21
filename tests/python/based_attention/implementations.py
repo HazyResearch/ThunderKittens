@@ -78,25 +78,33 @@ class TaylorExp(nn.Module):
             if i in chosen_terms: terms_list.append(term)
         return torch.cat(terms_list, dim=self.head_dim_idx)
 
-
-def based_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
-
-    def pytorch_method(q, k, v):
-        q, k = feature_map(q), feature_map(k)
+class pytorch_based(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.feature_map = TaylorExp(input_dim=FEATURE_DIM)
+        
+    def forward(self, q, k, v):
+        q, k = self.feature_map(q), self.feature_map(k)
         q, k, v = q.unsqueeze(-2), k.unsqueeze(-2), v.unsqueeze(-1)
         kv_state = (k * v).cumsum(dim=2) 
         y = ((q * kv_state).sum(dim=-1)) 
         return y
     
-    if torch_compile and method_str == "pytorch":
-        pytorch_method = torch.compile(pytorch_method)
+def based_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
     
+    pytorch_method = pytorch_based()
+    if torch_compile and method_str == "pytorch":
+        try:
+            pytorch_method = torch.compile(pytorch_method)
+        except Exception as e:
+            print(f"Could not compile pytorch_method: {e}")
+                    
     for stage in ['warmup', 'timed']:
-
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         
         for i in range(num_iters):
+            
             try:
                 q, k, v = get_based_inputs(b, h, n, dv, dt)
                 feature_map = TaylorExp(input_dim=FEATURE_DIM)

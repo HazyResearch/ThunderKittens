@@ -53,7 +53,7 @@ if __name__ == "__main__":
     print("Benchmarking the kernels...")
 
     verbose = False
-    torch_compile = False
+    torch_compile = True
 
     for mod in [
         attention, 

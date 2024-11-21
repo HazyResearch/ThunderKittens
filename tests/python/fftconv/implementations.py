@@ -43,17 +43,25 @@ def get_fft_inputs(dt, b, h, n, dv):
     k = torch.randn((d_model, n), dtype=torch.float32).to('cuda')
     return u, k
 
+class PytorchFFTConv(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, x, k, n):
+        return ref_fftconv(x, k, n)
 
 def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
     
-    def pytorch_method(x, k, n):
-        return ref_fftconv(x, k, n)
-    
+    pytorch_method = PytorchFFTConv()
     if torch_compile and method_str == "conv_torch":
-        pytorch_method = torch.compile(pytorch_method)
+        print("Torchinductor does not support code generation for complex operators. Performance may be worse than eager.")
+        print("Skipping torch compile for this method.")
+        # try:
+        #     pytorch_method = torch.compile(pytorch_method)
+        # except Exception as e:
+        #     print(f"Could not compile pytorch_method: {e}")
             
     for stage in ['warmup', 'timed']:
-
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         
