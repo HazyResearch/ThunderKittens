@@ -60,7 +60,7 @@ def get_rotary_inputs(b, h, n, dv, dt):
     return qkv, cos, sin, rotary_max_seqlen, rotary_emb
 
 
-def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
+def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
     # Reference: https://github.com/Dao-AILab/flash-attention/blob/898dd4bbf237b24ed8fd2a3d13ee33bd156bfb23/flash_attn/modules/mha.py#L957
 
     def rotate_half(x, interleaved=False):
@@ -70,14 +70,34 @@ def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, 
         else:
             x1, x2 = x[..., ::2], x[..., 1::2]
             return rearrange(torch.stack((-x2, x1), dim=-1), "... d two -> ... (d two)", two=2)
-
+        
     for stage in ['warmup', 'timed']:
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
-    
+
         for i in range(num_iters):
             qkv, cos, sin, rotary_max_seqlen, rotary_emb = get_rotary_inputs(b, h, n, dv, dt)
+            
+            def pytorch_method(q, k, cos, sin, o_dt, dt, ro_dim, interleaved):
+                # for q
+                cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+                sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+                y1 =  torch.cat(
+                    [q[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(q[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), q[..., ro_dim:].to(dt)],
+                    dim=-1,
+                ).to(o_dt)
 
+                # for k 
+                y2 =  torch.cat(
+                    [k[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(k[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), k[..., ro_dim:].to(dt)],
+                    dim=-1,
+                ).to(o_dt)
+                
+                return y1, y2
+            
+            if torch_compile and method_str == "torch":
+                pytorch_method = torch.compile(pytorch_method)
+            
             try:
                 if method_str == "flash_triton":
                     q = qkv[:,:,0]
@@ -105,19 +125,9 @@ def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, 
                     torch.cuda.synchronize()
                     start_events[i].record()
                     
-                    # for q
-                    cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-                    sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-                    y =  torch.cat(
-                        [q[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(q[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), q[..., ro_dim:].to(dt)],
-                        dim=-1,
-                    ).to(o_dt)
-
-                    # for k 
-                    y =  torch.cat(
-                        [k[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(k[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), k[..., ro_dim:].to(dt)],
-                        dim=-1,
-                    ).to(o_dt)
+                    y1, y2 = pytorch_method(q, k, cos, sin, o_dt, dt, ro_dim, interleaved)
+                    y = torch.cat((y1, y2), dim=-1)
+                    
                     end_events[i].record()
                     torch.cuda.synchronize()
 

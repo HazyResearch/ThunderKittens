@@ -50,7 +50,7 @@ def get_layer_norm_inputs(b, h, n, dv, dt):
     return x, residual, norm_weight, norm_bias, out, out_resid, norm, dropout
 
 
-def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
+def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=True, **kwargs):
 
     for stage in ['warmup', 'timed']:
 
@@ -66,16 +66,23 @@ def layernorm_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
             residual_in_fp32 = True
             dtype = dt
             dropout_p = dropout.p
-
+            
+            def pytorch_layernorm(x, residual, norm_weight, norm_bias, dropout_p):
+                with torch.no_grad():
+                    dropped = dropout(x) 
+                    residual = (residual + dropped ) if residual is not None else dropped
+                    y = norm(residual.to(dtype=norm.weight.dtype))
+                    residual = residual.to(torch.float32)
+                return y, residual
+            
+            if torch_compile and method_str == "pytorch_layernorm":
+                pytorch_layernorm = torch.compile(pytorch_layernorm)
+                
             if True:
                 if method_str == 'pytorch_layernorm':
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    with torch.no_grad():
-                        dropped = dropout(x) 
-                        residual = (residual + dropped ) if residual is not None else dropped
-                        y = norm(residual.to(dtype=norm.weight.dtype))
-                        residual = residual.to(torch.float32) 
+                    y, residual = pytorch_layernorm(x, residual, norm_weight, norm_bias, dropout_p)
                     end_events[i].record()
                     torch.cuda.synchronize()
 

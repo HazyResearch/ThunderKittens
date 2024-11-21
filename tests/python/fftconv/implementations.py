@@ -44,13 +44,19 @@ def get_fft_inputs(dt, b, h, n, dv):
     return u, k
 
 
-def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
+def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
     
     for stage in ['warmup', 'timed']:
 
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
-    
+        
+        def pytorch_method(x, k, n):
+            return ref_fftconv(x, k, n)
+        
+        if torch_compile and method_str == "conv_torch":
+            pytorch_method = torch.compile(pytorch_method)
+        
         for i in range(num_iters):
             x, k = get_fft_inputs(dt, b, h, n, dv)
             
@@ -59,8 +65,7 @@ def fftconv_tk_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=
                 if method_str == "conv_torch":
                     torch.cuda.synchronize()
                     start_events[i].record() 
-                    with torch.no_grad():
-                        y = ref_fftconv(x, k, n)
+                    y = pytorch_method(x, k, n)
                     end_events[i].record()
                     torch.cuda.synchronize()
 

@@ -41,7 +41,7 @@ def get_attention_inputs(b, h, n, dv, dt=torch.bfloat16, pad_multiple=0, ):
     return q, k, v, dO
 
 
-def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, **kwargs):
+def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
 
     for stage in ['warmup', 'timed']:
 
@@ -49,19 +49,27 @@ def attention_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
 
         for i in range(num_iters):
+            
+            def pytorch_method(q, k, v, causal):
+                QK = torch.matmul(q, k.transpose(-2, -1))
+                QK /= (q.size(-1) ** 0.5)
+                if causal:
+                    mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool).to(QK.device)
+                    QK.masked_fill_(mask, float('-inf'))
+                QK = torch.nn.functional.softmax(QK, dim=-1)
+                y = torch.matmul(QK, v)
+                return y
+
+            if torch_compile and method_str == "pytorch":
+                pytorch_method = torch.compile(pytorch_method)
+            
             try:
                 q, k, v, dO = get_attention_inputs(b, h, n, dv, dt)
                 
                 if method_str == "pytorch":
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    QK = torch.matmul(q, k.transpose(-2, -1))
-                    QK /= (q.size(-1) ** 0.5)
-                    if causal:
-                        mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool).to(QK.device)
-                        QK.masked_fill_(mask, float('-inf'))
-                    QK = torch.nn.functional.softmax(QK, dim=-1)
-                    y = torch.matmul(QK, v)
+                    y = pytorch_method(q, k, v, causal)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
