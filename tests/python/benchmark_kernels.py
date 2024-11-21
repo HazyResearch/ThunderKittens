@@ -16,13 +16,11 @@ warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 from utils import efficiency
 import attention.implementations as attention
 import hedgehog.implementations as hedgehog
-import based.implementations as based
+import based_attention.implementations as based
 import rotary.implementations as rotary
 import mamba2.implementations as mamba2
 import fftconv.implementations as fftconv
 import layernorm.implementations as layernorm
-
-
 ############## Efficiency Measurements #############
 
 b = 16
@@ -55,7 +53,7 @@ if __name__ == "__main__":
     print("Benchmarking the kernels...")
 
     verbose = False
-    torch_compile = False
+    torch_compile = True
 
     for mod in [
         attention, 
@@ -89,9 +87,9 @@ if __name__ == "__main__":
                 for n in [
                     1024 if 'attn' not in m else 768, 
                     2048 if 'attn' not in m else 1536, 
-                    # 4096 if 'attn' in m else 3072,
-                    # 8192 if 'attn' in m else 6144,
-                    # 16384 if 'attn' in m else 12288
+                    4096 if 'attn' in m else 3072,
+                    8192 if 'attn' in m else 6144,
+                    16384 if 'attn' in m else 12288
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
                         # restrict to sizes we have implemented
