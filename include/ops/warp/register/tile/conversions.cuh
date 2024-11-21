@@ -380,6 +380,7 @@ __device__ static inline void make_causal_t(RT &dst, const RT &src, const typena
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    // if(threadIdx.x == 0) printf("right_fill: col_idx=%d, val=%f, tile_size=(%d, %d)\n", col_idx, val, dst.height, dst.width);
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll

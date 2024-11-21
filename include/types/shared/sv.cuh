@@ -52,7 +52,12 @@ struct KITTENS_DEFAULT_ALIGN sv {
     static_assert(length % TILE_DIM == 0, "Length must be divisible by the tile dimension");
     static constexpr int tiles  = length / TILE_DIM; ///< Length in subtiles.
 
-    dtype data[length]; ///< The actual shared vector data.
+#ifdef KITTENS_HOPPER
+    static constexpr int num_alloc_elements = ((length * sizeof(dtype) + 127) / 128) * (128 / sizeof(dtype)); // round up to the nearest 128-byte boundary
+#else
+    static constexpr int num_alloc_elements = length;
+#endif
+    dtype data[num_alloc_elements]; ///< The actual shared vector data.
 
     __device__ static inline T* idx(T *ptr, int idx) { // useful for computations in shared address space, as silly as it sounds.
         return ptr[idx];

@@ -186,10 +186,11 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typenam
 // Our goal is to find the largest multiple of 16 that is <= 256 and divides the vector length evenly.
 
 template<typename SV, int D=16> struct find_vector_divider {
-    static constexpr int value = (SV::length % (16*D) == 0) ? 16*D : find_vector_divider<SV, D-1>::value;
+    static constexpr int value = (SV::length % (16*D) == 0 && (SV::length < 256 || ((16*D)*sizeof(typename SV::dtype)) % 128 == 0)) ?
+        16*D : find_vector_divider<SV, D-1>::value;
 };
 template<typename SV> struct find_vector_divider<SV, 1> { static constexpr int value = 16; }; // base case
-template<typename SV> constexpr int sv_tma_dim1 = find_vector_divider<SV>::value;
+template<typename SV> constexpr int sv_tma_dim1 = find_vector_divider<SV>::value; // inner dim
 template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>);
 
 /**
@@ -208,8 +209,11 @@ template<ducks::sv::all SV, int axis>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int batch, int depth, int rows, int cols) {
     using dtype = typename SV::dtype;
     static_assert(axis == -1, "for vector TMA, row axis must be -1 as it's unused");
+    static_assert(SV::length <= 256 || (SV::length*sizeof(dtype)) % 128 == 0);
+    // There is technically a way around ^ that involves instantiating two separate TMA descriptors, one of size 256
+    // and the other of size %256, but this is a fairly mild restriction and the other approach is a real PITA and incurs other costs.
     
-    constexpr uint32_t  tma_dim      = 5;
+    constexpr uint32_t  tma_dim      = 4;
     void                *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = (
@@ -223,14 +227,13 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
     constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
-    constexpr uint64_t dim1 = sv_tma_dim1<SV>;
-    constexpr uint64_t dim2 = sv_tma_dim2<SV>;
+    constexpr uint64_t dim1 = sv_tma_dim1<SV>; // inner dim
+    // constexpr uint64_t dim2 = sv_tma_dim2<SV>; outer dim, not used here.
 
-    int vec_wide = (cols + SV::length - 1) / SV::length; // round up, note this can potentially screw up out of bounds access handling :/
-    uint64_t gmem_shape [5] = {(uint64_t)vec_wide*dim1, (uint64_t)vec_wide*dim2, (uint64_t)rows, (uint64_t)depth, (uint64_t)batch};
-    uint64_t gmem_stride[4] = {dim1*sizeof(dtype), cols*sizeof(dtype), cols*rows*sizeof(dtype), cols*rows*depth*sizeof(dtype)};
-    uint32_t smem_shape [5] = {dim1, dim2, 1, 1, 1};
-    uint32_t smem_stride[5] = {1, 1, 1, 1, 1};
+    uint64_t gmem_shape [4] = {(uint64_t)cols, (uint64_t)rows, (uint64_t)depth, (uint64_t)batch};
+    uint64_t gmem_stride[3] = {cols*sizeof(dtype), cols*rows*sizeof(dtype), cols*rows*depth*sizeof(dtype)};
+    uint32_t smem_shape [4] = {dim1, 1, 1, 1};
+    uint32_t smem_stride[4] = {1, 1, 1, 1};
 
     // ensure that the global address is always 16-byte aligned 
     assert((reinterpret_cast<uint64_t>(global_addr) & 0b1111) == 0);
