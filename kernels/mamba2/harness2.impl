@@ -1,0 +1,244 @@
+#include <iostream>
+#include <random>
+#include <chrono>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+
+// Constants matching the original configuration
+constexpr int ATTN_B = 16;  // Batch size
+constexpr int ATTN_H = 16;  // Number of heads
+constexpr int ATTN_N = 1024;  // Sequence length
+constexpr int ATTN_D = 64;  // Head dimension
+constexpr int ATTN_G = 1;   // Number of groups
+constexpr int NUM_ITERATIONS = 2000;  // Number of test iterations
+
+constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
+
+// Helper function for CUDA error checking
+#define CHECK_CUDA(call) do { \
+    cudaError_t err = call; \
+    if (err != cudaSuccess) { \
+        std::cerr << "CUDA error in file '" << __FILE__ << "' line " << __LINE__ \
+                  << ": " << cudaGetErrorString(err) << std::endl; \
+        exit(EXIT_FAILURE); \
+    } \
+} while(0)
+
+struct TestResults {
+    int num_nans;
+    int num_infs;
+    float mean_output;
+    float mean_inputs[4];  // means for q, k, v, a
+};
+
+class MambaTest {
+private:
+    // Size constants
+    const int total_elements_vo = ATTN_B * ATTN_H * ATTN_N * ATTN_D;
+    const int total_elements_qk = ATTN_B * ATTN_G * ATTN_N * ATTN_D;
+    const int total_elements_a = ATTN_B * ATTN_H * ATTN_N;
+
+    // Host arrays
+    float *q, *k, *v, *a;
+    float *output;
+    __nv_bfloat16 *q_bf, *k_bf, *v_bf, *o_bf;
+
+    // Device arrays
+    __nv_bfloat16 *d_q, *d_k, *d_v, *d_o;
+    float *d_a;
+
+    std::mt19937 rng;
+
+public:
+    MambaTest() : rng(std::random_device{}()) {
+        allocateMemory();
+    }
+
+    ~MambaTest() {
+        freeMemory();
+    }
+
+    void allocateMemory() {
+        // Allocate host memory
+        q = new float[total_elements_qk];
+        k = new float[total_elements_qk];
+        v = new float[total_elements_vo];
+        a = new float[total_elements_a];
+        output = new float[total_elements_vo];
+        
+        q_bf = new __nv_bfloat16[total_elements_qk];
+        k_bf = new __nv_bfloat16[total_elements_qk];
+        v_bf = new __nv_bfloat16[total_elements_vo];
+        o_bf = new __nv_bfloat16[total_elements_vo];
+
+        // Allocate device memory
+        CHECK_CUDA(cudaMalloc(&d_q, total_elements_qk * sizeof(__nv_bfloat16)));
+        CHECK_CUDA(cudaMalloc(&d_k, total_elements_qk * sizeof(__nv_bfloat16)));
+        CHECK_CUDA(cudaMalloc(&d_v, total_elements_vo * sizeof(__nv_bfloat16)));
+        CHECK_CUDA(cudaMalloc(&d_o, total_elements_vo * sizeof(__nv_bfloat16)));
+        CHECK_CUDA(cudaMalloc(&d_a, total_elements_a * sizeof(float)));
+    }
+
+    void freeMemory() {
+        // Free host memory
+        delete[] q;
+        delete[] k;
+        delete[] v;
+        delete[] a;
+        delete[] output;
+        delete[] q_bf;
+        delete[] k_bf;
+        delete[] v_bf;
+        delete[] o_bf;
+
+        // Free device memory
+        cudaFree(d_q);
+        cudaFree(d_k);
+        cudaFree(d_v);
+        cudaFree(d_o);
+        cudaFree(d_a);
+    }
+
+    void generateInputs() {
+        std::uniform_real_distribution<float> dist_qva(0.0f, 1.0f / 10000.0f);
+        std::uniform_real_distribution<float> dist_k(0.0f, 1.0f / 100000000.0f);
+
+        // std::uniform_real_distribution<float> dist_qva(1.0f / 100.0f, 1.0f / 100.0f);
+        // std::uniform_real_distribution<float> dist_k(1.0f / 100.0f, 1.0f / 100.0f);
+
+        // Generate random inputs
+        for (int i = 0; i < total_elements_qk; i++) {
+            q[i] = dist_qva(rng);
+            k[i] = dist_k(rng);
+        }
+
+        for (int i = 0; i < total_elements_vo; i++) {
+            v[i] = dist_qva(rng);
+        }
+
+        for (int i = 0; i < total_elements_a; i++) {
+            a[i] = dist_qva(rng);
+        }
+
+        // Convert to bfloat16
+        for (int i = 0; i < total_elements_qk; i++) {
+            q_bf[i] = __float2bfloat16(q[i]);
+            k_bf[i] = __float2bfloat16(k[i]);
+        }
+
+        for (int i = 0; i < total_elements_vo; i++) {
+            v_bf[i] = __float2bfloat16(v[i]);
+        }
+    }
+
+    TestResults runIteration() {
+        TestResults results = {0, 0, 0.0f, {0.0f, 0.0f, 0.0f, 0.0f}};
+        
+        generateInputs();
+
+        // Calculate input means
+        for (int i = 0; i < total_elements_qk; i++) {
+            results.mean_inputs[0] += q[i];
+            results.mean_inputs[1] += k[i];
+        }
+        for (int i = 0; i < total_elements_vo; i++) {
+            results.mean_inputs[2] += v[i];
+        }
+        for (int i = 0; i < total_elements_a; i++) {
+            results.mean_inputs[3] += a[i];
+        }
+
+        results.mean_inputs[0] /= total_elements_qk;
+        results.mean_inputs[1] /= total_elements_qk;
+        results.mean_inputs[2] /= total_elements_vo;
+        results.mean_inputs[3] /= total_elements_a;
+
+        // Copy data to device
+        CHECK_CUDA(cudaMemcpy(d_q, q_bf, total_elements_qk * sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_k, k_bf, total_elements_qk * sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_v, v_bf, total_elements_vo * sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_a, a, total_elements_a * sizeof(float), cudaMemcpyHostToDevice));
+
+        // Run your kernel here
+        mamba2_fwd_template::layout::q_global Qg(d_q, ATTN_B, ATTN_G, ATTN_N, nullptr);
+        mamba2_fwd_template::layout::k_global Kg(d_k, ATTN_B, ATTN_G, ATTN_N, nullptr);
+        mamba2_fwd_template::layout::a_global Ag(d_a, ATTN_B, ATTN_H, nullptr, ATTN_N);
+        mamba2_fwd_template::layout::v_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
+        mamba2_fwd_template::layout::o_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+// 
+        // printf("ATTN_B: %d, ATTN_H: %d, ATTN_N: %d, ATTN_D: %d, ATTN_G: %d\n", ATTN_B, ATTN_H, ATTN_N, ATTN_D, ATTN_G);
+
+        mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
+        
+        unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048; // have the flag tell us
+        
+        cudaFuncSetAttribute(
+            prototype::lcsf::kernel<mamba2_fwd_template>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+
+        cudaDeviceSynchronize();
+        constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<mamba2_fwd_template>;
+        dim3 grid(264, 1, 1);
+        cudaDeviceSynchronize();
+        prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+        cudaDeviceSynchronize();
+
+        // Copy results back
+        CHECK_CUDA(cudaMemcpy(o_bf, d_o, total_elements_vo * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
+        
+        // Convert output to float and check for NaN/Inf
+        float mean_output = 0.0f;
+        for (int i = 0; i < total_elements_vo; i++) {
+            output[i] = __bfloat162float(o_bf[i]);
+            if (std::isnan(output[i])) results.num_nans++;
+            if (std::isinf(output[i]) || output[i] > 1e8) results.num_infs++;
+            mean_output += output[i];
+        }
+        results.mean_output = mean_output / total_elements_vo;
+
+        return results;
+    }
+};
+
+int main() {
+    try {
+        MambaTest test;
+        int total_nans = 0;
+        int total_infs = 0;
+
+        std::cout << "Starting " << NUM_ITERATIONS << " test iterations..." << std::endl;
+        
+        for (int i = 0; i < NUM_ITERATIONS; i++) {
+            TestResults results = test.runIteration();
+            
+            if ( results.mean_output > 1e8 || results.num_nans > 0 ) {
+                std::cout << "Iteration " << i << ":\n"
+                        << "  NaNs: " << results.num_nans 
+                        << ", Infs: " << results.num_infs << "\n"
+                        << "  Mean Q: " << results.mean_inputs[0]
+                        << ", Mean K: " << results.mean_inputs[1]
+                        << ", Mean V: " << results.mean_inputs[2]
+                        << ", Mean A: " << results.mean_inputs[3] << "\n"
+                        << "  Mean Output: " << results.mean_output << std::endl;
+            }
+                
+            total_nans += results.num_nans;
+            total_infs += results.num_infs;
+        }
+
+        std::cout << "\nTest Summary:\n"
+                 << "Total NaNs: " << total_nans << "\n"
+                 << "Total Infs: " << total_infs << "\n"
+                 << "Success rate: " 
+                 << (NUM_ITERATIONS - (total_nans > 0 || total_infs > 0)) 
+                 << "/" << NUM_ITERATIONS << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+
+    return 0;
+}

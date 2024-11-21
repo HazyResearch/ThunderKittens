@@ -4,3 +4,5 @@
 *.ptx
 *.cubin
 *.fatbin
+__pycache__/
+*/printouts/*

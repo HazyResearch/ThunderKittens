@@ -1,0 +1,56 @@
+dataset:
+  name: alpaca_clean
+  dataset_config:
+    name: default
+    path: yahma/alpaca-cleaned
+    chunk_size: 1024
+    concat_data: true
+    cache_dir: "data/alpaca"
+  pretrained_model_config:
+    pretrained_model_name_or_path: 'meta-llama/Meta-Llama-3.1-8B'  
+    cache_dir: '/scratch/'
+  preprocess_config: null
+
+dataloader:
+  batch_size: 1
+  num_workers: 2
+  drop_last: false
+  pin_memory: true
+
+optimizer:
+  optim: adamw_torch_fused
+  lr: 1e-4
+  weight_decay: 0.0
+
+lr_scheduler:
+  lr_scheduler_type: reduce_lr_on_plateau
+  mode: min
+  factor: 0.1
+  patience: 10
+  min_lr: 0.00001
+
+trainer: # HuggingFace Trainer-like arguments
+  name: default_lm
+  bf16: true
+  train_split: train
+  val_split: validation
+  num_train_epochs: 2
+  gradient_accumulation_steps: 8
+  seed: 42
+  batch_size: 1
+  load_best_model_at_end: true
+  greater_is_better: false
+  metric_for_best_model: eval/loss # eval/rouge/geometric_mean
+  logging_steps: 100
+  evaluation_strategy: steps
+  max_steps: -1
+  eval_steps: 100
+  max_eval_batches: null
+
+finetune:
+  method: lora
+  kwargs:
+    r: 8
+    lora_alpha: 16 # 32
+    lora_dropout: 0 # 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
