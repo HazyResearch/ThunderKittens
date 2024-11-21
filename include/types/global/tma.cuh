@@ -228,7 +228,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
     constexpr uint64_t dim1 = sv_tma_dim1<SV>; // inner dim
-    std::cout << "dim1: " << dim1 << std::endl;
     // constexpr uint64_t dim2 = sv_tma_dim2<SV>; outer dim, not used here.
 
     uint64_t gmem_shape [4] = {(uint64_t)cols, (uint64_t)rows, (uint64_t)depth, (uint64_t)batch};
