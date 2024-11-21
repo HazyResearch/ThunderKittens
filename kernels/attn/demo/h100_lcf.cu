@@ -25,8 +25,12 @@ template<int D> struct attn_fwd_template {
     static constexpr int NUM_CONSUMER_WARPS = 12, NUM_WORKERS = NUM_CONSUMER_WARPS/4, INPUT_PIPE_STAGES = 2;
     using layout = attn_fwd_layout<D, NUM_WORKERS>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.batch = blockIdx.z; args.common.head = blockIdx.y; args.common.seq = blockIdx.x;
-        args.num_iters = args.task_iter == 0 ? args.globals.K.rows/layout::kv_tile::rows : -1;
+        int task_id = gridDim.x*args.task_iter + blockIdx.x;
+        int seq_q = (args.globals.Q.rows + NUM_WORKERS*layout::qo_tile::rows - 1)/(NUM_WORKERS*layout::qo_tile::rows);
+        args.common.batch = task_id / (seq_q*args.globals.K.depth); task_id -= args.common.batch * seq_q * args.globals.K.depth;
+        args.common.head  = task_id / seq_q;                        task_id -= args.common.head  * seq_q;
+        args.common.seq   = task_id;
+        args.num_iters = args.common.batch < args.globals.Q.batch ? (args.globals.K.rows + layout::kv_tile::rows - 1)/(layout::kv_tile::rows) : -1;
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
@@ -59,6 +63,7 @@ template<int D> struct attn_fwd_template {
             mul(args.state.max_vec_last_scaled, args.state.max_vec, TEMPERATURE_SCALE);
             warpgroup::mma_async_wait();
             // softmax
+            right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
             row_max(args.state.max_vec, args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
             mul(args.state.max_vec_scaled, args.state.max_vec, TEMPERATURE_SCALE);
             mul(args.state.att_block, args.state.att_block, TEMPERATURE_SCALE);
@@ -76,13 +81,17 @@ template<int D> struct attn_fwd_template {
             if(laneid() == 0) arrive(args.inputs_finished); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
-            if((args.common.seq*NUM_WORKERS+warpgroup::groupid())*64 >= args.globals.Q.rows) return; // out of bounds?
-            div_row(args.state.o_reg, args.state.o_reg, args.state.norm_vec);
-            auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
-            warpgroup::store(o_smem, args.state.o_reg);
-            warpgroup::sync(warpgroup::groupid());
-            if(warpgroup::warpid() == 0)
-                tma::store_async(args.globals.O, o_smem, {args.common.batch, args.common.head, args.common.seq*NUM_WORKERS+warpgroup::groupid(), 0});
+            if((args.common.seq*NUM_WORKERS+warpgroup::groupid())*64 < args.globals.Q.rows) { // out of bounds?
+                div_row(args.state.o_reg, args.state.o_reg, args.state.norm_vec);
+                auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
+                warpgroup::store(o_smem, args.state.o_reg);
+                warpgroup::sync(warpgroup::groupid());
+                if(warpgroup::warpid() == 0)
+                    tma::store_async(args.globals.O, o_smem, {args.common.batch, args.common.head, args.common.seq*NUM_WORKERS+warpgroup::groupid(), 0});
+                tma::store_async_read_wait();
+            }
+            __syncwarp();
+            if(laneid() == 0) arrive(args.finish_finished); // done!
         }
     };
 };

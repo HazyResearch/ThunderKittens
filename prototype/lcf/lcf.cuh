@@ -48,13 +48,13 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
-    input_alloc_block   (&input_smem)  [INPUT_PIPE_STAGES]  = alloc.allocate<input_alloc_block,  INPUT_PIPE_STAGES>();
     scratch_alloc_block (&scratch_smem)                     = alloc.allocate<scratch_alloc_block>();
+    input_alloc_block   (&input_smem)  [INPUT_PIPE_STAGES]  = alloc.allocate<input_alloc_block,  INPUT_PIPE_STAGES>();
     
     // figure out where we're going to put the finish block
     constexpr int FINISH_BLOCK_OFFSET = (MAX_SHARED_MEMORY-1024)/detail::NUM_BLOCKS_v<lcft> - sizeof(finish_block);
     static_assert(FINISH_BLOCK_OFFSET >= 0, "Finish block is too large for shared memory.");
-    constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024; // including the losses from alignment
+    constexpr int NON_FINISH_BLOCK_SPACE = FINISH_BLOCK_OFFSET - 1024 - sizeof(scratch_alloc_block); // including the losses from alignment
     constexpr int SAFE_STAGES_BETWEEN_BLOCKS = NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block)<INPUT_PIPE_STAGES?NON_FINISH_BLOCK_SPACE/sizeof(input_alloc_block):INPUT_PIPE_STAGES;
     finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)&__shm[0] + FINISH_BLOCK_OFFSET)/1024)*1024); // alignment
 

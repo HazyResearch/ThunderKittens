@@ -306,26 +306,26 @@ template<int SEQ> typename fft_template<SEQ>::layout::globals setup_templates(
 
     // filters
     filter_layout kf_gl{
-        typename filter_layout::GL{d_kf_real, nullptr, H, nullptr, nullptr},
-        typename filter_layout::GL{d_kf_imag, nullptr, H, nullptr, nullptr}
+        typename filter_layout::component{d_kf_real, nullptr, H, nullptr, nullptr},
+        typename filter_layout::component{d_kf_imag, nullptr, H, nullptr, nullptr}
     };
     
     // factors
     fft_layout f_gl{
-        typename fft_layout::GL{d_f_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_f_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::component{d_f_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::component{d_f_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout tw_gl{
-        typename fft_layout::GL{d_tw_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_tw_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::component{d_tw_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::component{d_tw_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout finv_gl{
-        typename fft_layout::GL{d_finv_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_finv_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::component{d_finv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::component{d_finv_imag, nullptr, nullptr, nullptr, nullptr}
     };
     fft_layout twinv_t_gl{
-        typename fft_layout::GL{d_twinv_real, nullptr, nullptr, nullptr, nullptr},
-        typename fft_layout::GL{d_twinv_imag, nullptr, nullptr, nullptr, nullptr}
+        typename fft_layout::component{d_twinv_real, nullptr, nullptr, nullptr, nullptr},
+        typename fft_layout::component{d_twinv_imag, nullptr, nullptr, nullptr, nullptr}
     };
 
     globals G{

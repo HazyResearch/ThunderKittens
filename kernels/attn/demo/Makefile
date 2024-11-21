@@ -1,6 +1,6 @@
 # Compiler
 NVCC=nvcc
-GPU=4090
+GPU=H100
 
 
 ifeq ($(GPU),4090)

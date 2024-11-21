@@ -16,7 +16,7 @@ template<kittens_layout T> struct uniform_args {
     typename CKL::scratch_block_t & scratch;
     __device__ uniform_args(
         typename CKL::common_state_t& _common,
-        int & _task_iter,
+        int _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch

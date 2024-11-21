@@ -2,6 +2,15 @@
 #include <string>
 #include <fstream>
 
+<<<<<<< HEAD
+=======
+constexpr int ATTN_B = 8;
+constexpr int ATTN_H = 8;
+constexpr int ATTN_N = 1020;
+constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ITER   = 10;
+
+>>>>>>> stride_axis_2
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -38,7 +47,7 @@ int main(int argc, char **argv) {
 
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_H*ATTN_N*ATTN_D;
 
     float *q = new float[TOTAL_ELEMENTS];
     float *k = new float[TOTAL_ELEMENTS];
@@ -83,10 +92,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    global_layout<ATTN_D> Qg(d_q, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Kg(d_k, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Vg(d_v, ATTN_B, ATTN_N, ATTN_H, nullptr);
+    global_layout<ATTN_D> Og(d_o, ATTN_B, ATTN_N, ATTN_H, nullptr);
     globals<ATTN_D> g(Qg, Kg, Vg, Og);
     
     unsigned long mem_size = (kittens::MAX_SHARED_MEMORY) / 2; // have the flag tell us
@@ -109,6 +118,12 @@ int main(int argc, char **argv) {
     const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cout << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+        return 1;
+    }
     
     // check correctness
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyDeviceToHost);
@@ -117,6 +132,7 @@ int main(int argc, char **argv) {
     }
 
     bool good = true;
+    float total_diff = 0;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
@@ -140,6 +156,7 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff += abs(diff);
+<<<<<<< HEAD
 
         if (abs(diff) > max_error) {
             max_error = abs(diff);
@@ -156,6 +173,13 @@ int main(int argc, char **argv) {
     std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "FWD Correct :)\n";
     else std::cout << "FWD Incorrect :(\n";
+=======
+    }
+    std::cout << "Average diff: " << total_diff / TOTAL_UNIQUE_ELEMENTS << std::endl;
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    if(good) std::cout << "Correct :)\n";
+    else std::cout << "Incorrect :(\n";
+>>>>>>> stride_axis_2
     // Compute and print average TFLOPs achieved
     double avg_time_s = (double)(std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()) / (ITER * 1e6);
     double avg_tflops = (ATTN_FLOPS / avg_time_s) / 1e12;

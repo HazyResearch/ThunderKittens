@@ -70,7 +70,7 @@ template<int H, int W, int NW> std::string generate_test_name(std::string test_i
 template <typename T> concept integral_wrapper = std::is_integral_v<decltype(T::value)>;
 template<int H, int W, int NW, integral_wrapper _K> std::string generate_test_name(std::string test_id) {
     constexpr int K = _K::value;
-    std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(K)+"x"+std::to_string(W)+"]";
+    std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"]x"+std::to_string(K);
     if constexpr (NW > 1) {
         label += "_["+std::to_string(NW)+"warps]";
     }
