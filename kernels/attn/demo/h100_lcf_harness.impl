@@ -2,11 +2,11 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 3072; // 768*2; // 4096;
-constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 5;
+constexpr int ATTN_B = 256;
+constexpr int ATTN_H = 1;
+constexpr int ATTN_N = 924; // 768*2; // 4096;
+constexpr int ATTN_D = 128; // hardcoded into this kernel
+constexpr int ITER   = 10;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
 
     // create dummy variables that are the right size
     constexpr int TOTAL_ELEMENTS = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
-    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D*ATTN_H;
 
     float *q = new float[TOTAL_UNIQUE_ELEMENTS];
     float *k = new float[TOTAL_UNIQUE_ELEMENTS];
@@ -105,9 +105,8 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
     constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<ker_template>;
-    dim3 grid((ATTN_N + ker_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (ker_template::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<ker_template>;
-    // dim3 grid(132, 1, 1);
+    dim3 grid(132, 1, 1);
     // dim3 bad_grid(grid.z, grid.y, grid.x);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
     // warmup

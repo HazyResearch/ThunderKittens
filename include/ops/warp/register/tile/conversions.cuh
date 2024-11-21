@@ -380,7 +380,7 @@ __device__ static inline void make_causal_t(RT &dst, const RT &src, const typena
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    // if(threadIdx.x == 0) printf("right_fill: col_idx=%d, val=%f, tile_size=(%d, %d)\n", col_idx, val, dst.height, dst.width);
+    if(col_idx >= dst.cols) return;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -409,6 +409,7 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void left_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    if(col_idx <= 0) return;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -437,8 +438,8 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    if(row_idx <= 0) return;
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
-
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -464,6 +465,7 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void lower_fill(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    if(row_idx >= dst.rows) return;
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
 
     #pragma unroll

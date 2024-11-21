@@ -152,7 +152,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     const char *error_string;
     CUresult res = cuGetErrorString(result, &error_string);
     if (result != CUDA_SUCCESS) {
-        std::cerr << "Error creating tensor map: " << error_string << std::endl;
+        std::cerr << "Error in tile TMA descriptor creation: " << error_string << std::endl;
     }
 }
 
@@ -213,8 +213,8 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     // There is technically a way around ^ that involves instantiating two separate TMA descriptors, one of size 256
     // and the other of size %256, but this is a fairly mild restriction and the other approach is a real PITA and incurs other costs.
     
-    constexpr uint32_t  tma_dim      = 4;
-    void                *global_addr = (void*)(src);
+    constexpr uint32_t  tma_dim     = 4;
+    void               *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = (
         std::is_same_v<dtype, bf16>  ? CU_TENSOR_MAP_DATA_TYPE_BFLOAT16 :
@@ -228,11 +228,12 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     constexpr CUtensorMapSwizzle      swizzle         = CU_TENSOR_MAP_SWIZZLE_NONE;
 
     constexpr uint64_t dim1 = sv_tma_dim1<SV>; // inner dim
+    std::cout << "dim1: " << dim1 << std::endl;
     // constexpr uint64_t dim2 = sv_tma_dim2<SV>; outer dim, not used here.
 
     uint64_t gmem_shape [4] = {(uint64_t)cols, (uint64_t)rows, (uint64_t)depth, (uint64_t)batch};
-    uint64_t gmem_stride[3] = {cols*sizeof(dtype), cols*rows*sizeof(dtype), cols*rows*depth*sizeof(dtype)};
-    uint32_t smem_shape [4] = {dim1, 1, 1, 1};
+    uint64_t gmem_stride[3] = {(uint64_t)cols*sizeof(dtype), (uint64_t)cols*rows*sizeof(dtype), (uint64_t)cols*rows*depth*sizeof(dtype)};
+    uint32_t smem_shape [4] = {(uint32_t)dim1, 1, 1, 1};
     uint32_t smem_stride[4] = {1, 1, 1, 1};
 
     // ensure that the global address is always 16-byte aligned 
@@ -263,7 +264,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
     const char *error_string;
     CUresult res = cuGetErrorString(result, &error_string);
     if (result != CUDA_SUCCESS) {
-        std::cerr << "Error: " << error_string << std::endl;
+        std::cerr << "Error in vector TMA descriptor creation: " << error_string << std::endl;
     }
 };
 
