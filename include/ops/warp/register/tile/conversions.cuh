@@ -587,8 +587,8 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
                 const int thread_col = (j * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
-                if (thread_col <= col_idx)  { dst.tiles[i][j].data[k] = packed_val; }
-                else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
+                if (thread_col < col_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                else                       { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
         }
         __syncwarp();
@@ -616,7 +616,7 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
             for (int k = 0; k < dst.packed_per_tile; k++) {
                 const int thread_row = (i * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
                 if (thread_row < row_idx)  { dst.tiles[i][j].data[k] = packed_val; }
-                else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
+                else                       { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
         }
     }
@@ -631,10 +631,10 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
             for (int k = 0; k < dst.packed_per_tile; k++) {
                 const int row_idx_x = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
                 const int row_idx_y = (i * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
-                if (row_idx_x <= row_idx)  { dst.tiles[i][j].data[k].x = val; }
-                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                if (row_idx_y <= row_idx)  { dst.tiles[i][j].data[k].y = val; }
-                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                if (row_idx_x < row_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                      { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (row_idx_y < row_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                      { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
             }
         }
     }
