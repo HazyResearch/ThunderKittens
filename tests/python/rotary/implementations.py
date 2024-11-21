@@ -71,32 +71,32 @@ def rotary_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, 
             x1, x2 = x[..., ::2], x[..., 1::2]
             return rearrange(torch.stack((-x2, x1), dim=-1), "... d two -> ... (d two)", two=2)
         
+    def pytorch_method(q, k, cos, sin, o_dt, dt, ro_dim, interleaved):
+        # for q
+        cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+        sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
+        y1 =  torch.cat(
+            [q[..., :ro_dim] * cos + rotate_half(q[..., :ro_dim], interleaved) * sin, q[..., ro_dim:]],
+            dim=-1,
+        )
+
+        # for k 
+        y2 =  torch.cat(
+            [k[..., :ro_dim] * cos + rotate_half(k[..., :ro_dim], interleaved) * sin, k[..., ro_dim:]],
+            dim=-1,
+        )
+        
+        return y1, y2
+    
+    if torch_compile and method_str == "torch":
+        pytorch_method = torch.compile(pytorch_method)
+        
     for stage in ['warmup', 'timed']:
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
 
         for i in range(num_iters):
             qkv, cos, sin, rotary_max_seqlen, rotary_emb = get_rotary_inputs(b, h, n, dv, dt)
-            
-            def pytorch_method(q, k, cos, sin, o_dt, dt, ro_dim, interleaved):
-                # for q
-                cos = repeat(cos, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-                sin = repeat(sin, "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")
-                y1 =  torch.cat(
-                    [q[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(q[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), q[..., ro_dim:].to(dt)],
-                    dim=-1,
-                ).to(o_dt)
-
-                # for k 
-                y2 =  torch.cat(
-                    [k[..., :ro_dim].to(dt) * cos.to(dt) + rotate_half(k[..., :ro_dim].to(dt), interleaved).to(dt) * sin.to(dt), k[..., ro_dim:].to(dt)],
-                    dim=-1,
-                ).to(o_dt)
-                
-                return y1, y2
-            
-            if torch_compile and method_str == "torch":
-                pytorch_method = torch.compile(pytorch_method)
             
             try:
                 if method_str == "flash_triton":

@@ -122,6 +122,28 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
         x = torch.cat([x_pos, x_neg], dim=-1).clamp(min=1e-6)
         
         return x
+    
+    def pytorch_method(Q, K, V, Qmap, Kmap, alphas, betas):
+        Qs = pytorch_softmax_gt(Q, Qmap)
+        Ks = pytorch_softmax_gt(K, Kmap)
+        a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
+        a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
+        a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # mask
+        a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity
+        a_exp -= a_exp.amax(dim=-1, keepdim=True)
+        a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
+
+        a = a_exp + a_lin
+        a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
+        
+        o = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
+        kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
+        k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
+        
+        return o, k_state, kv_state
+    
+    if torch_compile and method_str == "pytorch":
+        pytorch_method = torch.compile(pytorch_method)
 
     for stage in ['warmup', 'timed']:
 
@@ -135,28 +157,6 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
             lin_mask = torch.tril(1-generator_mat).reshape((1,1,16384,16384))
             exp_mask = torch.tril(generator_mat).reshape((1,1,16384,16384))
             exp_mask = 10000*exp_mask - 10000 
-            
-            def pytorch_method(Q, K, V, Qmap, Kmap, alphas, betas):
-                Qs = pytorch_softmax_gt(Q, Qmap)
-                Ks = pytorch_softmax_gt(K, Kmap)
-                a_lin = torch.einsum('bhmd,bhnd->bhmn', Qs, Ks).to(torch.float32)
-                a_exp = torch.einsum('bhmd,bhnd->bhmn', Q, K).to(torch.float32)
-                a_lin *= lin_mask[:,:,:a_lin.shape[2], :a_lin.shape[3]] * alphas.reshape((1,-1,1,1)) # mask
-                a_exp += exp_mask[:,:,:a_exp.shape[2], :a_exp.shape[3]] # subtract infinity
-                a_exp -= a_exp.amax(dim=-1, keepdim=True)
-                a_exp = torch.exp(a_exp / (128**.5)) * betas.reshape((1,-1,1,1))
-
-                a = a_exp + a_lin
-                a = (a / (a.sum(dim=-1, keepdim=True)+1e-6)).to(torch.bfloat16) # normalize
-                
-                o = torch.einsum('bhmn,bhnd->bhmd', a, V).to(torch.bfloat16)
-                kv_state = torch.einsum('bhlf,bhld->bhfd', Ks[:,:,:-64,:], V[:,:,:-64,:]).to(torch.float32).detach()
-                k_state  = Ks[:,:,:-64,:].to(torch.float32).sum(dim=-2).detach()
-                
-                return o, k_state, kv_state
-            
-            if torch_compile and method_str == "pytorch":
-                pytorch_method = torch.compile(pytorch_method)
 
             try:
                 if method_str == 'pytorch':
