@@ -1,6 +1,6 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_GROUP_WGMMA_MMA_FP16_FP16
+#ifdef TEST_GROUP_COMPLEX_WGMMA_MMA_FP16_FP16
 
 #include "testing_commons.cuh"
 

@@ -147,7 +147,7 @@ struct test_left_fill {
         // here, set everything to from and left of col_idx 8 is set to zero
         for(int i = 0; i < H*16; i++) 
             for(int j = 0; j < W*16; j++) 
-                o_ref[i*W*16 + j] = (j > (8 * W)) ? i_ref[i*W*16 + j] : 0;
+                o_ref[i*W*16 + j] = (j >= (8 * W)) ? i_ref[i*W*16 + j] : 0;
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
@@ -179,7 +179,7 @@ struct test_upper_fill {
         // here, set everything to from and upper of row_idx 8 is set to zero
         for(int i = 0; i < H*16; i++) 
             for(int j = 0; j < W*16; j++) 
-                o_ref[i*W*16 + j] = (i > ((8 * H))) ? i_ref[i*W*16 + j] : 0;
+                o_ref[i*W*16 + j] = (i >= ((8 * H))) ? i_ref[i*W*16 + j] : 0;
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
