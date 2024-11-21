@@ -394,7 +394,6 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
                 else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
             }
         }
-        __syncwarp();
     }
 }
 
@@ -404,7 +403,7 @@ __device__ static inline void right_fill(RT &dst, const RT &src, const int col_i
  * @tparam RT The type of the register tile.
  * @param dst[in,out] The register tile to be filled.
  * @param src[in] The register tile to copy from.
- * @param col_idx[in] The column index to fill from and onwards to the left.
+ * @param col_idx[in] The column index to fill to the left (exclusive).
  * @param val[in] The value to fill with.
  */
 template<ducks::rt::row_layout RT>
@@ -417,13 +416,12 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
             for (int k = 0; k < dst.packed_per_tile; k++) {
                 const int col_idx_x = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2);
                 const int col_idx_y = (j * dst.tile_size) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
-                if (col_idx_x <= col_idx)  { dst.tiles[i][j].data[k].x = val; }
-                else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                if (col_idx_y <= col_idx)  { dst.tiles[i][j].data[k].y = val; }
-                else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                if (col_idx_x < col_idx)  { dst.tiles[i][j].data[k].x = val; }
+                else                      { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (col_idx_y < col_idx)  { dst.tiles[i][j].data[k].y = val; }
+                else                      { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
             }
         }
-        __syncwarp();
     }
 }
 
@@ -433,7 +431,7 @@ __device__ static inline void left_fill(RT &dst, const RT &src, const int col_id
  * @tparam RT The type of the register tile.
  * @param dst[in,out] The register tile to be filled.
  * @param src[in] The register tile to copy from.
- * @param row_idx[in] The row index to fill from and onwards to the upper.
+ * @param row_idx[in] The row index to fill to, from the top (exclusive).
  * @param val[in] The value to fill with.
  */
 template<ducks::rt::row_layout RT>
@@ -447,11 +445,10 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
             #pragma unroll
             for (int k = 0; k < dst.packed_per_tile; k++) {
                 const int thread_row = (i * dst.tile_size) + ((k % 2) * 8) + ((laneid() / 4));
-                if (thread_row <= row_idx)  { dst.tiles[i][j].data[k] = packed_val; }
+                if (thread_row < row_idx)  { dst.tiles[i][j].data[k] = packed_val; }
                 else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
         }
-        __syncwarp();
     }
 }
 
@@ -461,7 +458,7 @@ __device__ static inline void upper_fill(RT &dst, const RT &src, const int row_i
  * @tparam RT The type of the register tile.
  * @param dst[in,out] The register tile to be filled.
  * @param src[in] The register tile to copy from.
- * @param row_idx[in] The row index to fill from and onwards to the lower.
+ * @param row_idx[in] The row index to fill from and onwards to the bottom of the tile (inclusive).
  * @param val[in] The value to fill with.
  */
 template<ducks::rt::row_layout RT>
@@ -479,7 +476,6 @@ __device__ static inline void lower_fill(RT &dst, const RT &src, const int row_i
                 else                        { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
             }
         }
-        __syncwarp();
     }
 }
 

@@ -4,7 +4,7 @@
 
 constexpr int ATTN_B = 8;
 constexpr int ATTN_H = 8;
-constexpr int ATTN_N = 1024;
+constexpr int ATTN_N = 1020;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ITER   = 10;
 
@@ -130,6 +130,7 @@ int main(int argc, char **argv) {
     }
 
     bool good = true;
+    float total_diff = 0;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
@@ -146,8 +147,9 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.01 || isnan(diff)) {
             good = false;
         }
+        total_diff += abs(diff);
     }
-
+    std::cout << "Average diff: " << total_diff / TOTAL_UNIQUE_ELEMENTS << std::endl;
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";

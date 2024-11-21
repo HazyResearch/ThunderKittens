@@ -27,8 +27,10 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int total_rows = dst.height*dst.width;
 
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<axis, 3>())];
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -46,12 +48,13 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
             move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
         }
         else {
-            if (row + idx.template dim<axis>() < src.template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
                 float4 tmp;
                 move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
             }
             else {
+                // printf("thread %d skipping load on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
                 float4 zeros = {0.f,0.f,0.f,0.f};
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
             }
@@ -79,7 +82,8 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
     constexpr int total_calls = (src.height*src.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[(idx.template unit_coord<axis, 3>())];
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[unit_coord];
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -97,10 +101,13 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
             move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
         }
         else {
-            if (row + idx.template dim<axis>() < dst.template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < dst.template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
                 move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
+            }
+            else {
+                // printf("thread %d skipping store on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
             }
         }
     }
@@ -127,7 +134,8 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int total_calls = (dst.height*dst.width * TILE_DIM*TILE_DIM + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<axis, 3>())];
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -147,7 +155,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
             );
         }
         else {
-            if (row + idx.template dim<axis>() < src.template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
                 asm volatile(
                     "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
                     :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
@@ -155,6 +163,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                 );
             }
             else {
+                // printf("thread %d skipping async load on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
                 float4 zeros = {0.f,0.f,0.f,0.f};
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
             }

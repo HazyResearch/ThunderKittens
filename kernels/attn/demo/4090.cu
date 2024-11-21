@@ -33,7 +33,7 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     typename attn_tile<D, float>::col_vec max_vec_last, max_vec, norm_vec; // these are column vectors for the in-place softmax.
     // each warp loads its own Q tile of 16x64
     if (q_seq*ROWS<D> < g.Qg.depth) {
-        load<shared_tile<D>, global_layout<D>, 1>(qo_smem[workerid], g.Qg, {batch, q_seq, head, 0});  // going through shared memory improves coalescing of dram reads.
+        load<1, false>(qo_smem[workerid], g.Qg, {batch, q_seq, head, 0});  // going through shared memory improves coalescing of dram reads.
         __syncwarp();
         load(q_reg, qo_smem[workerid]);
     }
@@ -46,26 +46,29 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     zero(norm_vec);
     zero(o_reg);
     // launch the load of the first k, v tiles
-    int kv_blocks = g.Kg.depth / (LOAD_BLOCKS*ROWS<D>), tic = 0;
-    load_group::load_async<shared_tile<D>, global_layout<D>, 1>(k_smem[loadid][0], g.Kg, {batch, loadid, head, 0});
-    load_group::load_async<shared_tile<D>, global_layout<D>, 1>(v_smem[loadid][0], g.Vg, {batch, loadid, head, 0});
+    int kv_blocks = (g.Kg.depth + LOAD_BLOCKS*ROWS<D>-1) / (LOAD_BLOCKS*ROWS<D>), tic = 0;
+    load_group::load_async<1, false>(k_smem[loadid][0], g.Kg, {batch, loadid, head, 0});
+    load_group::load_async<1, false>(v_smem[loadid][0], g.Vg, {batch, loadid, head, 0});
     // iterate over k, v for these q's that have been loaded
     for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=(tic+1)%3) {
         int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
         if(next_load_idx*ROWS<D> < g.Kg.depth) {
             int next_tic = (tic+1)%3;
-            load_group::load_async<shared_tile<D>, global_layout<D>, 1>(k_smem[loadid][next_tic], g.Kg, {batch, next_load_idx, head, 0});
-            load_group::load_async<shared_tile<D>, global_layout<D>, 1>(v_smem[loadid][next_tic], g.Vg, {batch, next_load_idx, head, 0});
+            load_group::load_async<1, false>(k_smem[loadid][next_tic], g.Kg, {batch, next_load_idx, head, 0});
+            load_group::load_async<1, false>(v_smem[loadid][next_tic], g.Vg, {batch, next_load_idx, head, 0});
             load_async_wait<1>(); // next k, v can stay in flight.
         }
         else load_async_wait(); // all must arrive
         __syncthreads(); // Everyone's memory must be ready for the next stage.
         // now each warp goes through all of the subtiles, loads them, and then does the flash attention internal alg.
         #pragma unroll LOAD_BLOCKS
-        for(int subtile = 0; subtile < LOAD_BLOCKS && (kv_idx*LOAD_BLOCKS + subtile) < g.Kg.depth/ROWS<D>; subtile++) {
+        for(int subtile = 0; subtile < LOAD_BLOCKS && (kv_idx*LOAD_BLOCKS + subtile)*ROWS<D> < g.Kg.depth; subtile++) {
             load(k_reg, k_smem[subtile][tic]); // load k from shared into registers
             zero(att_block); // zero 16x16 attention tile
             mma_ABt(att_block, q_reg, k_reg, att_block); // Q@K.T
+            int first_index = (kv_idx*LOAD_BLOCKS + subtile)*ROWS<D>; // one past the last KV index of this tile
+            int start_fill = g.Kg.depth-first_index < ROWS<D> ? g.Kg.depth-first_index : ROWS<D>;
+            right_fill(att_block, att_block, start_fill, base_types::constants<float>::neg_infty());
             copy(max_vec_last,  max_vec);
             row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
             sub_row(att_block, att_block, max_vec); // subtract max from attention -- now all <=0
@@ -85,7 +88,7 @@ __global__ void attend_ker(const __grid_constant__ globals<D> g) {
     if (q_seq*ROWS<D> < g.Og.depth) { // write out o.
         store(qo_smem[workerid], o_reg); // going through shared memory improves coalescing of dram writes.
         __syncwarp();
-        store<shared_tile<D>, global_layout<D>, 1>(g.Og, qo_smem[workerid], {batch, q_seq, head, 0});
+        store<1, false>(g.Og, qo_smem[workerid], {batch, q_seq, head, 0});
     }
 }
 
