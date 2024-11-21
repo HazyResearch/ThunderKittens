@@ -130,8 +130,12 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_ref[idx] = __half2float(i_t[idx]);
         }
         else if constexpr (std::is_same_v<T, fp8e4m3>) {
-            // i_t[idx] = __float2fp8e4m3(f); // need to convert
-            // i_ref[idx] = __fp8e4m32float(i_t[idx]); // need to convert   # TODO: sim
+            i_t[idx] = __nv_fp8_e4m3(f); 
+            i_ref[idx] = float(i_t[idx]); 
+        } 
+        else if constexpr (std::is_same_v<T, fp8e5m2>) {
+            i_t[idx] = __nv_fp8_e5m2(f); 
+            i_ref[idx] = float(i_t[idx]); 
         }
         else {
             assert(false && "Unsupported data type");
@@ -172,8 +176,12 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
             o_ref[idx] = o_ref[idx];
         }
         else if constexpr(std::is_same_v<T, fp8e4m3>) {
-            // o[idx] = __fp8e4m32float(o_t[idx]);
-            // o_ref[idx] = __fp8e4m32float(__float2fp8e4m3(o_ref[idx])); // TODO: sim
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(__nv_fp8_e4m3(o_ref[idx])); 
+        }
+        else if constexpr(std::is_same_v<T, fp8e5m2>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(__nv_fp8_e5m2(o_ref[idx])); 
         }
         else {
             assert(false && "Unsupported data type");
