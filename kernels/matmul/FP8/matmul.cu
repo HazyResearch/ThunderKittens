@@ -6,22 +6,25 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
-    using  base_tile      = st_fl8_e4m3<64, 64>;
+    using  base_tile      = st_fl8_e4m3<64, 128>; // SA: note that if we could accum in fp16, then we could use <64, 256>
+    using  store_tile     = st_fl8_e4m3<64, 128*N_BLOCK>;
     using  global_layout  = gl<fp8e4m3, 1, 1, -1, -1, base_tile>;
-    struct globals        { global_layout A, B, C; };
+    using  store_layout   = gl<fp8e4m3, 1, 1, -1, -1, store_tile>;
+    struct globals        { global_layout A, B; store_layout C; };
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
-    struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
+    struct finish_block   { store_tile c[M_BLOCK]; };
     struct common_state   { int2 coord; };
     struct consumer_state { 
-        rt_fl<16, 64> accum[N_BLOCK]; 
-        rt_fl8_e4m3<16, 64> accum_fp8[N_BLOCK];
+        rt_fl<16, store_tile::cols> accum;  // Changed to single tall accumulator
+        rt_fl8_e4m3<16, store_tile::cols> accum_fp8;  // Changed to match tall format
     };
 };
-template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
+template<int _M_BLOCK=2, int _N_BLOCK=2, int _SUPER_M=12>
 struct matmul_template {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
-    using wide_tile = st_fl8_e4m3<64, 64*N_BLOCK>;
+    using tall_tile = st_fl8_e4m3<layout::store_tile::cols, 128>;  // Changed to tall tile
+
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
@@ -29,7 +32,7 @@ struct matmul_template {
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
+        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*128);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -44,7 +47,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/64;
+        args.num_iters = args.globals.A.cols/128;
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
         args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
     }
@@ -70,39 +73,27 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            for (int n = 0; n < N_BLOCK; n++) 
-                zero(args.state.accum[n]);
+            zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            for(int n = 0; n < N_BLOCK; n++) {
-                warpgroup::mma_ABt(
-                    args.state.accum[n],
-                    args.input.a[warpgroup::groupid()],
-                    args.input.b[n]
-                );
-            }
+            warpgroup::mma_ABt(
+                args.state.accum,
+                args.input.a[warpgroup::groupid()],
+                reinterpret_cast<tall_tile&>(args.input.b)
+            );
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            for(int n = 0; n < N_BLOCK; n++) {
-                copy(args.state.accum_fp8[n], args.state.accum[n]);
-                warpgroup::store(args.finish.c[warpgroup::groupid()][n], args.state.accum_fp8[n]);
-            }
+            copy(args.state.accum_fp8, args.state.accum);
+            warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum_fp8);
             warpgroup::sync(warpgroup::groupid()+4);
-            
             if(warpgroup::warpid() == 0) {
-                for(int i = 0; i < N_BLOCK; i++) {
-                    tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-                                   {args.common.coord.x, args.common.coord.y+i});
-                    tma::store_async_read_wait();
-                }
+                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
+                                   {args.common.coord.x, args.common.coord.y});
+                tma::store_async_read_wait();
             }
-
-            // Zero the accumulators
-            for(int n = 0; n < N_BLOCK; n++) {
-                zero(args.state.accum[n]);
-            }
+            zero(args.state.accum);
             if(laneid() == 0) arrive(args.finish_finished);
         }
     };
@@ -120,8 +111,8 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
         for (int j = 0; j < N; j++) {
             float sum = 0.0f;
             for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k];
-                // sum += a[i * K + k] * b[k * N + j];
+                sum += a[i * K + k] * b[j * K + k]; // mma_ABt
+                // sum += a[i * K + k] * b[k * N + j]; // mma_AB
             }
             c[i * N + j] = sum;
         }
@@ -132,10 +123,11 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 template<typename mmt>
 void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using global_layout = typename mmt::layout::global_layout;
+    using store_layout  = typename mmt::layout::store_layout;
     using globals  = typename mmt::layout::globals;
     global_layout Ag{d_A, nullptr, nullptr, M, K};
     global_layout Bg{d_B, nullptr, nullptr, K, N};
-    global_layout Cg{d_C, nullptr, nullptr, M, N};
+    store_layout Cg{d_C, nullptr, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
@@ -260,7 +252,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 1.0) { // large because of fp8 vs fp32 numerics
+        if(error > 0.10) { // large because of fp8 vs fp32 numerics
             if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 20) std::cout << "Too many errors to show them all.\n";
             error_count++;
@@ -290,7 +282,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 int main() {
     int N;
     N = 4096;
-    run_benchmark<matmul_template<2,4,8>>(N, N, N);
+    run_benchmark<matmul_template<2,2,8>>(N, N, N);
     return 0;
 }
 
