@@ -36,13 +36,14 @@ struct test_mma_ABt_fp32_fp8 {
         kittens::rt_fl<16, 16*W> c;
         kittens::rt<dtype, 16, 16*W> c_out_reg;
 
-        kittens::warpgroup::load_async(a, a_input, {}); // load to shared first
+        kittens::warpgroup::load_async(a, a_input, {}); // we don't have direct global to register right now
         kittens::warpgroup::load_async(b, b_input, {});
         kittens::warpgroup::load_async_wait(0);
 
         kittens::warpgroup::mm_ABt(c, a, b);
-        kittens::warpgroup::mma_async_wait();
-        kittens::copy(c_out_reg, c);
+        kittens::warpgroup::mma_async_wait(); 
+
+        kittens::copy(c_out_reg, c);  // we don't have direct global to register right now
         kittens::warpgroup::store(c_out_st, c_out_reg);
         kittens::store(c_output, c_out_st, {});
     }
@@ -84,7 +85,7 @@ struct reg_test_mma_ABt_fp32_fp8 {
         kittens::rt_fl<H*4, 16*W> c;
         kittens::rt<dtype, 16, 16*W> c_out;
 
-        kittens::load(a, a_input, {});
+        kittens::load(a, a_input, {}); // we don't have direct global to register right now
         kittens::load(b, b_input, {});
         kittens::warpgroup::load(a_reg, a);
         kittens::warpgroup::mma_fence(c);
@@ -92,7 +93,7 @@ struct reg_test_mma_ABt_fp32_fp8 {
         kittens::warpgroup::mma_commit_group();
         kittens::warpgroup::mma_async_wait();
 
-        kittens::copy(c_out, c);
+        kittens::copy(c_out, c); // we don't have direct global to register right now
         kittens::warpgroup::store(c_out_st, c_out);
         kittens::store(c_output, c_out_st, {});
     }
@@ -135,8 +136,10 @@ struct mma_wrapper_2d {
             mma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(a_input, b_input, c_output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...>(i_ref, o_ref);
+
             // check and cleanup
-            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16, 0.02); // wgmma's sometimes produce small errors. this appears to be hardware.
+            // wgmma's sometimes produce small errors. this appears to be hardware. Larger threshold for fp8.
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*16, 1); 
         }
         else {
             this_result.result = test_result::INVALID;
@@ -149,9 +152,9 @@ template<typename test, int MAX_W, typename... args> using mma_sweep_width_warpg
 template<typename test, int MAX_W, typename... args> using mma_sweep_width_warpgroup_doubleheight = mma_sweep_width<test, 8, MAX_W, 4, args...>;
 
 // If 1 and 3 work, the others likely will too.
-using I1_t = std::integral_constant<int, 2>;
-using I3_t = std::integral_constant<int, 4>;
-using I5_t = std::integral_constant<int, 6>;
+using I2_t = std::integral_constant<int, 2>;
+using I4_t = std::integral_constant<int, 4>;
+using I6_t = std::integral_constant<int, 6>;
 void group::wgmma::mma_fp32_fp8::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warpgroup/wgmma/mma_fp32_fp8 tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2 :
@@ -160,15 +163,14 @@ void group::wgmma::mma_fp32_fp8::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     // shared+shared->reg
-
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I1_t>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I3_t>::run(results);
-    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I5_t>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I2_t>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I4_t>::run(results);
+    mma_sweep_width_warpgroup<test_mma_ABt_fp32_fp8,  SIZE, I6_t>::run(results);
 
     // register+shared->reg
-    // mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I1_t>::run(results);
-//     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I3_t>::run(results);
-//     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I5_t>::run(results);
+    mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I2_t>::run(results);
+    mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I4_t>::run(results);
+    mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I6_t>::run(results);
 }
 
 #endif

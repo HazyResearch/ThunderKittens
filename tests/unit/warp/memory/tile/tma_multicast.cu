@@ -76,7 +76,7 @@ struct tmamulti_wrapper_2d {
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*kittens::TILE_DIM);
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, W*kittens::TILE_COL_DIM<dtype>);
         }
         else {
             this_result.result = test_result::INVALID;
