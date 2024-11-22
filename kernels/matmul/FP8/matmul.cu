@@ -4,35 +4,34 @@
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
-template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
-    using  base_tile      = st_fl8_e4m3<64, 128>; // SA: note that if we could accum in fp16, then we could use <64, 256>
-    using  store_tile     = st_fl8_e4m3<64, 128*N_BLOCK>;
-    using  global_layout  = gl<fp8e4m3, 1, 1, -1, -1, base_tile>;
-    using  store_layout   = gl<fp8e4m3, 1, 1, -1, -1, store_tile>;
-    struct globals        { global_layout A, B; store_layout C; };
-    struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
-    struct finish_block   { store_tile c[M_BLOCK]; };
+    using  a_tile         = st_fl8_e4m3<64,  128>; // SA: note that if we could accum in fp16, then we could use <64, 256>
+    using  b_tile         = st_fl8_e4m3<256, 128>;
+    using  c_tile         = st_fl8_e4m3<64,  256>;
+    using  a_layout       = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
+    using  b_layout       = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;
+    using  c_layout       = gl<fp8e4m3, 1, 1, -1, -1, c_tile>;
+    struct globals        { a_layout A; b_layout B; c_layout C; };
+    struct input_block    { a_tile a[2]; b_tile b; };
+    struct finish_block   { c_tile c[2]; };
     struct common_state   { int2 coord; };
     struct consumer_state { 
-        rt_fl<16, store_tile::cols> accum;  // Changed to single tall accumulator
-        rt_fl8_e4m3<16, store_tile::cols> accum_fp8;  // Changed to match tall format
+        rt_fl<16, c_tile::cols> accum;  // Changed to single tall accumulator
+        rt_fl8_e4m3<16, c_tile::cols> accum_fp8;  // Changed to match tall format
     };
 };
-template<int _M_BLOCK=2, int _N_BLOCK=2, int _SUPER_M=12>
+template<int _SUPER_M=12>
 struct matmul_template {
-    static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
-    using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
-    using tall_tile = st_fl8_e4m3<layout::store_tile::cols, 128>;  // Changed to tall tile
-
-    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
+    static constexpr int SUPER_M = _SUPER_M;
+    using layout    = matmul_layout;
+    static constexpr int NUM_CONSUMER_WARPS=8, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
-        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
+        return dim3(PERISISTENT_GRID ? 132 : M*N/(2*layout::c_tile::num_elements));
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*128);
+        int Rblocks = args.globals.C.rows / (2*layout::c_tile::rows), Cblocks = args.globals.C.cols / layout::c_tile::cols;
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -47,9 +46,9 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/128;
+        args.num_iters = args.globals.A.cols/layout::a_tile::cols;
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
-        args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
+        args.common.coord = { args.common.coord.x*2 + id, args.common.coord.y };
     }
 
     struct producer {
@@ -59,13 +58,12 @@ struct matmul_template {
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
                 tma::expect(args.inputs_arrived, args.input);
-                for(int i = 0; i < M_BLOCK; i++) {
+                for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 }
-                for(int i = 0; i < N_BLOCK; i++)
-                    tma::load_async(args.input.b[i], args.globals.B,
-                                    {args.common.coord.y+i, args.iter}, args.inputs_arrived);
+                tma::load_async(args.input.b, args.globals.B,
+                                {args.common.coord.y, args.iter}, args.inputs_arrived);
             }
         }
     };
@@ -79,7 +77,7 @@ struct matmul_template {
             warpgroup::mma_ABt(
                 args.state.accum,
                 args.input.a[warpgroup::groupid()],
-                reinterpret_cast<tall_tile&>(args.input.b)
+                args.input.b
             );
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
@@ -90,7 +88,7 @@ struct matmul_template {
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
-                                   {args.common.coord.x, args.common.coord.y});
+                                 {args.common.coord.x, args.common.coord.y});
                 tma::store_async_read_wait();
             }
             zero(args.state.accum);
@@ -106,6 +104,7 @@ struct matmul_template {
 #include <omp.h>
 
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
+    std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
@@ -122,12 +121,13 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 
 template<typename mmt>
 void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
-    using global_layout = typename mmt::layout::global_layout;
-    using store_layout  = typename mmt::layout::store_layout;
+    using a_layout = typename mmt::layout::a_layout;
+    using b_layout = typename mmt::layout::b_layout;
+    using c_layout = typename mmt::layout::c_layout;
     using globals  = typename mmt::layout::globals;
-    global_layout Ag{d_A, nullptr, nullptr, M, K};
-    global_layout Bg{d_B, nullptr, nullptr, K, N};
-    store_layout Cg{d_C, nullptr, nullptr, M, N};
+    a_layout Ag{d_A, nullptr, nullptr, M, K};
+    b_layout Bg{d_B, nullptr, nullptr, N, K};
+    c_layout Cg{d_C, nullptr, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
@@ -137,7 +137,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaError_t cudaStatus;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Block size: " << mmt::M_BLOCK*64 << "x" << mmt::N_BLOCK*64 << "\n";
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -150,18 +149,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // Initialize random number generator
     std::random_device rd;
     std::mt19937 gen(42);
-    std::uniform_real_distribution<> dis(-0.5, 0.5);
+    std::normal_distribution dis(0.0f, 1.0f);
 
     // Initialize matrices with random values
     for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 0.1f;
     for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 0.1f;
 
     std::cout << "Initialized matrices" << std::endl;
-
-    // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
 
     // Allocate device memory
     fp8e4m3 *d_A, *d_B, *d_C;
@@ -184,6 +178,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     __nv_fp8_e4m3 *h_B_fp8 = new __nv_fp8_e4m3[K * N];
     for (int i = 0; i < M * K; ++i) h_A_fp8[i] = __nv_fp8_e4m3(h_A[i]);
     for (int i = 0; i < K * N; ++i) h_B_fp8[i] = __nv_fp8_e4m3(h_B[i]);
+    for (int i = 0; i < M * K; ++i) h_A[i] = float(h_A_fp8[i]);
+    for (int i = 0; i < K * N; ++i) h_B[i] = float(h_B_fp8[i]);
+
+    // Perform CPU matrix multiplication for reference
+    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+
+    std::cout << "Performed CPU matrix multiplication" << std::endl;
 
     cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
@@ -248,20 +249,26 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Converted result back to float" << std::endl;
 
     // Check result
-    float max_error = 0.0f;
+    float max_error = 0.0f, total_error = 0.0f, total_ref = 0.0f, total_ours=0.0f;
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 0.10) { // large because of fp8 vs fp32 numerics
-            if(error_count < 25) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-            else if(error_count == 25) std::cout << "Too many errors to show them all.\n";
+        if(1) { // large because of fp8 vs fp32 numerics
+            if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+            else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
         // if (error > max_error) printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
         max_error = std::max(max_error, error);
+        total_ref += h_C_ref[i]*h_C_ref[i];
+        total_error += error*error;
+        total_ours += h_C[i]*h_C[i];
     }
 
     std::cout << "Max error: " << max_error << std::endl;
+    std::cout << "Average error: " << total_error / M / N << std::endl;
+    std::cout << "Average ref: " << total_ref / M / N << std::endl;
+    std::cout << "Average ours: " << total_ours / M / N << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up
@@ -282,8 +289,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 int main() {
     int N;
 
-    N = 3072;
-    run_benchmark<matmul_template<2,2,8>>(N, N, N);
+    N = 16384;
+    run_benchmark<matmul_template<8>>(N, N, N);
 
     // N = 4096;
     // run_benchmark<matmul_template<2,2,8>>(N, N, N);

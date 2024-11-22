@@ -252,12 +252,12 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     float2 val1, val2;
                     if (laneid % 2 == 0) { 
                         // put up src left core matrix first as 0, 2
-                        val1 = src.tiles[i][2*j].data[k];
-                        val2 = src.tiles[i][2*j + 1].data[k];
+                        val1 = src.tiles[i][2*j + k/2].data[(k%2)+0];
+                        val2 = src.tiles[i][2*j + k/2].data[(k%2)+2];
                     } else { 
                         // put up src right core matrix first as 1, 3
-                        val1 = src.tiles[i][2*j + 1].data[k];
-                        val2 = src.tiles[i][2*j].data[k];
+                        val1 = src.tiles[i][2*j + k/2].data[(k%2)+2];
+                        val2 = src.tiles[i][2*j + k/2].data[(k%2)+0];
                     }
 
                     // Shuffle first 4 floats
@@ -306,7 +306,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
             for(int j = 0; j < src.width; j++) {
                 #pragma unroll
                 for(int k = 0; k < src.tiles[0][0].packed_per_thread; k++) {
-                    int dst_j = (laneid % 2 == 0) ? 2*j : 2*j + 1;
+                    int dst_j = 2*j + k*2;
 
                     // Put something up for adoption
                     using fp8_4_t = std::conditional_t<std::is_same_v<U2, fp8e4m3>, fp8e4m3_4, fp8e5m2_4>;
@@ -323,16 +323,13 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                     }
 
                     // Shuffle f2_0
-                    int row_mask = 4 * ( laneid / 4 );
-                    int row_offset = row_mask + ( (laneid-row_mask) / 2 ) + ( laneid % 2 );
-                    int src_offset = (laneid % 2 == 0 ) ? row_offset + 0 : ( row_offset + 1 );
-                    float2 f2_0_shfl = packed_shfl_sync(MASK_ALL, f2_0, src_offset);
-                    dst.tiles[i][dst_j].data[k] = f2_0_shfl;
+                    int row_offset = 4 * (laneid/4) + (laneid%2) * 2 + (laneid%4) / 2;
+                    float2 f2_0_shfl = packed_shfl_sync(MASK_ALL, f2_0, row_offset);
+                    dst.tiles[i][dst_j].data[(k%2)+0] = f2_0_shfl;
 
-                    // Shuffle f2_1
-                    int src_offset2 = (laneid % 2 == 0 ) ? row_offset + 2 : (row_offset - 1); 
-                    float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, src_offset2);
-                    dst.tiles[i][dst_j^1].data[k] = f2_1_shfl;
+                    // Shuffle f2_1 
+                    float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, row_offset^2);
+                    dst.tiles[i][dst_j].data[(k%2)+2] = f2_1_shfl;
                 }
             }
         }
