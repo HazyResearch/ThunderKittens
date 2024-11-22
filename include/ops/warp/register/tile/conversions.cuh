@@ -306,7 +306,7 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
             for(int j = 0; j < src.width; j++) {
                 #pragma unroll
                 for(int k = 0; k < src.tiles[0][0].packed_per_thread; k++) {
-                    int dst_j = 2*j + k*2;
+                    int dst_j = 2*j + k/2;
 
                     // Put something up for adoption
                     using fp8_4_t = std::conditional_t<std::is_same_v<U2, fp8e4m3>, fp8e4m3_4, fp8e5m2_4>;
@@ -322,14 +322,19 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                         f2_1 = make_float2(f4.x, f4.y);
                     }
 
-                    // Shuffle f2_0
                     int row_offset = 4 * (laneid/4) + (laneid%2) * 2 + (laneid%4) / 2;
+                    // Shuffle f2_0
                     float2 f2_0_shfl = packed_shfl_sync(MASK_ALL, f2_0, row_offset);
-                    dst.tiles[i][dst_j].data[(k%2)+0] = f2_0_shfl;
-
                     // Shuffle f2_1 
                     float2 f2_1_shfl = packed_shfl_sync(MASK_ALL, f2_1, row_offset^2);
-                    dst.tiles[i][dst_j].data[(k%2)+2] = f2_1_shfl;
+
+                    if (laneid % 2 == 0) {  
+                        dst.tiles[i][dst_j].data[(k%2)+0] = f2_0_shfl;
+                        dst.tiles[i][dst_j].data[(k%2)+2] = f2_1_shfl;
+                    } else {
+                        dst.tiles[i][dst_j].data[(k%2)+0] = f2_1_shfl;
+                        dst.tiles[i][dst_j].data[(k%2)+2] = f2_0_shfl;
+                    }
                 }
             }
         }
