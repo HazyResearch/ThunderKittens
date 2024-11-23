@@ -190,10 +190,19 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, float>::run(results);
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
+
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); // fp8 
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); 
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, float>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::bf16>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::bf16>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e4m3>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e5m2>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::half>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::half>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e4m3>::run(results);
+    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e5m2>::run(results);
 
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);

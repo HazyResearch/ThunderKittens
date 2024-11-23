@@ -25,7 +25,6 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
     using U = typename GL::dtype;
 
     #ifdef KITTENS_HOPPER
-    // static assert that we're not using fp8e4m3 or fp8e5m2
     static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for load/store");
     #endif
 
@@ -76,7 +75,7 @@ __device__ inline static void load(RT &dst, const GL &src, const coord &idx) {
 
     #ifdef KITTENS_HOPPER
     // static assert that we're not using fp8e4m3 or fp8e5m2
-    static_assert(!std::is_same_v<T, fp8e4m3_4> && !std::is_same_v<T, fp8e5m2_4>, "Unsupported type for load/store");
+    static_assert(!std::is_same_v<T, fp8e4m3> && !std::is_same_v<T, fp8e5m2>, "Unsupported type for load/store");
     #endif
 
     U *src_ptr = (U*)&src.template get<RT>(idx);
@@ -180,7 +179,7 @@ __device__ inline static void store(GL &dst, const RT &src, const coord &idx) {
 
     #ifdef KITTENS_HOPPER
     // static assert that we're not using fp8e4m3 or fp8e5m2
-    static_assert(!std::is_same_v<T, fp8e4m3_4> && !std::is_same_v<T, fp8e5m2_4>, "Unsupported type for load/store");
+    static_assert(!std::is_same_v<T, fp8e4m3> && !std::is_same_v<T, fp8e5m2>, "Unsupported type for load/store");
     #endif
 
     

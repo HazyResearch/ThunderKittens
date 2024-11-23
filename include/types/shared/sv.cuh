@@ -50,7 +50,10 @@ struct KITTENS_DEFAULT_ALIGN sv {
 
     static constexpr int length = _length; ///< Length in elements.
     static_assert(length % TILE_ROW_DIM<T> == 0, "Length must be divisible by the tile dimension");
-    static constexpr int tiles  = length / TILE_ROW_DIM<T>; ///< Length in subtiles.
+    static constexpr int tiles  = length / TILE_ROW_DIM<T>; ///< Length in subtiles.'
+    #ifdef KITTENS_HOPPER
+    static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for fp8");
+    #endif
 
     dtype data[length]; ///< The actual shared vector data.
 
