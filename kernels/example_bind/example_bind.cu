@@ -1,7 +1,8 @@
 #include "kittens.cuh"
+#include "pyutils/pyutils.cuh"
 using namespace kittens;
 
-using my_layout = gl<float, -1, -1, -1, 64, st_bf<64,64>>; // An example layout that also instantiates a TMA descriptor on Hopper.
+using my_layout = gl<float, -1, -1, -1, 64, st_fl<64,64>>; // An example layout that also instantiates a TMA descriptor on Hopper.
 struct globals {
     my_layout in, out;
     dim3 grid()  { return dim3(in.batch, in.depth, in.rows); }
