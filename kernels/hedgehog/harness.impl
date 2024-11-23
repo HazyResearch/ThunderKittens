@@ -3,15 +3,12 @@
 #include <string>
 #include <fstream>
 
-#define ATTN_B (1)
-#define ATTN_H (1)
+#define ATTN_B (2)
+#define ATTN_H (2)
 #define ATTN_N (1024)
 
-<<<<<<< Updated upstream
-=======
-#define LOAD_HEADS (1)
+#define LOAD_HEADS (128)
 
->>>>>>> Stashed changes
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
     cudaError err = cudaGetLastError();

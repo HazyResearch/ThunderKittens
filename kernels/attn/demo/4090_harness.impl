@@ -2,15 +2,12 @@
 #include <string>
 #include <fstream>
 
-<<<<<<< HEAD
-=======
 constexpr int ATTN_B = 8;
 constexpr int ATTN_H = 8;
 constexpr int ATTN_N = 1020;
 constexpr int ATTN_D = 64; // hardcoded into this kernel
 constexpr int ITER   = 10;
 
->>>>>>> stride_axis_2
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -156,30 +153,11 @@ int main(int argc, char **argv) {
             good = false;
         }
         total_diff += abs(diff);
-<<<<<<< HEAD
-
-        if (abs(diff) > max_error) {
-            max_error = abs(diff);
-        }
-    }
-
-    // print average difference
-    std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS << std::endl;
-    std::cout << "Max     o difference: " << max_error << std::endl;
-    if (abs(total_diff / TOTAL_ELEMENTS) < 1e-3) {
-        good = true;
-    }
-
-    std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
-    if(good) std::cout << "FWD Correct :)\n";
-    else std::cout << "FWD Incorrect :(\n";
-=======
     }
     std::cout << "Average diff: " << total_diff / TOTAL_UNIQUE_ELEMENTS << std::endl;
     std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
     if(good) std::cout << "Correct :)\n";
     else std::cout << "Incorrect :(\n";
->>>>>>> stride_axis_2
     // Compute and print average TFLOPs achieved
     double avg_time_s = (double)(std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()) / (ITER * 1e6);
     double avg_tflops = (ATTN_FLOPS / avg_time_s) / 1e12;
