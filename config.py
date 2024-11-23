@@ -14,6 +14,9 @@ sources = {
         'source_files': {
             'h100': [
                 'kernels/based/lin_attn_h100.cu',
+            ],
+            '4090': [
+                'kernels/based/lin_attn_4090.cu',
             ]
         }
     },
@@ -55,7 +58,6 @@ sources = {
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
 kernels = ['attn', 'mamba2', 'hedgehog', 'fftconv', 'fused_rotary', 'based', 'fused_layernorm']
-# kernels = ['mamba2', 'fftconv']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'

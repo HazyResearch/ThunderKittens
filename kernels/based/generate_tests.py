@@ -7,9 +7,9 @@ import math
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
-B = 16
-H = 16
-N = 1024
+B = 1
+H = 1
+N = 1024*16
 D = 16
 DV = 64
 
@@ -74,7 +74,7 @@ def pytorch_test(Q, K, V, add_scale = True, add_norm = False, TESTNAME='all'):
 
 o, kv_a2, kv_a1 = pytorch_test(q, k, v, TESTNAME)
 
-with open(f'{TESTNAME}.txt', 'w') as f:
+with open(f'{TESTNAME}_{B}x{H}x{N}x{D}x{DV}.txt', 'w') as f:
     qf = q.to(torch.float32).flatten().cpu().numpy().tolist()
     kf = k.to(torch.float32).flatten().cpu().numpy().tolist()
     vf = v.to(torch.float32).flatten().cpu().numpy().tolist()

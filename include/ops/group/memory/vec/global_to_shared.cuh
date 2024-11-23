@@ -14,11 +14,11 @@
  * @param dst Reference to the shared vector where the data will be loaded.
  * @param src Pointer to the global memory location from where the data will be loaded.
  */
-template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
     for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
@@ -41,11 +41,11 @@ __device__ static inline void load(SV &dst, const GL &src, const coord &idx) {
  * @param dst Pointer to the global memory location where the data will be stored.
  * @param src Reference to the shared vector from where the data will be stored.
  */
-template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void store(GL &dst, const SV &src, const coord &idx) {
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void store(GL &dst, const SV &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr uint32_t total_calls = src.length / elem_per_transfer; // guaranteed to divide
-    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst.template get<SV>(idx);
+    typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[(idx.template unit_coord<-1, 3>())];
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     #pragma unroll
     for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {
@@ -57,11 +57,11 @@ __device__ static inline void store(GL &dst, const SV &src, const coord &idx) {
     }
 }
 
-template<ducks::sv::all SV, ducks::gl::all GL>
-__device__ static inline void load_async(SV &dst, const GL &src, const coord &idx) {
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
-    typename GL::dtype *src_ptr = (typename GL::dtype*)&src.template get<SV>(idx);
+    typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
     for(uint32_t i = threadIdx.x%GROUP_THREADS; i < total_calls; i+=GROUP_THREADS) {

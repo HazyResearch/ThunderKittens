@@ -253,7 +253,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(1) { // large because of fp8 vs fp32 numerics
+        if( error > 0.10 ) { // large because of fp8 vs fp32 numerics
             if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;

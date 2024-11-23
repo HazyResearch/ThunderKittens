@@ -337,7 +337,7 @@ based_globals based_init(
 
 
 #ifdef TK_COMPILE_BASED
-#include "common/pyutils/torch_helpers.cuh"
+#include "pyutils/torch_helpers.cuh"
 #include <iostream>
 void dispatch_based( 
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
@@ -421,7 +421,7 @@ std::tuple<torch::Tensor, torch::Tensor> based(
     cudaDeviceSynchronize();
 }
 #else
-#include "harness.impl"
+#include "harness_h100.impl"
 #endif
 
 

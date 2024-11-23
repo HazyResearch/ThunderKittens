@@ -11,22 +11,20 @@ NVCC=nvcc
 NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
 
 # At what level to run tests?
-# Level 1 takes a 15 seconds to compile 1,000 tests.
+# Level 1 takes 15 seconds to compile 1,000 tests.
 # (Default) Level 2 takes a minute to compile 3,000 tests.
 # Level 3 takes 5 minutes to compile 10,000 tests.
 # Level 4 takes 15 while to compile 25,000 tests
-NVCCFLAGS+= -DTEST_INTENSITY=2
+NVCCFLAGS+= -DTEST_INTENSITY=4
 # Which tests to run?
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY
 # Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
-# NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY -DTEST_ALL_GROUP_MEMORY
+# NVCCFLAGS+= -DTEST_WARP_MEMORY_VEC_TMA
 # NVCCFLAGS+= -DTEST_ALL_WARP_REGISTER_VEC
-# NVCCFLAGS+= -DTEST_WARP_MEMORY_TILE_GLOBAL_TO_SHARED
 # NVCCFLAGS+= -DTEST_WARP_REGISTER_TILE_MMA_COMPLEX
 # NVCCFLAGS+= -DTEST_WARP_REGISTER_TILE_MUL_COMPLEX
 # NVCCFLAGS+= -DTEST_WARP_REGISTER_TILE_MAPS_COMPLEX
-# NVCCFLAGS+= -DTEST_WARP_MEMORY # -DTEST_ALL
 NVCCFLAGS+= -DTEST_ALL
 
 ifeq ($(COMP_LEVEL),fast)

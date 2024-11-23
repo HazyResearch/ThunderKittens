@@ -16,20 +16,18 @@ warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
 from utils import efficiency
 import attention.implementations as attention
 import hedgehog.implementations as hedgehog
-import based.implementations as based
+import based_attention.implementations as based
 import rotary.implementations as rotary
 import mamba2.implementations as mamba2
 import fftconv.implementations as fftconv
 import layernorm.implementations as layernorm
-
-
 ############## Efficiency Measurements #############
 
 b = 16
 h = 16
 dv = 64
 
-def measure_efficiency(dt, n, method_name, method, verbose=False):
+def measure_efficiency(dt, n, method_name, method, verbose=False, torch_compile=True):
     if verbose:
         print(f"{b=}, {n=}, {h=}, {dv=}")
 
@@ -42,7 +40,7 @@ def measure_efficiency(dt, n, method_name, method, verbose=False):
     else:
         flops = mod.get_flops(b, n, dv, h)
 
-    outputs, times = method(dt, b, h, n, dv, verbose=verbose)
+    outputs, times = method(dt, b, h, n, dv, verbose=verbose, torch_compile=torch_compile)
     times = times * 1000
 
     eff = efficiency(flops, times)
@@ -55,16 +53,16 @@ if __name__ == "__main__":
     print("Benchmarking the kernels...")
 
     verbose = False
+    torch_compile = True
 
     for mod in [
         attention, 
         based, 
-        rotary,
+        rotary, 
         hedgehog, 
         layernorm, 
         mamba2, 
-        fftconv, 
-        
+        fftconv
     ]:
         implementations_list = []
         implementations_fwd = mod.IMPLEMENTATIONS
@@ -89,9 +87,9 @@ if __name__ == "__main__":
                 for n in [
                     1024 if 'attn' not in m else 768, 
                     2048 if 'attn' not in m else 1536, 
-                    # 4096 if 'attn' in m else 3072,
-                    # 8192 if 'attn' in m else 6144,
-                    # 16384 if 'attn' in m else 12288
+                    4096 if 'attn' in m else 3072,
+                    8192 if 'attn' in m else 6144,
+                    16384 if 'attn' in m else 12288
                 ]:
                     if "conv" in m and n not in [1024, 4096]:
                         # restrict to sizes we have implemented
@@ -104,7 +102,7 @@ if __name__ == "__main__":
                         print('skipping layernorm due to incompatible model dim')
                     if verbose:
                         print(f"Sequence Length: {n}")
-                    tflops, timing = measure_efficiency(torch.bfloat16, n, m, method, verbose=verbose)
+                    tflops, timing = measure_efficiency(torch.bfloat16, n, m, method, verbose=verbose, torch_compile=torch_compile)
                     if tflops > 0: 
                         flops_result[n] = tflops
                         timing_result[n] = timing

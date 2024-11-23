@@ -31,11 +31,11 @@ struct identifier {};
 template<kittens::ducks::gl::all _GL>
 struct cgl {
     using identifier = ducks::cgl::identifier;
-    using GL    = _GL;
-    using T     = GL::T;
-    using T2    = GL::T2;
-    using dtype = GL::dtype;
-    GL real, imag;
+    using component  = _GL;
+    using T          = component::T;
+    using T2         = component::T2;
+    using dtype      = component::dtype;
+    component real, imag;
 };
 
 namespace ducks {
