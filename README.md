@@ -1,4 +1,10 @@
 # ThunderKittens
+
+### Recent Updates (Nov 23, 2024)
+- kernels/example_bind has a newer, simpler way to get started binding TK kernels up to PyTorch.
+- FP8 support.
+- New-axis loads, automatic padding, and other QoL improvements.
+
 ### Tile primitives for speedy kernels
 
 <div align="center" >
