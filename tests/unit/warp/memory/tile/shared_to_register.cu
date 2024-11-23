@@ -6,13 +6,18 @@ template<typename T>
 struct sharedreg_load_store {
     using dtype = T;
     template<int H, int W, int NW, kittens::ducks::rt_layout::all RL> using valid = std::bool_constant<
-      ( NW == 1 && W*H<=64 ) && ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2> ) || W%2==0 ) && 
+      ( NW == 1 && W*H<=64 ) 
+      #ifdef KITTENS_HOPPER
+      && ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2> ) || W%2==0 ) && 
       ( (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2> ) || std::is_same_v<RL, kittens::ducks::rt_layout::row> ) 
+      #endif
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_reg_loadstore_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "shared_reg_loadstore_gmem=half" :
+                                                      #ifdef KITTENS_HOPPER
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "shared_reg_loadstore_gmem=fp8e4m3" :
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "shared_reg_loadstore_gmem=fp8e5m2" :
+                                                      #endif
                                                                                          "shared_reg_loadstore_gmem=float";
     template<int H, int W, int NW, kittens::ducks::gl::all GL, kittens::ducks::rt_layout::all RL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing

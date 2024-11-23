@@ -64,10 +64,17 @@ namespace ducks {
  */
 namespace base_types {
 
+#ifdef KITTENS_HOPPER
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4>; // could add half_2 later if implemented.
 template<typename T>
 concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>; // could add half_2 later if implemented.
+#else
+template<typename T>
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>;
+template<typename T>
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half>;
+#endif
 
 } // namespace base_types
 } // namespace ducks

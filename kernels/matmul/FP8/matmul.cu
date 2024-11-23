@@ -289,7 +289,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 int main() {
     int N;
 
-    N = 16384;
+    N = 4096;
     run_benchmark<matmul_template<8>>(N, N, N);
 
     // N = 4096;

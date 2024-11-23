@@ -94,13 +94,17 @@ template<int H, int W, int NW, kittens::ducks::base_types::T1 T2, kittens::ducks
     std::string label = generate_test_name<H,W,NW>(test_id);
     if constexpr (std::is_same_v<U2, float>) label += "_[float->";
     else if constexpr (std::is_same_v<U2, kittens::bf16>) label += "_[bf16->";
+    #ifdef KITTENS_HOPPER
     else if constexpr (std::is_same_v<U2, kittens::fp8e4m3>) label += "_[e4m3->";
     else if constexpr (std::is_same_v<U2, kittens::fp8e5m2>) label += "_[e5m2->";
+    #endif
     else label += "_[half->";
     if constexpr (std::is_same_v<T2, float>) label += "float]";
     else if constexpr (std::is_same_v<T2, kittens::bf16>) label += "bf16]";
+    #ifdef KITTENS_HOPPER
     else if constexpr (std::is_same_v<T2, kittens::fp8e4m3>) label += "e4m3]";
     else if constexpr (std::is_same_v<T2, kittens::fp8e5m2>) label += "e5m2]";
+    #endif
     else label += "half]";
     return label;
 }

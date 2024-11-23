@@ -90,6 +90,7 @@ struct test_type_convert {
     }
 };
 
+#ifdef KITTENS_HOPPER
 struct test_type_convert_typed { 
     template<int H, int W, int NW, typename T2, typename U2> using valid = std::bool_constant<NW == 1 && W*H<=32 && (
         ( ( 
@@ -135,6 +136,7 @@ struct test_type_convert_typed {
         }
     }
 };
+#endif
 
 struct test_subtile {
     template<int H, int W, int NW, typename ST_H> using valid = std::bool_constant<NW == 1 && (H%(ST_H::value))==0 && W*H<=64>; // this is warp-level
@@ -191,6 +193,7 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
     sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
 
+    #ifdef KITTENS_HOPPER
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); 
@@ -203,6 +206,7 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::half>::run(results);
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e4m3>::run(results);
     sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e5m2>::run(results);
+    #endif
 
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
     sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);

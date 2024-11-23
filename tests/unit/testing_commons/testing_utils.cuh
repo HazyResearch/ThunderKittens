@@ -129,6 +129,7 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_t[idx] = __float2half(f);
             i_ref[idx] = __half2float(i_t[idx]);
         }
+        #ifdef KITTENS_HOPPER
         else if constexpr (std::is_same_v<T, fp8e4m3>) {
             i_t[idx] = __nv_fp8_e4m3(f); 
             i_ref[idx] = float(i_t[idx]); 
@@ -137,6 +138,7 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_t[idx] = __nv_fp8_e5m2(f); 
             i_ref[idx] = float(i_t[idx]); 
         }
+        #endif
         else {
             assert(false && "Unsupported data type");
         }
@@ -175,6 +177,7 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
             o[idx] = o_t[idx];
             o_ref[idx] = o_ref[idx];
         }
+        #ifdef KITTENS_HOPPER
         else if constexpr(std::is_same_v<T, fp8e4m3>) {
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(__nv_fp8_e4m3(o_ref[idx])); 
@@ -183,6 +186,7 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(__nv_fp8_e5m2(o_ref[idx])); 
         }
+        #endif
         else {
             assert(false && "Unsupported data type");
         }

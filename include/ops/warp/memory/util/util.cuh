@@ -147,6 +147,7 @@ template<> struct move<float4> {
         asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(src.x), "f"(src.y), "f"(src.z), "f"(src.w), "l"(dst));
     }
 };
+#ifdef KITTENS_HOPPER
 template<> struct move<fp8e4m3_4> {
     __device__ static inline void ldsm4(fp8e4m3_4& dst1, fp8e4m3_4& dst2, fp8e4m3_4& dst3, fp8e4m3_4& dst4, uint32_t src) {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, %3}, [%4];\n" :
@@ -167,8 +168,8 @@ template<> struct move<fp8e5m2_4> {
         asm volatile("stmatrix.sync.aligned.m8n8.x4.shared::cta.b16 [%4], {%0, %1, %2, %3};\n" ::
                      "r"(*(uint32_t*)&src1), "r"(*(uint32_t*)&src2), "r"(*(uint32_t*)&src3), "r"(*(uint32_t*)&src4), "r"(dst));
     }
-
 };
+#endif
 
 /* ----------   Generic (non-Hopper specific) semaphore functions  ---------- */
 
