@@ -1,0 +1,349 @@
+#include <iostream>
+#include <iomanip>
+#include <string>
+#include <fstream>
+
+#define ATTN_B (1)
+#define ATTN_H (1)
+#define ATTN_N (1024)
+
+<<<<<<< Updated upstream
+=======
+#define LOAD_HEADS (1)
+
+>>>>>>> Stashed changes
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+uint64_t calculate_flops(int B, int H, int N) {
+    // Q, K maps first:
+    // (B*H*N*128) @ (128,64) = 2 * 128*64*(B*H*N) each
+    uint64_t map_flops = uint64_t(2 * 2*128*64) * B * H * N;
+    // Sliding window flops:
+    // length is average of 96 (64,128 are bounds), applied over every token
+    // yields B*H*N * (96*128 * 2) for QK, another B*H*N*(96 * ~4) for softmax, another B*H*N * (96 * 128 * 2) for AV
+    uint64_t sliding_flops = uint64_t(2 * (96*128 + 96*4 + 96*128)) * B * H * N;
+    // Linear attention flops
+    // Q, K internal softmax is ~4 per element = B*H*N*128*4 for each
+    // K.T@V matmul is 128*128*2 per sequence element, or B*H*N*128*128*2 for that
+    // Q@(KV state) is same
+    uint64_t linear_flops = uint64_t(128*128*2 + 128*128*2 + 128*4*2 + 128*4*2) * B * H * N;
+    // Norms are sufficiently negligible (~0.2%) that I'm going to ignore them
+    return map_flops + sliding_flops + linear_flops;
+}
+
+int main(int argc, char **argv) {
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_QK_MAP = ATTN_H*       ATTN_D*ATTN_D / 2;
+    constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV = ATTN_B*ATTN_H*       ATTN_D*ATTN_F;
+    constexpr int TOTAL_ELEMENTS_K   = ATTN_B*ATTN_H*ATTN_F;
+
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK_MAP = ATTN_H*ATTN_D*ATTN_D / 2;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_QK = ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_VO = ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_KV = ATTN_H*ATTN_D*ATTN_F;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_K = ATTN_H*ATTN_F;
+
+    float *alphas       = new float[ATTN_H];
+    float *betas        = new float[ATTN_H];
+    float *qmap         = new float[TOTAL_ELEMENTS_QK_MAP];
+    float *kmap         = new float[TOTAL_ELEMENTS_QK_MAP];
+    float *q            = new float[TOTAL_ELEMENTS_QK];
+    float *k            = new float[TOTAL_ELEMENTS_QK];
+    float *v            = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref        = new float[TOTAL_ELEMENTS_VO];
+    float *kv_state_ref = new float[TOTAL_ELEMENTS_KV];
+    float *k_state_ref  = new float[TOTAL_ELEMENTS_K];
+
+    bf16 *qmap_bf     = new bf16[TOTAL_ELEMENTS_QK_MAP];
+    bf16 *kmap_bf     = new bf16[TOTAL_ELEMENTS_QK_MAP];
+    bf16 *q_bf        = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *k_bf        = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *v_bf        = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *o_bf        = new bf16[TOTAL_ELEMENTS_VO]; // to be filled
+    
+    float *o          = new float[TOTAL_ELEMENTS_VO];  // on host, filled after kernel
+    float *kv_state   = new float[TOTAL_ELEMENTS_KV];  // on host, filled after kernel
+    float *k_state    = new float[TOTAL_ELEMENTS_K];   // on host, filled after kernel
+
+    if(argc > 1) {
+        std::ifstream infile(argv[1]);
+
+        std::cout << "Starting to enter!" << std::endl;
+
+        printf("ATTN_H = %d\n", ATTN_H);
+        printf("TOTAL_UNIQUE_ELEMENTS_QK_MAP = %d\n", TOTAL_UNIQUE_ELEMENTS_QK_MAP);
+        printf("TOTAL_UNIQUE_ELEMENTS_QK = %d\n", TOTAL_UNIQUE_ELEMENTS_QK);
+        printf("TOTAL_UNIQUE_ELEMENTS_VO = %d\n", TOTAL_UNIQUE_ELEMENTS_VO);
+
+        // 1, alpha and beta
+        for(int i = 0; i < ATTN_H; i++) {
+            infile >> alphas[i];
+            printf("alphas[%d] = %f\n", i, alphas[i]);
+        }
+        std::cout << "Finished loading " << ATTN_H << " elements of alphas" << std::endl;
+        for(int i = 0; i < ATTN_H; i++) {
+            infile >> betas[i];
+            printf("betas[%d] = %f\n", i, betas[i]);
+        }
+        std::cout << "Finished loading " << ATTN_H << " elements of betas" << std::endl;
+
+        // 2. QK map
+        for(int i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) infile >> qmap[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_QK_MAP << " elements of QMAP" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) infile >> kmap[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_QK_MAP << " elements of KMAP" << std::endl;
+
+        // 3. Q, K, V, O_REF
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> q[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_QK << " elements of Q" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> k[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_QK << " elements of K" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) infile >> v[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_VO << " elements of V" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+            infile >> o_ref[i];
+            // printf("o_ref[%d] = %f\n", i, o_ref[i]);
+        }
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_VO << " elements of O_REF" << std::endl;
+
+        // 4. k then v state
+        for(int i = 0; i < TOTAL_ELEMENTS_K; i++) infile >> k_state_ref[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_K << " elements of K_STATE_REF" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> kv_state_ref[i];
+        std::cout << "Finished loading " << TOTAL_ELEMENTS_KV << " elements of KV_STATE_REF" << std::endl;
+
+        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+    }
+
+    // inputs, replicated across batch and head dimensions
+    for(uint64_t i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        q_bf[i] = __float2bfloat16(q[i]);
+        k_bf[i] = __float2bfloat16(k[i]);
+    }
+    std::cout << "Q, K prepared\n";
+    for(uint64_t i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        v_bf[i] = __float2bfloat16(v[i]);
+    }
+    std::cout << "V prepared\n";
+    for(uint64_t i = 0; i < TOTAL_ELEMENTS_QK_MAP; i++) {
+        qmap_bf[i] = __float2bfloat16(qmap[i]);
+        kmap_bf[i] = __float2bfloat16(kmap[i]);
+    }
+    std::cout << "maps prepared\n";
+    for(uint64_t i = ATTN_H; i < ATTN_H; i++) {
+        alphas[i] = alphas[i];
+        betas[i]  = betas [i];
+    }
+
+    std::cout << "Initializing memory on GPU\n";
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_qmap, *d_kmap;
+    float *d_alphas, *d_betas, *d_kv_state, *d_k_state;
+    cudaMalloc(&d_alphas,   (uint64_t)(ATTN_H) * sizeof(float));
+    cudaMalloc(&d_betas,    (uint64_t)(ATTN_H) * sizeof(float));
+    cudaMalloc(&d_qmap,     (uint64_t)(TOTAL_ELEMENTS_QK_MAP) * sizeof(bf16));
+    cudaMalloc(&d_kmap,     (uint64_t)(TOTAL_ELEMENTS_QK_MAP) * sizeof(bf16));
+    cudaMalloc(&d_q,        (uint64_t)(TOTAL_ELEMENTS_QK) * sizeof(bf16));
+    cudaMalloc(&d_k,        (uint64_t)(TOTAL_ELEMENTS_QK) * sizeof(bf16));
+    cudaMalloc(&d_v,        (uint64_t)(TOTAL_ELEMENTS_VO) * sizeof(bf16));
+    cudaMalloc(&d_o,        (uint64_t)(TOTAL_ELEMENTS_VO) * sizeof(bf16));
+    cudaMalloc(&d_k_state,  TOTAL_ELEMENTS_K  * sizeof(float));
+    cudaMalloc(&d_kv_state, TOTAL_ELEMENTS_KV * sizeof(float));
+
+    cudaMemcpy(d_alphas, alphas,   ATTN_H * sizeof(float),           cudaMemcpyHostToDevice);
+    cudaMemcpy(d_betas,  betas,    ATTN_H * sizeof(float),           cudaMemcpyHostToDevice);
+    cudaMemcpy(d_qmap,   qmap_bf,  TOTAL_ELEMENTS_QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kmap,   kmap_bf,  TOTAL_ELEMENTS_QK_MAP * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q,      q_bf,     TOTAL_ELEMENTS_QK * sizeof(bf16),     cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k,      k_bf,     TOTAL_ELEMENTS_QK * sizeof(bf16),     cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v,      v_bf,     TOTAL_ELEMENTS_VO * sizeof(bf16),     cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
+
+    std::cout << "Allocating and creating tensor maps of " << ATTN_B*ATTN_H*ATTN_N << " tiles" << std::endl;
+    
+    /***************** Start TK2 Changes ****************/
+
+    hedgehog_globals g = hedgehog_init(
+        d_q, d_k, d_v, d_o,
+        d_qmap, d_kmap,
+        d_k_state, d_kv_state,
+        d_alphas, d_betas,
+        ATTN_B, ATTN_H, ATTN_N
+    );
+    
+    /***************** End TK2 Changes ******************/
+    
+    cudaFuncSetAttribute(
+        hedgehog_linear_attention_smd,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    const int ITER = 1;
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Starting kernel with " << ATTN_B*ATTN_H << " blocks and " << NUM_THREADS << " threads\n";
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        hedgehog_linear_attention_smd<<<dim3(ATTN_H,ATTN_B), NUM_THREADS, mem_size>>>(g, ATTN_N); 
+    }
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+
+    double avg_us = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER;
+    std::cout << "Average execution time: " << avg_us << " us" << std::endl;
+    uint64_t flops = calculate_flops(ATTN_B, ATTN_H, ATTN_N);
+    std::cout << "Operations executed: " << flops << std::endl;
+    std::cout << "Achieved FLOPS: " << double(flops) / avg_us / 1e6 << " TFLOPS" << std::endl;
+    std::cout << "Achieved utilization: " << double(flops) / avg_us / 1e6 / 9.89 << "%" << std::endl;
+
+    /****************************** CHECKS ******************************/
+    
+    cudaMemcpy(o_bf   ,  d_o,        TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kv_state, d_kv_state, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(k_state,  d_k_state,  TOTAL_ELEMENTS_K  * sizeof(float), cudaMemcpyDeviceToHost);
+
+    printf("\n\n");
+    printf("TOTAL_ELEMENTS_VO = %d\n", TOTAL_ELEMENTS_VO);
+    printf("TOTAL_ELEMENTS_KV = %d\n", TOTAL_ELEMENTS_KV);
+    printf("TOTAL_ELEMENTS_K  = %d\n", TOTAL_ELEMENTS_K);
+    
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        o[i] = __bfloat162float(o_bf[i]);
+    }
+
+    constexpr bool should_print = true;
+
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+
+    float max_o_diff=0, total_o_diff=0, total_o_abs=0; 
+
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_UNIQUE_ELEMENTS_VO << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        float diff = o[i] - o_ref[i];
+        if(should_print && i < TOTAL_ELEMENTS_VO) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+            if(i % 64 == 63) {
+                o_ref_file << std::endl;
+                o_file << std::endl;
+                diff_file << std::endl;
+            }
+        }
+        if(abs(diff) > max_o_diff || isnan(diff)) {
+            max_o_diff = abs(diff);
+            if(isnan(diff)) {
+                printf("NAN detected idx=%d, o = %f, o_ref = %f, diff = %f\n", i, o[i], o_ref[i], diff);
+                break;
+            }
+        }
+
+        total_o_abs += abs(o_ref[i]);
+        total_o_diff += abs(diff); 
+    }
+
+    std::ofstream kv_state_file("printouts/kv_state.txt");
+    std::ofstream kv_state_ref_file("printouts/kv_state_ref.txt");
+    std::ofstream kv_state_diff_file("printouts/kv_state_diff.txt");
+    float max_kv_diff=0, total_kv_diff=0, total_kv_abs = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        float diff = kv_state[i] - kv_state_ref[i];
+        if(should_print && i < TOTAL_ELEMENTS_KV) {
+            kv_state_ref_file << kv_state_ref[i] << ' ';
+            kv_state_file << kv_state[i] << ' ';
+            kv_state_diff_file << diff << ' ';
+            if(i % 64 == 63) {
+                kv_state_ref_file << std::endl;
+                kv_state_file << std::endl;
+                kv_state_diff_file << std::endl;
+            }
+        } 
+        if(abs(diff) > max_kv_diff || isnan(diff)) {
+            max_kv_diff = abs(diff);
+            if(isnan(diff)) {
+                printf("KV state NAN detected idx=%d, kv_state = %f, kv_state_ref = %f, diff = %f\n", i, kv_state[i], kv_state_ref[i], diff);
+                break;
+            }
+        }
+
+        total_kv_abs += abs(kv_state_ref[i]);
+        total_kv_diff += abs(diff); 
+    }
+
+    std::ofstream k_state_file("printouts/k_state.txt");
+    std::ofstream k_state_ref_file("printouts/k_state_ref.txt");
+    std::ofstream k_state_diff_file("printouts/k_state_diff.txt");
+    float max_k_diff=0, total_k_diff=0, total_k_abs=0;
+    for (int i = 0; i < TOTAL_ELEMENTS_K; i++) {
+        float diff = k_state[i] - k_state_ref[i];
+        if (should_print && i < TOTAL_ELEMENTS_K) {
+            k_state_ref_file << k_state_ref[i] << ' ';
+            k_state_file << k_state[i] << ' ';
+            k_state_diff_file << diff << ' ';
+            if(i % 64 == 63) {
+                k_state_ref_file << std::endl;
+                k_state_file << std::endl;
+                k_state_diff_file << std::endl;
+            }
+        }
+        if (abs(diff) > max_k_diff || isnan(diff)) {
+            max_k_diff = abs(diff);
+            if(isnan(diff)) {
+                printf("K state NAN detected idx=%d, k_state = %f, k_state_ref = %f, diff = %f\n", i, k_state[i], k_state_ref[i], diff);
+                break;
+            }
+        }
+
+        total_k_abs += abs(k_state_ref[i]);
+        total_k_diff += abs(diff);
+    }
+
+    std::cout.setf(std::ios::fixed, std::ios::floatfield);
+    std::cout.precision(6);
+    std::cout.width(12);
+    std::cout << "O  | avg_diff=" << (total_o_diff/TOTAL_ELEMENTS_VO)  << ", avg_abs=" << (total_o_abs/TOTAL_ELEMENTS_VO)  << ", rel_diff=" << 100*(total_o_diff/total_o_abs)   << "%, max_diff=" << max_o_diff  << std::endl; 
+    std::cout << "KV | avg_diff=" << (total_kv_diff/TOTAL_ELEMENTS_KV) << ", avg_abs=" << (total_kv_abs/TOTAL_ELEMENTS_KV) << ", rel_diff=" << 100*(total_kv_diff/total_kv_abs) << "%, max_diff=" << max_kv_diff << std::endl; 
+    std::cout << "K  | avg_diff=" << (total_k_diff/TOTAL_ELEMENTS_K)   << ", avg_abs=" << (total_k_abs/TOTAL_ELEMENTS_K)   << ", rel_diff=" << 100*(total_k_diff/total_k_abs)   << "%, max_diff=" << max_k_diff  << std::endl;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+    cudaFree(d_kv_state);
+    cudaFree(d_k_state);
+
+    delete[] q, k, v, o, o_ref; 
+    delete[] q_bf, k_bf, v_bf, o_bf; 
+    return 0;
+}

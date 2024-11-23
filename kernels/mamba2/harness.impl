@@ -1,0 +1,224 @@
+#include <iostream>
+#include <string>
+#include <fstream>
+
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 32;
+constexpr int ATTN_N = 2048;
+constexpr int ATTN_D = 64; // hardcoded into this kernel
+constexpr int ATTN_G = 1;  // hardcoded into this kernel
+constexpr int ITER   = 10;
+
+constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba2_fwd_template>;
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+// Compute FLOPs for forward attention
+constexpr uint64_t ATTN_FLOPS = 
+    2llu * ATTN_B * ATTN_H * ATTN_N * ATTN_N * ATTN_D + // Q * K^T: 2BHNND (multiply-add)
+    4llu * ATTN_B * ATTN_H * ATTN_N * ATTN_N +          // Softmax: 2BHNN (exp and divide, plus flash-attn bookkeeping)
+    2llu * ATTN_B * ATTN_H * ATTN_N * ATTN_N * ATTN_D;      // (Q * K^T) * V: 2BHNND (multiply-add)
+
+int main(int argc, char **argv) {
+    // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
+    // which may increase the probability of L2 cache hits on KV
+
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_VO  = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_QK  = ATTN_B*ATTN_G*ATTN_N*ATTN_D; 
+    constexpr int TOTAL_ELEMENTS_A   = ATTN_B*ATTN_H*ATTN_N;
+
+    float *q = new float[TOTAL_ELEMENTS_QK];
+    float *a = new float[TOTAL_ELEMENTS_A];
+    float *k = new float[TOTAL_ELEMENTS_QK];
+    float *v = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref = new float[TOTAL_ELEMENTS_VO];
+
+    bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *v_bf = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
+
+    float *a_in = new float[ATTN_B*ATTN_H*ATTN_N];
+    float *o    = new float[TOTAL_ELEMENTS_VO];
+
+    std::ifstream infile(argv[1]);
+
+    std::cout << "Starting to enter!" << std::endl;
+
+
+    int elements_loaded = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        infile >> v[i];
+        elements_loaded++;
+    }
+    std::cout << "Finished loading V: " << elements_loaded << " elements loaded" << std::endl;
+
+    elements_loaded = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_A; i++) {
+        infile >> a[i];
+        elements_loaded++;
+    }
+    std::cout << "Finished loading A: " << elements_loaded << " elements loaded" << std::endl;
+
+    elements_loaded = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        infile >> k[i];
+        elements_loaded++;
+    }
+    std::cout << "Finished loading K: " << elements_loaded << " elements loaded" << std::endl;
+
+    elements_loaded = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        infile >> q[i];
+        elements_loaded++;
+    }
+    std::cout << "Finished loading Q: " << elements_loaded << " elements loaded" << std::endl;
+
+    elements_loaded = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        infile >> o_ref[i];
+        elements_loaded++;
+    }
+    std::cout << "Finished loading O_REF: " << elements_loaded << " elements loaded" << std::endl;
+
+    std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+
+    // replicate v into batch and heads
+    for (int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        v_bf[i] = __float2bfloat16(v[i]);
+    }
+
+    // replicate q and k into batch
+    for (int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        q_bf[i] = __float2bfloat16(q[i]);
+        k_bf[i] = __float2bfloat16(k[i]);
+    }
+
+    // replicate a into batch and heads
+    for (int i = 0; i < TOTAL_ELEMENTS_A; i++) {
+        a_in[i] = a[i];
+    }
+
+    bf16 *d_q, *d_k, *d_v, *d_o;
+    float *d_a;
+    cudaMalloc(&d_q, TOTAL_ELEMENTS_QK * sizeof(bf16));
+    cudaMalloc(&d_k, TOTAL_ELEMENTS_QK * sizeof(bf16));    
+    cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_a, TOTAL_ELEMENTS_A * sizeof(float));
+
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_QK * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_a, a_in, TOTAL_ELEMENTS_A * sizeof(float), cudaMemcpyHostToDevice);
+
+    mamba2_fwd_template::layout::q_global Qg(d_q, ATTN_B, ATTN_G, ATTN_N, nullptr);
+    mamba2_fwd_template::layout::k_global Kg(d_k, ATTN_B, ATTN_G, ATTN_N, nullptr);
+
+    mamba2_fwd_template::layout::a_global Ag(d_a, ATTN_B, ATTN_H, nullptr, ATTN_N);
+
+    mamba2_fwd_template::layout::v_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    mamba2_fwd_template::layout::o_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+
+    mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
+    
+    unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048; // have the flag tell us
+    
+    cudaFuncSetAttribute(
+        prototype::lcsf::kernel<mamba2_fwd_template>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    cudaDeviceSynchronize();
+    std::cout << "Starting kernel\n";
+    constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<mamba2_fwd_template>;
+    // dim3 grid((ATTN_N + mamba2_fwd_template::layout::qo_tile::rows*NUM_WORKERS - 1) / (attn_fwd_templamamba2_fwd_templatete::layout::qo_tile::rows*NUM_WORKERS), ATTN_H, ATTN_B);
+    dim3 grid(264, 1, 1);
+    // dim3 bad_grid(grid.z, grid.y, grid.x);
+    std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
+    // warmup
+    for(int j = 0; j < ITER; j++)
+        prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+    cudaDeviceSynchronize();
+    
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        std::cout << "Launching kernel " << i+1 << " of " << ITER << std::endl;
+        prototype::lcsf::kernel<mamba2_fwd_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+    }
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+    
+    // check correctness
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        o[i] = __bfloat162float(o_bf[i]);
+    }
+
+    bool good = true;
+    double total_error = 0;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        float diff = o[i] - o_ref[i];
+        if (i < ATTN_H*ATTN_N*ATTN_D) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(i % 64 == 63) {
+            o_ref_file << '\n';
+            o_file << '\n';
+            diff_file << '\n';
+        }
+        if(abs(diff) > 0.1 || isnan(diff) || isinf(diff)) {
+            good = false;
+            if(isnan(diff) || isinf(diff)) std::cout << "NaN/inf detected at " << i << std::endl;
+        }
+        total_error += diff;
+    }
+
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    std::cout << "Avg error: " << total_error / TOTAL_ELEMENTS_VO << std::endl;
+    if(good) std::cout << "Correct :)\n";
+    else std::cout << "Incorrect :(\n";
+    // Compute and print average TFLOPs achieved
+    double avg_time_s = (double)(std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()) / (ITER * 1e6);
+    double avg_tflops = (ATTN_FLOPS / avg_time_s) / 1e12;
+    std::cout << "Average TFLOPs achieved: " << avg_tflops << std::endl;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+
+    delete[] q, k, v, o, o_ref;
+    delete[] q_bf, k_bf, v_bf, o_bf;
+
+    return 0;
+}
