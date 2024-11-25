@@ -82,11 +82,9 @@ template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dyn
         globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
         if constexpr (kittens::py::has_dynamic_shared_memory<globals_struct>) { \
             int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory(); \
-            std::cout << "Launching kernel with " << __dynamic_shared_memory__ << " bytes of dynamic shared memory." << std::endl; \
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__); \
             kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__); \
         } else { \
-            std::cout << "Launching kernel without dynamic shared memory." << std::endl; \
             kernel<<<__g__.grid(), __g__.block()>>>(__g__); \
         } \
     });
