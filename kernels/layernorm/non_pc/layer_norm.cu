@@ -235,8 +235,8 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     TORCH_CHECK(norm_weight.size(0) == d, "norm_weight is d_model?");
     TORCH_CHECK(norm_bias.size(0) == d, "norm_bias is d_model?");
 
-    TORCH_CHECK(x.size(1) % kittens::TILE_DIM == 0,        "sequence length is divisible by 16?");
-    TORCH_CHECK(residual.size(1) % kittens::TILE_DIM == 0, "sequence length is divisible by 16?");
+    TORCH_CHECK(x.size(1) % kittens::TILE_ROW_DIM<bf16> == 0,        "sequence length is divisible by 16?");
+    TORCH_CHECK(residual.size(1) % kittens::TILE_ROW_DIM<bf16> == 0, "sequence length is divisible by 16?");
 
     torch::Tensor out = torch::empty({b, n, d}, x.options());
     torch::Tensor out_resid = torch::empty({b, n, d}, x.options());

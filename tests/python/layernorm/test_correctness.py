@@ -29,7 +29,7 @@ def run_tk(x, residual, drop_path, dropout, norm, residual_in_fp32=False):
 
 
 def run_flash(x, residual, drop_path, dropout, norm, residual_in_fp32=True):
-    from layer_norm_triton import layer_norm_fn, RMSNorm
+    from baselines.layer_norm_triton import layer_norm_fn, RMSNorm
 
     rowscale = torch.ones(x.shape[:-1], device=x.device, dtype=x.dtype, )
     # drop_path()
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     norm = nn.LayerNorm(d).cuda()
     dropout = nn.Dropout(p)
     drop_path = None #StochasticDepth(p_path, mode="row")
-    run_naive(x, residual, drop_path, dropout, norm)
+    # run_naive(x, residual, drop_path, dropout, norm)
 
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
@@ -113,7 +113,8 @@ if __name__ == "__main__":
 
     outs = []
     resids = []
-    for fn in [run_tk, run_flash]:
+    for _name, fn in [('tk', run_tk), ('triton', run_flash)]:
+        print(f"Running {_name}")
         torch.manual_seed(0)
         torch.cuda.manual_seed_all(0)
         norm = nn.LayerNorm(d).cuda()
@@ -131,5 +132,9 @@ if __name__ == "__main__":
         print(resid[4,2,:8])
         print(fn_resid[4,2,:8])
         print(f"Resid Diff: {diff}")
+
+        print("----"*10)
+
+        # breakpoint()
 
 
