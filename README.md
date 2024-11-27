@@ -25,7 +25,7 @@ ThunderKittens is built around three key principles:
     <img src="assets/attn.png" height=600 alt="Flash Attention 3, but with kittens!" style="margin-bottom:px"/> 
 </div>
 
-Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/W7CUhN5w
+Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 ThunderKittens is built from the hardware up -- we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
 
