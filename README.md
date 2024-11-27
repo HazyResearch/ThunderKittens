@@ -246,5 +246,5 @@ Learn more about ThunderKittens and how GPUs work by checking out:
 - [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
 - [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
 
-Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/W7CUhN5w
+Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
 
