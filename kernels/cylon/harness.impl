@@ -225,9 +225,9 @@ int main() {
     // B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO
     kv_state_global kv_state_arg{d_kv_state, B, H, STATE_PER_SM * COLLABORATIVE_SMS * D_QK, D_VO};
     // H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM
-    q_map_global q_map_arg{d_q_map, H, COLLABORATIVE_SMS, D_QK, D_QK * STATE_PER_SM};
+    q_map_global q_map_arg{d_q_map, H, COLLABORATIVE_SMS, D_QK * STATE_PER_SM, D_QK};
     // H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM
-    k_map_global k_map_arg{d_k_map, H, COLLABORATIVE_SMS, D_QK, D_QK * STATE_PER_SM};
+    k_map_global k_map_arg{d_k_map, H, COLLABORATIVE_SMS, D_QK * STATE_PER_SM, D_QK};
 
     // CUtensorMap* q_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, B * H * N / 64);
     // CUtensorMap* k_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * H * N / 64);
