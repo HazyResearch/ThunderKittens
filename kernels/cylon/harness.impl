@@ -198,7 +198,6 @@ int main() {
     std::cout << "Copied data to GPU" << std::endl;
 
     // Create tma descriptors
-
     using q_tile        = st_bf<64, 64>;
     using k_tile        = st_bf<64, 64>;
     using v_tile        = st_bf<64, 64>;
@@ -228,14 +227,6 @@ int main() {
     q_map_global q_map_arg{d_q_map, H, COLLABORATIVE_SMS, D_QK * STATE_PER_SM, D_QK};
     // H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM
     k_map_global k_map_arg{d_k_map, H, COLLABORATIVE_SMS, D_QK * STATE_PER_SM, D_QK};
-
-    // CUtensorMap* q_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q, B * H * N / 64);
-    // CUtensorMap* k_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k, B * H * N / 64);
-    // CUtensorMap* v_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_v, B * H * N / 64, 2);
-    // CUtensorMap* o_tma        = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_o, B * H * N / 64, 2);
-    // CUtensorMap* kv_state_tma = tma::allocate_and_create_tensor_map<st_fl_4x4>(d_kv_state, B * H * COLLABORATIVE_SMS * STATE_PER_SM, 2);
-    // CUtensorMap* q_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_q_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
-    // CUtensorMap* k_map_tma    = tma::allocate_and_create_tensor_map<st_bf_4x4>(d_k_map, H * COLLABORATIVE_SMS * STATE_PER_SM);
 
     globals g{qg_arg, kg_arg, vg_arg, og_arg, kv_state_arg, q_map_arg, k_map_arg, N};
 
@@ -281,74 +272,7 @@ int main() {
     std::cout << "Comparing kv_state..." << std::endl;
     compareOutputs(kv_state, ref_kv_state_data, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, 1e-3f);
     dumpToFile("outputs/kv_state.txt", kv_state, B * H * STATE_PER_SM * COLLABORATIVE_SMS * D_QK * D_VO, D_VO);
-
-    // // RUN BACKWARDS KERNEL //
-
-    // // Launch kernel
-    // cudaFuncSetAttribute(cylon_backwards, cudaFuncAttributeMaxDynamicSharedMemorySize, 225000);
-
-    // dim3 bwd_grid(COLLABORATIVE_SMS*2, H, B);
-    // std::cout << "Launching kernel with grid of " << B << "x" << H << "x" << COLLABORATIVE_SMS*2 << " and blocks of " << NUM_THREADS << " threads" << std::endl;
-    // start = std::chrono::high_resolution_clock::now();
-
-    // cylon_backwards<<<bwd_grid, NUM_THREADS, 225000>>>(
-    //     N,
-    //     q_tma, k_tma, v_tma,
-    //     q_map_tma, k_map_tma,
-    //     o_grad_tma, kv_state_tma,
-    //     q_grad_tma, k_grad_tma, v_grad_tma,
-    //     q_map_grad_tma, k_map_grad_tma
-    // );
-    // CudaCheckError();
-
-    // // Wait for kernel to finish
-    // cudaDeviceSynchronize();
-    // CudaCheckError();
-    // std::cout << "Backwards kernel finished" << std::endl;
-
-    // /* PRINT UTILIZATION FOR BACKWARDS KERNEL */
-
-    // end = std::chrono::high_resolution_clock::now();
-    // duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    // std::cout << "Kernel execution time: " << duration.count() << " microseconds" << std::endl;
-    // flops_executed = flops_bwd(B, N, D_QK, D_VO, COLLABORATIVE_SMS);
-    // std::cout << "FLOPs executed: " << flops_executed/1e12 << "T\n";
-    // std::cout << "TFLOPs achieved: " << flops_executed / duration.count() / 1e6 << std::endl;
-
-    // /* CHECK CORRECTNESS FOR BACKWARDS KERNEL */
-
-    // cudaMemcpy(q_grad.data(), d_q_grad, B * H * N * D_QK * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Copied q grad to host" << std::endl;
-    // cudaMemcpy(k_grad.data(), d_k_grad, B * H * N * D_QK * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Copied k grad to host" << std::endl;
-    // cudaMemcpy(v_grad.data(), d_v_grad, B * H * N * D_VO * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Copied v grad to host" << std::endl;
-    // cudaMemcpy(q_map_grad.data(), d_q_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Copied q map grad to host" << std::endl;
-    // cudaMemcpy(k_map_grad.data(), d_k_map_grad, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Copied k map grad to host" << std::endl;
-    // for(int i = 0; i < q_map_grad.size(); i++) { // these have to be normalized because the batch dim is kind of fake here
-    //     q_map_grad[i] *= float(LOAD_B) / float(B);
-    //     k_map_grad[i] *= float(LOAD_B) / float(B);
-    // }
-
-    // // Compare outputs
-    // std::cout << "Comparing q grad..." << std::endl;
-    // compareOutputs(q_grad, ref_q_grad_data, B * H * N * D_QK, 1e-3f); // Adjust tolerance as needed
-    // dumpToFile("outputs/q_grad.txt", q_grad, N * D_QK, D_QK);
-    // std::cout << "Comparing k grad..." << std::endl;
-    // compareOutputs(k_grad, ref_k_grad_data, B * H * N * D_QK, 1e-3f); // Adjust tolerance as needed
-    // dumpToFile("outputs/k_grad.txt", k_grad, N * D_QK, D_QK);
-    // std::cout << "Comparing v grad..." << std::endl;
-    // compareOutputs(v_grad, ref_v_grad_data, B * H * N * D_VO, 1e-3f); // Adjust tolerance as needed
-    // dumpToFile("outputs/v_grad.txt", v_grad, N * D_VO, D_VO);
-    // std::cout << "Comparing q map grad..." << std::endl;
-    // compareOutputs(q_map_grad, ref_q_map_grad_data, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM, 1e-3f); // Adjust tolerance as needed
-    // dumpToFile("outputs/q_map_grad.txt", q_map_grad, D_QK * D_QK * STATE_PER_SM, D_QK * D_QK);
-    // std::cout << "Comparing k map grad..." << std::endl;
-    // compareOutputs(k_map_grad, ref_k_map_grad_data, H * COLLABORATIVE_SMS * D_QK * D_QK * STATE_PER_SM, 1e-3f); // Adjust tolerance as needed
-    // dumpToFile("outputs/k_map_grad.txt", k_map_grad, D_QK * D_QK * STATE_PER_SM, D_QK * D_QK);
-
+    
     // Free memory
     cudaFree(d_q);
     cudaFree(d_k);
@@ -363,19 +287,6 @@ int main() {
     cudaFree(d_q_map_grad);
     cudaFree(d_k_map_grad);
     cudaFree(d_o_grad);
-    // cudaFree(q_tma);
-    // cudaFree(k_tma);
-    // cudaFree(v_tma);
-    // cudaFree(o_tma);
-    // cudaFree(q_map_tma);
-    // cudaFree(k_map_tma);
-    // cudaFree(o_grad_tma);
-    // cudaFree(kv_state_tma);
-    // cudaFree(q_grad_tma);
-    // cudaFree(k_grad_tma);
-    // cudaFree(v_grad_tma);
-    // cudaFree(q_map_grad_tma);
-    // cudaFree(k_map_grad_tma);
 
     std::cout << "Execution completed successfully!" << std::endl;
     return 0;
