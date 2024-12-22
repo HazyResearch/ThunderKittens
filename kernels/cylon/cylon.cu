@@ -45,12 +45,12 @@ template<ducks::rt::all RT> __device__ static inline void featurize(RT &reg) {
     relu(reg, reg);
 }
 
-__global__ __launch_bounds__(NUM_THREADS, 1)
-void cylon_forwards(fwd_globals g) 
+static __global__ __launch_bounds__(NUM_THREADS, 1)
+void cylon_forwards(const __grid_constant__ fwd_globals g) 
 {
     int laneid = kittens::laneid(); 
     int warpid = kittens::warpid(); 
-    int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
+    int warpgroupid = kittens::warpgroupid(); 
 
     int tic = 0, toc = 1; // these are used to track the two-stage pipeline.
     unsigned int batch_id = blockIdx.z; // which batch?
@@ -65,24 +65,22 @@ void cylon_forwards(fwd_globals g)
     using k_tile = st_bf<64, 64>;
     using v_tile = st_bf<64, 64>;
     using o_tile = st_bf<64, 64>;
-    using kv_state_tile = st_fl<64, 64>;
+    using kv_scratch_tile = st_bf<64, 64>;
+    using kv_state_tile   = st_fl<64, 64>;
     using q_map_tile = st_bf<64, 64>;
     using k_map_tile = st_bf<64, 64>;
 
-    using tile_bf_64_64 = st_bf<64, 64>;
-    using tile_fl_64_64 = st_fl<64, 64>;
+    q_tile (&q_smem)[2]    = alloc.allocate<q_tile, 2>();    // 64x64, tic-toc'd (16384)
+    k_tile (&k_smem)[2]    = alloc.allocate<k_tile, 2>();    // 64x64, tic-toc'd (16384)
+    v_tile (&v_smem)[2][2] = alloc.allocate<v_tile, 2, 2>(); // 64x128, but easier to work with when split up. (32768)
+    o_tile (&o_smem)[2]    = alloc.allocate<o_tile, 2>();    // 64x128, but easier to work with when split up. (16384)
 
-    tile_bf_64_64 (&q_smem)[2]    = alloc.allocate<tile_bf_64_64, 2>();    // 64x64, tic-toc'd (16384)
-    tile_bf_64_64 (&k_smem)[2]    = alloc.allocate<tile_bf_64_64, 2>();    // 64x64, tic-toc'd (16384)
-    tile_bf_64_64 (&v_smem)[2][2] = alloc.allocate<tile_bf_64_64, 2, 2>(); // 64x128, but easier to work with when split up. (32768)
-    tile_bf_64_64 (&o_smem)[2]    = alloc.allocate<tile_bf_64_64, 2>();    // 64x128, but easier to work with when split up. (16384)
+    kv_scratch_tile (&kv_scratch)[2][2] = alloc.allocate<kv_scratch_tile, 2, 2>(); // This is scratch for doing wgmma's (32768)
 
-    tile_bf_64_64 (&kv_scratch)[2][2] = alloc.allocate<tile_bf_64_64, 2, 2>(); // This is scratch for doing wgmma's (32768)
+    q_map_tile (&q_map)[2] = alloc.allocate<q_map_tile, 2>(); // featurized q (16384)
+    k_map_tile (&k_map)[2] = alloc.allocate<k_map_tile, 2>(); // featurized k (16384)
 
-    tile_bf_64_64 (&q_map)[2] = alloc.allocate<tile_bf_64_64, 2>(); // featurized q (16384)
-    tile_bf_64_64 (&k_map)[2] = alloc.allocate<tile_bf_64_64, 2>(); // featurized k (16384)
-
-    tile_fl_64_64 (&kv_state_smem)[2][2] = reinterpret_cast<tile_fl_64_64(&)[2][2]>(q_smem); // we can reuse old memory for the writeout at the end
+    kv_state_tile (&kv_state_smem)[2][2] = reinterpret_cast<kv_state_tile(&)[2][2]>(q_smem); // we can reuse old memory for the writeout at the end
 
     // Initialize barriers
     __shared__ kittens::semaphore inputs_arrived[2], inputs_finished[2], outputs_ready[2];
@@ -99,7 +97,7 @@ void cylon_forwards(fwd_globals g)
     }
     // Launch first load. No sync needed since thread 0 is doing these, too.
     if(warpid == 0) {
-        tma::expect_bytes(inputs_arrived[0], sizeof(tile_bf_64_64) * 8); // register a transaction for q, k, v, and q_map, k_map
+        tma::expect_bytes(inputs_arrived[0], sizeof(q_tile) * 8); // register a transaction for q, k, v, and q_map, k_map
 
         // int load_idx = ((batch_id * gridDim.y) + head_id) * n_chunks;
         // tma::load_async(q_smem[tic],    g.q, inputs_arrived[0], load_idx); // launch the initial load
@@ -121,13 +119,13 @@ void cylon_forwards(fwd_globals g)
         // tma::load_async(q_map[1], g.q_map, inputs_arrived[0], base_map_idx+1);
         // tma::load_async(k_map[0], g.k_map, inputs_arrived[0], base_map_idx+0);
         // tma::load_async(k_map[1], g.k_map, inputs_arrived[0], base_map_idx+1);
-        coord<q_map_tile> q_map_tile_idx = {head_id, state_id, 0, 0};
+        coord<q_map_tile> q_map_tile_idx = {batch_id, head_id, 0, 0};
         tma::load_async(q_map[0], g.q_map, q_map_tile_idx, inputs_arrived[0]);
-                          q_map_tile_idx = {head_id, state_id, 0, 1};
+                          q_map_tile_idx = {batch_id, head_id, 0, 1};
         tma::load_async(q_map[1], g.q_map, q_map_tile_idx, inputs_arrived[0]);
-        coord<k_map_tile> k_map_tile_idx = {head_id, state_id, 0, 0};
+        coord<k_map_tile> k_map_tile_idx = {batch_id, head_id, 0, 0};
         tma::load_async(k_map[0], g.k_map, k_map_tile_idx, inputs_arrived[0]);
-                          k_map_tile_idx = {head_id, state_id, 0, 1};
+                          k_map_tile_idx = {batch_id, head_id, 0, 1};
         tma::load_async(k_map[1], g.k_map, k_map_tile_idx, inputs_arrived[0]);
     }
 
@@ -138,7 +136,7 @@ void cylon_forwards(fwd_globals g)
    
         if(warpid == NUM_CONSUMER_WARPS) { // just need a single warp to handle input loads
             for (int chunk_idx = 0; chunk_idx < n_chunks-1; chunk_idx++, tic=tic^1, toc=toc^1) {
-                tma::expect_bytes(inputs_arrived[toc], sizeof(tile_bf_64_64) * 4); // register that another block is coming in
+                tma::expect_bytes(inputs_arrived[toc], sizeof(q_tile) * 4); // register that another block is coming in
                 
                 // int next_load_idx = ((batch_id * gridDim.y) + head_id) * n_chunks + chunk_idx + 1;
                 // tma::load_async(q_smem[toc],    g.q, inputs_arrived[toc], next_load_idx); // load that block
@@ -146,13 +144,13 @@ void cylon_forwards(fwd_globals g)
                 // tma::load_async(v_smem[toc][0], g.v, inputs_arrived[toc], next_load_idx, 0); // load that block
                 // tma::load_async(v_smem[toc][1], g.v, inputs_arrived[toc], next_load_idx, 1); // load that block
 
-                coord<q_tile> q_tile_idx = {batch_id, head_id, chunk_idx + 1, 0};
+                coord<q_tile> q_tile_idx = {batch_id, head_id, chunk_idx, 0};
                 tma::load_async(q_smem[toc], g.q, q_tile_idx, inputs_arrived[toc]);
-                coord<k_tile> k_tile_idx = {batch_id, head_id, chunk_idx + 1, 0};
+                coord<k_tile> k_tile_idx = {batch_id, head_id, chunk_idx, 0};
                 tma::load_async(k_smem[toc], g.k, k_tile_idx, inputs_arrived[toc]);
-                coord<v_tile> v_tile_idx = {batch_id, head_id, chunk_idx + 1, 0};
+                coord<v_tile> v_tile_idx = {batch_id, head_id, chunk_idx, 0};
                 tma::load_async(v_smem[toc][0], g.v, v_tile_idx, inputs_arrived[toc]);
-                              v_tile_idx = {batch_id, head_id, chunk_idx + 1, 1};
+                              v_tile_idx = {batch_id, head_id, chunk_idx, 1};
                 tma::load_async(v_smem[toc][1], g.v, v_tile_idx, inputs_arrived[toc]);
 
                 wait(inputs_finished[tic], (chunk_idx/2)%2); // phase changes at half the rate of the tic/toc
@@ -273,8 +271,9 @@ void cylon_forwards(fwd_globals g)
         if(warpgroup::warpid() == 0) {
             // int base_kv_idx = ((((batch_id * gridDim.y) + head_id) * gridDim.x) + state_id) * STATE_PER_SM;
             // tma::store_async(g.kv_state, kv_state_smem[0][warpgroupid], base_kv_idx+0, warpgroupid);
-            coord<kv_state_tile> kv_state_tile_idx = {batch_id, head_id, (state_id * STATE_PER_SM), warpgroupid}; 
+            coord<kv_state_tile> kv_state_tile_idx = {batch_id, head_id, state_id, warpgroupid};
             tma::store_async(g.kv_state, kv_state_smem[0][warpgroupid], kv_state_tile_idx);
+            
             tma::store_commit_group();
         }
         warpgroup::store(kv_state_smem[1][warpgroupid], kv_state[1]);
@@ -283,8 +282,9 @@ void cylon_forwards(fwd_globals g)
         if(warpgroup::warpid() == 0) {
             // int base_kv_idx = ((((batch_id * gridDim.y) + head_id) * gridDim.x) + state_id) * STATE_PER_SM;
             // tma::store_async(g.kv_state, kv_state_smem[1][warpgroupid], base_kv_idx+1, warpgroupid);
-            coord<kv_state_tile> kv_state_tile_idx = {batch_id, head_id, (state_id * STATE_PER_SM) + 1, warpgroupid}; 
-            tma::store_async(g.kv_state, kv_state_smem[1][warpgroupid], kv_state_tile_idx); 
+            coord<kv_state_tile> kv_state_tile_idx = {batch_id, head_id, state_id, warpgroupid};
+            tma::store_async(g.kv_state, kv_state_smem[1][warpgroupid], kv_state_tile_idx);
+
             tma::store_commit_group();
         }
         tma::store_async_read_wait();
