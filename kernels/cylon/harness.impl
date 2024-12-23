@@ -12,7 +12,7 @@ constexpr int H                 = 1;
 constexpr int N                 = 8192;
 constexpr int D_QK              = 64;
 constexpr int D_VO              = 128;
-constexpr int COLLABORATIVE_SMS = 8;
+// constexpr int COLLABORATIVE_SMS = 8;
 
 // Error checking macro
 #define CudaCheckError() { \

@@ -2,8 +2,8 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-constexpr int NUM_CONSUMER_WARPGROUPS = 2; // hardcoded, don't touch
 constexpr int COLLABORATIVE_SMS = 8;
+constexpr int NUM_CONSUMER_WARPGROUPS = 2; // hardcoded, don't touch
 constexpr int STATE_PER_SM = 2;            // how many maps get run on each SM. 
                                            // hardcoded, don't touch
 
