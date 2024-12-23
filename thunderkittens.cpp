@@ -50,17 +50,14 @@ extern std::tuple<torch::Tensor, torch::Tensor> based(
 #endif
 
 #ifdef TK_COMPILE_CYLON
-extern void cylon(
+extern std::vector<torch::Tensor> cylon(
     torch::Tensor q, torch::Tensor k, torch::Tensor v,
-    torch::Tensor o, torch::Tensor kv_state,
     torch::Tensor q_map, torch::Tensor k_map
 );
-extern void cylon_bwd(
+extern std::vector<torch::Tensor> cylon_bwd(
     torch::Tensor q, torch::Tensor k, torch::Tensor v,
     torch::Tensor q_map, torch::Tensor k_map,
-    torch::Tensor o_grad, torch::Tensor kv_state,
-    torch::Tensor q_grad, torch::Tensor k_grad, torch::Tensor v_grad,
-    torch::Tensor q_map_grad, torch::Tensor k_map_grad
+    torch::Tensor o_grad, torch::Tensor kv_state
 );
 #endif
 

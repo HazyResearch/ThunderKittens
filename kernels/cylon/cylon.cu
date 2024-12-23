@@ -3,6 +3,7 @@
 #include <iostream>
 
 constexpr int NUM_CONSUMER_WARPGROUPS = 2; // hardcoded, don't touch
+constexpr int COLLABORATIVE_SMS = 8;
 constexpr int STATE_PER_SM = 2;            // how many maps get run on each SM. 
                                            // hardcoded, don't touch
 
@@ -633,8 +634,8 @@ void cylon_backwards(const __grid_constant__ bwd_globals g) { // in fp32
 #include <iostream>
 
 std::vector<torch::Tensor>
-cylon_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
-              torch::Tensor q_map, torch::Tensor k_map) 
+cylon(torch::Tensor q, torch::Tensor k, torch::Tensor v,
+      torch::Tensor q_map, torch::Tensor k_map) 
 {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -666,8 +667,8 @@ cylon_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
                                            static_cast<const uint>(d_vo)}, 
                                            torch::TensorOptions().dtype(torch::kFloat32).device(q.device()));
 
-    bf16* d_o        = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
-    bf16* d_kv_state = reinterpret_cast<bf16*>(kv_state.data_ptr<c10::BFloat16>());
+    bf16*  d_o        = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
+    float* d_kv_state = reinterpret_cast<float*>(kv_state.data_ptr<float>());
 
     using q_tile        = st_bf<64, 64>;
     using k_tile        = st_bf<64, 64>;
@@ -701,20 +702,20 @@ cylon_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 
     using globals_fwd = fwd_globals; 
 
-    q_global           qg_arg{d_q,           static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    k_global           kg_arg{d_k,           static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    v_global           vg_arg{d_v,           static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
-    o_global           og_arg{d_o,           static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
-    kv_state_global kv_state_arg{d_kv_state, static_cast<unsigned int>(b), static_cast<unsigned int>(h), STATE_PER_SM * COLLABORATIVE_SMS * d_qk, static_cast<unsigned int>(d_vo)};
-    q_map_global       q_map_arg{d_q_map,    static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
-    k_map_global       k_map_arg{d_k_map,    static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
+    q_global           qg_arg{d_q,           static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_qk)};
+    k_global           kg_arg{d_k,           static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_qk)};
+    v_global           vg_arg{d_v,           static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_vo)};
+    o_global           og_arg{d_o,           static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_vo)};
+    kv_state_global kv_state_arg{d_kv_state, static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(STATE_PER_SM * COLLABORATIVE_SMS * d_qk), static_cast<unsigned int>(d_vo)};
+    q_map_global       q_map_arg{d_q_map,    static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM),                     static_cast<unsigned int>(d_qk)};
+    k_map_global       k_map_arg{d_k_map,    static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM),                     static_cast<unsigned int>(d_qk)};
 
     globals_fwd g_fwd{qg_arg, kg_arg, vg_arg, og_arg, kv_state_arg, q_map_arg, k_map_arg, static_cast<unsigned int>(n)};
 
     auto stream   = at::cuda::getCurrentCUDAStream().stream();
     auto mem_size = 225000; 
 
-    dim3 grid(COLLABORATIVE_SMS, H, B);
+    dim3 grid(COLLABORATIVE_SMS, h, b);
 
     cudaFuncSetAttribute(
         cylon_forwards, 
@@ -731,9 +732,9 @@ cylon_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 }
 
 std::vector<torch::Tensor>
-cylon_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
-               torch::Tensor q_map, torch::Tensor k_map,
-               torch::Tensor o_grad, torch::Tensor kv_state) 
+cylon_bwd(torch::Tensor q, torch::Tensor k, torch::Tensor v,
+          torch::Tensor q_map, torch::Tensor k_map,
+          torch::Tensor o_grad, torch::Tensor kv_state) 
 {
     CHECK_INPUT(q);
     CHECK_INPUT(k); 
@@ -801,28 +802,27 @@ cylon_backward(torch::Tensor q, torch::Tensor k, torch::Tensor v,
 
     using globals_bwd = bwd_globals;
 
-    q_global              qg_arg{d_q,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    k_global              kg_arg{d_k,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    v_global              vg_arg{d_v,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
-    o_global              og_arg{d_o,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
-    kv_state_global kv_state_arg{d_kv_state, static_cast<unsigned int>(b), static_cast<unsigned int>(h), STATE_PER_SM * COLLABORATIVE_SMS * d_qk, static_cast<unsigned int>(d_vo)};
+    q_global              qg_arg{d_q,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_qk)};
+    k_global              kg_arg{d_k,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_qk)};
+    v_global              vg_arg{d_v,        static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n),                                       static_cast<unsigned int>(d_vo)};
+    kv_state_global kv_state_arg{d_kv_state, static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(STATE_PER_SM * COLLABORATIVE_SMS * d_qk), static_cast<unsigned int>(d_vo)};
     
-    q_map_global       q_map_arg{d_q_map,    static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
-    k_map_global       k_map_arg{d_k_map,    static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
-    o_grad_global    og_grad_arg{d_o_grad,   static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
+    q_map_global       q_map_arg{d_q_map,    static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
+    k_map_global       k_map_arg{d_k_map,    static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
+    o_grad_global    og_grad_arg{d_o_grad,   static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                   static_cast<unsigned int>(d_vo)};
 
-    q_grad_global           qg_grad_arg{d_q_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    k_grad_global           kg_grad_arg{d_k_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_qk)};
-    v_grad_global           vg_grad_arg{d_v_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h), static_cast<unsigned int>(n), static_cast<unsigned int>(d_vo)};
-    q_map_grad_global    q_map_grad_arg{d_q_map_grad, static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
-    k_map_grad_global    k_map_grad_arg{d_k_map_grad, static_cast<unsigned int>(h), COLLABORATIVE_SMS, static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
+    q_grad_global           qg_grad_arg{d_q_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                   static_cast<unsigned int>(d_qk)};
+    k_grad_global           kg_grad_arg{d_k_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                   static_cast<unsigned int>(d_qk)};
+    v_grad_global           vg_grad_arg{d_v_grad,     static_cast<unsigned int>(b), static_cast<unsigned int>(h),                 static_cast<unsigned int>(n),                   static_cast<unsigned int>(d_vo)};
+    q_map_grad_global    q_map_grad_arg{d_q_map_grad, static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
+    k_map_grad_global    k_map_grad_arg{d_k_map_grad, static_cast<unsigned int>(h), static_cast<unsigned int>(COLLABORATIVE_SMS), static_cast<unsigned int>(d_qk * STATE_PER_SM), static_cast<unsigned int>(d_qk)};
 
     globals_bwd g_bwd{qg_arg, kg_arg, vg_arg, q_map_arg, k_map_arg, og_grad_arg, kv_state_arg, qg_grad_arg, kg_grad_arg, vg_grad_arg, q_map_grad_arg, k_map_grad_arg, static_cast<unsigned int>(n)};
 
     auto stream   = at::cuda::getCurrentCUDAStream().stream();
     auto mem_size = 225000; 
 
-    dim3 grid(COLLABORATIVE_SMS*2, H, B);
+    dim3 grid(COLLABORATIVE_SMS*2, h, b);
 
     cudaFuncSetAttribute(
         cylon_backwards, 
