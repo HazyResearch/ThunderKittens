@@ -5,6 +5,7 @@
 #include "testing_commons.cuh"
 
 #include "mma_fp32_fp8.cuh"
+#include "mma_fp16_fp8.cuh"
 #include "mma_fp32_bf16.cuh"
 #include "mma_fp32_fp16.cuh"
 #include "mma_fp16_fp16.cuh"

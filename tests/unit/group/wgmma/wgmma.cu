@@ -13,6 +13,9 @@ void group::wgmma::tests(test_data &results) {
 #ifdef TEST_GROUP_WGMMA_MMA_FP32_FP8
     group::wgmma::mma_fp32_fp8::tests(results);
 #endif
+#ifdef TEST_GROUP_WGMMA_MMA_FP16_FP8
+    group::wgmma::mma_fp16_fp8::tests(results);
+#endif
 #ifdef TEST_GROUP_WGMMA_MMA_FP32_FP16
     group::wgmma::mma_fp32_fp16::tests(results);
 #endif
