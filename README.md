@@ -37,7 +37,7 @@ ThunderKittens makes a few tricky things easy that enable high utilization on mo
 5. Worker overlapping. Use our Load-Store-Compute-Finish template to overlap work and I/O.
 
 
-*Example: A Simple Atention Kernel*
+*Example: A Simple Attention Kernel*
 
 Here’s an example of what a simple FlashAttention-2 kernel for an RTX 4090 looks like written in ThunderKittens.
 
