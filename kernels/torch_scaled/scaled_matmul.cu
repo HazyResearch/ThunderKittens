@@ -4,22 +4,25 @@
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
+
+using c_dtype = half;
+
 struct matmul_layout {
     // tiles for the quantized inputs
     using  a_tile   = st_fl8_e4m3<64, 128>; 
-    using  b_tile   = st_fl8_e4m3<256, 128>;
-    using  c_tile   = st_fl8_e4m3<64, 256>;
+    using  b_tile   = st_fl8_e4m3<128, 128>;
+    using  c_tile   = st<c_dtype, 64, 128>;
     using  a_layout = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
     using  b_layout = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;
-    using  c_layout = gl<fp8e4m3, 1, 1, -1, -1, c_tile>;
+    using  c_layout = gl<c_dtype, 1, 1, -1, -1, c_tile>;
 
     // tiles for the dequantized inputs
-    using scale_a_vec = sv<float, c_tile::rows>;
-    using scale_b_vec = sv<float, c_tile::cols>;
-    using scale_a_layout = gl<float, 1, 1, 1, -1, scale_a_vec>;
-    using scale_b_layout = gl<float, 1, 1, 1, -1, scale_b_vec>;
+    using scale_a_vec = sv<c_dtype, c_tile::rows>;
+    using scale_b_vec = sv<c_dtype, c_tile::cols>;
+    using scale_a_layout = gl<c_dtype, 1, 1, 1, -1, scale_a_vec>;
+    using scale_b_layout = gl<c_dtype, 1, 1, 1, -1, scale_b_vec>;
 
-    using accum_tile = rt_fl<16, c_tile::cols>;
+    template<typename T=float> using accum_tile = rt<T, 16, c_tile::cols>;
 
     struct globals        { 
         a_layout A; b_layout B; c_layout C; 
@@ -36,10 +39,10 @@ struct matmul_layout {
     };
     struct common_state   { int2 coord; };
     struct consumer_state { 
-        accum_tile accum;            // Changed to single tall accumulator
-        rt_fl8_e4m3<16, c_tile::cols> accum_fp8;  // Changed to match tall format
-        accum_tile::col_vec scale_a_rv[2];
-        accum_tile::row_vec scale_b;
+        accum_tile<c_dtype> accum;            // Changed to single tall accumulator
+        accum_tile<fp8e4m3> accum_fp8;  // Changed to match tall format
+        accum_tile<c_dtype>::col_vec scale_a_rv[2];
+        accum_tile<c_dtype>::row_vec scale_b;
 
     };
 };
@@ -100,30 +103,23 @@ struct matmul_template {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
             zero(args.state.accum);
-            // warpgroup::load(args.state.scale_b, args.
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
+            load(args.state.scale_b, args.input.scale_b);
+            warpgroup::load(args.state.scale_a_rv[warpgroup::groupid()], args.input.scale_a[warpgroup::groupid()]);
             warpgroup::mma_ABt(
                 args.state.accum,
                 args.input.a[warpgroup::groupid()],
                 args.input.b
             );
-
-            // multiply by scale_b 
-            load(args.state.scale_b, args.input.scale_b);
-            mul_col(args.state.accum, args.state.accum, args.state.scale_b);
-
-            // multiply by scale_a 
-            warpgroup::load(args.state.scale_a_rv[warpgroup::groupid()], args.input.scale_a[warpgroup::groupid()]);
-            mul_row(args.state.accum, args.state.accum, args.state.scale_a_rv[warpgroup::groupid()]);
-
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
-            
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            copy(args.state.accum_fp8, args.state.accum);
-            warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum_fp8);
+            mul_col(args.state.accum, args.state.accum, args.state.scale_b);
+            mul_row(args.state.accum, args.state.accum, args.state.scale_a_rv[warpgroup::groupid()]);
+
+            warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
@@ -146,8 +142,8 @@ struct matmul_template {
 
 template<typename mmt>
 void inner_run(
-    fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, 
-    float *d_scale_a, float *d_scale_b,
+    fp8e4m3 *d_A, fp8e4m3 *d_B, c_dtype *d_C, 
+    c_dtype *d_scale_a, c_dtype *d_scale_b,
     size_t M, size_t N, size_t K, 
     dim3 grid, dim3 block
 ) {
@@ -211,14 +207,15 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Allocate device memory
-    fp8e4m3 *d_A, *d_B, *d_C;
+    fp8e4m3 *d_A, *d_B;
+    c_dtype *d_C;
     cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
     cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
-    cudaMalloc(&d_C, M*N*sizeof(fp8e4m3));
+    cudaMalloc(&d_C, M*N*sizeof(c_dtype));
     // scales
-    float *d_scale_a, *d_scale_b;
-    cudaMalloc(&d_scale_a, M*sizeof(float));
-    cudaMalloc(&d_scale_b, N*sizeof(float));
+    c_dtype *d_scale_a, *d_scale_b;
+    cudaMalloc(&d_scale_a, M*sizeof(c_dtype));
+    cudaMalloc(&d_scale_b, N*sizeof(c_dtype));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -246,12 +243,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
 
     // fill scale with 1.0f
-    float *h_scale_a = new float[M];
-    float *h_scale_b = new float[N];
+    c_dtype *h_scale_a = new c_dtype[M];
+    c_dtype *h_scale_b = new c_dtype[N];
     for(int i = 0; i < M; i++) h_scale_a[i] = 1.0f;
     for(int i = 0; i < N; i++) h_scale_b[i] = 1.0f;
-    cudaMemcpy(d_scale_a, h_scale_a, M*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_scale_b, h_scale_b, N*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_scale_a, h_scale_a, M*sizeof(c_dtype), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_scale_b, h_scale_b, N*sizeof(c_dtype), cudaMemcpyHostToDevice);
 
     std::cout << "Copied matrices to device" << std::endl;
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
@@ -299,14 +296,14 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
 
     // Copy result back to host
-    __nv_fp8_e4m3 *h_C_fp8 = new __nv_fp8_e4m3[M * N];
-    cudaMemcpy(h_C_fp8, d_C, M*N*sizeof(fp8e4m3), cudaMemcpyDeviceToHost);
+    c_dtype *h_C_out = new c_dtype[M * N];
+    cudaMemcpy(h_C_out, d_C, M*N*sizeof(c_dtype), cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
     for (int i = 0; i < M * N; ++i) {
-        h_C[i] = float(h_C_fp8[i]);
+        h_C[i] = c_dtype(h_C_out[i]);
     }
 
     std::cout << "Converted result back to float" << std::endl;
@@ -341,7 +338,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_C_ref;
     delete[] h_A_fp8;
     delete[] h_B_fp8;
-    delete[] h_C_fp8;
+    delete[] h_C_out;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
