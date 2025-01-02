@@ -29,7 +29,10 @@ template<ducks::gl::all GL> struct from_object<GL> {
             std::array<int, 4> shape = {1, 1, 1, 1};
             auto py_shape = obj.attr("shape").cast<pybind11::tuple>();
             size_t dims = py_shape.size();
-            for (size_t i = 0; i < dims && i < 4; ++i) {
+            if (dims > 4) {
+                throw std::runtime_error("Expected Tensor.ndim <= 4");
+            }
+            for (size_t i = 0; i < dims; ++i) {
                 shape[4 - dims + i] = pybind11::cast<int>(py_shape[i]);
             }
             
@@ -45,54 +48,27 @@ template<ducks::gl::all GL> struct from_object<GL> {
 
 template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dynamic_shared_memory() } -> std::convertible_to<int>; };
 
-#define EMPTY()
-#define DEFER(m) m EMPTY EMPTY()()
-#define EVAL(...) EVAL1024(__VA_ARGS__)
-#define EVAL1024(...) EVAL512(EVAL512(__VA_ARGS__))
-#define EVAL512(...) EVAL256(EVAL256(__VA_ARGS__))
-#define EVAL256(...) EVAL128(EVAL128(__VA_ARGS__))
-#define EVAL128(...) EVAL64(EVAL64(__VA_ARGS__))
-#define EVAL64(...) EVAL32(EVAL32(__VA_ARGS__))
-#define EVAL32(...) EVAL16(EVAL16(__VA_ARGS__))
-#define EVAL16(...) EVAL8(EVAL8(__VA_ARGS__))
-#define EVAL8(...) EVAL4(EVAL4(__VA_ARGS__))
-#define EVAL4(...) EVAL2(EVAL2(__VA_ARGS__))
-#define EVAL2(...) EVAL1(EVAL1(__VA_ARGS__))
-#define EVAL1(...) __VA_ARGS__
-#define MAP(m, struct_type, idx, first, ...)           \
-  m(struct_type, idx, first)                           \
-  __VA_OPT__(                        \
-    , DEFER(_MAP)()(m, struct_type, (idx+1), __VA_ARGS__)    \
-  )
-#define _MAP() MAP
-#define ITER(m, struct_type, ...) EVAL(MAP(m, struct_type, 0, __VA_ARGS__))
-
-#define EXPAND_MEMBER_ACCESS(struct_type, idx, x) \
-    kittens::py::from_object<decltype(std::declval<struct_type>().x)>::make(args[idx])
-
-#define GENERATE_CONSTRUCTOR(struct_type, ...) \
-    [](pybind11::args args) { \
-        return struct_type{ \
-            ITER(EXPAND_MEMBER_ACCESS, struct_type, __VA_ARGS__) \
-        }; \
-    }
-
-#define BIND_KERNEL(module, name, kernel, globals_struct, ...) \
-    module.def(name, [](pybind11::args args) { \
-        globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
-        if constexpr (kittens::py::has_dynamic_shared_memory<globals_struct>) { \
-            int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory(); \
-            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__); \
-            kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__); \
-        } else { \
-            kernel<<<__g__.grid(), __g__.block()>>>(__g__); \
-        } \
+template<typename> struct trait;
+template<typename MT, typename T> struct trait<MT T::*> { using member_type = MT; using type = T; };
+template<typename> using object = pybind11::object;
+template<auto kernel, typename TGlobal> static void bind_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
+    m.def(name, [](object<decltype(member_ptrs)>... args) {
+        TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...};
+        if constexpr (has_dynamic_shared_memory<TGlobal>) {
+            int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
+            kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__);
+        } else {
+            kernel<<<__g__.grid(), __g__.block()>>>(__g__);
+        }
     });
-#define BIND_FUNCTION(module, name, function, globals_struct, ...) \
-    module.def(name, [](pybind11::args args) { \
-        globals_struct __g__{ ITER(EXPAND_MEMBER_ACCESS, globals_struct, __VA_ARGS__) }; \
-        function(__g__); \
+}
+template<auto function, typename TGlobal> static void bind_function(auto m, auto name, auto TGlobal::*... member_ptrs) {
+    m.def(name, [](object<decltype(member_ptrs)>... args) {
+        TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...};
+        function(__g__);
     });
+}
 
 } // namespace py
 } // namespace kittens

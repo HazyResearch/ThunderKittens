@@ -19,6 +19,6 @@ void run_copy_kernel(globals g) {
 
 PYBIND11_MODULE(example_bind, m) {
     m.doc() = "example_bind python module";
-    BIND_KERNEL(m, "copy_kernel", copy_kernel, globals, in, out); // For wrapping kernels directly.
-    BIND_FUNCTION(m, "wrapped_copy_kernel", run_copy_kernel, globals, in, out); // For host functions that wrap the kernel.
+    py::bind_kernel<copy_kernel>(m, "copy_kernel", &globals::in, &globals::out);
+    py::bind_function<run_copy_kernel>(m, "wrapped_copy_kernel", &globals::in, &globals::out);
 }
