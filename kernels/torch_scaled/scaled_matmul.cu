@@ -31,19 +31,18 @@ struct matmul_layout {
 
     struct input_block    { 
         a_tile a[2]; b_tile b; 
-        scale_a_vec scale_a[2];
-        scale_b_vec scale_b;
     };
     struct finish_block   { 
         c_tile c[2]; 
     };
+    struct scratch_block  {
+        accum_tile<c_dtype>::col_vec scale_a_rv[2];
+        accum_tile<c_dtype>::row_vec scale_b_rv;
+    };
     struct common_state   { int2 coord; };
     struct consumer_state { 
-        accum_tile<c_dtype> accum;            // Changed to single tall accumulator
+        accum_tile<c_dtype> accum;      // Changed to single tall accumulator
         accum_tile<fp8e4m3> accum_fp8;  // Changed to match tall format
-        accum_tile<c_dtype>::col_vec scale_a_rv[2];
-        accum_tile<c_dtype>::row_vec scale_b;
-
     };
 };
 
@@ -74,8 +73,15 @@ struct matmul_template {
             return;
         }
         args.num_iters = args.globals.A.cols/layout::a_tile::cols;
-        int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
+        int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer is 0
         args.common.coord = { args.common.coord.x*2 + id, args.common.coord.y };
+        
+        if (warpgroup::groupid() == 0) {
+            for(int i = 0; i < 2; i++) {
+                warpgroup::load(args.scratch.scale_a_rv[i], args.globals.scale_a, {args.common.coord.x+i});
+            }
+            load(args.scratch.scale_b_rv, args.globals.scale_b, {args.common.coord.y});
+        }
     }
 
     struct producer {
@@ -88,13 +94,9 @@ struct matmul_template {
                 for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
-                    tma::load_async(args.input.scale_a[i], args.globals.scale_a,
-                                    {args.common.coord.x+i}, args.inputs_arrived);
                 }
                 tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
-                tma::load_async(args.input.scale_b, args.globals.scale_b,
-                                {args.common.coord.y}, args.inputs_arrived);
             }
         }
     };
@@ -105,8 +107,6 @@ struct matmul_template {
             zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            load(args.state.scale_b, args.input.scale_b);
-            warpgroup::load(args.state.scale_a_rv[warpgroup::groupid()], args.input.scale_a[warpgroup::groupid()]);
             warpgroup::mma_ABt(
                 args.state.accum,
                 args.input.a[warpgroup::groupid()],
@@ -116,9 +116,8 @@ struct matmul_template {
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            mul_col(args.state.accum, args.state.accum, args.state.scale_b);
-            mul_row(args.state.accum, args.state.accum, args.state.scale_a_rv[warpgroup::groupid()]);
-
+            mul_col(args.state.accum, args.state.accum, args.scratch.scale_b_rv);
+            mul_row(args.state.accum, args.state.accum, args.scratch.scale_a_rv[warpgroup::groupid()]);
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
@@ -311,6 +310,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // Check result
     float max_error = 0.0f, total_error = 0.0f, total_ref = 0.0f, total_ours=0.0f;
     int error_count = 0;
+    printf("Num rows: %d, Num cols: %d\n", M, N);
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if( error > 0.10 ) { // large because of fp8 vs fp32 numerics
