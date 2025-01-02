@@ -7,37 +7,40 @@ using namespace kittens::prototype::lcf;
 struct matmul_layout {
     // tiles for the quantized inputs
     using  a_tile   = st_fl8_e4m3<64, 128>; 
-    using  b_tile   = st_fl8_e4m3<64, 128>;
-    using  c_tile   = st_fl8_e4m3<64, 64>;
+    using  b_tile   = st_fl8_e4m3<256, 128>;
+    using  c_tile   = st_fl8_e4m3<64, 256>;
     using  a_layout = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
     using  b_layout = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;
     using  c_layout = gl<fp8e4m3, 1, 1, -1, -1, c_tile>;
 
     // tiles for the dequantized inputs
-    using  a_tile_d   = st_bf<a_tile::rows,  a_tile::cols>;
-    using  b_tile_d   = st_bf<b_tile::rows,  b_tile::cols>;
-    using  a_layout_d = gl<bf16, 1, 1, -1, -1, a_tile_d>;
-    using  b_layout_d = gl<bf16, 1, 1, -1, -1, b_tile_d>;
+    using scale_a_vec = sv<float, c_tile::rows>;
+    using scale_b_vec = sv<float, c_tile::cols>;
+    using scale_a_layout = gl<float, 1, 1, 1, -1, scale_a_vec>;
+    using scale_b_layout = gl<float, 1, 1, 1, -1, scale_b_vec>;
+
+    using accum_tile = rt_fl<16, c_tile::cols>;
 
     struct globals        { 
         a_layout A; b_layout B; c_layout C; 
-        float scale_a; float scale_b; 
+        scale_a_layout scale_a; scale_b_layout scale_b;
     };
 
     struct input_block    { 
         a_tile a[2]; b_tile b; 
-    };
-    struct scratch_block  { 
-        a_tile_d a_d[2];
-        b_tile_d b_d; 
+        scale_a_vec scale_a[2];
+        scale_b_vec scale_b;
     };
     struct finish_block   { 
         c_tile c[2]; 
     };
     struct common_state   { int2 coord; };
     struct consumer_state { 
-        rt_fl<16, c_tile::cols> accum;            // Changed to single tall accumulator
+        accum_tile accum;            // Changed to single tall accumulator
         rt_fl8_e4m3<16, c_tile::cols> accum_fp8;  // Changed to match tall format
+        accum_tile::col_vec scale_a_rv[2];
+        accum_tile::row_vec scale_b;
+
     };
 };
 
@@ -82,9 +85,13 @@ struct matmul_template {
                 for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                    tma::load_async(args.input.scale_a[i], args.globals.scale_a,
+                                    {args.common.coord.x+i}, args.inputs_arrived);
                 }
                 tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
+                tma::load_async(args.input.scale_b, args.globals.scale_b,
+                                {args.common.coord.y}, args.inputs_arrived);
             }
         }
     };
@@ -93,21 +100,23 @@ struct matmul_template {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
             zero(args.state.accum);
+            // warpgroup::load(args.state.scale_b, args.
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            // convert to dequantized precision 
-            copy(args.scratch.a_d[warpgroup::groupid()], args.input.a[warpgroup::groupid()]);
-            copy(args.scratch.b_d, args.input.b);
-
-            // scale the inputs
-            mul(args.scratch.a_d[warpgroup::groupid()], args.scratch.a_d[warpgroup::groupid()], args.globals.scale_a);
-            mul(args.scratch.b_d, args.scratch.b_d, args.globals.scale_b);
-
             warpgroup::mma_ABt(
                 args.state.accum,
-                args.scratch.a_d[warpgroup::groupid()],
-                args.scratch.b_d
+                args.input.a[warpgroup::groupid()],
+                args.input.b
             );
+
+            // multiply by scale_b 
+            load(args.state.scale_b, args.input.scale_b);
+            mul_col(args.state.accum, args.state.accum, args.state.scale_b);
+
+            // multiply by scale_a 
+            warpgroup::load(args.state.scale_a_rv[warpgroup::groupid()], args.input.scale_a[warpgroup::groupid()]);
+            mul_row(args.state.accum, args.state.accum, args.state.scale_a_rv[warpgroup::groupid()]);
+
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
             
@@ -135,6 +144,32 @@ struct matmul_template {
 #include <omp.h>
 
 
+template<typename mmt>
+void inner_run(
+    fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, 
+    float *d_scale_a, float *d_scale_b,
+    size_t M, size_t N, size_t K, 
+    dim3 grid, dim3 block
+) {
+    using a_layout = typename mmt::layout::a_layout;
+    using b_layout = typename mmt::layout::b_layout;
+    using c_layout = typename mmt::layout::c_layout;
+    using globals  = typename mmt::layout::globals;
+    a_layout Ag{d_A, nullptr, nullptr, M, K};
+    b_layout Bg{d_B, nullptr, nullptr, N, K};
+    c_layout Cg{d_C, nullptr, nullptr, M, N};
+
+    // scales
+    using scale_a_layout = typename mmt::layout::scale_a_layout;
+    using scale_b_layout = typename mmt::layout::scale_b_layout;
+    scale_a_layout scale_a{d_scale_a, nullptr, nullptr, nullptr, M};
+    scale_b_layout scale_b{d_scale_b, nullptr, nullptr, nullptr, N};
+
+    globals G{Ag, Bg, Cg, scale_a, scale_b};
+    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+}
+
+
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -151,26 +186,7 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 
 
 template<typename mmt>
-void inner_run(
-    fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, 
-    size_t M, size_t N, size_t K, 
-    float scale_a, float scale_b, 
-    dim3 grid, dim3 block
-) {
-    using a_layout = typename mmt::layout::a_layout;
-    using b_layout = typename mmt::layout::b_layout;
-    using c_layout = typename mmt::layout::c_layout;
-    using globals  = typename mmt::layout::globals;
-    a_layout Ag{d_A, nullptr, nullptr, M, K};
-    b_layout Bg{d_B, nullptr, nullptr, N, K};
-    c_layout Cg{d_C, nullptr, nullptr, M, N};
-    globals G{Ag, Bg, Cg, scale_a, scale_b};
-    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
-}
-
-
-template<typename mmt>
-int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
+int run_benchmark(size_t M, size_t N, size_t K) {
     cudaError_t cudaStatus;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
@@ -199,6 +215,10 @@ int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
     cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
     cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
     cudaMalloc(&d_C, M*N*sizeof(fp8e4m3));
+    // scales
+    float *d_scale_a, *d_scale_b;
+    cudaMalloc(&d_scale_a, M*sizeof(float));
+    cudaMalloc(&d_scale_b, N*sizeof(float));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -220,14 +240,20 @@ int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
 
     // Perform CPU matrix multiplication for reference
     if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
     cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
 
-    std::cout << "Copied matrices to device" << std::endl;
+    // fill scale with 1.0f
+    float *h_scale_a = new float[M];
+    float *h_scale_b = new float[N];
+    for(int i = 0; i < M; i++) h_scale_a[i] = 1.0f;
+    for(int i = 0; i < N; i++) h_scale_b[i] = 1.0f;
+    cudaMemcpy(d_scale_a, h_scale_a, M*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_scale_b, h_scale_b, N*sizeof(float), cudaMemcpyHostToDevice);
 
+    std::cout << "Copied matrices to device" << std::endl;
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
@@ -236,7 +262,7 @@ int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < ( 2 ); i++) { // warmup
-        inner_run<mmt>(d_A, d_B, d_C, M, N, K, scale_a, scale_b, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, d_scale_a, d_scale_b, M, N, K, grid, block); 
     }
 
     // Start timing
@@ -246,7 +272,7 @@ int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
 
     constexpr int ITERS = ( 10 );
     for(int i = 0; i < ITERS; i++) {
-        inner_run<mmt>(d_A, d_B, d_C, M, N, K, scale_a, scale_b, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, d_scale_a, d_scale_b, M, N, K, grid, block); 
     }
     cudaDeviceSynchronize();
 
@@ -326,11 +352,8 @@ int run_benchmark(size_t M, size_t N, size_t K, float scale_a, float scale_b) {
 
 int main() {
     int N;
-    float scale_a = 1.0f;
-    float scale_b = 1.0f;
-
     N = 4096;
-    run_benchmark<matmul_template<8>>(N, N, N, scale_a, scale_b);
+    run_benchmark<matmul_template<8>>(N, N, N);
     return 0;
 }
 
