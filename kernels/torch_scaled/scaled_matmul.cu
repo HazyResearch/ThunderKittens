@@ -5,7 +5,7 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 
-using c_dtype = half;
+using c_dtype = float;
 
 struct matmul_layout {
     // tiles for the quantized inputs
@@ -42,7 +42,6 @@ struct matmul_layout {
     struct common_state   { int2 coord; };
     struct consumer_state { 
         accum_tile<c_dtype> accum;      // Changed to single tall accumulator
-        accum_tile<fp8e4m3> accum_fp8;  // Changed to match tall format
     };
 };
 
@@ -164,7 +163,6 @@ void inner_run(
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
 
-
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -200,8 +198,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::normal_distribution dis(0.0f, 1.0f);
 
     // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 0.1f;
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 0.1f;
+    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 10.0f;
+    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 10.0f;
 
     std::cout << "Initialized matrices" << std::endl;
 
@@ -238,17 +236,72 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
-    cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-
-    // fill scale with 1.0f
+    //  Obtain inputs on GPU device
+    const float FP8_E4M3_MAX = 448.0f;
+    const float FP8_E4M3_MIN = -448.0f;
     c_dtype *h_scale_a = new c_dtype[M];
     c_dtype *h_scale_b = new c_dtype[N];
-    for(int i = 0; i < M; i++) h_scale_a[i] = 1.0f;
-    for(int i = 0; i < N; i++) h_scale_b[i] = 1.0f;
+    __nv_fp8_e4m3 *h_A_fp8_scaled = new __nv_fp8_e4m3[M * K];
+    __nv_fp8_e4m3 *h_B_fp8_scaled = new __nv_fp8_e4m3[K * N];
+    
+    // fill h_scale_a by following to_float8_e4m3fn
+    for(int i = 0; i < M; i++) {
+        float max_val = 0.0f;
+        for(int j = 0; j < K; j++) {
+            float abs_val = std::abs(h_A[i * K + j]);
+            max_val = std::max(max_val, abs_val);
+        }
+        h_scale_a[i] = 1.0f; //c_dtype(max_val / FP8_E4M3_MAX); 
+
+        if ( i == 0 ) {
+            std::cout << "h_scale_a[" << i << "] = " << float(h_scale_a[i]) << ", max_val: " << max_val << std::endl;
+        }
+    }
+
+    // fill h_A_fp8_scaled by following to_float8_e4m3fn. 
+    for(int i = 0; i < M; i++) {
+        for(int j = 0; j < K; j++) {
+            h_A_fp8_scaled[i * K + j] = __nv_fp8_e4m3(h_A[i * K + j] / float(h_scale_a[i]));
+
+            if ( i == 0 && j == 0 ) {
+                std::cout << "h_A_fp8_scaled[" << i << "] = " << float(h_A_fp8_scaled[i * K + j]) << std::endl;
+            }
+        }
+    }
+
+    // fill h_scale_b by following to_float8_e4m3fn
+    for(int i = 0; i < N; i++) {
+        float max_val = 0.0f;
+        for(int j = 0; j < K; j++) {
+            float abs_val = std::abs(h_B[j * N + i]);
+            max_val = std::max(max_val, abs_val);
+        }
+        h_scale_b[i] = 1.0f; //c_dtype(max_val / FP8_E4M3_MAX);
+        
+        if ( i == 0 ) {
+            std::cout << "h_scale_b[" << i << "] = " << float(h_scale_b[i]) << ", max_val: " << max_val << std::endl;
+        }
+    }
+
+    // fill h_B_fp8_scaled by following to_float8_e4m3fn
+    for(int i = 0; i < N; i++) {
+        for(int j = 0; j < K; j++) {
+            h_B_fp8_scaled[j * N + i] = __nv_fp8_e4m3(h_B[j * N + i] / float(h_scale_b[i]));
+
+            if ( i == 0 && j == 0 ) {
+                std::cout << "h_B_fp8_scaled[" << i << "] = " << float(h_B_fp8_scaled[i * N + j]) << std::endl;
+            }
+        }
+    }
+    
+    cudaMemcpy(d_A, h_A_fp8_scaled, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_fp8_scaled, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
     cudaMemcpy(d_scale_a, h_scale_a, M*sizeof(c_dtype), cudaMemcpyHostToDevice);
     cudaMemcpy(d_scale_b, h_scale_b, N*sizeof(c_dtype), cudaMemcpyHostToDevice);
 
+    /* 
+    Launch kernel
+    */
     std::cout << "Copied matrices to device" << std::endl;
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
@@ -302,7 +355,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Convert result back to float for comparison
     for (int i = 0; i < M * N; ++i) {
-        h_C[i] = c_dtype(h_C_out[i]);
+        h_C[i] = float(h_C_out[i]);
     }
 
     std::cout << "Converted result back to float" << std::endl;
@@ -313,12 +366,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     printf("Num rows: %d, Num cols: %d\n", M, N);
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if( error > 0.10 ) { // large because of fp8 vs fp32 numerics
-            if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+        if( error > 0.10 ) { // large because of fp8 vs fp32 numerics # error > 0.10
+            if(error_count < 10) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
-        // if (error > max_error) printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
         max_error = std::max(max_error, error);
         total_ref += h_C_ref[i]*h_C_ref[i];
         total_error += error*error;
