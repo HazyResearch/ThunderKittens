@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include <iomanip>
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -198,8 +199,10 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::normal_distribution dis(0.0f, 1.0f);
 
     // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 10.0f;
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 10.0f;
+    // for (int i = 0; i < M * K; ++i) h_A[i] = i / 100000.0f;  // dis(gen) * 0.2f; 
+    // for (int i = 0; i < K * N; ++i) h_B[i] = i / 100000.0f;   // dis(gen) * 0.2f; 
+    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen) * 0.2f; 
+    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen) * 0.2f; 
 
     std::cout << "Initialized matrices" << std::endl;
 
@@ -224,14 +227,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     std::cout << "Allocated device memory" << std::endl;
 
-    // Convert to __nv_fp8_e4m3 and copy to device
-    __nv_fp8_e4m3 *h_A_fp8 = new __nv_fp8_e4m3[M * K];
-    __nv_fp8_e4m3 *h_B_fp8 = new __nv_fp8_e4m3[K * N];
-    for (int i = 0; i < M * K; ++i) h_A_fp8[i] = __nv_fp8_e4m3(h_A[i]);
-    for (int i = 0; i < K * N; ++i) h_B_fp8[i] = __nv_fp8_e4m3(h_B[i]);
-    for (int i = 0; i < M * K; ++i) h_A[i] = float(h_A_fp8[i]);
-    for (int i = 0; i < K * N; ++i) h_B[i] = float(h_B_fp8[i]);
-
     // Perform CPU matrix multiplication for reference
     if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
     std::cout << "Performed CPU matrix multiplication" << std::endl;
@@ -244,17 +239,16 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     __nv_fp8_e4m3 *h_A_fp8_scaled = new __nv_fp8_e4m3[M * K];
     __nv_fp8_e4m3 *h_B_fp8_scaled = new __nv_fp8_e4m3[K * N];
     
-    // fill h_scale_a by following to_float8_e4m3fn
-    for(int i = 0; i < M; i++) {
+    // row-wise scaling
+    for(int row = 0; row < M; row++) {
         float max_val = 0.0f;
-        for(int j = 0; j < K; j++) {
-            float abs_val = std::abs(h_A[i * K + j]);
+        for(int col = 0; col < K; col++) {
+            float abs_val = std::abs(h_A[row * K + col]);
             max_val = std::max(max_val, abs_val);
         }
-        h_scale_a[i] = 1.0f; //c_dtype(max_val / FP8_E4M3_MAX); 
-
-        if ( i == 0 ) {
-            std::cout << "h_scale_a[" << i << "] = " << float(h_scale_a[i]) << ", max_val: " << max_val << std::endl;
+        h_scale_a[row] = c_dtype(max_val / FP8_E4M3_MAX); 
+        if ( row < 10 ) {
+            std::cout << "h_scale_a[" << row << "] = " << float(h_scale_a[row]) << ", max_val: " << max_val << std::endl;
         }
     }
 
@@ -262,24 +256,20 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for(int i = 0; i < M; i++) {
         for(int j = 0; j < K; j++) {
             h_A_fp8_scaled[i * K + j] = __nv_fp8_e4m3(h_A[i * K + j] / float(h_scale_a[i]));
-
-            if ( i == 0 && j == 0 ) {
-                std::cout << "h_A_fp8_scaled[" << i << "] = " << float(h_A_fp8_scaled[i * K + j]) << std::endl;
-            }
         }
     }
 
-    // fill h_scale_b by following to_float8_e4m3fn
-    for(int i = 0; i < N; i++) {
+    // column-wise scaling
+    for(int col = 0; col < N; col++) {
         float max_val = 0.0f;
-        for(int j = 0; j < K; j++) {
-            float abs_val = std::abs(h_B[j * N + i]);
+        for(int row = 0; row < K; row++) {
+            float abs_val = std::abs(h_B[row * N + col]);
             max_val = std::max(max_val, abs_val);
         }
-        h_scale_b[i] = 1.0f; //c_dtype(max_val / FP8_E4M3_MAX);
-        
-        if ( i == 0 ) {
-            std::cout << "h_scale_b[" << i << "] = " << float(h_scale_b[i]) << ", max_val: " << max_val << std::endl;
+        h_scale_b[col] = c_dtype(max_val / FP8_E4M3_MAX);
+
+        if ( col < 10 ) {
+            std::cout << "h_scale_b[" << col << "] = " << float(h_scale_b[col]) << ", max_val: " << max_val << std::endl;
         }
     }
 
@@ -287,10 +277,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for(int i = 0; i < N; i++) {
         for(int j = 0; j < K; j++) {
             h_B_fp8_scaled[j * N + i] = __nv_fp8_e4m3(h_B[j * N + i] / float(h_scale_b[i]));
-
-            if ( i == 0 && j == 0 ) {
-                std::cout << "h_B_fp8_scaled[" << i << "] = " << float(h_B_fp8_scaled[i * N + j]) << std::endl;
-            }
         }
     }
     
@@ -362,6 +348,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Check result
     float max_error = 0.0f, total_error = 0.0f, total_ref = 0.0f, total_ours=0.0f;
+    float input_a = 0.0f, input_b = 0.0f;
     int error_count = 0;
     printf("Num rows: %d, Num cols: %d\n", M, N);
     for (int i = 0; i < M * N; ++i) {
@@ -372,15 +359,20 @@ int run_benchmark(size_t M, size_t N, size_t K) {
             error_count++;
         }
         max_error = std::max(max_error, error);
-        total_ref += h_C_ref[i]*h_C_ref[i];
-        total_error += error*error;
-        total_ours += h_C[i]*h_C[i];
+        total_ref += std::abs(h_C_ref[i]);
+        total_error += error;
+        total_ours += std::abs(h_C[i]);
+        input_a += std::abs(h_A[i]);
+        input_b += std::abs(h_B[i]);
     }
 
+    std::cout << std::fixed << std::setprecision(6);
     std::cout << "Max error: " << max_error << std::endl;
     std::cout << "Average error: " << total_error / M / N << std::endl;
-    std::cout << "Average ref: " << total_ref / M / N << std::endl;
+    std::cout << "Average ref: " << total_ref / (M * N) << std::endl;
     std::cout << "Average ours: " << total_ours / M / N << std::endl;
+    std::cout << "Average input_a: " << input_a / M / N << std::endl;
+    std::cout << "Average input_b: " << input_b / M / N << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up
@@ -388,8 +380,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_B;
     delete[] h_C;
     delete[] h_C_ref;
-    delete[] h_A_fp8;
-    delete[] h_B_fp8;
     delete[] h_C_out;
     cudaFree(d_A);
     cudaFree(d_B);

@@ -1,19 +1,26 @@
 import torch
 import torch.nn.functional as F
 import sys
+from tqdm import tqdm
 
 
-size=(16, 16)
+size=(4096, 4096)
 
 TESTNAME = sys.argv[1]
 
 if TESTNAME == 'ones':
-    x = torch.ones(size, dtype=torch.float16, device='cuda')
-    w = torch.ones(size, dtype=torch.float16, device='cuda').t()   # Note: cuBLASLt float8 matmul requires column major for the second argument
+    x = 10 * torch.ones(size, dtype=torch.float32, device='cuda')
+    w = 10 * torch.ones(size, dtype=torch.float32, device='cuda').t()   # Note: cuBLASLt float8 matmul requires column major for the second argument
 elif TESTNAME == 'randn':
     torch.random.manual_seed(42)
-    x = torch.randn(size, dtype=torch.float16, device='cuda')
-    w = torch.randn(size, dtype=torch.float16, device='cuda').t() # Note: cuBLASLt float8 matmul requires column major for the second argument
+    x = torch.randn(size, dtype=torch.float32, device='cuda') * 0.2
+    w = torch.randn(size, dtype=torch.float32, device='cuda').t() * 0.2
+elif TESTNAME == 'custom':
+    x = torch.arange(size[0] * size[1], dtype=torch.float32, device='cuda') / 100000.0
+    w = x.clone()  # Since you want the same values
+    x = x.reshape(size).contiguous()
+    w = w.reshape(size).contiguous().t()
+    print(f"x.shape: {x.shape}, w.shape: {w.shape}")
 else:
     print('Invalid test name')
     sys.exit(0)
@@ -34,7 +41,9 @@ def compare_f8_mm(dtype=torch.float8_e4m3fn) -> None:
     x_f8, x_inv_s = to_float8_e4m3fn(x)
     w_f8, w_inv_s = to_float8_e4m3fn(w)
 
-    breakpoint()
+    print(f'x_inv_s: {x_inv_s[:10]}')
+    print(f'w_inv_s: {w_inv_s[:10]}')
+
     y = torch._scaled_mm(
         x_f8, w_f8,      
         out_dtype=torch.bfloat16,
@@ -47,7 +56,26 @@ def compare_f8_mm(dtype=torch.float8_e4m3fn) -> None:
     cos_sim = F.cosine_similarity(torch.mm(x, w).reshape(-1), y.reshape(-1), dim=0)    
     print(f'cos_sim {cos_sim.item():.4f}')
 
-o = compare_f8_mm()
+    # average of x
+    avg_x = x.abs().mean()
+    print(f'avg_x {avg_x.item():.4f}')
+
+    # average of w
+    avg_w = w.abs().mean()
+    print(f'avg_w {avg_w.item():.4f}')
+
+    # average of y
+    avg_y = y.abs().mean()
+    print(f'avg_y {avg_y.item():.4f}')
+
+    # max diff
+    max_diff = (torch.mm(x, w) - y).abs().max()
+    print(f'max_diff {max_diff.item():.4f}')
+
+    # average diff
+    avg_diff = (torch.mm(x, w) - y).abs().mean()
+    print(f'avg_diff {avg_diff.item():.4f}')
+
 
 if __name__ == "__main__":
     compare_f8_mm()
