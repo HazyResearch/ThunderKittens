@@ -195,6 +195,8 @@ To validate your install, and run TK's fairly comprehensive unit testing suite, 
 
 ## ThunderKittens Manual
 
+[In-progress onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations. Please leave comments if any aspect of this is unclear. 
+
 ThunderKittens is actually a pretty small library, in terms of what it gives you.
 
  - Data types: (Register + shared) * (tiles + vectors), all parameterized by layout, type, and size.
