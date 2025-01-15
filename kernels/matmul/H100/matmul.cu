@@ -1,32 +1,61 @@
+
+#include <cstring>
+namespace std {
+    // Our version of nvcc doesn't have std::bit_cast?!?!
+    template <class T2, class T1> constexpr T2 bit_cast(T1 t1) {
+        static_assert(sizeof(T1) == sizeof(T2));
+        static_assert(std::is_standard_layout<T1>() && std::is_trivial<T1>());
+        static_assert(std::is_standard_layout<T2>() && std::is_trivial<T2>());
+    
+        T2 t2;
+        std::memcpy(std::addressof(t2), std::addressof(t1), sizeof(T1));
+        return t2;
+    }
+} // namespace std
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
-template<int M_BLOCK, int N_BLOCK>
-struct matmul_layout {
-    using  base_tile      = st_bf<64, 64>;
-    using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile>;
-    struct globals        { global_layout A, B, C; };
-    struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
-    struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
-    struct common_state   { int2 coord; };
-    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+struct Shape {
+    int M;
+    int N;
+    int K;
+
+    bool operator==(const Shape&) const = default;
 };
-template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
+
+template<Shape SHAPE, int M_BLOCK, int N_BLOCK>
+struct matmul_layout {
+    using  a_tile         = st_bf<SHAPE.M,  SHAPE.K>;
+    using  b_tile         = st_bf<SHAPE.K, SHAPE.N>;
+    using  c_tile         = st_bf<SHAPE.M,  SHAPE.N>;
+    using  a_layout       = gl<bf16, 1, 1, -1, -1, a_tile>;
+    using  b_layout       = gl<bf16, 1, 1, -1, -1, b_tile>;
+    using  c_layout       = gl<bf16, 1, 1, -1, -1, c_tile>;
+    struct globals        { a_layout A; b_layout B; c_layout C; };
+    struct input_block    { a_tile a[M_BLOCK]; b_tile b[N_BLOCK]; };
+    struct finish_block   { c_tile c[M_BLOCK][N_BLOCK]; };
+    struct common_state   { int2 coord; };
+    struct consumer_state { rt_fl<16, N_BLOCK*c_tile::cols> accum; };
+};
+template<Shape _SHAPE, int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
+    static constexpr Shape SHAPE = _SHAPE;
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
-    using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
-    using wide_tile = st_bf<64, 64*N_BLOCK>;
+    using layout    = matmul_layout<SHAPE, M_BLOCK, N_BLOCK>;
+    using wide_tile_B = st_bf<SHAPE.K, SHAPE.N*N_BLOCK>;
+    using wide_tile_C = st_bf<SHAPE.M, SHAPE.N*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
-        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
+        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::c_tile::num_elements));
     }
       // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
+        int Rblocks = args.globals.C.rows / (M_BLOCK*SHAPE.M), Cblocks = args.globals.C.cols / (N_BLOCK*SHAPE.N);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -42,7 +71,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/64;
+        args.num_iters = args.globals.A.cols/SHAPE.K;
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
         args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
     }
@@ -71,13 +100,13 @@ struct matmul_template {
             warpgroup::mma_AB(
                 args.state.accum, // dest registers
                 args.input.a[warpgroup::groupid()], // A matrix
-                reinterpret_cast<wide_tile&>(args.input.b) // B matrix
+                reinterpret_cast<wide_tile_B&>(args.input.b) // B matrix
             );
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
+            warpgroup::store(reinterpret_cast<wide_tile_C&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
@@ -112,11 +141,13 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 
 template<typename mmt>
 void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
-    using global_layout = typename mmt::layout::global_layout;
+    using a_layout = typename mmt::layout::a_layout;
+    using b_layout = typename mmt::layout::b_layout;
+    using c_layout = typename mmt::layout::c_layout;
     using globals  = typename mmt::layout::globals;
-    global_layout Ag{d_A, nullptr, nullptr, M, K};
-    global_layout Bg{d_B, nullptr, nullptr, K, N};
-    global_layout Cg{d_C, nullptr, nullptr, M, N};
+    a_layout Ag{d_A, nullptr, nullptr, M, K};
+    b_layout Bg{d_B, nullptr, nullptr, K, N};
+    c_layout Cg{d_C, nullptr, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
@@ -126,7 +157,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaError_t cudaStatus;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Block size: " << mmt::M_BLOCK*64 << "x" << mmt::N_BLOCK*64 << "\n";
+    std::cout << "Block size: " << mmt::M_BLOCK*mmt::SHAPE.M << "x" << mmt::N_BLOCK*mmt::SHAPE.N << "\n";
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -273,7 +304,18 @@ int main() {
     // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     int N;
     N = 4096;
-    run_benchmark<matmul_template<2,4,8>>(N, N, N);
+    // This doesn't work?
+    std::cout << "N=16, N_BLOCK=2" << std::endl;
+    run_benchmark<matmul_template<Shape{.M=64,.N=16,.K=64},2,2,8>>(N, N, N);
+    // but it works when N_Blocks is 1
+    std::cout << "N=16, N_BLOCK=1" << std::endl;
+    run_benchmark<matmul_template<Shape{.M=64,.N=16,.K=64},2,1,8>>(N, N, N);
+    // and this is fine
+    std::cout << "N=32, N_BLOCK=1" << std::endl;
+    run_benchmark<matmul_template<Shape{.M=64,.N=32,.K=64},2,1,8>>(N, N, N);
+    // and this is fine
+    std::cout << "N=64, N_BLOCK=2" << std::endl;
+    run_benchmark<matmul_template<Shape{.M=64,.N=64,.K=64},2,2,8>>(N, N, N);
     // N = 3072;
     // run_benchmark<matmul_template<2,4,8>>(N, N, N);
     // run_benchmark<matmul_template<3,3,8>>(N, N, N);
