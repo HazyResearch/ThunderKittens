@@ -77,6 +77,20 @@ struct rt {
 
     using row_vec = rv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a column vector for this tile.
     using col_vec = rv<T, rows, typename rt_base<T, layout>::col_vec_layout>; ///< A type representing a column vector for this tile.
+
+    __device__ inline void operator=(const T &value) {
+        T2 value2 = base_types::packing<T>::pack(value);
+        #pragma unroll
+        for(int i = 0; i < height; i++) {
+            #pragma unroll
+            for(int j = 0; j < width; j++) {
+                #pragma unroll
+                for(int k = 0; k < packed_per_tile; k++) {
+                    tiles[i][j].data[k] = value2;
+                }
+            }
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */

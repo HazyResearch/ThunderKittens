@@ -218,6 +218,13 @@ struct st_subtile {
     // vector types
     using col_vec = sv<dtype, rows>;
     using row_vec = sv<dtype, cols>;
+
+    __device__ inline void operator=(const dtype &value) { // runs at warp scope by default
+        #pragma unroll
+        for(int i = kittens::laneid(); i < num_elements; i += WARP_THREADS) {
+            data[i] = value;
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */

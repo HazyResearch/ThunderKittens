@@ -70,6 +70,22 @@ struct rv {
     __device__ inline const dtype* operator[](size_t idx) const { return &data[idx][0]; } ///< A wrapper for indexing into vector data.
     __device__ inline       dtype& operator[](int2 outin)       { return data[outin.x][outin.y]; } ///< A wrapper for indexing into vector data.
     __device__ inline const dtype& operator[](int2 outin) const { return data[outin.x][outin.y]; } ///< A wrapper for indexing into vector data.
+
+    __device__ inline void operator=(const T &value) {
+        dtype value2;
+        if constexpr(is_naive) {
+            value2 = value;
+        } else {
+            value2 = base_types::packing<T>::pack(value);
+        }
+        #pragma unroll
+        for(int i = 0; i < outer_dim; i++) {
+            #pragma unroll
+            for(int j = 0; j < inner_dim; j++) {
+                data[i][j] = value2;
+            }
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */
