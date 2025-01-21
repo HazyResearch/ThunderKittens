@@ -64,15 +64,12 @@ template<int D> struct attn_fwd_template {
             warpgroup::mma_async_wait();
             // softmax
             right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
-            args.state.max_vec = max<axis::ROW>(args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
+            args.state.max_vec = max<axis::COL>(args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
             args.state.max_vec_scaled = args.state.max_vec * TEMPERATURE_SCALE;
-            args.state.att_block *= TEMPERATURE_SCALE;
-            args.state.att_block -= args.state.max_vec_scaled;
-            args.state.att_block = exp2(args.state.att_block);
-            args.state.max_vec_last_scaled -= args.state.max_vec_scaled;
-            args.state.max_vec_last_scaled = exp2(args.state.max_vec_last_scaled);
+            args.state.att_block = exp2((args.state.att_block*TEMPERATURE_SCALE) - args.state.max_vec_scaled);
+            args.state.max_vec_last_scaled = exp2(args.state.max_vec_last_scaled - args.state.max_vec_scaled);
             args.state.norm_vec *= args.state.max_vec_last_scaled;
-            args.state.norm_vec = sum<axis::ROW>(args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
+            args.state.norm_vec = sum<axis::COL>(args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
             args.state.o_reg *= args.state.max_vec_last_scaled; // normalize o_reg before mma
             args.state.att_block_mma = args.state.att_block; // convert to bf16 for mma
             // O += A @ V
