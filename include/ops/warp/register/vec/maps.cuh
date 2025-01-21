@@ -303,6 +303,10 @@ __device__ static inline T operator+(const T &lhs, const U &rhs) {
     add(dst, lhs, rhs);
     return dst;
 }
+template<ducks::rv::all T, typename U>
+__device__ static inline void operator+=(T &lhs, const U &rhs) {
+    add(lhs, lhs, rhs);
+}
 /**
  * @brief Computes the element-wise difference of two register vectors.
  *
@@ -321,6 +325,10 @@ __device__ static inline T operator-(const T &lhs, const U &rhs) {
     T dst;
     sub(dst, lhs, rhs);
     return dst;
+}
+template<ducks::rv::all T, typename U>
+__device__ static inline void operator-=(T &lhs, const U &rhs) {
+    sub(lhs, lhs, rhs);
 }
 /**
  * @brief Computes the element-wise product of two register vectors.
@@ -341,6 +349,10 @@ __device__ static inline T operator*(const T &lhs, const U &rhs) {
     mul(dst, lhs, rhs);
     return dst;
 }
+template<ducks::rv::all T, typename U>
+__device__ static inline void operator*=(T &lhs, const U &rhs) {
+    mul(lhs, lhs, rhs);
+}
 /**
  * @brief Computes the element-wise division of two register vectors.
  *
@@ -360,5 +372,9 @@ __device__ static inline T operator/(const T &lhs, const U &rhs) {
     div(dst, lhs, rhs);
     return dst;
 }
-
+template<ducks::rv::all T, typename U>
+__device__ static inline void operator/=(T &lhs, const U &rhs) {
+    div(lhs, lhs, rhs);
 }
+
+} // namespace kittens
