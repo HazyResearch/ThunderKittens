@@ -86,6 +86,17 @@ struct rv {
             }
         }
     }
+    template<typename U>
+    __device__ inline void operator=(const rv<U, length, layout> &other) {
+        using U2 = base_types::packing<U>::packed_type;
+        #pragma unroll
+        for(int i = 0; i < outer_dim; i++) {
+            #pragma unroll
+            for(int j = 0; j < inner_dim; j++) {
+                data[i][j] = base_types::convertor<T2, U2>::convert(other.data[i][j]);
+            }
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */

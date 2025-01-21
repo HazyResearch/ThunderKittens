@@ -91,6 +91,20 @@ struct rt {
             }
         }
     }
+    template<typename U>
+    __device__ inline void operator=(const rt<U, rows, cols, layout> &other) {
+        using U2 = base_types::packing<U>::packed_type;
+        #pragma unroll
+        for(int i = 0; i < height; i++) {
+            #pragma unroll
+            for(int j = 0; j < width; j++) {
+                #pragma unroll
+                for(int k = 0; k < packed_per_tile; k++) {
+                    tiles[i][j].data[k] = base_types::convertor<T2, U2>::convert(other.tiles[i][j].data[k]);
+                }
+            }
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */
