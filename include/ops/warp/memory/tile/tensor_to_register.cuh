@@ -43,7 +43,7 @@ __device__ inline static void load(RT &dst, const TM &src) {
                           "=r"(dst.tiles[i][j].data[1].x), "=r"(dst.tiles[i][j].data[1].y),
                           "=r"(dst.tiles[i][j].data[2].x), "=r"(dst.tiles[i][j].data[2].y),
                           "=r"(dst.tiles[i][j].data[3].x), "=r"(dst.tiles[i][j].data[3].y)
-                        : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/sizeof(U)))
+                        : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/(uint32_t)sizeof(U)))
                     );
                 } else {
                     asm volatile(
@@ -52,7 +52,7 @@ __device__ inline static void load(RT &dst, const TM &src) {
                           "=r"(dst.tiles[i][j].data[1].x), "=r"(dst.tiles[i][j].data[1].y),
                           "=r"(dst.tiles[i][j].data[2].x), "=r"(dst.tiles[i][j].data[2].y),
                           "=r"(dst.tiles[i][j].data[3].x), "=r"(dst.tiles[i][j].data[3].y)
-                        : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/sizeof(U)))
+                        : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/(uint32_t)sizeof(U)))
                     );
                 }
             }
@@ -69,7 +69,7 @@ __device__ inline static void load(RT &dst, const TM &src) {
                       "=f"(dst.tiles[i][j].data[1].x), "=f"(dst.tiles[i][j].data[1].y),
                       "=f"(dst.tiles[i][j].data[2].x), "=f"(dst.tiles[i][j].data[2].y),
                       "=f"(dst.tiles[i][j].data[3].x), "=f"(dst.tiles[i][j].data[3].y)
-                    : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/sizeof(U)))
+                    : "r"(src.addr + (i * dst.tile_size_row << 16) + j * dst.tile_size_col/(4/(uint32_t)sizeof(U)))
                 );
             }
         }
@@ -102,21 +102,12 @@ __device__ inline static void store(TM &dst, const RT &src) {
             for(int j = 0; j < src.width; j++) {
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                     asm volatile(
-                        "tcgen05.st.sync.aligned.16x128b.x2.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
-                        :: "r"(dst.addr + (i * src.tile_size_row << 16) + j * src.tile_size_col/(4/sizeof(U))),
-                           "r"(src.tiles[i][j].data[0].x), "r"(src.tiles[i][j].data[0].y),
-                           "r"(src.tiles[i][j].data[1].x), "r"(src.tiles[i][j].data[1].y),
-                           "r"(src.tiles[i][j].data[2].x), "r"(src.tiles[i][j].data[2].y),
-                           "r"(src.tiles[i][j].data[3].x), "r"(src.tiles[i][j].data[3].y)
-                    );
-                } else {
-                    asm volatile(
-                        "tcgen05.st.sync.aligned.16x128b.x2.unpack::16b.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
-                        :: "r"(dst.addr + (i * src.tile_size_row << 16) + j * src.tile_size_col/(4/sizeof(U))),
-                           "r"(src.tiles[i][j].data[0].x), "r"(src.tiles[i][j].data[0].y),
-                           "r"(src.tiles[i][j].data[1].x), "r"(src.tiles[i][j].data[1].y),
-                           "r"(src.tiles[i][j].data[2].x), "r"(src.tiles[i][j].data[2].y),
-                           "r"(src.tiles[i][j].data[3].x), "r"(src.tiles[i][j].data[3].y)
+                        "tcgen05.st.sync.aligned.16x128b.x2.b32 [%0], {%1, %2, %3, %4};\n"
+                        :: "r"(dst.addr + (i * src.tile_size_row << 16) + j * src.tile_size_col/(4/(uint32_t)sizeof(U))),
+                           "r"(*(uint32_t*)&src.tiles[i][j].data[0]),
+                           "r"(*(uint32_t*)&src.tiles[i][j].data[1]),
+                           "r"(*(uint32_t*)&src.tiles[i][j].data[2]),
+                           "r"(*(uint32_t*)&src.tiles[i][j].data[3])
                     );
                 }
             }
@@ -129,7 +120,7 @@ __device__ inline static void store(TM &dst, const RT &src) {
             for(int j = 0; j < src.width; j++) {
                 asm volatile(
                     "tcgen05.st.sync.aligned.16x256b.x2.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
-                    :: "r"(dst.addr + (i * src.tile_size_row << 16) + j * src.tile_size_col/(4/sizeof(U))),
+                    :: "r"(dst.addr + (i * src.tile_size_row << 16) + j * src.tile_size_col/(4/(uint32_t)sizeof(U))),
                        "f"(src.tiles[i][j].data[0].x), "f"(src.tiles[i][j].data[0].y),
                        "f"(src.tiles[i][j].data[1].x), "f"(src.tiles[i][j].data[1].y),
                        "f"(src.tiles[i][j].data[2].x), "f"(src.tiles[i][j].data[2].y),
