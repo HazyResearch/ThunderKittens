@@ -10,6 +10,8 @@
 
 namespace kittens {
 
+namespace detail {
+
 // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#instruction-descriptor
 template<typename D, typename AB, int M, int N, bool trans_a, bool trans_b, bool neg=false>
 struct instruction_descriptor {
@@ -63,8 +65,6 @@ struct instruction_descriptor {
     }
     return desc;
 };
-
-namespace detail {
 
 template<int acc>
 __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr, uint64_t b_desc, uint32_t idesc) {
@@ -125,13 +125,13 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>),
         "Currently unsupported type combination for matrix multiply."
     );
-    uint32_t idesc = instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
+    uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
     if(laneid() == 0) {
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-        detail::template st_st<acc>(
+        detail::template tmem_st<acc>(
             d.addr,
             a.chunk_addr(0),
             b_desc.chunk_descriptor(0),
@@ -139,7 +139,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         );
         #pragma unroll
         for(int i = 1; i < K/red_dim; i++) {
-            detail::template st_st<1>(
+            detail::template tmem_st<1>(
                 d.addr,
                 a.chunk_addr(i),
                 b_desc.chunk_descriptor(i),
@@ -178,7 +178,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>),
         "Currently unsupported type combination for matrix multiply."
     );
-    uint32_t idesc = instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
+    uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
