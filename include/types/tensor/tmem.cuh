@@ -61,6 +61,24 @@ struct tmem {
     template<ducks::tmem::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {
         return TM(addr + (row_offset << 16) + col_offset/(4/sizeof(typename TM::T))); // in units of the tile's data type.
     }
+    template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) {
+        if constexpr (transpose) {
+            if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
+                return addr + ((16 * chunk) << 16);
+            }
+            else {
+                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.")
+            }
+        }
+        else {
+            if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
+                return addr + (16 * chunk);
+            }
+            else {
+                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.")
+            }
+        }
+    } 
 
 };
 
