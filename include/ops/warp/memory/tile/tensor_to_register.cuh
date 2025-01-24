@@ -22,7 +22,7 @@ namespace kittens {
  * @param src[in]  The source tensor tile.
  */
 template<ducks::rt::all RT, ducks::tmem::all TM>
-__device__ inline static void load(RT &dst, const TM &src) {
+__device__ inline static void load_async(RT &dst, const TM &src) {
     static_assert(RT::height == TM::height, "register tile and tensor tile must match height");
     static_assert(RT::width == TM::width, "register tile and tensor tile must match width");
 
@@ -86,7 +86,7 @@ __device__ inline static void load(RT &dst, const TM &src) {
  * @param src[in]  The source register tile.
  */
 template<ducks::rt::all RT, ducks::tmem::all TM>
-__device__ inline static void store(TM &dst, const RT &src) {
+__device__ inline static void store_async(TM &dst, const RT &src) {
     static_assert(RT::height == TM::height, "register tile and tensor tile must match height");
     static_assert(RT::width == TM::width, "register tile and tensor tile must match width");
 
