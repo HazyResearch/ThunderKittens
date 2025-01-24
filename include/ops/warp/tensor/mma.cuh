@@ -69,9 +69,9 @@ __device__ static inline uint32_t instruction_descriptor() {
 template<int acc>
 __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr, uint64_t b_desc, uint32_t idesc) {
     asm volatile(
-        ".reg .pred p;\n" \
+        "{.reg .pred p;\n" \
         "setp.eq.u32 p, 1, %4;\n" \
-        "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;\n"
+        "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;}\n"
     ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
     );
 }
@@ -79,9 +79,9 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
 template<int acc>
 __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint64_t b_desc, uint32_t idesc) {
     asm volatile(
-        ".reg .pred p;\n" \
+        "{.reg .pred p;\n" \
         "setp.eq.u32 p, 1, %4;\n" \
-        "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, p;\n"
+        "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, p;}\n"
     ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
     );
 }
@@ -103,7 +103,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
 
     // Do everything here.
     constexpr int M = trans_a ? A::cols : A::rows;
-    static_assert(M == D::rows && (M == 4 || M == 8)); // output register is correctly sized
+    static_assert(M == D::rows && (M == 64 || M == 128)); // output register is correctly sized
 
     constexpr int N = trans_b ? B::rows : B::cols;
     static_assert(N == D::cols); // output register is correctly sized
@@ -133,7 +133,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
 
         detail::template tmem_st<acc>(
             d.addr,
-            a.chunk_addr(0),
+            a.template chunk_addr<trans_a>(0),
             b_desc.chunk_descriptor(0),
             idesc
         );
@@ -141,7 +141,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         for(int i = 1; i < K/red_dim; i++) {
             detail::template tmem_st<1>(
                 d.addr,
-                a.chunk_addr(i),
+                a.template chunk_addr<trans_a>(i),
                 b_desc.chunk_descriptor(i),
                 idesc
             );
@@ -211,36 +211,36 @@ __device__ static inline void mm(D &d, const A &a, const B &b, semaphore &sem) {
 
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 1, D, A, B, 1>(d, a, b);
+    mma<0, 1, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_ABt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 0, D, A, B, 1>(d, a, b);
+    mma<0, 0, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<1, 1, D, A, B, 1>(d, a, b);
+    mma<1, 1, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
-__device__ static inline void mma_AtBt(D &d, const A &a, const B &b) {
-    mma<1, 0, D, A, B, 1>(d, a, b);
+__device__ static inline void mma_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
+    mma<1, 0, D, A, B, 1>(d, a, b, sem);
 }
 
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
-__device__ static inline void mm_AB(D &d, const A &a, const B &b) {
-    mma<0, 1, D, A, B, 0>(d, a, b);
+__device__ static inline void mm_AB(D &d, const A &a, const B &b, semaphore &sem) {
+    mma<0, 1, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
-__device__ static inline void mm_ABt(D &d, const A &a, const B &b) {
-    mma<0, 0, D, A, B, 0>(d, a, b);
+__device__ static inline void mm_ABt(D &d, const A &a, const B &b, semaphore &sem) {
+    mma<0, 0, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
-__device__ static inline void mm_AtB(D &d, const A &a, const B &b) {
-    mma<1, 1, D, A, B, 0>(d, a, b);
+__device__ static inline void mm_AtB(D &d, const A &a, const B &b, semaphore &sem) {
+    mma<1, 1, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
-__device__ static inline void mm_AtBt(D &d, const A &a, const B &b) {
-    mma<1, 0, D, A, B, 0>(d, a, b);
+__device__ static inline void mm_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
+    mma<1, 0, D, A, B, 0>(d, a, b, sem);
 }
 
 

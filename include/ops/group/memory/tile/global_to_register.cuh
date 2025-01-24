@@ -25,7 +25,10 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
-    const int row_offset = dst.rows*warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
+    const int row_offset = dst.rows*local_warpid;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         int row = row_offset + i*dst.tile_size_row + (warp_laneid / 4);
@@ -64,7 +67,10 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     U *src_ptr = (U*)&src[(idx.template unit_coord<axis, 3>())];
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
-    const int row_offset = dst.rows*warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
+    const int row_offset = dst.rows*local_warpid;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         int row = row_offset + i*dst.tile_size_row + 2*(warp_laneid % 4);
@@ -120,7 +126,10 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
-    const int row_offset = src.rows*warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
+    const int row_offset = src.rows*local_warpid;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         int row = row_offset + i*src.tile_size_row + (warp_laneid / 4);
@@ -159,7 +168,10 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     U *dst_ptr = (U*)&dst[(idx.template unit_coord<axis, 3>())];
     const int row_stride = dst.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
-    const int row_offset = src.rows*warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
+    const int row_offset = src.rows*local_warpid;
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         int row = row_offset + i*src.tile_size_row + 2*(warp_laneid % 4);

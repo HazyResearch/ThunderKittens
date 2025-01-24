@@ -2,19 +2,19 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
-constexpr int QO_HEADS   = 16;
-constexpr int KV_HEADS   = 16;
+constexpr int ATTN_B     = 64;
+constexpr int QO_HEADS   = 4;
+constexpr int KV_HEADS   = 4;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 768; 
+constexpr int ATTN_N     = 8192; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
 constexpr int ITER       = 10; 
 
-constexpr bool causal    = true; 
+constexpr bool causal    = false; 
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -207,8 +207,8 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
-    static_assert(ATTN_N % (CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4) == 0);
+    dim3 grid(ATTN_N/(128), QO_HEADS, ATTN_B);
+    static_assert(ATTN_N % (128) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < ITER; i++) {    
@@ -276,254 +276,254 @@ int main(int argc, char **argv) {
     double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
     std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
 
-    // backward pass
-    using og_tile = st_bf<4*16, ATTN_D>;
-    using o_tile  = st_bf<4*16, ATTN_D>;
-    using d_tile  = col_vec<st_fl<4*16, ATTN_D>>;
+    // // backward pass
+    // using og_tile = st_bf<4*16, ATTN_D>;
+    // using o_tile  = st_bf<4*16, ATTN_D>;
+    // using d_tile  = col_vec<st_fl<4*16, ATTN_D>>;
 
-    using og_global = gl<bf16,  -1, -1, -1, -1, og_tile>;
-    using o_global  = gl<bf16,  -1, -1, -1, -1, o_tile>;
-    using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
+    // using og_global = gl<bf16,  -1, -1, -1, -1, og_tile>;
+    // using o_global  = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    // using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
 
-    using bwd_prep_globals = bwd_prep_globals<ATTN_D>;
+    // using bwd_prep_globals = bwd_prep_globals<ATTN_D>;
 
-    og_global prep_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
-    o_global  prep_o_arg {d_o,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
-    d_global  prep_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+    // og_global prep_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    // o_global  prep_o_arg {d_o,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    // d_global  prep_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
 
-    bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
+    // bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
 
-    // backward pass
-    cudaFuncSetAttribute(
-        bwd_attend_prep_ker<ATTN_D>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    );
-    std::cout << "Set max dynamic memory!" << std::endl;
+    // // backward pass
+    // cudaFuncSetAttribute(
+    //     bwd_attend_prep_ker<ATTN_D>,
+    //     cudaFuncAttributeMaxDynamicSharedMemorySize,
+    //     mem_size
+    // );
+    // std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid_bwd(ATTN_N/(4*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
-    static_assert(ATTN_N % (4*kittens::TILE_ROW_DIM<bf16>*4) == 0);
-    cudaDeviceSynchronize();
-    std::cout << "Starting bwd prep warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {
-        bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
-    }
-    cudaDeviceSynchronize();
-    std::cout << "Starting bwd prep kernel" << std::endl;
-    const auto start_bwd = std::chrono::high_resolution_clock::now();
-    for(int i = 0; i < ITER; i++) {
-        bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
-    }
-    cudaDeviceSynchronize();
-    const auto finish_bwd = std::chrono::high_resolution_clock::now();
-    CudaCheckError();
-    std::cout << "Finished bwd prep kernel\n";
+    // dim3 grid_bwd(ATTN_N/(4*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
+    // static_assert(ATTN_N % (4*kittens::TILE_ROW_DIM<bf16>*4) == 0);
+    // cudaDeviceSynchronize();
+    // std::cout << "Starting bwd prep warmup" << std::endl;
+    // for(int i = 0; i < ITER; i++) {
+    //     bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
+    // }
+    // cudaDeviceSynchronize();
+    // std::cout << "Starting bwd prep kernel" << std::endl;
+    // const auto start_bwd = std::chrono::high_resolution_clock::now();
+    // for(int i = 0; i < ITER; i++) {
+    //     bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
+    // }
+    // cudaDeviceSynchronize();
+    // const auto finish_bwd = std::chrono::high_resolution_clock::now();
+    // CudaCheckError();
+    // std::cout << "Finished bwd prep kernel\n";
 
-    cudaMemcpy(d_fl, d_d, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(d_fl, d_d, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
 
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
-        d[i]  = d_fl[i];
-    }
+    // for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
+    //     d[i]  = d_fl[i];
+    // }
 
-    const auto bwd_prep = std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER;
+    // const auto bwd_prep = std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER;
 
-    // backward pass
-    using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_qg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using bwd_l_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
-    using bwd_d_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
+    // // backward pass
+    // using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_qg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    // using bwd_l_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
+    // using bwd_d_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
 
-    using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, bwd_q_tile>;
-    using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, bwd_k_tile>;
-    using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, bwd_v_tile>;
+    // using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, bwd_q_tile>;
+    // using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, bwd_k_tile>;
+    // using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, bwd_v_tile>;
 
-    using bwd_og_global = gl<bf16,  -1, -1, -1, -1, bwd_og_tile>;
+    // using bwd_og_global = gl<bf16,  -1, -1, -1, -1, bwd_og_tile>;
 
-    using bwd_qg_global = gl<float, -1, -1, -1, -1, bwd_qg_tile>;
-    using bwd_kg_global = gl<float, -1, -1, -1, -1, bwd_kg_tile>;
-    using bwd_vg_global = gl<float, -1, -1, -1, -1, bwd_vg_tile>;
+    // using bwd_qg_global = gl<float, -1, -1, -1, -1, bwd_qg_tile>;
+    // using bwd_kg_global = gl<float, -1, -1, -1, -1, bwd_kg_tile>;
+    // using bwd_vg_global = gl<float, -1, -1, -1, -1, bwd_vg_tile>;
 
-    using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
-    using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
+    // using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
+    // using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
 
-    using bwd_global_args = bwd_globals<ATTN_D>;
+    // using bwd_global_args = bwd_globals<ATTN_D>;
 
-    bwd_q_global  bwd_q_arg {d_q,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
-    bwd_k_global  bwd_k_arg {d_k,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
-    bwd_v_global  bwd_v_arg {d_v,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    // bwd_q_global  bwd_q_arg {d_q,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    // bwd_k_global  bwd_k_arg {d_k,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    // bwd_v_global  bwd_v_arg {d_v,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
 
-    bwd_og_global bwd_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    // bwd_og_global bwd_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
 
-    bwd_qg_global bwd_qg_arg{d_qg, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
-    bwd_kg_global bwd_kg_arg{d_kg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
-    bwd_vg_global bwd_vg_arg{d_vg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    // bwd_qg_global bwd_qg_arg{d_qg, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    // bwd_kg_global bwd_kg_arg{d_kg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    // bwd_vg_global bwd_vg_arg{d_vg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
     
-    bwd_l_global  bwd_l_arg {d_l,  ATTN_B, QO_HEADS, 1,      ATTN_N};
-    bwd_d_global  bwd_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+    // bwd_l_global  bwd_l_arg {d_l,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+    // bwd_d_global  bwd_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
 
-    bwd_global_args bwd_global{bwd_q_arg, 
-                      bwd_k_arg, 
-                      bwd_v_arg, 
-                      bwd_og_arg, 
-                      bwd_qg_arg, 
-                      bwd_kg_arg, 
-                      bwd_vg_arg, 
-                      bwd_l_arg, 
-                      bwd_d_arg, 
-                      ATTN_N, 
-                      QK_HEAD_RATIO};
+    // bwd_global_args bwd_global{bwd_q_arg, 
+    //                   bwd_k_arg, 
+    //                   bwd_v_arg, 
+    //                   bwd_og_arg, 
+    //                   bwd_qg_arg, 
+    //                   bwd_kg_arg, 
+    //                   bwd_vg_arg, 
+    //                   bwd_l_arg, 
+    //                   bwd_d_arg, 
+    //                   ATTN_N, 
+    //                   QK_HEAD_RATIO};
 
-    const int carveout_memsize = 194000; 
+    // const int carveout_memsize = 194000; 
 
-    cudaFuncSetAttribute(
-        bwd_attend_ker<ATTN_D, causal>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        carveout_memsize
-    );
-    cudaFuncSetAttribute(
-        bwd_attend_ker<ATTN_D, causal>,
-        cudaFuncAttributePreferredSharedMemoryCarveout,
-        85
-    ); 
+    // cudaFuncSetAttribute(
+    //     bwd_attend_ker<ATTN_D, causal>,
+    //     cudaFuncAttributeMaxDynamicSharedMemorySize,
+    //     carveout_memsize
+    // );
+    // cudaFuncSetAttribute(
+    //     bwd_attend_ker<ATTN_D, causal>,
+    //     cudaFuncAttributePreferredSharedMemoryCarveout,
+    //     85
+    // ); 
 
-    dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), QO_HEADS, ATTN_B);
-    static_assert(ATTN_N % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>) == 0);
+    // dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), QO_HEADS, ATTN_B);
+    // static_assert(ATTN_N % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>) == 0);
 
-    cudaDeviceSynchronize();
-    std::cout << "Starting bwd warmup" << std::endl;
-    for (int i = 0; i < ITER; i++) {
-        cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
-        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
-    }
-    cudaDeviceSynchronize();
-    std::cout << "Starting bwd kernel" << std::endl;
-    auto total_time = 0; 
+    // cudaDeviceSynchronize();
+    // std::cout << "Starting bwd warmup" << std::endl;
+    // for (int i = 0; i < ITER; i++) {
+    //     cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+    //     cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+    //     cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+    //     bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
+    // }
+    // cudaDeviceSynchronize();
+    // std::cout << "Starting bwd kernel" << std::endl;
+    // auto total_time = 0; 
 
-    for(int i = 0; i < ITER; i++) {
-        cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
-        cudaDeviceSynchronize();
-        const auto start_bwd2 = std::chrono::high_resolution_clock::now();
+    // for(int i = 0; i < ITER; i++) {
+    //     cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+    //     cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+    //     cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+    //     cudaDeviceSynchronize();
+    //     const auto start_bwd2 = std::chrono::high_resolution_clock::now();
 
-        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
-        cudaDeviceSynchronize();
+    //     bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
+    //     cudaDeviceSynchronize();
 
-        const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
-    }
-    CudaCheckError();
-    std::cout << "Finished bwd kernel\n";
+    //     const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
+    //     total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
+    // }
+    // CudaCheckError();
+    // std::cout << "Finished bwd kernel\n";
 
-    // check correctness
-    cudaMemcpy(qg_fl, d_qg, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(kg_fl, d_kg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(vg_fl, d_vg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
+    // // check correctness
+    // cudaMemcpy(qg_fl, d_qg, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(kg_fl, d_kg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(vg_fl, d_vg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
 
-    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        qg[i] = (qg_fl[i]);
-    }
-    for (int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        kg[i] = (kg_fl[i]);
-        vg[i] = (vg_fl[i]);
-    }
+    // for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+    //     qg[i] = (qg_fl[i]);
+    // }
+    // for (int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+    //     kg[i] = (kg_fl[i]);
+    //     vg[i] = (vg_fl[i]);
+    // }
 
-    float total_diff_qg = 0.0f;
-    float total_diff_kg = 0.0f;
-    float total_diff_vg = 0.0f;
+    // float total_diff_qg = 0.0f;
+    // float total_diff_kg = 0.0f;
+    // float total_diff_vg = 0.0f;
 
-    float max_diff_qg = 0.0f;
-    float max_diff_kg = 0.0f;
-    float max_diff_vg = 0.0f;
+    // float max_diff_qg = 0.0f;
+    // float max_diff_kg = 0.0f;
+    // float max_diff_vg = 0.0f;
 
-    good = true;
-    std::ofstream qg_ref_file("printouts/qg_ref.txt");
-    std::ofstream qg_file("printouts/qg.txt");
-    std::ofstream diff_qg_file("printouts/diff_qg.txt");
-    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        float diff = qg[i] - qg_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
-        if (i < TOTAL_UNIQUE_ELEMENTS) {
-            qg_ref_file << qg_ref[i] << ' ';
-            qg_file << qg[i] << ' ';
-            diff_qg_file << diff << ' ';
-        }
-        if(abs(diff) > 0.015 || isnan(diff)) {
-            good = false;
-        }
-        total_diff_qg += abs(diff); 
+    // good = true;
+    // std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    // std::ofstream qg_file("printouts/qg.txt");
+    // std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    // for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+    //     float diff = qg[i] - qg_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
+    //     if (i < TOTAL_UNIQUE_ELEMENTS) {
+    //         qg_ref_file << qg_ref[i] << ' ';
+    //         qg_file << qg[i] << ' ';
+    //         diff_qg_file << diff << ' ';
+    //     }
+    //     if(abs(diff) > 0.015 || isnan(diff)) {
+    //         good = false;
+    //     }
+    //     total_diff_qg += abs(diff); 
 
-        if (abs(diff) > max_diff_qg) {
-            max_diff_qg = abs(diff);
-        }
-    }
-    // print average qg diff
-    std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS_QO << std::endl;
-    std::cout << "Max     qg diff: " << max_diff_qg << std::endl;
+    //     if (abs(diff) > max_diff_qg) {
+    //         max_diff_qg = abs(diff);
+    //     }
+    // }
+    // // print average qg diff
+    // std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS_QO << std::endl;
+    // std::cout << "Max     qg diff: " << max_diff_qg << std::endl;
 
-    std::ofstream kg_ref_file("printouts/kg_ref.txt");
-    std::ofstream kg_file("printouts/kg.txt");
-    std::ofstream diff_kg_file("printouts/diff_kg.txt");
-    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        float diff = kg[i] - kg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
-        if (i < TOTAL_UNIQUE_ELEMENTS) {
-            kg_ref_file << kg_ref[i] << ' ';
-            kg_file << kg[i] << ' ';
-            diff_kg_file << diff << ' ';
-        }
-        if(abs(diff) > 0.015 || isnan(diff)) {
-            good = false;
-        }
-        total_diff_kg += abs(diff); 
+    // std::ofstream kg_ref_file("printouts/kg_ref.txt");
+    // std::ofstream kg_file("printouts/kg.txt");
+    // std::ofstream diff_kg_file("printouts/diff_kg.txt");
+    // for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+    //     float diff = kg[i] - kg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
+    //     if (i < TOTAL_UNIQUE_ELEMENTS) {
+    //         kg_ref_file << kg_ref[i] << ' ';
+    //         kg_file << kg[i] << ' ';
+    //         diff_kg_file << diff << ' ';
+    //     }
+    //     if(abs(diff) > 0.015 || isnan(diff)) {
+    //         good = false;
+    //     }
+    //     total_diff_kg += abs(diff); 
 
-        if (abs(diff) > max_diff_kg) {
-            max_diff_kg = abs(diff);
-        }
-    }
-    // print average kg diff
-    std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS_KV << std::endl;
-    std::cout << "Max     kg diff: " << max_diff_kg << std::endl;
+    //     if (abs(diff) > max_diff_kg) {
+    //         max_diff_kg = abs(diff);
+    //     }
+    // }
+    // // print average kg diff
+    // std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS_KV << std::endl;
+    // std::cout << "Max     kg diff: " << max_diff_kg << std::endl;
 
-    std::ofstream vg_ref_file("printouts/vg_ref.txt");
-    std::ofstream vg_file("printouts/vg.txt");
-    std::ofstream diff_vg_file("printouts/diff_vg.txt");
-    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        float diff = vg[i] - vg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
-        if (i < TOTAL_UNIQUE_ELEMENTS) {
-            vg_ref_file << vg_ref[i] << ' ';
-            vg_file << vg[i] << ' ';
-            diff_vg_file << diff << ' ';
-        }
-        if(abs(diff) > 0.015 || isnan(diff)) {
-            good = false;
-        }
-        total_diff_vg += abs(diff);
+    // std::ofstream vg_ref_file("printouts/vg_ref.txt");
+    // std::ofstream vg_file("printouts/vg.txt");
+    // std::ofstream diff_vg_file("printouts/diff_vg.txt");
+    // for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+    //     float diff = vg[i] - vg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
+    //     if (i < TOTAL_UNIQUE_ELEMENTS) {
+    //         vg_ref_file << vg_ref[i] << ' ';
+    //         vg_file << vg[i] << ' ';
+    //         diff_vg_file << diff << ' ';
+    //     }
+    //     if(abs(diff) > 0.015 || isnan(diff)) {
+    //         good = false;
+    //     }
+    //     total_diff_vg += abs(diff);
 
-        if (abs(diff) > max_diff_vg) {
-            max_diff_vg = abs(diff);
-        }
-    }
-    // print average vg diff
-    std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS_KV << std::endl;
-    std::cout << "Max     vg diff: " << max_diff_vg << std::endl;
+    //     if (abs(diff) > max_diff_vg) {
+    //         max_diff_vg = abs(diff);
+    //     }
+    // }
+    // // print average vg diff
+    // std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS_KV << std::endl;
+    // std::cout << "Max     vg diff: " << max_diff_vg << std::endl;
 
-    std::cout << "Average bwd execution time: " << ((total_time) / ITER) + (bwd_prep) << " us" << std::endl;
-    if(good) std::cout << "BWD Correct :)\n";
-    else std::cout << "BWD Incorrect :(\n";
+    // std::cout << "Average bwd execution time: " << ((total_time) / ITER) + (bwd_prep) << " us" << std::endl;
+    // if(good) std::cout << "BWD Correct :)\n";
+    // else std::cout << "BWD Incorrect :(\n";
 
-    // calculate efficiency
-    f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "bwd");
+    // // calculate efficiency
+    // f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "bwd");
 
-    e = efficiency(f, ((total_time) / ITER) + (bwd_prep * 1.7)); 
-    // multiply by 1.7 to account for copy kernel
+    // e = efficiency(f, ((total_time) / ITER) + (bwd_prep * 1.7)); 
+    // // multiply by 1.7 to account for copy kernel
 
-    std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
+    // std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
 
     cudaFree(d_q);
     cudaFree(d_k);

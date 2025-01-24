@@ -18,7 +18,9 @@ __device__ inline static void load(RT &dst, const ST &src) {
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
     static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
     static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
-    int local_warpid = warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
     using T2 = RT::dtype;
     using U  = ST::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
@@ -137,7 +139,9 @@ __device__ inline static void store(ST &dst, const RT &src) {
     static_assert(height%N_WARPS == 0, "Group load / store requires tile height to be a multiple of N_WARPS.");
     static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
     static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
-    int local_warpid = warpid();
+    int local_warpid;
+    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    else local_warpid = warpid();
     using T2 = RT::dtype;
     using U  = ST::dtype;
     using T  = base_types::packing<T2>::unpacked_type;

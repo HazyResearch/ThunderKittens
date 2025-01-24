@@ -59,7 +59,7 @@ struct tmem {
     __device__ inline tmem(uint32_t addr) : addr(addr) {}
 
     template<ducks::tmem::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {
-        return TM(addr + (row_offset << 16) + col_offset/(4/sizeof(typename TM::T))); // in units of the tile's data type.
+        return TM(addr + (row_offset << 16) + col_offset/(4/(uint32_t)sizeof(T))); // in units of the tile's data type.
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
@@ -72,7 +72,7 @@ struct tmem {
         }
         else {
             if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
-                return addr + (16 * chunk);
+                return addr + (16 * chunk / (4/(uint32_t)sizeof(T)));
             }
             else {
                 static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
@@ -84,14 +84,16 @@ struct tmem {
 
 template<int nblocks> constexpr int num_tmem_cols = ((512/nblocks) / 32) * 32;
 template<int nblocks=1> __device__ auto allocate_tmem() {
-    constexpr int cols = num_tmem_cols<nblocks>;
-    static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
     __shared__ uint32_t addr;
-    asm volatile(
-        "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-    ::  "l"((uint64_t)&addr), "n"(cols)
-    );
-    __syncwarp();
+    constexpr int cols = num_tmem_cols<nblocks>;
+    if(warpid() == 0) {
+        static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
+        asm volatile(
+            "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
+        ::  "l"((uint64_t)&addr), "n"(cols)
+        );
+    }
+    __syncthreads();
     return tmem<float, 128, cols>(addr);
 };
 
