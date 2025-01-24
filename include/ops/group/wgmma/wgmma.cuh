@@ -161,7 +161,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -216,8 +216,8 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -278,7 +278,7 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -344,8 +344,8 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -411,8 +411,8 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -474,8 +474,8 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -571,8 +571,8 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -664,10 +664,10 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -761,8 +761,8 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -865,10 +865,10 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -967,10 +967,10 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -1065,10 +1065,10 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::wgmma::descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
