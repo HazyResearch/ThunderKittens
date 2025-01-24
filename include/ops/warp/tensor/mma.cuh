@@ -105,11 +105,11 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     constexpr int M = trans_a ? A::cols : A::rows;
     static_assert(M == D::rows && (M == 64 || M == 128)); // output register is correctly sized
 
-    constexpr int N = trans_b ? B::rows : B::cols;
+    constexpr int N = trans_b ? B::cols : B::rows;
     static_assert(N == D::cols); // output register is correctly sized
 
     constexpr int K = trans_a ? A::rows : A::cols;
-    static_assert((trans_b ? B::cols : B::rows) == K); // K dimension must match
+    static_assert((trans_b ? B::rows : B::cols) == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -158,11 +158,11 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     constexpr int M = trans_a ? A::cols : A::rows;
     static_assert(M == D::rows && (M == 64 || M == 128)); // output register is correctly sized
 
-    constexpr int N = trans_b ? B::rows : B::cols;
+    constexpr int N = trans_b ? B::cols : B::rows;
     static_assert(N == D::cols); // output register is correctly sized
 
     constexpr int K = trans_a ? A::rows : A::cols;
-    static_assert((trans_b ? B::cols : B::rows) == K); // K dimension must match
+    static_assert((trans_b ? B::rows : B::cols) == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
