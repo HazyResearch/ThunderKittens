@@ -131,4 +131,12 @@ __device__ inline static void store(TM &dst, const RT &src) {
     }
 }
 
+__device__ inline static void tm_load_wait() {
+   asm volatile("tcgen05.wait::ld.sync.aligned;");
+}
+
+__device__ inline static void tm_store_wait() {
+   asm volatile("tcgen05.wait::st.sync.aligned;"); 
+}
+
 }
