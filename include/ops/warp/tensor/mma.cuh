@@ -14,7 +14,7 @@ namespace detail {
 
 // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#instruction-descriptor
 template<typename D, typename AB, int M, int N, bool trans_a, bool trans_b, bool neg=false>
-struct instruction_descriptor {
+__device__ static inline uint32_t instruction_descriptor() {
     uint32_t desc = 0;
     if constexpr (sizeof(AB) == 2) { // kind::f16
         static_assert(std::is_same_v<D, float> || std::is_same_v<AB, half>);
@@ -72,7 +72,7 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
         ".reg .pred p;\n" \
         "setp.eq.u32 p, 1, %4;\n" \
         "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;\n"
-    ::  "r"(d_tmem_addr), "r"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+    ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
     );
 }
 
@@ -102,21 +102,21 @@ template<int trans_a, int trans_b, ducks::tmem::all D, ducks::tmem::all A, ducks
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
 
     // Do everything here.
-    constexpr int M = trans_a ? A::width : A::height;
-    static_assert(M == D::height && (M == 4 || M == 8)); // output register is correctly sized
+    constexpr int M = trans_a ? A::cols : A::rows;
+    static_assert(M == D::rows && (M == 4 || M == 8)); // output register is correctly sized
 
-    constexpr int N = trans_b ? B::height : B::width;
-    static_assert(N == D::width); // output register is correctly sized
+    constexpr int N = trans_b ? B::rows : B::cols;
+    static_assert(N == D::cols); // output register is correctly sized
 
-    constexpr int K = trans_a ? A::height : A::width;
-    static_assert((trans_b ? B::width : B::height) == K); // K dimension must match
+    constexpr int K = trans_a ? A::rows : A::cols;
+    static_assert((trans_b ? B::cols : B::rows) == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
     using T_AB = A::T; static_assert(std::is_same_v<T_AB, typename B::T>);
     using T_D  = D::T;
 
-    constexpr int red_dim = reduction_dimension<typename A::T>;
+    constexpr int red_dim = reduction_dimension<T_AB>;
     static_assert(K%red_dim == 0, "K dimension must be divisible by red_dim.");
 
     static_assert(
@@ -155,21 +155,21 @@ template<int trans_a, int trans_b, ducks::tmem::all D, ducks::st_descriptor::inp
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
 
     // Do everything here.
-    constexpr int M = trans_a ? A::width : A::height;
-    static_assert(M == D::height && (M == 4 || M == 8)); // output register is correctly sized
+    constexpr int M = trans_a ? A::cols : A::rows;
+    static_assert(M == D::rows && (M == 64 || M == 128)); // output register is correctly sized
 
-    constexpr int N = trans_b ? B::height : B::width;
-    static_assert(N == D::width); // output register is correctly sized
+    constexpr int N = trans_b ? B::rows : B::cols;
+    static_assert(N == D::cols); // output register is correctly sized
 
-    constexpr int K = trans_a ? A::height : A::width;
-    static_assert((trans_b ? B::width : B::height) == K); // K dimension must match
+    constexpr int K = trans_a ? A::rows : A::cols;
+    static_assert((trans_b ? B::cols : B::rows) == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
     using T_AB = A::T; static_assert(std::is_same_v<T_AB, typename B::T>);
     using T_D  = D::T;
 
-    constexpr int red_dim = reduction_dimension<typename A::T>;
+    constexpr int red_dim = reduction_dimension<T_AB>;
     static_assert(K%red_dim == 0, "K dimension must be divisible by red_dim.");
 
     static_assert(
@@ -184,7 +184,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
 
     if(laneid() == 0) {
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-
+        
         detail::template st_st<acc>(
             d.addr,
             a_desc.chunk_descriptor(0),

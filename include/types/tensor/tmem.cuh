@@ -67,7 +67,7 @@ struct tmem {
                 return addr + ((16 * chunk) << 16);
             }
             else {
-                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.")
+                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
             }
         }
         else {
@@ -75,7 +75,7 @@ struct tmem {
                 return addr + (16 * chunk);
             }
             else {
-                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.")
+                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
             }
         }
     } 
@@ -83,15 +83,16 @@ struct tmem {
 };
 
 template<int nblocks> constexpr int num_tmem_cols = ((512/nblocks) / 32) * 32;
-template<int nblocks=1> __device__ tmem<float, 128, num_tmem_cols<nblocks>> allocate_tmem() {
+template<int nblocks=1> __device__ auto allocate_tmem() {
+    constexpr int cols = num_tmem_cols<nblocks>;
     static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
     __shared__ uint32_t addr;
     asm volatile(
         "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-    ::  "l"((uint64_t)&addr), "n"(cols);
+    ::  "l"((uint64_t)&addr), "n"(cols)
     );
     __syncwarp();
-    return tmem<128, cols>(addr);
+    return tmem<float, 128, cols>(addr);
 };
 
 } // namespace kittens

@@ -8,6 +8,7 @@
 #include "register/register.cuh"
 #include "shared/shared.cuh"
 #include "global/global.cuh"
+#include "tensor/tensor.cuh"
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
