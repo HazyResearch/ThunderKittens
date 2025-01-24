@@ -7,7 +7,8 @@
 
 #include "sv.cuh"
 #include "st.cuh"
-#include "st_descriptor.cuh"
 
 #include "csv.cuh"
 #include "cst.cuh"
+
+#include "st_descriptor.cuh"

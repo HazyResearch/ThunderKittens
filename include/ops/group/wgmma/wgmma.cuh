@@ -140,7 +140,7 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -161,7 +161,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -187,14 +187,14 @@ __device__ static inline void mma_AB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
     mma_AB<D, A, B, 1, 0>(d, a, b);
 }
 
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -216,8 +216,8 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -239,7 +239,7 @@ __device__ static inline void mma_AB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
@@ -261,7 +261,7 @@ __device__ static inline void mm_AB(D &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -278,7 +278,7 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -304,7 +304,7 @@ __device__ static inline void mma_ABt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::rt::row_layout A, ducks::st_descriptor::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -326,7 +326,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -344,8 +344,8 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc(a);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -367,7 +367,7 @@ __device__ static inline void mma_ABt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -389,7 +389,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b) {
@@ -411,8 +411,8 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc(b);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -434,7 +434,7 @@ __device__ static inline void mma_AtB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
@@ -452,7 +452,7 @@ __device__ static inline void mm_AtB(D &d,
  * @tparam B The source shared tile type.
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  */
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B, int fence=1, int accumulate=1>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b) {
@@ -474,8 +474,8 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc(a);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc(b);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -497,7 +497,7 @@ __device__ static inline void mma_AtBt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::rt::row_layout D, ducks::wgmma::input A, ducks::wgmma::input B>
+template<ducks::rt::row_layout D, ducks::st_descriptor::input A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtBt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -550,7 +550,7 @@ Note: mma is an alias for mma_AB and dot is an alias for mma_ABt
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -571,8 +571,8 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -635,14 +635,14 @@ __device__ static inline void mma_AB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
     mma_AB<D, A, B, 1, 0>(d, a, b);
 }
 
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b) {
@@ -664,10 +664,10 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -722,7 +722,7 @@ __device__ static inline void mma_AB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_AB(D &d,
                               const A &a,
                               const B &b) {
@@ -744,7 +744,7 @@ __device__ static inline void mm_AB(D &d,
  * @param a[in] The source register tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -761,8 +761,8 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -825,7 +825,7 @@ __device__ static inline void mma_ABt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::crt::row_layout A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -847,7 +847,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b) {
@@ -865,10 +865,10 @@ __device__ static inline void mma_ABt(D &d,
     using T_AB = A::T;
     using T_D  = D::T;
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_real(a.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 0> a_desc_imag(a.imag);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -923,7 +923,7 @@ __device__ static inline void mma_ABt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_ABt(D &d,
                                const A &a,
                                const B &b) {
@@ -945,7 +945,7 @@ __device__ static inline void mm_ABt(D &d,
  * @param a[in] The source shared tile to be multiplied.
  * @param b[in] The source shared tile to be multiplied.
  */
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b) {
@@ -967,10 +967,10 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 1> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -1025,7 +1025,7 @@ __device__ static inline void mma_AtB(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_AtB(D &d,
                                const A &a,
                                const B &b) {
@@ -1043,7 +1043,7 @@ __device__ static inline void mm_AtB(D &d,
  * @tparam B The source shared tile type.
  * @tparam accumulate Whether to accumulate the result into `d` or overwrite `d`.
  */
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B, int fence=1, int accumulate=1>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B, int fence=1, int accumulate=1>
 __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b) {
@@ -1065,10 +1065,10 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
     using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_real(a.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<A>, 1> a_desc_imag(a.imag);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_real(b.real);
-    kittens::st_descriptor<ducks::wgmma::detail::get_st<B>, 0> b_desc_imag(b.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_real(a.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_imag(a.imag);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
     if constexpr (fence) { mma_fence(d); }
 
@@ -1123,7 +1123,7 @@ __device__ static inline void mma_AtBt(D &d,
     }
     mma_commit_group(); // commit the group of these WGMMA calls.
 }
-template<ducks::crt::row_layout D, ducks::wgmma::complex_input A, ducks::wgmma::complex_input B>
+template<ducks::crt::row_layout D, ducks::st_descriptor::complex_input A, ducks::st_descriptor::complex_input B>
 __device__ static inline void mm_AtBt(D &d,
                                 const A &a,
                                 const B &b) {

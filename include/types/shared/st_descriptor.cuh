@@ -9,6 +9,7 @@
 
 #include "../../common/common.cuh"
 #include "st.cuh"
+#include "cst.cuh"
 
 namespace kittens {
 namespace ducks {
@@ -97,6 +98,20 @@ struct st_descriptor {
         }
     }
 };
+
+namespace ducks {
+namespace st_descriptor {
+// input refers to either an ST directly or to a pre-generated descriptor, which can save cycles in certain situations.
+template<typename T> concept input = ducks::st::all<T> || (requires {typename T::identifier;} && std::is_same_v<typename T::identifier, ducks::st_descriptor::identifier>);
+template<typename T> concept complex_input = ducks::cst::all<T>;
+namespace detail {
+template<typename T> struct st_getter { using type = typename T::ST; };
+template<ducks::st::all T> struct st_getter<T> { using type = T; };
+template<ducks::cst::all T> struct st_getter<T> { using type = T::component; };
+template<typename T> using get_st = typename st_getter<T>::type;
+} // namespace detail
+} // namespace st_descriptor
+} // namespace ducks
 
 } // namespace kittens
 
