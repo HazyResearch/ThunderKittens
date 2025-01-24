@@ -1,10 +1,10 @@
 #include "kittens.cuh"
 
-constexpr int ATTN_B = 16;
-constexpr int ATTN_H = 16;
-constexpr int ATTN_N = 1024*8; 
-constexpr int ATTN_D = 128;
-constexpr int ITER   = 10;
+// constexpr int ATTN_B = 16;
+// constexpr int ATTN_H = 16;
+// constexpr int ATTN_N = 1024*8; 
+// constexpr int ATTN_D = 128;
+// constexpr int ITER   = 10;
 
 using namespace kittens;
 
