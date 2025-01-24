@@ -9,6 +9,8 @@
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
 
+#include "tensor_to_register.cuh"
+
 #include "complex/complex_shared_to_register.cuh"
 #include "complex/complex_global_to_register.cuh"
 #include "complex/complex_global_to_shared.cuh"
