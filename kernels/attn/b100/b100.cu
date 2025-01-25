@@ -2,7 +2,7 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-constexpr int CONSUMER_WARPGROUPS = (4); 
+constexpr int CONSUMER_WARPGROUPS = (2); 
 constexpr int PRODUCER_WARPGROUPS = (1); 
 constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS); 
 constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS); 
@@ -30,12 +30,6 @@ __device__ static inline void rescale_add_row(T &dst, const T &src, const V &row
 }
 
 template<int D> struct fwd_attend_ker_tile_dims {};
-// template<> struct fwd_attend_ker_tile_dims<64> {
-//     constexpr static int tile_width = (64);
-//     constexpr static int qo_height  = (4*16);
-//     constexpr static int kv_height  = (8*16);
-//     constexpr static int stages     = (4); 
-// };
 template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int qo_height  = (128);
@@ -70,7 +64,6 @@ template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
-    // Allocate smem
     using consumer = group<8>;
     extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -90,7 +83,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     l_col_vec (&l_smem)[NUM_CONSUMERS] = al.allocate<l_col_vec, NUM_CONSUMERS>();
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
 
-    // Allocate tmem
     auto all_tmem = allocate_tmem();
 
     using att_tm_fl = tmem<float, K::qo_height, K::kv_height>;
@@ -100,7 +92,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     att_tm_fl att_tm    = all_tmem.subtile<att_tm_fl>(0, consumerid*K::kv_height);
     o_tm_fl   o_tm      = all_tmem.subtile<o_tm_fl>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
     att_tm_bf att_bf_tm = reinterpret_cast<att_tm_bf&>(att_tm);
-    // att_tm_bf att_bf_tm = all_tmem.subtile<att_tm_bf>(0, (NUM_CONSUMERS*(K::kv_height+K::tile_width)) + consumerid*K::kv_height/2);
     
     int kv_blocks   = g.N / (K::kv_height);
     int kv_head_idx = blockIdx.y / g.hr;
@@ -142,7 +133,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     if(warpgroupid == NUM_WARPGROUPS-1) {
         warpgroup::decrease_registers<24>();      
         
-        int kv_iters = kv_blocks-2;
+        int kv_iters; 
+        if constexpr (is_causal) {
+            kv_iters = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (NUM_CONSUMERS * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)); 
+            kv_iters = ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) == 0) ? (0) : ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) - 1);
+        }
+        else { kv_iters = kv_blocks-2; }
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
@@ -168,7 +164,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         neg_infty(max_vec);
         zero(norm_vec);
 
-        int kv_iters = kv_blocks - 1;
+        int kv_iters; 
+        if constexpr (is_causal) {
+            kv_iters = (seq_idx * 8) - 1 + (NUM_CONSUMERS * 8);
+            kv_iters = (kv_iters/8);
+        }
+        else { kv_iters = kv_blocks - 1; }
 
         wait(qsmem_semaphore, 0);
 
@@ -186,13 +187,29 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::load_async(att_block, att_tm); 
             tm_load_wait();
 
+            if constexpr (is_causal) {
+                const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + 8 * (warpid/8) + ((warpid%8)/4+(warpid%4)*2);
+                      int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
+
+                #pragma unroll
+                for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
+                    #pragma unroll
+                    for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
+                        auto k_idx = k_blk + j;
+                        auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
+
+                        if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+                        else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                        __syncwarp();
+                    }
+                }
+            }
+
             row_max(max_vec, att_block, max_vec);
             
-            // mul(att_block,    att_block, 1.44269504089f*0.08838834764f); 
             mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
 
             rescale_add_row(att_block, att_block, max_vec_scaled);
-            // sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
             add(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled, max_vec_last_scaled);
