@@ -11,6 +11,24 @@ constexpr int NUM_CONSUMERS       = CONSUMER_WARPGROUPS/2;
 using namespace kittens;
 namespace cg = cooperative_groups;
 
+struct rescale_add {
+    template<typename T> static __device__ inline T op(const T &a, const T &b) {
+        if constexpr (std::is_same_v<T, float2>) {
+            constexpr float2 scale = {1.44269504089f*0.08838834764f, 1.44269504089f*0.08838834764f};
+            float2 c;
+            asm volatile("fma.rn.f32x2 %0, %1, %2, %3;" : "=l"(*(uint64_t*)&c) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&scale), "l"(*(uint64_t*)&b));
+            return c;
+        }
+        else {
+            static_assert(sizeof(T) == 999, "Currently unsupported type");
+        }
+    }
+};
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline void rescale_add_row(T &dst, const T &src, const V &row_values) {
+    row_map<rescale_add, T, V>(dst, src, row_values);
+}
+
 template<int D> struct fwd_attend_ker_tile_dims {};
 // template<> struct fwd_attend_ker_tile_dims<64> {
 //     constexpr static int tile_width = (64);
@@ -161,8 +179,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], mma_semaphore[consumerid]);
             
             copy(max_vec_last_scaled, max_vec);
-            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
-            else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
+            mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f);
             
             wait(mma_semaphore[consumerid], 0);
             
@@ -171,20 +188,15 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             row_max(max_vec, att_block, max_vec);
             
-            if constexpr (D == 64) { 
-                mul(att_block,    att_block, 1.44269504089f*0.125f); 
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
-            }
-            else                   { 
-                mul(att_block,    att_block, 1.44269504089f*0.08838834764f); 
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
-            }
+            // mul(att_block,    att_block, 1.44269504089f*0.08838834764f); 
+            mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
 
-            sub_row(att_block, att_block, max_vec_scaled);
+            rescale_add_row(att_block, att_block, max_vec_scaled);
+            // sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
-            sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-            exp2(max_vec_last_scaled,       max_vec_last_scaled);
-            mul(norm_vec,            norm_vec,     max_vec_last_scaled);
+            add(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
+            exp2(max_vec_last_scaled, max_vec_last_scaled);
+            mul(norm_vec, norm_vec, max_vec_last_scaled);
             row_sum(norm_vec,  att_block, norm_vec);
             copy(att_block_mma, att_block); 
             consumer::store_async(att_bf_tm, att_block_mma);

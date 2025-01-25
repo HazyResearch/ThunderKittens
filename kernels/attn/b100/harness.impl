@@ -2,7 +2,7 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
+constexpr int ATTN_B     = 64;
 constexpr int QO_HEADS   = 4;
 constexpr int KV_HEADS   = 4;
 
@@ -211,17 +211,22 @@ int main(int argc, char **argv) {
     static_assert(ATTN_N % (128 * NUM_CONSUMERS) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {    
+    for(int i = 0; i < 0; i++) {    
         fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
-    const auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
+    auto finish = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
+        start = std::chrono::high_resolution_clock::now();
         fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
+        cudaDeviceSynchronize();
+        finish = std::chrono::high_resolution_clock::now();
+        double time = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count();
+        double perf = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd") / time;
+        std::cout << "Iteration " << i << " , time=" << time << " us, perf=" << perf << " TFLOPs" << std::endl;
     }
-    cudaDeviceSynchronize();
-    const auto finish = std::chrono::high_resolution_clock::now();
     CudaCheckError();
     std::cout << "Finished kernel\n";
 
