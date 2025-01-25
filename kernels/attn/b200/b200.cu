@@ -187,23 +187,22 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::load_async(att_block, att_tm); 
             tm_load_wait();
 
-            if constexpr (is_causal) {
-                const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + 8 * (warpid/8) + ((warpid%8)/4+(warpid%4)*2);
-                      int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
+            // if constexpr (is_causal) {
+            //     const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + 8 * (warpid/8) + ((warpid%8)/4+(warpid%4)*2);
+            //           int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
 
-                #pragma unroll
-                for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
-                    #pragma unroll
-                    for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
-                        auto k_idx = k_blk + j;
-                        auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
+            //     #pragma unroll
+            //     for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
+            //         #pragma unroll
+            //         for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
+            //             auto k_idx = k_blk + j;
+            //             auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
 
-                        if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
-                        else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
-                        __syncwarp();
-                    }
-                }
-            }
+            //             if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+            //             else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+            //         }
+            //     }
+            // }
 
             row_max(max_vec, att_block, max_vec);
             
