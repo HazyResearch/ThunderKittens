@@ -358,11 +358,20 @@ template<ducks::sv::all SV> struct size_info<SV> {
     static constexpr uint32_t bytes    = SV::length * sizeof(typename SV::dtype);
 };
 }
-template<typename... Args>                       inline constexpr uint32_t size_bytes             = 0; // base case
-template<typename T, typename... Args>           inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
+template<typename... Args>             inline constexpr uint32_t size_bytes             = 0; // base case
+template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
 
 } // namespace kittens
 
 #ifdef KITTENS_HOPPER
 #include "tma.cuh"
+#endif
+
+#ifdef KITTENS_BLACKWELL
+__device__ static inline void tm_before_thread_sync() {
+    asm volatile("tcgen05.fence::before_thread_sync;\n");
+}
+__device__ static inline void tm_after_thread_sync() {
+    asm volatile("tcgen05.fence::after_thread_sync;\n");
+}
 #endif
