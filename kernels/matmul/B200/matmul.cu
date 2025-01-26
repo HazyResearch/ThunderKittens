@@ -11,16 +11,13 @@ constexpr int NUM_PRODUCERS = (1);
 using namespace kittens;
 namespace cg = cooperative_groups;
 
-// static constexpr int Mb = 128;
-// static constexpr int Nb = 256;
-// static constexpr int Kb = 64;
 static constexpr int Mb = 128;
 static constexpr int Nb = 256;
 static constexpr int Kb = 64;
 
 struct matmul_globals {
     using a_tile = st_bf<Mb, Kb>;
-    using b_tile = st_bf<Nb, Kb>;
+    using b_tile = st_bf<Nb/2, Kb>;
     using d_tile = st_bf<Mb, Nb>;
 
     using a_gl = gl<bf16, 1, 1, -1, -1, a_tile>;
@@ -35,24 +32,26 @@ struct matmul_globals {
 constexpr int NUM_WORKERS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
 constexpr int NUM_THREADS = NUM_WORKERS * kittens::WARP_THREADS;
 
-__global__  __launch_bounds__(NUM_THREADS, 1)
+__global__ __cluster_dims__(2) __launch_bounds__(NUM_THREADS, 1)
 void matmul(const __grid_constant__ matmul_globals g) {
 
     extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
     int warpid = kittens::warpid(), warpgroupid = warpgroup::groupid();
 
-    constexpr int PIPE_DEPTH = 3;
+    constexpr int PIPE_DEPTH = 4;
 
     using a_tile = st_bf<Mb, Kb>;
-    using b_tile = st_bf<Nb, Kb>;
+    using b_tile = st_bf<Nb/2, Kb>;
     using d_tile = st_bf<Mb, Nb>;
     
     a_tile (&a_smem)[PIPE_DEPTH][NUM_CONSUMERS] = al.allocate<a_tile, PIPE_DEPTH, NUM_CONSUMERS>();
     b_tile (&b_smem)[PIPE_DEPTH] = al.allocate<b_tile, PIPE_DEPTH>();
     d_tile (*d_smem) = reinterpret_cast<d_tile*>(&a_smem[0][0]);
 
-    auto all_tmem = allocate_tmem();
+    tma::cluster::sync();
+    int ctarank = cluster_ctarank();
+    auto all_tmem = allocate_tmem<1, 2>();
     using d_tmem_t = tmem<float, Mb, Nb>;
 
     d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
@@ -60,45 +59,47 @@ void matmul(const __grid_constant__ matmul_globals g) {
     __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH];
     if (threadIdx.x == 0) { 
         for(int i = 0; i < PIPE_DEPTH; i++) {
-            init_semaphore(inputs_arrived[i], 0, 1); 
+            init_semaphore(inputs_arrived[i], 0, 2); 
             init_semaphore(inputs_finished[i], 0, NUM_CONSUMERS); 
         }
     }
 
-    int row_idx = warpgroupid == NUM_CONSUMERS ? blockIdx.x*2 : blockIdx.x*2 + warpgroupid;
-    int col_idx = blockIdx.y;
+    int3 cluster_idx = clusterIdx();
+    int row_idx = (warpgroupid == NUM_CONSUMERS) ? cluster_idx.x*4 + ctarank*2 : cluster_idx.x*4 + ctarank*2 + warpgroupid; // units of 128
+    int col_idx = cluster_idx.y; // units of 256
 
-    __syncthreads(); 
+    tma::cluster::sync();
     
     if(warpgroupid == NUM_CONSUMERS) {
         warpgroup::decrease_registers<32>();  
 
         if(warpid == NUM_WORKERS-4) {
             for (auto idx = 0; idx < g.a.cols / Kb; idx++) {
-                tma::expect(inputs_arrived[idx%PIPE_DEPTH], a_smem[0][0], a_smem[0][1], b_smem[0]);
-                tma::load_async(a_smem[idx%PIPE_DEPTH][0], g.a, {row_idx,      idx}, inputs_arrived[idx%PIPE_DEPTH]);
-                tma::load_async(a_smem[idx%PIPE_DEPTH][1], g.a, {(row_idx+1),  idx}, inputs_arrived[idx%PIPE_DEPTH]);
-                tma::load_async(b_smem[idx%PIPE_DEPTH],    g.b, {col_idx,      idx}, inputs_arrived[idx%PIPE_DEPTH]);
+                tma::cluster::expect(inputs_arrived[idx%PIPE_DEPTH], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
+                tma::cluster::load_async(a_smem[idx%PIPE_DEPTH][0], g.a, {row_idx,           idx}, inputs_arrived[idx%PIPE_DEPTH], (uint16_t)(1<<ctarank), 0);
+                tma::cluster::load_async(a_smem[idx%PIPE_DEPTH][1], g.a, {(row_idx+1),       idx}, inputs_arrived[idx%PIPE_DEPTH], (uint16_t)(1<<ctarank), 0);
+                tma::cluster::load_async(b_smem[idx%PIPE_DEPTH],    g.b, {2*col_idx+ctarank, idx}, inputs_arrived[idx%PIPE_DEPTH], (uint16_t)(1<<ctarank), 0);
                 if(idx >= PIPE_DEPTH-1) {
-                    wait(inputs_finished[(idx-PIPE_DEPTH+1)%PIPE_DEPTH], ((idx-PIPE_DEPTH+1)/PIPE_DEPTH)%2);
+                    tma::cluster::wait(inputs_finished[(idx-PIPE_DEPTH+1)%PIPE_DEPTH], ((idx-PIPE_DEPTH+1)/PIPE_DEPTH)%2);
                 }
             }
         }
+        tma::cluster::sync();
     }
     else {
         warpgroup::increase_registers<224>();
-        if(warpgroup::warpid() == 0) {
-            wait(inputs_arrived[0], 0);
-            mm_ABt(d_tmem, a_smem[0][warpgroupid], b_smem[0], inputs_finished[0]);
+        if(ctarank == 0 && warpgroup::warpid() == 0) {
+            tma::cluster::wait(inputs_arrived[0], 0);
+            mm2_ABt(d_tmem, a_smem[0][warpgroupid], b_smem[0], inputs_finished[0]);
             int idx = 1;
             while(idx < g.a.cols / Kb) {
-                wait(inputs_arrived[idx%PIPE_DEPTH], (idx/PIPE_DEPTH)%2);
-                mma_ABt(d_tmem, a_smem[idx%PIPE_DEPTH][warpgroupid], b_smem[idx%PIPE_DEPTH], inputs_finished[idx%PIPE_DEPTH]);
+                tma::cluster::wait(inputs_arrived[idx%PIPE_DEPTH], (idx/PIPE_DEPTH)%2);
+                mma2_ABt(d_tmem, a_smem[idx%PIPE_DEPTH][warpgroupid], b_smem[idx%PIPE_DEPTH], inputs_finished[idx%PIPE_DEPTH]);
                 idx++;
             }
-            wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
+            tma::cluster::wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
         }
-        warpgroup::sync(warpgroupid);
+        tma::cluster::sync();
         rt_fl<Mb/4, Nb> d_reg;
         warpgroup::load_async(d_reg, d_tmem);
         tm_load_wait();
