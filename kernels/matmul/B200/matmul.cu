@@ -11,6 +11,9 @@ constexpr int NUM_PRODUCERS = (1);
 using namespace kittens;
 namespace cg = cooperative_groups;
 
+// static constexpr int Mb = 128;
+// static constexpr int Nb = 256;
+// static constexpr int Kb = 64;
 static constexpr int Mb = 128;
 static constexpr int Nb = 256;
 static constexpr int Kb = 64;
@@ -54,15 +57,11 @@ void matmul(const __grid_constant__ matmul_globals g) {
 
     d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
 
-    __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], mma_done[NUM_CONSUMERS][2];
+    __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH];
     if (threadIdx.x == 0) { 
         for(int i = 0; i < PIPE_DEPTH; i++) {
             init_semaphore(inputs_arrived[i], 0, 1); 
             init_semaphore(inputs_finished[i], 0, NUM_CONSUMERS); 
-        }
-        for(int i = 0; i < NUM_CONSUMERS; i++) {
-            init_semaphore(mma_done[i][0], 0, 1); 
-            init_semaphore(mma_done[i][1], 0, 1); 
         }
     }
 
@@ -88,32 +87,23 @@ void matmul(const __grid_constant__ matmul_globals g) {
     }
     else {
         warpgroup::increase_registers<224>();
-
-        wait(inputs_arrived[0], 0);
-        if(warpgroup::warpid() == 0){
-            mm_ABt(d_tmem, a_smem[0][warpgroupid], b_smem[0], mma_done[warpgroupid][0]);
-        }
-
-        int idx;
-        for (idx = 1; idx < g.a.cols / Kb; idx++) {
-            wait(inputs_arrived[idx%PIPE_DEPTH], (idx/PIPE_DEPTH)%2);
-            if(warpgroup::warpid() == 0) {
-                mma_ABt(d_tmem, a_smem[idx%PIPE_DEPTH][warpgroupid], b_smem[idx%PIPE_DEPTH], mma_done[warpgroupid][idx%2]);
+        if(warpgroup::warpid() == 0) {
+            wait(inputs_arrived[0], 0);
+            mm_ABt(d_tmem, a_smem[0][warpgroupid], b_smem[0], inputs_finished[0]);
+            int idx = 1;
+            while(idx < g.a.cols / Kb) {
+                wait(inputs_arrived[idx%PIPE_DEPTH], (idx/PIPE_DEPTH)%2);
+                mma_ABt(d_tmem, a_smem[idx%PIPE_DEPTH][warpgroupid], b_smem[idx%PIPE_DEPTH], inputs_finished[idx%PIPE_DEPTH]);
+                idx++;
             }
-            wait(mma_done[warpgroupid][((idx-1)%2)], ((idx-1)/2)%2);
-            warpgroup::sync(warpgroupid);
-            if(warpgroup::laneid() == 0) arrive(inputs_finished[(idx-1)%PIPE_DEPTH], 1);
+            wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
         }
-        wait(mma_done[warpgroupid][((idx-1)%2)], ((idx-1)/2)%2);
         warpgroup::sync(warpgroupid);
-        if(warpgroup::laneid() == 0) arrive(inputs_finished[(idx-1)%PIPE_DEPTH], 1);
-
         rt_fl<Mb/4, Nb> d_reg;
         warpgroup::load_async(d_reg, d_tmem);
         tm_load_wait();
         warpgroup::store(d_smem[warpgroupid], d_reg); 
         warpgroup::sync(warpgroupid);
-
         if (warpgroup::warpid() == 0) {
             tma::store_async(g.d, d_smem[warpgroupid], {row_idx, col_idx});
         }
@@ -214,7 +204,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     dim3 grid(M / (2*Mb), N / Nb, 1);
     dim3 block(NUM_THREADS);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
+    for(int i = 0; i < (NCU ? 0 : 1); i++) { // warmup
         inner_run(d_A, d_B, d_C, M, N, K, grid, block);
     }
 
@@ -223,7 +213,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     auto start = std::chrono::high_resolution_clock::now();
 
-    constexpr int ITERS = (NCU ? 1 : 10);
+    constexpr int ITERS = (NCU ? 1 : 5);
     for(int i = 0; i < ITERS; i++) {
         inner_run(d_A, d_B, d_C, M, N, K, grid, block);
     }
@@ -300,36 +290,15 @@ int main() {
     // run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     int N;
+    // N = 1024;
+    // run_benchmark(N, N, N);
+    // N = 2048;
+    // run_benchmark(N, N, N);
+    // N = 4096;
+    // run_benchmark(N, N, N);
     N = 8192;
     run_benchmark(N, N, N);
-    // N = 3072;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
-    // N = 4096;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // N = 6144;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
-    // N = 8192;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // N = 12288;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,8>>(N, N, N);
     // N = 16384;
-    // run_benchmark<matmul_template<2,4,8>>(N, N, N);
-    // run_benchmark<matmul_template<2,4,12>>(N, N, N);
-    // run_benchmark<matmul_template<3,3,12>>(192*12, 192*11, 8192);
-    // run_benchmark<matmul_template<2,4,11>>(128*22, 256* 6, 8192);
-    // run_benchmark<matmul_template<2,4,1>>(128 * 132, 256, 256);
-    // run_benchmark<matmul_template<2,4,1>>(128 * 133, 256, 256);
-    // run_benchmark<matmul_template<2,4,1>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,8>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,12>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<2,4,128>>(16384, 16384, 16384);
-    // run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 8192);
-    // run_benchmark<matmul_template<3,3,12>>(192*22, 192*6*2, 16384);
-    // run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192);
-    // run_benchmark<matmul_template<3,3,12>>(192*12*2, 192*11*2, 8192*2);
-    // run_benchmark<matmul_template<2,4,11>>(128*22*2, 256* 6*2, 8192*2);
+    // run_benchmark(N, N, N);
     return 0;
 }
