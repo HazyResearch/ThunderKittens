@@ -17,6 +17,7 @@ template<typename D, typename AB, int M, int N, bool trans_a, bool trans_b, bool
 __device__ static inline uint32_t instruction_descriptor() {
     uint32_t desc = 0;
     if constexpr (sizeof(AB) == 2) { // kind::f16
+        // either accumulate to float, or the input is half and the output is half
         static_assert(std::is_same_v<D, float> || std::is_same_v<AB, half>);
         desc |= 0b00      << 0;  // sparsity bits unneeded
         desc |= 0b0       << 2;  // dense
@@ -80,7 +81,7 @@ __device__ static inline uint32_t instruction_descriptor() {
         desc |= 0b0      << 29; // reserved
         desc |= 0b00     << 30; // no shift for B-matrix reuse
     } else if constexpr (sizeof(AB) == 1) { // kind::f8f6f4
-        static_assert(std::is_same_v<D, float> || std::is_same_v<AB, half>);
+        static_assert(std::is_same_v<D, float> || std::is_same_v<D, half>); // FP8/6/4 has to accumulate to float or half
         desc |= 0b00      << 0;  // sparsity bits unneeded
         desc |= 0b0       << 2;  // dense
         desc |= 0b0       << 3;  // no saturate on fp types

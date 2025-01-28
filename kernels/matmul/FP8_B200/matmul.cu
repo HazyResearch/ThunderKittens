@@ -18,11 +18,11 @@ static constexpr int Kb = 64;
 struct matmul_globals {
     using a_tile = st_fl8_e4m3<Mb, Kb>;
     using b_tile = st_fl8_e4m3<Nb/2, Kb>;
-    using d_tile = st_bf<Mb, Nb>;
+    using d_tile = st_hf<Mb, Nb>;
 
     using a_gl = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
     using b_gl = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;
-    using d_gl = gl<bf16, 1, 1, -1, -1, d_tile>;
+    using d_gl = gl<half, 1, 1, -1, -1, d_tile>;
 
     a_gl a;
     b_gl b;
@@ -43,7 +43,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
 
     using a_tile = st_fl8_e4m3<Mb, Kb>;
     using b_tile = st_fl8_e4m3<Nb/2, Kb>;
-    using d_tile = st_bf<Mb, Nb>;
+    using d_tile = st_hf<Mb, Nb>;
     
     a_tile (&a_smem)[PIPE_DEPTH][NUM_CONSUMERS] = al.allocate<a_tile, PIPE_DEPTH, NUM_CONSUMERS>();
     b_tile (&b_smem)[PIPE_DEPTH] = al.allocate<b_tile, PIPE_DEPTH>();
@@ -52,7 +52,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     tma::cluster::sync();
     int ctarank = cluster_ctarank();
     auto all_tmem = allocate_tmem<1, 2>();
-    using d_tmem_t = tmem<float, Mb, Nb>;
+    using d_tmem_t = tmem<half, Mb, Nb>;
 
     d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
 
@@ -100,7 +100,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             tma::cluster::wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
         }
         tma::cluster::sync();
-        rt_fl<Mb/4, Nb> d_reg;
+        rt_hf<Mb/4, Nb> d_reg;
         warpgroup::load_async(d_reg, d_tmem);
         tm_load_wait();
         warpgroup::store(d_smem[warpgroupid], d_reg); 
@@ -133,7 +133,7 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     }
 }
 
-void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
+void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, half *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using globals  = matmul_globals;
     typename globals::a_gl Ag{d_A, nullptr, nullptr, M, K};
     typename globals::b_gl Bg{d_B, nullptr, nullptr, N, K};
@@ -168,11 +168,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Allocate device memory
-    __nv_fp8_e4m3 *d_A, *d_B;
-    __nv_bfloat16 *d_C;
+    fp8e4m3 *d_A, *d_B;
+    half *d_C;
     cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
     cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
-    cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_C, M*N*sizeof(half));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -185,10 +185,10 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Allocated device memory" << std::endl;
 
     // Convert to __nv_bfloat16 and copy to device
-    __nv_fp8_e4m3 *h_A_fp8 = new __nv_fp8_e4m3[M * K];
-    __nv_fp8_e4m3 *h_B_fp8 = new __nv_fp8_e4m3[K * N];
-    for (int i = 0; i < M * K; ++i) h_A_fp8[i] = __nv_fp8_e4m3(h_A[i]);
-    for (int i = 0; i < K * N; ++i) h_B_fp8[i] = __nv_fp8_e4m3(h_B[i]);
+    fp8e4m3 *h_A_fp8 = new __nv_fp8_e4m3[M * K];
+    fp8e4m3 *h_B_fp8 = new __nv_fp8_e4m3[K * N];
+    for (int i = 0; i < M * K; ++i) h_A_fp8[i] = fp8e4m3(h_A[i]);
+    for (int i = 0; i < K * N; ++i) h_B_fp8[i] = fp8e4m3(h_B[i]);
     for (int i = 0; i < M * K; ++i) h_A[i] = float(h_A_fp8[i]);
     for (int i = 0; i < K * N; ++i) h_B[i] = float(h_B_fp8[i]);
 
@@ -247,13 +247,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
 
     // Copy result back to host
-    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+    half *h_C_bf16 = new half[M * N];
     cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
-    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
+    for (int i = 0; i < M * N; ++i) h_C[i] = __half2float(h_C_bf16[i]);
 
     std::cout << "Converted result back to float" << std::endl;
 
