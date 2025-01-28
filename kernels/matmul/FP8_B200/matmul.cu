@@ -247,15 +247,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
 
     // Copy result back to host
-    __nv_fp8_e4m3 *h_C_fp8 = new __nv_fp8_e4m3[M * N];
-    cudaMemcpy(h_C_fp8, d_C, M*N*sizeof(fp8e4m3), cudaMemcpyDeviceToHost);
+    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
-    for (int i = 0; i < M * N; ++i) {
-        h_C[i] = float(h_C_fp8[i]);
-    }
+    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
 
     std::cout << "Converted result back to float" << std::endl;
 
@@ -286,7 +284,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_C_ref;
     delete[] h_A_fp8;
     delete[] h_B_fp8;
-    delete[] h_C_bf16;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
