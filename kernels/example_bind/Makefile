@@ -1,5 +1,5 @@
 # Compiler
-NVCC=nvcc
+NVCC?=nvcc
 GPU=4090
 
 TARGET=example_bind
