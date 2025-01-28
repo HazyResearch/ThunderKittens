@@ -229,7 +229,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::sync(consumerid);
 
             consumer::store_async(att_bf_tm, att_block_mma);
-            tm_store_wait();
+            // tm_store_wait();
 
             consumer::load_async(o_reg, o_tm);
             tm_load_wait();
@@ -242,7 +242,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         tm_store_wait();
         tma::cluster::wait(v_smem_arrived[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
         if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_iters)%K::stages], v_done_use[(kv_iters)%K::stages]);
-        consumer::sync(consumerid);
+        // consumer::sync(consumerid);
 
         tma::cluster::wait(v_done_use[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
         consumer::sync(consumerid);
