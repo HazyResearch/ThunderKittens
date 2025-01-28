@@ -31,10 +31,30 @@ __device__ static inline uint32_t instruction_descriptor() {
         if constexpr (std::is_same_v<AB, half>) {
             desc |= 0b000 << 7;  // 16-bit A input type as FP16
             desc |= 0b000 << 10; // 16-bit B input type as FP16
-        } else {
+        } else if constexpr (std::is_same_v<AB, bf16>) {
             desc |= 0b001 << 7;  // 16-bit A input type as BF16
             desc |= 0b001 << 10; // 16-bit B input type as BF16
+        } else if constexpr (std::is_same_v<AB, fp8e4m3>) {
+            desc |= 0b000 << 7;  // 8-bit A input type as FP8 e4m3
+            desc |= 0b000 << 10; // 8-bit B input type as FP8 e4m3
+        } else if constexpr (std::is_same_v<AB, fp8e5m2>) {
+            desc |= 0b001 << 7;  // 8-bit A input type as FP8 e5m2
+            desc |= 0b001 << 10; // 8-bit B input type as FP8 e5m2
         }
+        /* fp6 and fp4
+        else if constexpr (std::is_same_v<AB, fp6e2m3>) {
+            desc |= 0b011 << 7;  // 6-bit A input type as FP6 e2m3
+            desc |= 0b011 << 10; // 6-bit B input type as FP6 e2m3
+        }
+        else if constexpr (std::is_same_v<AB, fp4e2m3>) {
+            desc |= 0b100 << 7;  // 6-bit A input type as FP6 e3m2
+            desc |= 0b100 << 10; // 6-bit B input type as FP6 e3m2
+        }
+        else if constexpr (std::is_same_v<AB, fp4e3m1>) {
+            desc |= 0b101 << 7;  // 4-bit A input type as FP4 e3m1
+            desc |= 0b101 << 10; // 4-bit B input type as FP4 e3m1
+        }
+        */
         if constexpr (neg) {
             desc |= 0b1   << 13; // Do negate A matrix
         }
@@ -66,43 +86,83 @@ __device__ static inline uint32_t instruction_descriptor() {
     return desc;
 };
 
-template<int acc, int ncta=1>
+template<typename T_AB, int acc, int ncta=1>
 __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr, uint64_t b_desc, uint32_t idesc) {
-    if constexpr (ncta == 1) {
-        asm volatile(
-            "{.reg .pred p;\n" \
-            "setp.eq.u32 p, 1, %4;\n" \
-            "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;}\n"
-        ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
-        );
-    }
-    else {
-        asm volatile(
-            "{.reg .pred p;\n" \
-            "setp.eq.u32 p, 1, %4;\n" \
-            "tcgen05.mma.cta_group::2.kind::f16 [%0], [%1], %2, %3, p;}\n"
-        ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
-        );
+    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
+        // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
+        if constexpr (ncta == 1) {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::1.kind::f8f6f4 [%0], [%1], %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+        else {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::2.kind::f8f6f4 [%0], [%1], %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+    } else {
+        if constexpr (ncta == 1) {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+        else {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::2.kind::f16 [%0], [%1], %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
     }
 }
 
-template<int acc, int ncta=1>
+template<typename T_AB, int acc, int ncta=1>
 __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint64_t b_desc, uint32_t idesc) {
-    if constexpr (ncta == 1) {
-        asm volatile(
-            "{.reg .pred p;\n" \
-            "setp.eq.u32 p, 1, %4;\n" \
-            "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, p;}\n"
-        ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
-        );
-    }
-    else {
-        asm volatile(
-            "{.reg .pred p;\n" \
-            "setp.eq.u32 p, 1, %4;\n" \
-            "tcgen05.mma.cta_group::2.kind::f16 [%0], %1, %2, %3, p;}\n"
-        ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
-        );
+    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
+        // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
+        if constexpr (ncta == 1) {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::1.kind::f8f6f4 [%0], %1, %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+        else {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::2.kind::f8f6f4 [%0], %1, %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+    } else {
+        if constexpr (ncta == 1) {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
+        else {
+            asm volatile(
+                "{.reg .pred p;\n" \
+                "setp.eq.u32 p, 1, %4;\n" \
+                "tcgen05.mma.cta_group::2.kind::f16 [%0], %1, %2, %3, p;}\n"
+            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            );
+        }
     }
 }
 
@@ -149,8 +209,12 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
 
     static_assert(
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, half>) || 
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e4m3>) ||
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e5m2>) ||
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, bf16>) || 
-        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>),
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e4m3>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
         "Currently unsupported type combination for matrix multiply."
     );
     uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
@@ -159,7 +223,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     if(laneid() == 0) {
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-        detail::template tmem_st<acc, ncta>(
+        detail::template tmem_st<T_AB, acc, ncta>(
             d.addr,
             a.template chunk_addr<trans_a>(0),
             b_desc.chunk_descriptor(0),
@@ -167,7 +231,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         );
         #pragma unroll
         for(int i = 1; i < K/red_dim; i++) {
-            detail::template tmem_st<1, ncta>(
+            detail::template tmem_st<T_AB, 1, ncta>(
                 d.addr,
                 a.template chunk_addr<trans_a>(i),
                 b_desc.chunk_descriptor(i),
@@ -202,8 +266,12 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
 
     static_assert(
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, half>) || 
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e4m3>) || 
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e5m2>) || 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, bf16>) || 
-        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>),
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e4m3>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
         "Currently unsupported type combination for matrix multiply."
     );
     uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
@@ -213,7 +281,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     if(laneid() == 0) {
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
         
-        detail::template st_st<acc, ncta>(
+        detail::template st_st<T_AB, acc, ncta>(
             d.addr,
             a_desc.chunk_descriptor(0),
             b_desc.chunk_descriptor(0),
@@ -221,7 +289,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         );
         #pragma unroll
         for(int i = 1; i < K/red_dim; i++) {
-            detail::template st_st<1, ncta>(
+            detail::template st_st<T_AB, 1, ncta>(
                 d.addr,
                 a_desc.chunk_descriptor(i),
                 b_desc.chunk_descriptor(i),
