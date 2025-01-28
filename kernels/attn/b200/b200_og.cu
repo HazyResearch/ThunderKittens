@@ -2,13 +2,13 @@
 #include <cooperative_groups.h>
 #include <iostream>
 
-constexpr bool causal = false; 
-
 constexpr int CONSUMER_WARPGROUPS = (4); 
 constexpr int PRODUCER_WARPGROUPS = (1); 
 constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS); 
 constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS); 
-constexpr int NUM_CONSUMERS       = (CONSUMER_WARPGROUPS/2);
+constexpr int NUM_CONSUMERS       = CONSUMER_WARPGROUPS/2;
+
+constexpr bool causal = false;
 
 using namespace kittens;
 namespace cg = cooperative_groups;
@@ -32,6 +32,12 @@ __device__ static inline void rescale_add_row(T &dst, const T &src, const V &row
 }
 
 template<int D> struct fwd_attend_ker_tile_dims {};
+// template<> struct fwd_attend_ker_tile_dims<64> {
+//     constexpr static int tile_width = (64);
+//     constexpr static int qo_height  = (4*16);
+//     constexpr static int kv_height  = (8*16);
+//     constexpr static int stages     = (4); 
+// };
 template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int qo_height  = (128);
@@ -66,6 +72,7 @@ template<int D, bool is_causal>
 __global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 1)
 void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
+    // Allocate smem
     using consumer = group<8>;
     extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -85,6 +92,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     l_col_vec (&l_smem)[NUM_CONSUMERS] = al.allocate<l_col_vec, NUM_CONSUMERS>();
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
 
+    // Allocate tmem
     auto all_tmem = allocate_tmem();
 
     using att_tm_fl = tmem<float, K::qo_height, K::kv_height>;
@@ -94,21 +102,23 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     att_tm_fl att_tm    = all_tmem.subtile<att_tm_fl>(0, consumerid*K::kv_height);
     o_tm_fl   o_tm      = all_tmem.subtile<o_tm_fl>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
     att_tm_bf att_bf_tm = reinterpret_cast<att_tm_bf&>(att_tm);
+    // att_tm_bf att_bf_tm = all_tmem.subtile<att_tm_bf>(0, (NUM_CONSUMERS*(K::kv_height+K::tile_width)) + consumerid*K::kv_height/2);
     
     int kv_blocks   = g.N / (K::kv_height);
     int kv_head_idx = blockIdx.y / g.hr;
     int seq_idx     = blockIdx.x * (NUM_CONSUMERS); 
 
-    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages]; 
-    __shared__ kittens::semaphore v_done_use[K::stages], k_done_use[K::stages];
-
+    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
+    __shared__ kittens::semaphore mma_semaphore[NUM_CONSUMERS];
     if (threadIdx.x == 0) { 
         init_semaphore(qsmem_semaphore, 0, 1); 
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1); 
-            init_semaphore(v_smem_arrived[j], 0, 1);
-            init_semaphore(k_done_use[j], NUM_CONSUMERS, 0);
-            init_semaphore(v_done_use[j], NUM_CONSUMERS, 0); 
+            init_semaphore(v_smem_arrived[j], 0, 1); 
+            init_semaphore(compute_done[j], NUM_CONSUMERS, 0); 
+        }
+        for(int j = 0; j < NUM_CONSUMERS; j++) {
+            init_semaphore(mma_semaphore[j], 0, 1);
         }
 
         tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
@@ -139,18 +149,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
                 coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
-                tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
-                kittens::wait(v_done_use[(kv_idx+K::stages)%K::stages], ((kv_idx)/K::stages)%2);
-            }
-        }
-
-        if (warpid == NUM_WORKERS-3) {
-            for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
-                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
                 tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-                kittens::wait(k_done_use[(kv_idx+K::stages)%K::stages], ((kv_idx)/K::stages)%2);
+                tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
+                tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
+                
+                kittens::wait(compute_done[(kv_idx+K::stages)%K::stages], ((kv_idx)/K::stages)%2);
             }
         }
     }
@@ -170,81 +174,58 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         kittens::wait(qsmem_semaphore, 0);
 
-        kittens::wait(k_smem_arrived[(0)%K::stages], ((0)/K::stages)%2);
-        if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(0)%K::stages], k_done_use[(0)%K::stages]);
-        copy(max_vec_last_scaled, max_vec);
-        mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f);
-        kittens::wait(k_done_use[(0)%K::stages], (0/K::stages)%2);
-        consumer::load_async(att_block, att_tm); 
-        tm_load_wait();
+        for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
 
-        row_max(max_vec, att_block, max_vec);
-        mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
-        rescale_add_row(att_block, att_block, max_vec_scaled);
-        exp2(att_block, att_block);
-        add(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-        exp2(max_vec_last_scaled, max_vec_last_scaled);
-        mul(norm_vec, norm_vec, max_vec_last_scaled);
-        row_sum(norm_vec,  att_block, norm_vec);
-        copy(att_block_mma, att_block); 
-        consumer::store_async(att_bf_tm, att_block_mma);
-        // tm_store_wait();
-
-        zero(o_reg);
-        mul_row(o_reg, o_reg, max_vec_last_scaled);
-        consumer::store_async(o_tm, o_reg);
-        // tm_store_wait();
-        consumer::sync(consumerid);
-
-        for (int kv_idx = 1; kv_idx <= kv_iters; kv_idx++) {
-
-            tm_store_wait();
-            kittens::wait(v_smem_arrived[(kv_idx-1)%K::stages], ((kv_idx-1)/K::stages)%2);
-            if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_idx-1)%K::stages], v_done_use[(kv_idx-1)%K::stages]);
-
-            kittens::wait(k_smem_arrived[(kv_idx)%K::stages], ((kv_idx)/K::stages)%2);
-            if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], k_done_use[(kv_idx)%K::stages]);
-
+            kittens::wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
+            
+            if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], mma_semaphore[consumerid]);
+            
             copy(max_vec_last_scaled, max_vec);
             mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f);
-            kittens::wait(k_done_use[(kv_idx)%K::stages], ((kv_idx)/K::stages)%2);
+            
+            kittens::wait(mma_semaphore[consumerid], 0);
+            
             consumer::load_async(att_block, att_tm); 
             tm_load_wait();
 
             row_max(max_vec, att_block, max_vec);
+            
+            // mul(att_block,    att_block, 1.44269504089f*0.08838834764f); 
             mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
+
             rescale_add_row(att_block, att_block, max_vec_scaled);
+            // sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
             add(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled, max_vec_last_scaled);
             mul(norm_vec, norm_vec, max_vec_last_scaled);
             row_sum(norm_vec,  att_block, norm_vec);
             copy(att_block_mma, att_block); 
-
-            kittens::wait(v_done_use[(kv_idx-1)%K::stages], ((kv_idx-1)/K::stages)%2);
-            consumer::sync(consumerid);
-
             consumer::store_async(att_bf_tm, att_block_mma);
-            // tm_store_wait();
 
-            consumer::load_async(o_reg, o_tm);
-            tm_load_wait();
+            kittens::wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
+            tm_store_wait();
+
+            if(kv_idx == 0) { zero(o_reg); }
+            else {
+                consumer::load_async(o_reg, o_tm);
+                tm_load_wait();
+            }
             mul_row(o_reg, o_reg, max_vec_last_scaled);
             consumer::store_async(o_tm, o_reg);
-            // tm_store_wait();
+            tm_store_wait();
             consumer::sync(consumerid);
+           
+            if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_idx)%K::stages], mma_semaphore[consumerid]);
+        
+            kittens::wait(mma_semaphore[consumerid], 1); 
+            consumer::sync(consumerid);
+
+            if(consumer::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
 
-        tm_store_wait();
-        kittens::wait(v_smem_arrived[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
-        if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_iters)%K::stages], v_done_use[(kv_iters)%K::stages]);
-        // consumer::sync(consumerid);
-
-        kittens::wait(v_done_use[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
-        consumer::sync(consumerid);
-
         consumer::load_async(o_reg, o_tm);
-        tm_load_wait(); 
+        tm_load_wait();
         div_row(o_reg, o_reg, norm_vec);
         consumer::store(o_smem[consumerid], o_reg); 
         consumer::sync(consumerid);
