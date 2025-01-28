@@ -7,7 +7,7 @@ GPU_TARGET=H100
 COMP_LEVEL=fast
 
 # Compiler
-NVCC=nvcc
+NVCC?=nvcc
 NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
 
 # At what level to run tests?

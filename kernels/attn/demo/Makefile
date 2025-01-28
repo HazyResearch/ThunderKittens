@@ -1,5 +1,5 @@
 # Compiler
-NVCC=nvcc
+NVCC?=nvcc
 GPU=H100
 
 

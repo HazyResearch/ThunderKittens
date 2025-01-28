@@ -2,7 +2,7 @@
 GPU_TARGET=H100
 
 # Compiler
-NVCC=nvcc
+NVCC?=nvcc
 
 # Conditional setup based on the target GPU
 ifeq ($(GPU_TARGET),4090)
