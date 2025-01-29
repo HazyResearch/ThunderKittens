@@ -233,7 +233,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
-    if(N<=8192) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
 
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
@@ -269,9 +269,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Launch kernel
     dim3 grid(148, 1);
-    // dim3 grid(74*4, 1);
-    // dim3 grid(M / (2*Mb) * N / Nb / 2, 1);
-    // dim3 grid(M / (2*Mb) * N / Nb, 1);
     dim3 block(NUM_THREADS);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 1); i++) { // warmup
