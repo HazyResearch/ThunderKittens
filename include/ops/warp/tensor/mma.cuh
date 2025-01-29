@@ -41,6 +41,9 @@ __device__ static inline uint32_t instruction_descriptor() {
         } else if constexpr (std::is_same_v<AB, fp8e5m2>) {
             desc |= 0b001 << 7;  // 8-bit A input type as FP8 e5m2
             desc |= 0b001 << 10; // 8-bit B input type as FP8 e5m2
+        } else if constexpr (std::is_same_v<AB, fp4e2m1>) {
+            desc |= 0b101 << 7;  // 4-bit A input type as FP4 e2m1
+            desc |= 0b101 << 10; // 4-bit B input type as FP4 e2m1
         }
         /* fp6 and fp4
         else if constexpr (std::is_same_v<AB, fp6e2m3>) {
@@ -98,6 +101,9 @@ __device__ static inline uint32_t instruction_descriptor() {
         } else if constexpr (std::is_same_v<AB, fp8e5m2>) {
             desc |= 0b001 << 7;  // 8-bit A input type as FP8 e5m2
             desc |= 0b001 << 10; // 8-bit B input type as FP8 e5m2
+        } else if constexpr (std::is_same_v<AB, fp4e2m1>) {
+            desc |= 0b101 << 7;  // 4-bit A input type as FP4 e2m1
+            desc |= 0b101 << 10; // 4-bit B input type as FP4 e2m1
         }
         /* fp6 and fp4
         else if constexpr (std::is_same_v<AB, fp6e2m3>) {
@@ -146,7 +152,7 @@ __device__ static inline uint32_t instruction_descriptor() {
 
 template<typename T_AB, int acc, int ncta=1>
 __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr, uint64_t b_desc, uint32_t idesc) {
-    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
+    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2> || std::is_same_v<T_AB, fp4e2m1>) {
         // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
         if constexpr (ncta == 1) {
             asm volatile(
@@ -186,7 +192,7 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
 
 template<typename T_AB, int acc, int ncta=1>
 __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint64_t b_desc, uint32_t idesc) {
-    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
+    if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2> || std::is_same_v<T_AB, fp4e2m1>) {
         // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
         if constexpr (ncta == 1) {
             asm volatile(
@@ -269,10 +275,12 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, half>) || 
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e4m3>) ||
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e5m2>) ||
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp4e2m1>) ||
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, bf16>) || 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>) ||
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e4m3>) ||
-        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp4e2m1>),
         "Currently unsupported type combination for matrix multiply."
     );
     uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
@@ -326,10 +334,12 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, half>) || 
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e4m3>) || 
         (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp8e5m2>) || 
+        (std::is_same_v<T_D, half> && !std::is_same_v<T_AB, fp4e2m1>) ||
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, bf16>) || 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, half>) ||
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e4m3>) ||
-        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>) ||
+        (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp4e2m1>),
         "Currently unsupported type combination for matrix multiply."
     );
     uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
