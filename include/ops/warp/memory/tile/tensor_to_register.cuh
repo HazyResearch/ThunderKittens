@@ -30,29 +30,41 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
     using U  = typename TM::dtype;
     using U2 = base_types::packing<typename TM::dtype>::packed_type;
 
-    if constexpr (sizeof(typename TM::dtype) == 2) {
+    if constexpr (sizeof(typename TM::dtype) == 1) {
         #pragma unroll
         for(int i = 0; i < dst.height; i++) {
             #pragma unroll
             for(int j = 0; j < dst.width; j++) {
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                     asm volatile(
-                        "tcgen05.ld.sync.aligned.16x128b.x2.b32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
-                        : "=r"(dst.tiles[i][j].data[0].x), "=r"(dst.tiles[i][j].data[0].y),
-                          "=r"(dst.tiles[i][j].data[1].x), "=r"(dst.tiles[i][j].data[1].y),
-                          "=r"(dst.tiles[i][j].data[2].x), "=r"(dst.tiles[i][j].data[2].y),
-                          "=r"(dst.tiles[i][j].data[3].x), "=r"(dst.tiles[i][j].data[3].y)
+                        "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3}, [%4];\n"
+                        : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[3])
                         : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
                     );
                 } else {
+                    static_assert(std::is_same_v<typename RT::layout, ducks::rt_layout::row>, "register layout must be row");
+                }
+            }
+        }
+    } else if constexpr (sizeof(typename TM::dtype) == 2) {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {
                     asm volatile(
-                        "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
-                        : "=r"(dst.tiles[i][j].data[0].x), "=r"(dst.tiles[i][j].data[0].y),
-                          "=r"(dst.tiles[i][j].data[1].x), "=r"(dst.tiles[i][j].data[1].y),
-                          "=r"(dst.tiles[i][j].data[2].x), "=r"(dst.tiles[i][j].data[2].y),
-                          "=r"(dst.tiles[i][j].data[3].x), "=r"(dst.tiles[i][j].data[3].y)
-                        : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
+                        "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3}, [%4];\n"
+                        : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
+                          "=r"(*(uint32_t*) &dst.tiles[i][j].data[3])
+                        : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col))
                     );
+                } else {
+                    static_assert(std::is_same_v<typename RT::layout, ducks::rt_layout::row>, "register layout must be row");
                 }
             }
         }

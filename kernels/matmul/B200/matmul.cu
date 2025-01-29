@@ -15,7 +15,6 @@ struct matmul_globals {
     using a_tile = st_bf<Mb, Kb>;
     using b_tile = st_bf<Nb/2, Kb>;
     using d_tile = st_bf<Mb, 64>;
-    // using d_tile = st_bf<Mb, Nb>;
 
     using a_gl = gl<bf16, 1, 1, -1, -1, a_tile>;
     using b_gl = gl<bf16, 1, 1, -1, -1, b_tile>;
@@ -142,6 +141,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 }
             }
         }
+        tma::cluster::sync();
     }
     else {
         warpgroup::increase_registers<224>();

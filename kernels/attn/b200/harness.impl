@@ -9,12 +9,10 @@ constexpr int KV_HEADS   = 16;
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 768; 
+constexpr int ATTN_N     = 3072; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
-constexpr int ITER       = 1;
-
-constexpr bool causal    = true; 
+constexpr int ITER       = 10;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -216,6 +214,7 @@ int main(int argc, char **argv) {
     }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
+    float total_time = 0;
     auto start = std::chrono::high_resolution_clock::now();
     auto finish = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
@@ -226,6 +225,7 @@ int main(int argc, char **argv) {
         double time = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count();
         double perf = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd") / time;
         std::cout << "Iteration " << i << " , time=" << time << " us, perf=" << perf << " TFLOPs" << std::endl;
+        total_time += time;
     }
     CudaCheckError();
     std::cout << "Finished kernel\n";
@@ -272,13 +272,13 @@ int main(int argc, char **argv) {
         good = true;
     }
 
-    std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    std::cout << "Average fwd execution time: " << total_time / ITER << " us" << std::endl;
     if(good) std::cout << "FWD Correct :)\n";
     else std::cout << "FWD Incorrect :(\n";
 
     // calculate efficiency
     long long f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd");
-    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    double e = efficiency(f, total_time / ITER);
     std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
     
     cudaFree(d_q);

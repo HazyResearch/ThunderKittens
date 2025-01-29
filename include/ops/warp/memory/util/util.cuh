@@ -368,10 +368,12 @@ template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, A
 #endif
 
 #ifdef KITTENS_BLACKWELL
+namespace kittens {
 __device__ static inline void tm_before_thread_sync() {
     asm volatile("tcgen05.fence::before_thread_sync;\n");
 }
 __device__ static inline void tm_after_thread_sync() {
     asm volatile("tcgen05.fence::after_thread_sync;\n");
+}
 }
 #endif
