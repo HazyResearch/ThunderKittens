@@ -268,8 +268,14 @@ namespace cluster {
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
+#ifdef KITTENS_BLACKWELL
 template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1)
+#else
+template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask)
+#endif
+{
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
@@ -277,6 +283,24 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
+#ifdef KITTENS_BLACKWELL
+        if(dst_mbar_cta != -1) {
+            uint32_t neighbor_mbar_ptr;
+            asm volatile (
+                "mapa.shared::cluster.u32  %0, %1, %2;\n"
+                : "=r"(neighbor_mbar_ptr)
+                : "r"(mbar_ptr), "r"(dst_mbar_cta)
+            );
+            asm volatile (
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(neighbor_mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
+                : "memory"
+            );
+        } else
+#endif
         asm volatile (
             "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
             " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
@@ -287,10 +311,17 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         );
     }
 }
+#ifdef KITTENS_BLACKWELL
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+    load_async<2>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
+}
+#else
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
     load_async<2>(dst, src, idx, bar, cluster_mask);
 }
+#endif
 
 } // namespace cluster
 } // namespace tma

@@ -1,27 +1,21 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
-
-#include "kittens.cuh"
-#include <cooperative_groups.h>
 #include <iostream>
 
 constexpr int NUM_CONSUMERS = (2); 
 constexpr int NUM_PRODUCERS = (1);
 
 using namespace kittens;
-namespace cg = cooperative_groups;
 
-// static constexpr int Mb = 128;
-// static constexpr int Nb = 256;
-// static constexpr int Kb = 64;
 static constexpr int Mb = 128;
 static constexpr int Nb = 256;
 static constexpr int Kb = 64;
 
 struct matmul_globals {
     using a_tile = st_bf<Mb, Kb>;
-    using b_tile = st_bf<Nb, Kb>;
-    using d_tile = st_bf<Mb, Nb>;
+    using b_tile = st_bf<Nb/2, Kb>;
+    using d_tile = st_bf<Mb, 64>;
+    // using d_tile = st_bf<Mb, Nb>;
 
     using a_gl = gl<bf16, 1, 1, -1, -1, a_tile>;
     using b_gl = gl<bf16, 1, 1, -1, -1, b_tile>;
@@ -35,84 +29,158 @@ struct matmul_globals {
 constexpr int NUM_WORKERS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
 constexpr int NUM_THREADS = NUM_WORKERS * kittens::WARP_THREADS;
 
-__global__  __launch_bounds__(NUM_THREADS, 1)
+__device__ static inline int get_iters_per_task(const matmul_globals &g) {
+    return g.a.cols / Kb;
+}
+template<int SUPER_M=8> __device__ static inline int2 get_task_idx(const matmul_globals &g, int task_iter, bool is_consumer) {
+    constexpr int CLUSTER_M = 4*Mb, CLUSTER_N = Nb;
+    int cluster_x = clusterIdx().x, ctarank = cluster_ctarank();
+    int task_id = task_iter * (gridDim.x/2) + cluster_x;
+    int Rblocks = g.d.rows / CLUSTER_M, Cblocks = g.d.cols / CLUSTER_N;
+    int super_rows = (Rblocks/SUPER_M)*SUPER_M,
+        final_rows = Rblocks - super_rows,
+        super_repeat = SUPER_M*Cblocks;
+    if (task_id < super_rows * Cblocks) {
+        return { 
+            (SUPER_M*(task_id/super_repeat) + task_id%SUPER_M)*4 + ctarank*2 + is_consumer*(warpgroup::groupid()),
+            is_consumer ? (task_id%super_repeat)/SUPER_M : 2*((task_id%super_repeat)/SUPER_M) + ctarank
+        };
+    }
+    else if (task_id < Rblocks*Cblocks) {
+        int remainder_id = task_id - super_rows*Cblocks;
+        return {
+            (super_rows + remainder_id%final_rows)*4 + ctarank*2 + is_consumer*(warpgroup::groupid()),
+            is_consumer ? remainder_id/final_rows : 2*(remainder_id/final_rows) + ctarank
+        };
+    }
+    else {
+        return { -1, -1 };
+    }
+}
+
+__global__ __cluster_dims__(2) __launch_bounds__(NUM_THREADS, 1)
 void matmul(const __grid_constant__ matmul_globals g) {
 
     extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
     int warpid = kittens::warpid(), warpgroupid = warpgroup::groupid();
+    int iters_per_task = get_iters_per_task(g);
 
-    constexpr int PIPE_DEPTH = 3;
+    constexpr int PIPE_DEPTH = 4;
 
-    using a_tile = st_bf<Mb, Kb>;
-    using b_tile = st_bf<Nb, Kb>;
-    using d_tile = st_bf<Mb, Nb>;
+    using a_tile = matmul_globals::a_tile;
+    using b_tile = matmul_globals::b_tile;
+    using d_tile = matmul_globals::d_tile;
     
     a_tile (&a_smem)[PIPE_DEPTH][NUM_CONSUMERS] = al.allocate<a_tile, PIPE_DEPTH, NUM_CONSUMERS>();
-    b_tile (&b_smem)[PIPE_DEPTH] = al.allocate<b_tile, PIPE_DEPTH>();
-    d_tile (*d_smem) = reinterpret_cast<d_tile*>(&a_smem[0][0]);
+    b_tile (&b_smem)[PIPE_DEPTH]                = al.allocate<b_tile, PIPE_DEPTH>();
+    d_tile (&d_smem)                            = al.allocate<d_tile>();
 
-    auto all_tmem = allocate_tmem();
+    tma::cluster::sync();
+    auto all_tmem = allocate_tmem<1, 2>();
     using d_tmem_t = tmem<float, Mb, Nb>;
 
-    d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
+    __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], outputs_arrived, outputs_finished[NUM_CONSUMERS];
+    uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
 
-    __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH];
     if (threadIdx.x == 0) { 
         for(int i = 0; i < PIPE_DEPTH; i++) {
-            init_semaphore(inputs_arrived[i], 0, 1); 
+            init_semaphore(inputs_arrived[i], 0, 2); 
             init_semaphore(inputs_finished[i], 0, NUM_CONSUMERS); 
+        }
+        init_semaphore(outputs_arrived, 0, 1);
+        for(int i = 0; i < NUM_CONSUMERS; i++) {
+            init_semaphore(outputs_finished[i], 0, 1);
         }
     }
 
-    int row_idx = warpgroupid == NUM_CONSUMERS ? blockIdx.x*2 : blockIdx.x*2 + warpgroupid;
-    int col_idx = blockIdx.y;
-
-    __syncthreads(); 
+    tma::cluster::sync();
     
     if(warpgroupid == NUM_CONSUMERS) {
-        warpgroup::decrease_registers<32>();  
-
-        if(warpid == NUM_WORKERS-4) {
-            for (auto idx = 0; idx < g.a.cols / Kb; idx++) {
-                tma::expect(inputs_arrived[idx%PIPE_DEPTH], a_smem[0][0], a_smem[0][1], b_smem[0]);
-                tma::load_async(a_smem[idx%PIPE_DEPTH][0], g.a, {row_idx,      idx}, inputs_arrived[idx%PIPE_DEPTH]);
-                tma::load_async(a_smem[idx%PIPE_DEPTH][1], g.a, {(row_idx+1),  idx}, inputs_arrived[idx%PIPE_DEPTH]);
-                tma::load_async(b_smem[idx%PIPE_DEPTH],    g.b, {col_idx,      idx}, inputs_arrived[idx%PIPE_DEPTH]);
-                if(idx >= PIPE_DEPTH-1) {
-                    wait(inputs_finished[(idx-PIPE_DEPTH+1)%PIPE_DEPTH], ((idx-PIPE_DEPTH+1)/PIPE_DEPTH)%2);
+        warpgroup::decrease_registers<56>();
+        int ctarank = cluster_ctarank(); 
+        if(warpgroup::warpid() == 3) {
+            int input_ring = 0; // tracking which input block is being loaded
+            for(int task_iter = 0; true; task_iter++) {
+                int2 rowcol = get_task_idx(g, task_iter, false);
+                if(rowcol.x == -1) {
+                    for(int idx = 0; idx < (PIPE_DEPTH); idx++) {
+                        tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
+                        input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                    }
+                    if(laneid() == 0) arrive(outputs_arrived);
+                    return;
+                }
+                for (int idx = 0; idx < iters_per_task; idx++) {
+                    tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
+                    prototype::update_phasebit<1>(bitfield, input_ring);
+                    if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); 
+                    tma::cluster::expect(inputs_arrived[idx%PIPE_DEPTH], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
+                    tma::cluster::load_async(a_smem[input_ring][0], g.a, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    tma::cluster::load_async(a_smem[input_ring][1], g.a, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    tma::cluster::load_async(b_smem[input_ring],    g.b, { rowcol.y,    idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                }
+            }
+        }
+        else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
+            d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroup::warpid()*Nb);
+            int input_ring = 0; // tracking which input block is being loaded
+            for(int task_iter = 0; true; task_iter++) {
+                int2 rowcol = get_task_idx(g, task_iter, false);
+                if(rowcol.x == -1) return;
+                tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
+                tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
+                prototype::update_phasebit<0>(bitfield, input_ring);
+                mm2_ABt(d_tmem, a_smem[0][warpgroup::warpid()], b_smem[0], inputs_finished[0]);
+                input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                for(int idx = 1; idx < iters_per_task; idx++) {
+                    tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
+                    prototype::update_phasebit<0>(bitfield, input_ring);
+                    mma2_ABt(d_tmem, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                    input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }
         }
     }
     else {
         warpgroup::increase_registers<224>();
-        if(warpgroup::warpid() == 0) {
-            wait(inputs_arrived[0], 0);
-            mm_ABt(d_tmem, a_smem[0][warpgroupid], b_smem[0], inputs_finished[0]);
-            int idx = 1;
-            while(idx < g.a.cols / Kb) {
-                wait(inputs_arrived[idx%PIPE_DEPTH], (idx/PIPE_DEPTH)%2);
-                mma_ABt(d_tmem, a_smem[idx%PIPE_DEPTH][warpgroupid], b_smem[idx%PIPE_DEPTH], inputs_finished[idx%PIPE_DEPTH]);
-                idx++;
+        d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
+        for(int task_iter = 0; true; task_iter++) {
+            int2 rowcol = get_task_idx(g, task_iter, true);
+            if(rowcol.x == -1) return;
+            kittens::wait(outputs_arrived, task_iter%2);
+            rt_bf<Mb/4, d_tile::cols> d_reg[4];
+            if(warpgroupid == 1) group<8>::sync(15);
+            #pragma unroll
+            for(int i = 0; i < Nb/d_tile::cols; i++) {
+                warpgroup::load_async(d_reg[i], d_tmem.subtile<tmem<float, 128, 64>>(0, 64*i));
             }
-            wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
+            tm_load_wait();
+            warpgroup::sync(warpgroupid);
+            if(warpgroup::laneid() == 0) arrive(outputs_finished[warpgroupid]); // Tensor memory for warpgroup 0 is now free.
+            if(warpgroupid == 0) group<8>::sync(15);
+            if(warpgroupid == 1) group<8>::sync(14);
+            warpgroup::store(d_smem, d_reg[0]);
+            warpgroup::sync(warpgroupid);
+            if(warpgroup::warpid() == 0) tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+0});
+            #pragma unroll
+            for(int i = 1; i < Nb/d_tile::cols; i++) {
+                tma::store_async_read_wait();
+                warpgroup::sync(warpgroupid);
+                warpgroup::store(d_smem, d_reg[i]);
+                warpgroup::sync(warpgroupid);
+                if(warpgroup::warpid() == 0) tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+i});
+            }
+            tma::store_async_read_wait();
+            if(warpgroupid == 0) group<8>::sync(14);
+            group<8>::sync(15); // All consumers sync here.
         }
-        warpgroup::sync(warpgroupid);
-        rt_fl<Mb/4, Nb> d_reg;
-        warpgroup::load_async(d_reg, d_tmem);
-        tm_load_wait();
-        warpgroup::store(d_smem[warpgroupid], d_reg); 
-        warpgroup::sync(warpgroupid);
-        if (warpgroup::warpid() == 0) {
-            tma::store_async(g.d, d_smem[warpgroupid], {row_idx, col_idx});
-        }
-        tma::store_async_wait();
     }
 }
 
 
-constexpr bool NCU = false;
+constexpr bool NCU = true;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
@@ -166,7 +234,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+    if(N<=8192) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
 
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
@@ -201,7 +269,10 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaFuncSetAttribute(matmul, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     // Launch kernel
-    dim3 grid(M / (2*Mb), N / Nb, 1);
+    dim3 grid(148, 1);
+    // dim3 grid(74*4, 1);
+    // dim3 grid(M / (2*Mb) * N / Nb / 2, 1);
+    // dim3 grid(M / (2*Mb) * N / Nb, 1);
     dim3 block(NUM_THREADS);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 1); i++) { // warmup
@@ -284,11 +355,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 }
 
 int main() {
-    // int Cblocks = 22, Rblocks = 24;
-    // int Cblocks192 = 20, Rblocks192 = 16;
-    // run_benchmark<matmul_template<4>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
-    // run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
-    // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     int N;
     // N = 1024;
     // run_benchmark(N, N, N);
@@ -298,7 +364,7 @@ int main() {
     // run_benchmark(N, N, N);
     N = 8192;
     run_benchmark(N, N, N);
-    // N = 16384;
-    // run_benchmark(N, N, N);
+    N = 16384;
+    run_benchmark(N, N, N);
     return 0;
 }

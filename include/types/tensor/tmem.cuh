@@ -83,17 +83,31 @@ struct tmem {
 };
 
 template<int nblocks> constexpr int num_tmem_cols = ((512/nblocks) / 32) * 32;
-template<int nblocks=1> __device__ auto allocate_tmem() {
+template<int nblocks=1, int ncta=1> __device__ auto allocate_tmem() {
     __shared__ uint32_t addr;
     constexpr int cols = num_tmem_cols<nblocks>;
-    if(warpid() == 0) {
-        static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
-        asm volatile(
-            "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-        ::  "l"((uint64_t)&addr), "n"(cols)
-        );
+    static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
+    if constexpr (ncta == 1) {
+        if(warpid() == 0) {
+            asm volatile(
+                "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
+            ::  "l"((uint64_t)&addr), "n"(cols)
+            );
+            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;\n");
+        }
     }
+    else {
+        if(warpid() == 0) {
+            asm volatile(
+                "tcgen05.alloc.cta_group::2.sync.aligned.shared::cta.b32  [%0], %1;\n"
+            ::  "l"((uint64_t)&addr), "n"(cols)
+            );
+            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;\n");
+        }
+    }
+    asm volatile("tcgen05.fence::before_thread_sync;\n");
     __syncthreads();
+    asm volatile("tcgen05.fence::after_thread_sync;\n");
     return tmem<float, 128, cols>(addr);
 };
 

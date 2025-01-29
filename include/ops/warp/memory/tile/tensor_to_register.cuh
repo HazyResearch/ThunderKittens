@@ -27,9 +27,8 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
     static_assert(RT::width == TM::width, "register tile and tensor tile must match width");
 
     using T2 = RT::dtype;
-    using T  = base_types::packing<T2>::unpacked_type;
-    using U  = TM::dtype;
-    using U2 = base_types::packing<U>::packed_type;
+    using U  = typename TM::dtype;
+    using U2 = base_types::packing<typename TM::dtype>::packed_type;
 
     if constexpr (sizeof(typename TM::dtype) == 2) {
         #pragma unroll
@@ -63,14 +62,19 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
         for(int i = 0; i < dst.height; i++) {
             #pragma unroll
             for(int j = 0; j < dst.width; j++) {
+                U2 data[4];
                 asm volatile(
                     "tcgen05.ld.sync.aligned.16x256b.x2.b32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
-                    : "=f"(dst.tiles[i][j].data[0].x), "=f"(dst.tiles[i][j].data[0].y),
-                      "=f"(dst.tiles[i][j].data[1].x), "=f"(dst.tiles[i][j].data[1].y),
-                      "=f"(dst.tiles[i][j].data[2].x), "=f"(dst.tiles[i][j].data[2].y),
-                      "=f"(dst.tiles[i][j].data[3].x), "=f"(dst.tiles[i][j].data[3].y)
+                    : "=f"(data[0].x), "=f"(data[0].y),
+                      "=f"(data[1].x), "=f"(data[1].y),
+                      "=f"(data[2].x), "=f"(data[2].y),
+                      "=f"(data[3].x), "=f"(data[3].y)
                     : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
                 );
+                #pragma unroll
+                for(int k = 0; k < 4; k++) {
+                    dst.tiles[i][j].data[k] = base_types::convertor<T2, U2>::convert(data[k]);
+                }
             }
         }
     }
@@ -118,13 +122,18 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
         for(int i = 0; i < src.height; i++) {
             #pragma unroll
             for(int j = 0; j < src.width; j++) {
+                U2 data[4];
+                #pragma unroll
+                for(int k = 0; k < 4; k++) {
+                    data[k] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[k]);
+                }
                 asm volatile(
                     "tcgen05.st.sync.aligned.16x256b.x2.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
                     :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
-                       "f"(src.tiles[i][j].data[0].x), "f"(src.tiles[i][j].data[0].y),
-                       "f"(src.tiles[i][j].data[1].x), "f"(src.tiles[i][j].data[1].y),
-                       "f"(src.tiles[i][j].data[2].x), "f"(src.tiles[i][j].data[2].y),
-                       "f"(src.tiles[i][j].data[3].x), "f"(src.tiles[i][j].data[3].y)
+                       "f"(data[0].x), "f"(data[0].y),
+                       "f"(data[1].x), "f"(data[1].y),
+                       "f"(data[2].x), "f"(data[2].y),
+                       "f"(data[3].x), "f"(data[3].y)
                 );
             }
         }
