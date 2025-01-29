@@ -141,7 +141,6 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 }
             }
         }
-        tma::cluster::sync();
     }
     else {
         warpgroup::increase_registers<224>();
