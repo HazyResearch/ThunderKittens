@@ -1,5 +1,4 @@
 #include "kittens.cuh"
-#include <cooperative_groups.h>
 #include <iostream>
 
 constexpr bool causal = false; 
@@ -8,10 +7,9 @@ constexpr int CONSUMER_WARPGROUPS = (4);
 constexpr int PRODUCER_WARPGROUPS = (1); 
 constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS); 
 constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS); 
-constexpr int NUM_CONSUMERS       = (CONSUMER_WARPGROUPS/2);
+constexpr int NUM_CONSUMERS       = CONSUMER_WARPGROUPS/2;
 
 using namespace kittens;
-namespace cg = cooperative_groups;
 
 struct rescale_add {
     template<typename T> static __device__ inline T op(const T &a, const T &b) {
@@ -101,14 +99,18 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
     __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages]; 
     __shared__ kittens::semaphore v_done_use[K::stages], k_done_use[K::stages];
-
+    __shared__ kittens::semaphore mma_semaphore[NUM_CONSUMERS][2]; 
     if (threadIdx.x == 0) { 
         init_semaphore(qsmem_semaphore, 0, 1); 
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1); 
             init_semaphore(v_smem_arrived[j], 0, 1);
-            init_semaphore(k_done_use[j], NUM_CONSUMERS, 0);
             init_semaphore(v_done_use[j], NUM_CONSUMERS, 0); 
+            init_semaphore(k_done_use[j], NUM_CONSUMERS, 0); 
+        }
+        for(int j = 0; j < NUM_CONSUMERS; j++) {
+            init_semaphore(mma_semaphore[j][0], 0, 1);
+            init_semaphore(mma_semaphore[j][1], 0, 1);
         }
 
         tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
@@ -134,7 +136,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     if(warpgroupid == NUM_WARPGROUPS-1) {
         warpgroup::decrease_registers<24>();      
         
-        int kv_iters = kv_blocks-2;
+        int kv_iters; 
+        if constexpr (is_causal) {
+            kv_iters = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (NUM_CONSUMERS * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)); 
+            kv_iters = ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) == 0) ? (0) : ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) - 1);
+        }
+        else { kv_iters = kv_blocks-2; }
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
@@ -145,7 +152,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             }
         }
 
-        if (warpid == NUM_WORKERS-3) {
+        if(warpid == NUM_WORKERS-3) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
                 coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
@@ -166,17 +173,24 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         neg_infty(max_vec);
         zero(norm_vec);
 
-        int kv_iters = kv_blocks - 1;
+        int kv_iters; 
+        if constexpr (is_causal) {
+            kv_iters = (seq_idx * 8) - 1 + (NUM_CONSUMERS * 8);
+            kv_iters = (kv_iters/8);
+        }
+        else { kv_iters = kv_blocks - 1; }
 
         kittens::wait(qsmem_semaphore, 0);
 
-        kittens::wait(k_smem_arrived[(0)%K::stages], ((0)/K::stages)%2);
-        if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(0)%K::stages], k_done_use[(0)%K::stages]);
+        int kv_idx = 0; 
+
+        kittens::wait(k_smem_arrived[(kv_idx)%K::stages], ((kv_idx)/K::stages)%2);
+        if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], mma_semaphore[consumerid][0]);
         copy(max_vec_last_scaled, max_vec);
         mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f);
-        kittens::wait(k_done_use[(0)%K::stages], (0/K::stages)%2);
+        kittens::wait(mma_semaphore[consumerid][0], 0);
+        if (consumer::laneid() == 0) arrive(k_done_use[(kv_idx)%K::stages], 1);
         consumer::load_async(att_block, att_tm); 
-        tm_load_wait();
 
         row_max(max_vec, att_block, max_vec);
         mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
@@ -188,28 +202,26 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         row_sum(norm_vec,  att_block, norm_vec);
         copy(att_block_mma, att_block); 
         consumer::store_async(att_bf_tm, att_block_mma);
-        // tm_store_wait();
 
         zero(o_reg);
         mul_row(o_reg, o_reg, max_vec_last_scaled);
         consumer::store_async(o_tm, o_reg);
-        // tm_store_wait();
         consumer::sync(consumerid);
 
-        for (int kv_idx = 1; kv_idx <= kv_iters; kv_idx++) {
-
+        for (kv_idx = 1; kv_idx <= kv_iters; kv_idx++) {
             tm_store_wait();
+            
             kittens::wait(v_smem_arrived[(kv_idx-1)%K::stages], ((kv_idx-1)/K::stages)%2);
-            if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_idx-1)%K::stages], v_done_use[(kv_idx-1)%K::stages]);
+            if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_idx-1)%K::stages], mma_semaphore[consumerid][(kv_idx-1)%2]);
 
             kittens::wait(k_smem_arrived[(kv_idx)%K::stages], ((kv_idx)/K::stages)%2);
-            if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], k_done_use[(kv_idx)%K::stages]);
+            if (consumer::warpid() == 0) mm_ABt(att_tm, q_smem[consumerid], k_smem[(kv_idx)%K::stages], mma_semaphore[consumerid][(kv_idx)%2]);
 
             copy(max_vec_last_scaled, max_vec);
             mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f);
-            kittens::wait(k_done_use[(kv_idx)%K::stages], ((kv_idx)/K::stages)%2);
+            kittens::wait(mma_semaphore[consumerid][(kv_idx)%2], 0); 
             consumer::load_async(att_block, att_tm); 
-            tm_load_wait();
+            if (consumer::laneid() == 0) arrive(k_done_use[(kv_idx)%K::stages], 1);
 
             row_max(max_vec, att_block, max_vec);
             mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
@@ -221,30 +233,28 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             row_sum(norm_vec,  att_block, norm_vec);
             copy(att_block_mma, att_block); 
 
-            kittens::wait(v_done_use[(kv_idx-1)%K::stages], ((kv_idx-1)/K::stages)%2);
-            consumer::sync(consumerid);
-
+            kittens::wait(mma_semaphore[consumerid][(kv_idx-1)%2], 1); 
+            
             consumer::store_async(att_bf_tm, att_block_mma);
-            // tm_store_wait();
-
             consumer::load_async(o_reg, o_tm);
-            tm_load_wait();
+
+            if (consumer::laneid() == 0) arrive(v_done_use[(kv_idx-1)%K::stages], 1);
+
             mul_row(o_reg, o_reg, max_vec_last_scaled);
             consumer::store_async(o_tm, o_reg);
-            // tm_store_wait();
             consumer::sync(consumerid);
         }
 
         tm_store_wait();
         kittens::wait(v_smem_arrived[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
-        if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_iters)%K::stages], v_done_use[(kv_iters)%K::stages]);
-        // consumer::sync(consumerid);
-
-        kittens::wait(v_done_use[(kv_iters)%K::stages], ((kv_iters)/K::stages)%2);
-        consumer::sync(consumerid);
+        if (consumer::warpid() == 0) mma_AB(o_tm, att_bf_tm, v_smem[(kv_iters)%K::stages], mma_semaphore[consumerid][(kv_iters)%2]);
+        
+        kittens::wait(mma_semaphore[consumerid][(kv_iters)%2], 1); 
 
         consumer::load_async(o_reg, o_tm);
-        tm_load_wait(); 
+
+        if (consumer::laneid() == 0) arrive(v_done_use[(kv_iters)%K::stages], 1);
+
         div_row(o_reg, o_reg, norm_vec);
         consumer::store(o_smem[consumerid], o_reg); 
         consumer::sync(consumerid);
