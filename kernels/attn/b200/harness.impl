@@ -2,17 +2,17 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 8;
+constexpr int ATTN_B     = 16;
 constexpr int QO_HEADS   = 16;
 constexpr int KV_HEADS   = 16;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 8192; 
+constexpr int ATTN_N     = 256*4; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
-constexpr int ITER       = 5;
+constexpr int ITER       = 10;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {

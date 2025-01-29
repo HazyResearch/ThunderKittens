@@ -1,7 +1,7 @@
 #include "kittens.cuh"
 #include <iostream>
 
-constexpr bool causal = false; 
+constexpr bool causal = true; 
 
 constexpr int CONSUMER_WARPGROUPS = (4); 
 constexpr int PRODUCER_WARPGROUPS = (1); 
@@ -192,6 +192,23 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         if (consumer::laneid() == 0) arrive(k_done_use[(kv_idx)%K::stages], 1);
         consumer::load_async(att_block, att_tm); 
 
+        if constexpr (is_causal) {
+            const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + 8 * (warpid/8) + ((warpid%8)/4+(warpid%4)*2);
+                  int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
+
+            #pragma unroll
+            for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
+                #pragma unroll
+                for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
+                    auto k_idx = k_blk + j;
+                    auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
+
+                    if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+                    else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                }
+            }
+        }
+
         row_max(max_vec, att_block, max_vec);
         mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
         rescale_add_row(att_block, att_block, max_vec_scaled);
@@ -200,7 +217,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         exp2(max_vec_last_scaled, max_vec_last_scaled);
         mul(norm_vec, norm_vec, max_vec_last_scaled);
         row_sum(norm_vec,  att_block, norm_vec);
-        copy(att_block_mma, att_block); 
+        copy(att_block_mma, att_block);
         consumer::store_async(att_bf_tm, att_block_mma);
 
         zero(o_reg);
@@ -223,6 +240,23 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::load_async(att_block, att_tm); 
             if (consumer::laneid() == 0) arrive(k_done_use[(kv_idx)%K::stages], 1);
 
+            if constexpr (is_causal) {
+                const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + 8 * (warpid/8) + ((warpid%8)/4+(warpid%4)*2);
+                      int k_blk = (kv_idx *  (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
+    
+                #pragma unroll
+                for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
+                    #pragma unroll
+                    for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
+                        auto k_idx = k_blk + j;
+                        auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
+    
+                        if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+                        else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                    }
+                }
+            }
+
             row_max(max_vec, att_block, max_vec);
             mul(max_vec_scaled, max_vec, -1.44269504089f*0.08838834764f);
             rescale_add_row(att_block, att_block, max_vec_scaled);
@@ -231,7 +265,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             exp2(max_vec_last_scaled, max_vec_last_scaled);
             mul(norm_vec, norm_vec, max_vec_last_scaled);
             row_sum(norm_vec,  att_block, norm_vec);
-            copy(att_block_mma, att_block); 
+            copy(att_block_mma, att_block);
 
             kittens::wait(mma_semaphore[consumerid][(kv_idx-1)%2], 1); 
             
@@ -256,7 +290,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         if (consumer::laneid() == 0) arrive(v_done_use[(kv_iters)%K::stages], 1);
 
         div_row(o_reg, o_reg, norm_vec);
-        consumer::store(o_smem[consumerid], o_reg); 
+        consumer::store(o_smem[consumerid], o_reg);
         consumer::sync(consumerid);
 
         if (consumer::warpid() == 0) {
