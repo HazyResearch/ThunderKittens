@@ -71,6 +71,11 @@ void matmul(const __grid_constant__ matmul_globals g) {
     tma::cluster::sync();
     
     if(warpgroupid == NUM_CONSUMERS) {
+
+        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+            printf("b-first, %d \n", warpgroup::warpid());
+        }
+
         warpgroup::decrease_registers<32>();
 
         if(warpid == NUM_WORKERS-4) {
@@ -80,17 +85,22 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 tma::cluster::load_async(a_smem[idx%PIPE_DEPTH][1], g.a, {(row_idx+1),       idx}, inputs_arrived[idx%PIPE_DEPTH], (uint16_t)(1<<ctarank), 0);
                 tma::cluster::load_async(b_smem[idx%PIPE_DEPTH],    g.b, {2*col_idx+ctarank, idx}, inputs_arrived[idx%PIPE_DEPTH], (uint16_t)(1<<ctarank), 0);
                 if(idx >= PIPE_DEPTH-1) {
-                    printf("step 15\n");
                     tma::cluster::wait(inputs_finished[(idx-PIPE_DEPTH+1)%PIPE_DEPTH], ((idx-PIPE_DEPTH+1)/PIPE_DEPTH)%2);
                 }
             }
-            printf("step 16\n");
         }
-        printf("step 17\n");
         tma::cluster::sync();
-        printf("step 18\n");
+
+        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+            printf("e-first, %d \n", warpgroup::warpid());
+        }
     }
     else {
+
+        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+            printf("b-second, %d \n", warpgroup::warpid());
+        }
+
         warpgroup::increase_registers<224>();
         if(ctarank == 0 && warpgroup::warpid() == 0) {
             tma::cluster::wait(inputs_arrived[0], 0);
@@ -103,26 +113,19 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
             tma::cluster::wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
         }
-        printf("step 28\n");
+        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+            printf("sync, %d \n", warpgroup::warpid());
+        }
         tma::cluster::sync();
-        printf("step 29\n");
         rt_hf<Mb/4, Nb> d_reg;
-        printf("step 30\n");
         warpgroup::load_async(d_reg, d_tmem);
-        printf("step 31\n");
         tm_load_wait();
-        printf("step 32\n");
         warpgroup::store(d_smem[warpgroupid], d_reg); 
-        printf("step 33\n");
         warpgroup::sync(warpgroupid);
-        printf("step 34\n");
         if (warpgroup::warpid() == 0) {
-            printf("step 35\n");
             tma::store_async(g.d, d_smem[warpgroupid], {row_idx, col_idx});
         }
-        printf("step 36\n");
         tma::store_async_wait();
-        printf("step 37\n");
     }
 }
 
@@ -282,7 +285,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
-        // if (error > max_error) printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
+        // if (error > max_error) // printf("Error at row %d col %d: %f != %f (ref)\n", i / N, i % N, h_C[i], h_C_ref[i]);
         max_error = std::max(max_error, error);
         total_ref += h_C_ref[i]*h_C_ref[i];
         total_error += error*error;
