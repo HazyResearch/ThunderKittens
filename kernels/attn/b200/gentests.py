@@ -16,12 +16,9 @@ D = int(sys.argv[2])
 H_QO = int(sys.argv[3])
 H_KV = int(sys.argv[4])
 
-causal = True
+causal = False
 
 torch.random.manual_seed(42)
-# q = (torch.ones((B, H_QO, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
-# k = (torch.ones((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
-# v = (torch.ones((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
 q = (torch.randn((B, H_QO, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
 k = (torch.randn((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
 v = (torch.randn((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
@@ -66,11 +63,11 @@ output = torch.matmul(scores, values_l)  # (bs, n_local_heads, seqlen, head_dim)
 ##########################################
 
 # now do backwards computations
-# o.backward(grad_output)
+o.backward(grad_output)
 
-# q_grad = q.grad
-# k_grad = k.grad
-# v_grad = v.grad
+q_grad = q.grad
+k_grad = k.grad
+v_grad = v.grad
     
 softmax_scale = 1 / math.sqrt(D)
 l_vec = torch.empty((B, H_QO, N, N), dtype=torch.bfloat16, device=q.device)
@@ -93,32 +90,32 @@ d_vec = torch.mul(o.to(torch.bfloat16), grad_output.to(torch.bfloat16))
 d_vec = d_vec.to(torch.bfloat16).sum(dim=-1, keepdim=True)
 
 
-# print("--------------------------------------")
-# print("Q shape: ",      q.shape)
-# print("K shape: ",      k.shape)
-# print("V shape: ",      v.shape)
-# print("O shape: ",      o.shape)
-# print("Q grad shape: ", q_grad.shape)
-# print("K grad shape: ", k_grad.shape)
-# print("V grad shape: ", v_grad.shape)
-# print("L shape: ",      l_vec.shape)
-# print("D shape: ",      d_vec.shape)
-# print("--------------------------------------")
+print("--------------------------------------")
+print("Q shape: ",      q.shape)
+print("K shape: ",      k.shape)
+print("V shape: ",      v.shape)
+print("O shape: ",      o.shape)
+print("Q grad shape: ", q_grad.shape)
+print("K grad shape: ", k_grad.shape)
+print("V grad shape: ", v_grad.shape)
+print("L shape: ",      l_vec.shape)
+print("D shape: ",      d_vec.shape)
+print("--------------------------------------")
 
-# # print out avg magnitude of output tensor
-# print(f'Average magnitude of OUTPUT tensor: {o.abs().mean()}')
-# print(f'1/100 magnitude of OUTPUT tensor:   {o.abs().mean()/100}')
-# print(f'Average magnitude of Q_GRAD tensor: {q_grad.abs().mean()}')
-# print(f'1/100 magnitude of Q_GRAD tensor:   {q_grad.abs().mean()/100}')
-# print(f'Average magnitude of K_GRAD tensor: {k_grad.abs().mean()}')
-# print(f'1/100 magnitude of K_GRAD tensor:   {k_grad.abs().mean()/100}')
-# print(f'Average magnitude of V_GRAD tensor: {v_grad.abs().mean()}')
-# print(f'1/100 magnitude of V_GRAD tensor:   {v_grad.abs().mean()/100}')
-# print(f'Average magnitude of L tensor:      {l_vec.abs().mean()}')
-# print(f'1/100 magnitude of L tensor:        {l_vec.abs().mean()/100}')
-# print(f'Average magnitude of D tensor:      {d_vec.abs().mean()}')
-# print(f'1/100 magnitude of D tensor:        {d_vec.abs().mean()/100}')
-# print("--------------------------------------")
+# print out avg magnitude of output tensor
+print(f'Average magnitude of OUTPUT tensor: {o.abs().mean()}')
+print(f'1/100 magnitude of OUTPUT tensor:   {o.abs().mean()/100}')
+print(f'Average magnitude of Q_GRAD tensor: {q_grad.abs().mean()}')
+print(f'1/100 magnitude of Q_GRAD tensor:   {q_grad.abs().mean()/100}')
+print(f'Average magnitude of K_GRAD tensor: {k_grad.abs().mean()}')
+print(f'1/100 magnitude of K_GRAD tensor:   {k_grad.abs().mean()/100}')
+print(f'Average magnitude of V_GRAD tensor: {v_grad.abs().mean()}')
+print(f'1/100 magnitude of V_GRAD tensor:   {v_grad.abs().mean()/100}')
+print(f'Average magnitude of L tensor:      {l_vec.abs().mean()}')
+print(f'1/100 magnitude of L tensor:        {l_vec.abs().mean()/100}')
+print(f'Average magnitude of D tensor:      {d_vec.abs().mean()}')
+print(f'1/100 magnitude of D tensor:        {d_vec.abs().mean()/100}')
+print("--------------------------------------")
 
 filename = f'randn_{N}N_{D}D_{H_QO}QO_{H_KV}KV'
 
@@ -142,9 +139,9 @@ with open(filename, 'w') as f:
     l_vecf = l_vec.to(torch.float32).flatten().detach().cpu().numpy()
     d_vecf = d_vec.to(torch.float32).flatten().detach().cpu().numpy()
     
-    # qg_f = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
-    # kg_f = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
-    # vg_f = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    qg_f = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    kg_f = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
+    vg_f = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
     
     for i in trange(q.shape[0] * q.shape[1] * q.shape[2] * q.shape[3]):
         f.write(repr(float(qf[i])))
@@ -164,15 +161,15 @@ with open(filename, 'w') as f:
     for i in trange(d_vec.shape[0] * d_vec.shape[1] * d_vec.shape[2]):
         f.write(repr(float(d_vecf[i])))
         f.write(' ')
-    # for i in trange(grad_output.shape[0] * grad_output.shape[1] * grad_output.shape[2] * grad_output.shape[3]):
-    #     f.write(repr(float(og_f[i])))
-    #     f.write(' ')
-    # for i in trange(q_grad.shape[0] * q_grad.shape[1] * q_grad.shape[2] * q_grad.shape[3]):
-    #     f.write(repr(float(qg_f[i])))
-    #     f.write(' ')
-    # for i in trange(k_grad.shape[0] * k_grad.shape[1] * k_grad.shape[2] * k_grad.shape[3]):
-    #     f.write(repr(float(kg_f[i])))
-    #     f.write(' ')
-    # for i in trange(v_grad.shape[0] * v_grad.shape[1] * v_grad.shape[2] * v_grad.shape[3]):
-    #     f.write(repr(float(vg_f[i])))
-    #     f.write(' ')
+    for i in trange(grad_output.shape[0] * grad_output.shape[1] * grad_output.shape[2] * grad_output.shape[3]):
+        f.write(repr(float(og_f[i])))
+        f.write(' ')
+    for i in trange(q_grad.shape[0] * q_grad.shape[1] * q_grad.shape[2] * q_grad.shape[3]):
+        f.write(repr(float(qg_f[i])))
+        f.write(' ')
+    for i in trange(k_grad.shape[0] * k_grad.shape[1] * k_grad.shape[2] * k_grad.shape[3]):
+        f.write(repr(float(kg_f[i])))
+        f.write(' ')
+    for i in trange(v_grad.shape[0] * v_grad.shape[1] * v_grad.shape[2] * v_grad.shape[3]):
+        f.write(repr(float(vg_f[i])))
+        f.write(' ')
