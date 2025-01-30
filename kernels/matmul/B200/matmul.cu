@@ -89,7 +89,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
         }
         init_semaphore(outputs_arrived, 0, 1);
         for(int i = 0; i < NUM_CONSUMERS; i++) {
-            init_semaphore(outputs_finished[i], 0, 1);
+            init_semaphore(outputs_finished[i], 0, 2);
         }
     }
 
@@ -157,7 +157,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
             tm_load_wait();
             warpgroup::sync(warpgroupid);
-            if(warpgroup::laneid() == 0) arrive(outputs_finished[warpgroupid]); // Tensor memory for warpgroup 0 is now free.
+            if(warpgroup::laneid() == 0) tma::cluster::arrive(outputs_finished[warpgroupid], 0); // Tensor memory for warpgroup 0 is now free.
             if(warpgroupid == 0) group<8>::sync(15);
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);
@@ -321,6 +321,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Check result
     float max_error = 0.0f;
+    float average_error = 0.0f;
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
@@ -330,9 +331,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
             error_count++;
         }
         max_error = std::max(max_error, error);
+        average_error += error;
     }
+    average_error /= M*N;
 
     std::cout << "Max error: " << max_error << std::endl;
+    std::cout << "Average error: " << average_error << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up

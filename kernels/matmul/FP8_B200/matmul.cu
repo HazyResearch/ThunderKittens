@@ -89,7 +89,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
         }
         init_semaphore(outputs_arrived, 0, 1);
         for(int i = 0; i < NUM_CONSUMERS; i++) {
-            init_semaphore(outputs_finished[i], 0, 1);
+            init_semaphore(outputs_finished[i], 0, 2);
         }
     }
 
@@ -157,7 +157,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
             tm_load_wait();
             warpgroup::sync(warpgroupid);
-            if(warpgroup::laneid() == 0) arrive(outputs_finished[warpgroupid]); // Tensor memory for warpgroup 0 is now free.
+            if(warpgroup::laneid() == 0) tma::cluster::arrive(outputs_finished[warpgroupid], 0); // Tensor memory for warpgroup 0 is now free.
             if(warpgroupid == 0) group<8>::sync(15);
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);
