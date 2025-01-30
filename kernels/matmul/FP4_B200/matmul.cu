@@ -13,7 +13,7 @@ namespace cg = cooperative_groups;
 
 static constexpr int Mb = 128;
 static constexpr int Nb = 256;
-static constexpr int Kb = 64;
+static constexpr int Kb = 128;
 
 struct matmul_globals {
     using a_tile = st_fl4_e2m1<Mb, Kb>;
@@ -72,10 +72,6 @@ void matmul(const __grid_constant__ matmul_globals g) {
     
     if(warpgroupid == NUM_CONSUMERS) {
 
-        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
-            printf("b-first, %d \n", warpgroup::warpid());
-        }
-
         warpgroup::decrease_registers<32>();
 
         if(warpid == NUM_WORKERS-4) {
@@ -90,16 +86,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         tma::cluster::sync();
-
-        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
-            printf("e-first, %d \n", warpgroup::warpid());
-        }
-    }
-    else {
-
-        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
-            printf("b-second, %d \n", warpgroup::warpid());
-        }
+    } else {
 
         warpgroup::increase_registers<224>();
         if(ctarank == 0 && warpgroup::warpid() == 0) {
@@ -112,9 +99,6 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 idx++;
             }
             tma::cluster::wait(inputs_finished[(idx-1)%PIPE_DEPTH], ((idx-1)/PIPE_DEPTH)%2);
-        }
-        if ((threadIdx.x % (kittens::WARP_THREADS)) == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
-            printf("sync, %d \n", warpgroup::warpid());
         }
         tma::cluster::sync();
         rt_hf<Mb/4, Nb> d_reg;

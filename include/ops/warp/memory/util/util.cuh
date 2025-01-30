@@ -351,7 +351,10 @@ template<typename T> struct size_info {
 };
 template<ducks::st::all ST> struct size_info<ST> {
     static constexpr uint32_t elements = ST::num_elements;
-    static constexpr uint32_t bytes    = ST::num_elements * sizeof(typename ST::dtype);
+    static constexpr uint32_t bytes    =
+        std::is_same_v<typename ST::dtype, fp4e2m1>
+            ? ST::num_elements * sizeof(fp4e2m1) / 2
+            : ST::num_elements * sizeof(typename ST::dtype);
 };
 template<ducks::sv::all SV> struct size_info<SV> {
     static constexpr uint32_t elements = SV::length;
