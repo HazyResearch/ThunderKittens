@@ -36,8 +36,9 @@ __device__ static inline uint32_t instruction_descriptor() {
             desc |= 0b001 << 7;  // 16-bit A input type as BF16
             desc |= 0b001 << 10; // 16-bit B input type as BF16
         } else if constexpr (std::is_same_v<AB, fp8e4m3>) {
-            desc |= 0b000 << 7;  // 8-bit A input type as FP8 e4m3
-            desc |= 0b000 << 10; // 8-bit B input type as FP8 e4m3
+            // !!! Temp hack to get fp4 working, needs removal.
+            desc |= 0b101 << 7;  // 4-bit A input type as FP4 e2m1
+            desc |= 0b101 << 10; // 4-bit B input type as FP4 e2m1
         } else if constexpr (std::is_same_v<AB, fp8e5m2>) {
             desc |= 0b001 << 7;  // 8-bit A input type as FP8 e5m2
             desc |= 0b001 << 10; // 8-bit B input type as FP8 e5m2
@@ -93,8 +94,8 @@ __device__ static inline uint32_t instruction_descriptor() {
         }
         desc |= 0b0       << 6;  // reserved
         if constexpr (std::is_same_v<AB, fp8e4m3>) {
-            desc |= 0b000 << 7;  // 8-bit A input type as FP8 e4m3
-            desc |= 0b000 << 10; // 8-bit B input type as FP8 e4m3
+            desc |= 0b101 << 7;  // 4-bit A input type as FP4 e2m1
+            desc |= 0b101 << 10; // 4-bit B input type as FP4 e2m1
         } else if constexpr (std::is_same_v<AB, fp8e5m2>) {
             desc |= 0b001 << 7;  // 8-bit A input type as FP8 e5m2
             desc |= 0b001 << 10; // 8-bit B input type as FP8 e5m2
