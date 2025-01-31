@@ -2,17 +2,18 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
-constexpr int QO_HEADS   = 16;
-constexpr int KV_HEADS   = 16;
+constexpr int ATTN_B     = 64;
+constexpr int QO_HEADS   = 1;
+constexpr int KV_HEADS   = 1;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 3072; 
-constexpr int ATTN_D     = 128; 
-constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
+constexpr int ATTN_N     = 8192; 
+constexpr int ATTN_D     = 128;
 constexpr int ITER       = 10;
+
+constexpr bool causal = false;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -55,6 +56,78 @@ double efficiency(long long flop, double time) {
     double tflops = flop / 1e12;
     double time_ms = time / 1e6;
     return tflops / time_ms;
+}
+
+// Function to check correctness
+void check_correctness(const bf16* d_o, const float* o_ref, int TOTAL_ELEMENTS_QO, int TOTAL_UNIQUE_ELEMENTS, bool dump_to_file) {
+    float max_error = 0.0f;
+    bool good = true;
+    float total_diff = 0;
+
+    float *o = new float[TOTAL_ELEMENTS_QO];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_QO];
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_QO*sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        o[i] = __bfloat162float(o_bf[i]);
+    }
+
+    if (dump_to_file) {
+        std::ofstream o_ref_file("printouts/o_ref.txt");
+        std::ofstream o_file("printouts/o.txt");
+        std::ofstream diff_file("printouts/o_diff.txt");
+
+        for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+            float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
+            if (i < TOTAL_UNIQUE_ELEMENTS) {
+                o_ref_file << o_ref[i] << ' ';
+                o_file << o[i] << ' ';
+                diff_file << diff << ' ';
+                if(i%ATTN_D == ATTN_D-1) {
+                    o_ref_file << '\n';
+                    o_file << '\n';
+                    diff_file << '\n';
+                }
+            }
+            if(abs(diff) > 0.01 || isnan(diff)) {
+                good = false;
+            }
+            total_diff += abs(diff);
+
+            if (abs(diff) > max_error) {
+                max_error = abs(diff);
+            }
+        }
+
+        // Close the files
+        o_ref_file.close();
+        o_file.close();
+        diff_file.close();
+    } else {
+        for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+            float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
+            if(abs(diff) > 0.01 || isnan(diff)) {
+                good = false;
+            }
+            total_diff += abs(diff);
+
+            if (abs(diff) > max_error) {
+                max_error = abs(diff);
+            }
+        }
+    }
+
+    // Print average and max difference
+    std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS_QO << std::endl;
+    std::cout << "Max     o difference: " << max_error << std::endl;
+    if (abs(total_diff / TOTAL_ELEMENTS_QO) < 1e-3) {
+        good = true;
+    }
+
+    if(good) std::cout << "FWD Correct :)\n";
+    else std::cout << "FWD Incorrect :(\n";
+
+    delete[] o;
+    delete[] o_bf;
 }
 
 int main(int argc, char **argv) {
@@ -172,17 +245,11 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
 
-    using q_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using k_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-    using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>;
-    using o_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
-
-    using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
-    using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
-    using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
-    using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-    using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using q_global = fwd_globals<ATTN_D>::q_gl;
+    using k_global = fwd_globals<ATTN_D>::k_gl;
+    using v_global = fwd_globals<ATTN_D>::v_gl;
+    using l_global = fwd_globals<ATTN_D>::l_gl;
+    using o_global = fwd_globals<ATTN_D>::o_gl;
 
     using globals      = fwd_globals<ATTN_D>;
 
@@ -192,7 +259,7 @@ int main(int argc, char **argv) {
     l_global lg_arg{d_l, ATTN_B, QO_HEADS, 1,      ATTN_N};
     o_global og_arg{d_o, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
 
-    globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, ATTN_N, QK_HEAD_RATIO};
+    globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg};//, ATTN_N, QK_HEAD_RATIO};
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
@@ -205,12 +272,14 @@ int main(int argc, char **argv) {
     );
     std::cout << "Set max dynamic memory!" << std::endl;
 
-    dim3 grid(ATTN_N/(128 * NUM_CONSUMERS), QO_HEADS, ATTN_B);
+    // dim3 grid(ATTN_N/(128 * NUM_CONSUMERS), QO_HEADS, ATTN_B);
+    // dim3 grid(2);
+    dim3 grid(148);
     static_assert(ATTN_N % (128 * NUM_CONSUMERS) == 0);
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
     for(int i = 0; i < 0; i++) {    
-        fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
+        fwd_attend_ker<ATTN_D, causal><<<grid, NUM_THREADS, mem_size>>>(g);
     }
     cudaDeviceSynchronize();
     std::cout << "Starting kernel" << std::endl;
@@ -219,62 +288,21 @@ int main(int argc, char **argv) {
     auto finish = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
         start = std::chrono::high_resolution_clock::now();
-        fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
+        fwd_attend_ker<ATTN_D, causal><<<grid, NUM_THREADS, mem_size>>>(g);
         cudaDeviceSynchronize();
         finish = std::chrono::high_resolution_clock::now();
         double time = std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count();
         double perf = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd") / time;
-        std::cout << "Iteration " << i << " , time=" << time << " us, perf=" << perf << " TFLOPs" << std::endl;
+        std::cout << "Iteration " << i << " , time=" << time << " us, perf=" << perf/1e6 << " TFLOPs" << std::endl;
         total_time += time;
+
+        // Check correctness after each kernel execution
+        check_correctness(d_o, o_ref, TOTAL_ELEMENTS_QO, TOTAL_UNIQUE_ELEMENTS, false); // Set to 'false' to not dump to file
     }
     CudaCheckError();
     std::cout << "Finished kernel\n";
 
-    float max_error = 0.0f;
-    
-    // check correctness
-    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        o[i] = __bfloat162float(o_bf[i]);
-    }
-    cudaMemcpy(l_fl, d_l, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
-    for (int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
-        l[i] = l_fl[i]; 
-    }
-
-    bool good = true;
-    std::ofstream o_ref_file("printouts/o_ref.txt");
-    std::ofstream o_file("printouts/o.txt");
-    std::ofstream diff_file("printouts/o_diff.txt");
-
-    float total_diff = 0;
-    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
-        if (i < TOTAL_UNIQUE_ELEMENTS) {
-            o_ref_file << o_ref[i] << ' ';
-            o_file << o[i] << ' ';
-            diff_file << diff << ' ';
-        }
-        if(abs(diff) > 0.01 || isnan(diff)) {
-            good = false;
-        }
-        total_diff += abs(diff);
-
-        if (abs(diff) > max_error) {
-            max_error = abs(diff);
-        }
-    }
-
-    // print average difference
-    std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS_QO << std::endl;
-    std::cout << "Max     o difference: " << max_error << std::endl;
-    if (abs(total_diff / TOTAL_ELEMENTS_QO) < 1e-3) {
-        good = true;
-    }
-
-    std::cout << "Average fwd execution time: " << total_time / ITER << " us" << std::endl;
-    if(good) std::cout << "FWD Correct :)\n";
-    else std::cout << "FWD Incorrect :(\n";
+    check_correctness(d_o, o_ref, TOTAL_ELEMENTS_QO, TOTAL_UNIQUE_ELEMENTS, true); // Set to 'true' to dump to file
 
     // calculate efficiency
     long long f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd");
