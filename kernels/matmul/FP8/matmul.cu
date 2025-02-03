@@ -1,6 +1,10 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
 
+#ifdef TORCH_COMPILE
+#define TK_COMPILE_FP8_GEMM
+#endif
+
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
@@ -103,6 +107,51 @@ struct matmul_template {
 #include <cuda_fp8.h>
 #include <omp.h>
 
+template<typename mmt>
+void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
+    using a_layout = typename mmt::layout::a_layout;
+    using b_layout = typename mmt::layout::b_layout;
+    using c_layout = typename mmt::layout::c_layout;
+    using globals  = typename mmt::layout::globals;
+    a_layout Ag{d_A, nullptr, nullptr, M, K};
+    b_layout Bg{d_B, nullptr, nullptr, N, K};
+    c_layout Cg{d_C, nullptr, nullptr, M, N};
+    globals G{Ag, Bg, Cg};
+    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+}
+
+#ifdef TK_COMPILE_FP8_GEMM
+#include <ATen/cuda/CUDAContext.h> 
+#include "pyutils/torch_helpers.cuh"
+#include <iostream>
+
+torch::Tensor fp8_gemm(torch::Tensor A, torch::Tensor B) {
+    CHECK_INPUT(A);
+    CHECK_INPUT(B);
+
+    auto M = A.size(0);
+    auto N = B.size(0);
+    auto K = A.size(1);
+    printf("M=%d N=%d K=%d\n", M, N, K);
+    torch::Tensor C = torch::empty({M, N}, A.options());
+
+    // convert to bf16
+    c10::Float8_e4m3fn *A_fp8 = A.data_ptr<c10::Float8_e4m3fn>();
+    c10::Float8_e4m3fn *B_fp8 = B.data_ptr<c10::Float8_e4m3fn>();
+
+    fp8e4m3 *d_A = reinterpret_cast<fp8e4m3*>(A_fp8);
+    fp8e4m3 *d_B = reinterpret_cast<fp8e4m3*>(B_fp8);
+    fp8e4m3 *d_C = reinterpret_cast<fp8e4m3*>(C.data_ptr<c10::Float8_e4m3fn>());
+
+    dim3 grid(matmul_template<8>::grid(M, N, K));
+    dim3 block(kittens::prototype::detail::NUM_THREADS_v<matmul_template<8>>);
+
+    inner_run<matmul_template<8>>(d_A, d_B, d_C, M, N, K, grid, block);
+
+    CHECK_CUDA_ERROR(cudaGetLastError());
+    return C;
+}
+#else
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -116,20 +165,6 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
             c[i * N + j] = sum;
         }
     }
-}
-
-
-template<typename mmt>
-void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
-    using a_layout = typename mmt::layout::a_layout;
-    using b_layout = typename mmt::layout::b_layout;
-    using c_layout = typename mmt::layout::c_layout;
-    using globals  = typename mmt::layout::globals;
-    a_layout Ag{d_A, nullptr, nullptr, M, K};
-    b_layout Bg{d_B, nullptr, nullptr, N, K};
-    c_layout Cg{d_C, nullptr, nullptr, M, N};
-    globals G{Ag, Bg, Cg};
-    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
 
 template<typename mmt>
@@ -253,7 +288,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if( error > 0.10 ) { // large because of fp8 vs fp32 numerics
+        if(1) { // large because of fp8 vs fp32 numerics
             if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
@@ -309,4 +344,4 @@ int main() {
 
     return 0;
 }
-
+#endif
