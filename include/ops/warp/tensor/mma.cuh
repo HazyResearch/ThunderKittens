@@ -358,7 +358,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     }
     __syncwarp();
 }
-template<int trans_a, int trans_b, ducks::tmem::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1>
+template<int trans_a, int trans_b, ducks::tmem::all D, typename A, ducks::st_descriptor::input B, int acc=1>
 __device__ static inline void mma2(D &d, const A &a, const B &b, semaphore &sem) {
     mma<trans_a, trans_b, D, A, B, acc, 2>(d, a, b, sem);
 }

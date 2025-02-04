@@ -273,7 +273,7 @@ struct mul {
     template<typename T> static __device__ inline T op(const T &a, const T &b) { return a*b; }
 };
 template<> __device__ inline float2 mul::op<float2>(const float2 &a, const float2 &b) { 
-#ifdef KITTENS_BLACKWELL2
+#ifdef KITTENS_BLACKWELL
     float2 c;
     asm volatile("mul.f32x2 %0, %1, %2;" : "=l"(*(uint64_t*)&c) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&b));
     return c;
