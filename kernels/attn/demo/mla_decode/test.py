@@ -5,15 +5,16 @@ torch.manual_seed(0)
 
 from torch.nn.functional import linear, scaled_dot_product_attention as sdpa
 
-B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH = 2, 1, 1, 576, 512, 64, 32768
+# batch size 18 makes Ce happy
+B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH = 18, 5, 1, 576, 512, 64, 32768
 MAX_PAGES = MAX_LENGTH//PAGE_SIZE
 
-CACHE_PAGES = 1000
+CACHE_PAGES = 10000
 
-Q = torch.randn((B, NEW_TOKENS, H, D_QK), device='cuda', dtype=torch.bfloat16)
-Cache = torch.ones((CACHE_PAGES, PAGE_SIZE, D_QK), device='cuda', dtype=torch.bfloat16)
 # Q = torch.randn((B, NEW_TOKENS, H, D_QK), device='cuda', dtype=torch.bfloat16)
-# Cache = torch.randn((CACHE_PAGES, PAGE_SIZE, D_QK), device='cuda', dtype=torch.bfloat16)
+# Cache = torch.ones((CACHE_PAGES, PAGE_SIZE, D_QK), device='cuda', dtype=torch.bfloat16)
+Q = torch.randn((B, NEW_TOKENS, H, D_QK), device='cuda', dtype=torch.bfloat16)
+Cache = torch.randn((CACHE_PAGES, PAGE_SIZE, D_QK), device='cuda', dtype=torch.bfloat16)
 Lengths = torch.randint(0, MAX_LENGTH, (B,), device='cuda', dtype=torch.int32)
 Table = torch.randint(0, CACHE_PAGES, (B, MAX_PAGES), device='cuda', dtype=torch.int32)
 O = torch.zeros((B, NEW_TOKENS, H, D_VO), device='cuda', dtype=torch.bfloat16)
@@ -38,7 +39,8 @@ Table[sequence_ids, position_ids] = (
         .int()
     )
 
-latent = torch.ones(total, 1, D_QK, dtype=torch.bfloat16, device='cuda')
+# latent = torch.ones(total, 1, D_QK, dtype=torch.bfloat16, device='cuda')
+latent = torch.randn(total, 1, D_QK, dtype=torch.bfloat16, device='cuda')
 expanded = latent.expand(total, H, D_QK)
 
 sequence_ids, position_ids = (
@@ -103,3 +105,6 @@ print(torch.mean(O_ref.abs()))
 
 print("\nMax difference:", torch.max(torch.abs(O - O_ref)).item())
 print("Mean difference:", torch.mean(torch.abs(O - O_ref)).item())
+
+print("B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH")
+print(B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH)
