@@ -61,7 +61,7 @@ Cache[entry_ids, column_ids] = latent.squeeze(1)
 
 mask = None
 R = NEW_TOKENS - 1
-if R > 0:
+if True:
     bounds = (
         torch.arange(R + 1, dtype=torch.int32, device='cuda')[None, :]
         + Lengths[:, None]

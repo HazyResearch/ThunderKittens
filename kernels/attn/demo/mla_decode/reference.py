@@ -52,6 +52,7 @@ with torch.device(DEVICE):
         .view(B, R + 1, H, Z)
     )
 
+    # query = torch.ones(B, R + 1, H, Z, dtype=DTYPE)
 
     # Define Sequence Length and Block Size(s).
 
@@ -110,7 +111,7 @@ with torch.device(DEVICE):
 
     mask = None
 
-    if R > 0:
+    if True:
 
         bounds = (
             torch.arange(R + 1, dtype=torch.int32)[None, :]
@@ -163,6 +164,7 @@ padded_o1 = sdpa(
 o1 = padded_o1.transpose(1, 2)
 print(o1)
 
+breakpoint()
 # Execution Barrier,
 
 torch.cuda.current_stream().synchronize()
