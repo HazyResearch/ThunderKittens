@@ -77,15 +77,15 @@ if True:
     )
 
 
+Sz = 1.0 / (D_QK ** 0.5)
 print('Starting')
-mla_decode.mla_decode(Q, Cache, Lengths, Table, O)
+mla_decode.mla_decode(Q, Cache, Lengths, Table, O, Sz)
 torch.cuda.synchronize()
 print('Finished')
 
 print(O)
 print(torch.mean(O.abs()))
 
-Sz = 1.0 / (D_QK ** 0.5)
 padded_o1 = sdpa(
     query=Q.transpose(1, 2),
     key=padded_key.transpose(1, 2),

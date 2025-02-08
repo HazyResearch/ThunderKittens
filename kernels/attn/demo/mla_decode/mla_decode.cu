@@ -22,6 +22,7 @@ struct mla_decode_layout {
         lengths_global Lengths;
         table_global Table;
         o_global O;
+        const float softmax_scale;
         int dynamic_shared_memory() { return 224000; }
         dim3 grid()  { return dim3(Q.batch * Q.rows); }
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
@@ -73,7 +74,9 @@ struct mla_decode_template {
             warpgroup::sync(warpgroup::groupid());
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
-            constexpr float SOFTMAX_TEMPERATURE = 0.04166666666f * 1.44269504089f;
+            // 1.44269504089f is from exp2
+            const float SOFTMAX_TEMPERATURE = args.globals.softmax_scale * 1.44269504089f;
+            // constexpr float SOFTMAX_TEMPERATURE = 0.04166666666f * 1.44269504089f;
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
                 warpgroup::mm_ABt(args.state.att_block, args.scratch.q, args.input.c);
@@ -136,6 +139,7 @@ PYBIND11_MODULE(mla_decode, m) {
         &mla_decode_layout::globals::Cache,
         &mla_decode_layout::globals::Lengths,
         &mla_decode_layout::globals::Table,
-        &mla_decode_layout::globals::O
+        &mla_decode_layout::globals::O,
+        &mla_decode_layout::globals::softmax_scale
     );
 }
