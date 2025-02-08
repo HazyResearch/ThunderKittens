@@ -6,7 +6,7 @@ torch.manual_seed(0)
 from torch.nn.functional import linear, scaled_dot_product_attention as sdpa
 
 # batch size 18 makes Ce happy
-B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH = 18, 5, 1, 576, 512, 64, 32768
+B, NEW_TOKENS, H, D_QK, D_VO, PAGE_SIZE, MAX_LENGTH = 18, 5, 1, 576, 512, 256, 32768
 MAX_PAGES = MAX_LENGTH//PAGE_SIZE
 
 CACHE_PAGES = 10000
