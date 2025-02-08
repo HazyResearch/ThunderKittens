@@ -7,10 +7,11 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 struct mla_decode_layout {
-    static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, PAGE_SIZE = 64, MAX_PAGES = 32768/PAGE_SIZE;
+    static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 64, PAGE_SIZE = 256, MAX_PAGES = 32768/PAGE_SIZE;
     using q_tile         = st_bf<64, QK_D>;
     using q_global       = kittens::gl<bf16, -1, -1, -1, QK_D>; // B * R * H * D_QK
-    using cache_tile     = st_bf<PAGE_SIZE, QK_D>; using v_tile = st_bf<PAGE_SIZE, VO_Dd2>; // we need the v_tile for later
+    // using cache_tile     = st_bf<PAGE_SIZE, QK_D>; using v_tile = st_bf<PAGE_SIZE, VO_Dd2>; // we need the v_tile for later
+    using cache_tile     = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
     using cache_global   = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
     using lengths_global = kittens::gl<int, 1, 1, 1, -1>; // B
     using table_global   = kittens::gl<int, 1, 1, -1, MAX_PAGES>; // B * (max # pages)
@@ -28,7 +29,7 @@ struct mla_decode_layout {
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
     };
     struct input_block    { cache_tile c; };
-    struct scratch_block  { q_tile q; st_bf<64, PAGE_SIZE> att_block; sv_bf<64> max_vec_last_scaled, norm_vec; };
+    struct scratch_block  { q_tile q; st_bf<64, NUM_ROWS> att_block; sv_bf<64> max_vec_last_scaled, norm_vec; };
     struct common_state   { int batch, head; };
     struct consumer_state {
         rt_fl<16, o_tile::cols> o_reg;
@@ -48,7 +49,7 @@ struct mla_decode_template {
         int task_id = blockIdx.x;
         args.common.batch = task_id / args.globals.Q.rows; task_id -= args.common.batch * args.globals.Q.rows;
         args.common.head  = task_id;
-        args.num_iters = (args.globals.Lengths[args.common.batch] + layout::PAGE_SIZE - 1) / layout::PAGE_SIZE;
+        args.num_iters = (args.globals.Lengths[args.common.batch] + layout::NUM_ROWS - 1) / layout::NUM_ROWS;
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
@@ -57,9 +58,10 @@ struct mla_decode_template {
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
                 // next page we need to load?
-                int next_page_id = args.globals.Table[coord<>{args.common.batch, args.iter}];
+                int global_load_idx = args.iter % 4;
+                int next_page_id = args.globals.Table[coord<>{args.common.batch, args.iter / 4}];
                 tma::expect(args.inputs_arrived, args.input);
-                tma::load_async(args.input.c, args.globals.Cache, {next_page_id, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.c, args.globals.Cache, {next_page_id, global_load_idx, 0}, args.inputs_arrived);
             }
             warpgroup::sync(5);
         }
@@ -84,10 +86,10 @@ struct mla_decode_template {
                 warpgroup::mma_async_wait();
                 // softmax
                 if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
-                    right_fill(args.state.att_block, args.state.att_block, args.globals.Lengths[args.common.batch] - args.iter*layout::PAGE_SIZE, base_types::constants<float>::neg_infty());
+                    right_fill(args.state.att_block, args.state.att_block, args.globals.Lengths[args.common.batch] - args.iter*layout::NUM_ROWS, base_types::constants<float>::neg_infty());
                 }
                 if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
-                    warpgroup::tril(args.state.att_block, args.state.att_block, args.globals.Lengths[args.common.batch] - args.iter*layout::PAGE_SIZE - args.globals.Q.depth, base_types::constants<float>::neg_infty());
+                    warpgroup::tril(args.state.att_block, args.state.att_block, args.globals.Lengths[args.common.batch] - args.iter*layout::NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
                 }
                 row_max(args.state.max_vec, args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
                 mul(args.state.max_vec_scaled, args.state.max_vec, SOFTMAX_TEMPERATURE);
