@@ -62,14 +62,18 @@ def run_benchmark(config: BenchConfig, num_warmup: int = 5, num_trials: int = 10
     
     return tokens_per_sec, avg_latency_us
 
-def plot_results(x_values, y_values, x_label, title, output_path):
-    plt.figure(figsize=(10, 6))
+def plot_results(x_values, y_values, x_label, title, subtitle, output_path):
+    plt.figure(figsize=(10, 7))  # Made taller to accommodate subtitle
     plt.plot(x_values, y_values, 'o-', linewidth=2, markersize=8)
     plt.grid(True, alpha=0.3)
     plt.xlabel(x_label)
     plt.ylabel('Tokens/sec')
-    plt.title(title)
     
+    # Main title and subtitle
+    plt.suptitle(title, fontsize=14, y=0.95)
+    plt.title(subtitle, fontsize=10, pad=10)
+    
+    # Add value labels above each point
     for x, y in zip(x_values, y_values):
         plt.text(x, y + (max(y_values) * 0.02), f'{y:.0f}', ha='center')
     
@@ -79,11 +83,11 @@ def plot_results(x_values, y_values, x_label, title, output_path):
 def generate_configs():
     """Generate different configurations to benchmark"""
     configs = []
-    batch_sizes = [1, 4, 8, 16, 18, 32, 64] 
-    new_tokens = [1, 5, 8, 16, 32] 
-    cache_pages = [1000, 5000, 10000, 20000, 50000]
+    batch_sizes = [1, 4, 8, 16, 18, 32, 64]  # Include base config in sequence
+    new_tokens = [1, 5, 8, 16, 32]  # Include base config in sequence
+    cache_pages = [1000, 5000, 10000, 20000, 50000]  # Include base config in sequence
     
-    # base 
+    # base configuration
     base_config = BenchConfig(
         batch_size=18,
         new_tokens=5,
@@ -94,7 +98,7 @@ def generate_configs():
         cache_pages=10000
     )
     
-    # batch size configs
+    # Generate batch size configs
     batch_configs = [BenchConfig(
         batch_size=b,
         new_tokens=base_config.new_tokens,
@@ -105,7 +109,7 @@ def generate_configs():
         cache_pages=base_config.cache_pages
     ) for b in batch_sizes]
     
-    # new tokens configs
+    # Generate new tokens configs
     token_configs = [BenchConfig(
         batch_size=base_config.batch_size,
         new_tokens=t,
@@ -116,7 +120,7 @@ def generate_configs():
         cache_pages=base_config.cache_pages
     ) for t in new_tokens]
     
-    # cache pages configs
+    # Generate cache pages configs
     cache_configs = [BenchConfig(
         batch_size=base_config.batch_size,
         new_tokens=base_config.new_tokens,
@@ -137,12 +141,13 @@ def main():
     print("Starting MLA Decode Kernel Benchmark")
     print("-" * 80)
     
+    # Create output directory
     os.makedirs('tk_benchmarks', exist_ok=True)
     
     configs = generate_configs()
     results = {}
     
-    # benchmarks and collect results
+    # Run benchmarks and collect results
     for param_name, (x_values, param_configs) in configs.items():
         print(f"\nBenchmarking {param_name} variations")
         throughputs = []
@@ -160,22 +165,30 @@ def main():
         
         results[param_name] = (x_values, throughputs)
     
-    # plots
+    base_config = configs['batch'][1][0]  # Get base config for reference
+    
+    # Generate plots with configuration subtitles
     plot_results(
         results['batch'][0], results['batch'][1],
         'Batch Size', 'MLA Decode Performance vs Batch Size',
+        f'Fixed params: NT={base_config.new_tokens}, D_QK={base_config.d_qk}, D_VO={base_config.d_vo}, '
+        f'PS={base_config.page_size}, ML={base_config.max_length}, CP={base_config.cache_pages}',
         'tk_benchmarks/batch_size_perf.png'
     )
     
     plot_results(
         results['tokens'][0], results['tokens'][1],
         'New Tokens', 'MLA Decode Performance vs New Tokens',
+        f'Fixed params: B={base_config.batch_size}, D_QK={base_config.d_qk}, D_VO={base_config.d_vo}, '
+        f'PS={base_config.page_size}, ML={base_config.max_length}, CP={base_config.cache_pages}',
         'tk_benchmarks/new_tokens_perf.png'
     )
     
     plot_results(
         results['cache'][0], results['cache'][1],
         'Cache Pages', 'MLA Decode Performance vs Cache Pages',
+        f'Fixed params: B={base_config.batch_size}, NT={base_config.new_tokens}, D_QK={base_config.d_qk}, '
+        f'D_VO={base_config.d_vo}, PS={base_config.page_size}, ML={base_config.max_length}',
         'tk_benchmarks/cache_pages_perf.png'
     )
 
