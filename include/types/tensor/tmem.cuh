@@ -56,6 +56,7 @@ struct tmem {
 
     uint32_t addr;
 
+    __device__ inline tmem() : addr(0) {}
     __device__ inline tmem(uint32_t addr) : addr(addr) {}
 
     template<ducks::tmem::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {

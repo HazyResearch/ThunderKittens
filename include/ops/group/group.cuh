@@ -37,6 +37,7 @@ __device__ static inline void sync(int id) { // backup: specify the barrier ID m
 
 #include "memory/memory.cuh"
 #include "shared/shared.cuh"
+#include "register/register.cuh"
 
 #ifdef KITTENS_HOPPER
 #include "wgmma/wgmma.cuh"
