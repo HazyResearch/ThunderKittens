@@ -1,9 +1,13 @@
-import mla_decode
 import torch
 import numpy as np
 from dataclasses import dataclass
 import os
 import matplotlib.pyplot as plt
+from math import sqrt
+from torch.nn import init
+from torch.nn.functional import linear
+
+from flash_mla import flash_mla_decode, mla_buffers
 
 @dataclass
 class BenchConfig:
@@ -18,46 +22,110 @@ class BenchConfig:
     def __str__(self):
         return f"B{self.batch_size}_NT{self.new_tokens}_DQK{self.d_qk}_DVO{self.d_vo}_PS{self.page_size}_ML{self.max_length}_CP{self.cache_pages}"
 
+def mitchell(w: torch.Tensor) -> torch.Tensor:
+    """Initialize weights using truncated normal distribution"""
+    sigma = 1 / sqrt(w.size(-1))
+    bound = 3 * sigma
+    init.trunc_normal_(w, mean=0.0, std=sigma, a=-bound, b=bound)
+    return w
+
 def run_benchmark(config: BenchConfig, num_warmup: int = 5, num_trials: int = 10):
-    """Run benchmark for a specific configuration using CUDA events for precise timing"""
+    """Run benchmark for flash_mla_decode using CUDA events for precise timing"""
     torch.manual_seed(0)
     
-    B, NEW_TOKENS = config.batch_size, config.new_tokens
+    B, R = config.batch_size, config.new_tokens - 1 
     D_QK, D_VO = config.d_qk, config.d_vo
-    PAGE_SIZE, MAX_LENGTH = config.page_size, config.max_length
-    MAX_PAGES = MAX_LENGTH // PAGE_SIZE
-    CACHE_PAGES = config.cache_pages
-
-    # Q and O use 16 heads, K and V use 1 head
-    Q = torch.randn((B, NEW_TOKENS, 16, D_QK), device='cuda', dtype=torch.bfloat16)
-    Cache = torch.randn((CACHE_PAGES, PAGE_SIZE, D_QK), device='cuda', dtype=torch.bfloat16)  # 1 head for K
-    Lengths = torch.randint(0, MAX_LENGTH, (B,), device='cuda', dtype=torch.int32)
-    Table = torch.randint(0, CACHE_PAGES, (B, MAX_PAGES), device='cuda', dtype=torch.int32)
-    O = torch.zeros((B, NEW_TOKENS, 16, D_VO), device='cuda', dtype=torch.bfloat16)  # 16 heads for O
-    Sz = 1.0 / (D_QK ** 0.5)
-
+    K, N = config.page_size, config.cache_pages
+    MAX_LENGTH = config.max_length
+    H = 16  
+    
+    # Input dimensions
+    L = B * (R + 1)
+    D = 7_168  # Hidden dimension
+    Z = D_QK  # Total head dimension
+    Zc = D_VO  # Value dimension
+    Zr = Z - Zc  # RoPE dimension
+    
+    # Sequence length specifics
+    T = MAX_LENGTH // K
+    Sl, Sh = 0, 32768  # Min/max sequence lengths
+    
+    # Softmax scale
+    Sz = 1 / sqrt(Z)
+    
+    # init tensors
+    hidden = torch.randn(L, D, dtype=torch.bfloat16, device='cuda')
+    cache = torch.empty(N, K, 1, Z, dtype=torch.bfloat16, device='cuda')
+    weight = mitchell(torch.empty(H * Z, D, dtype=torch.bfloat16, device='cuda'))
+    
+    query = linear(hidden, weight).view(B, R + 1, H, Z)
+    
+    # seq lengths and block table
+    lengths = torch.randint(Sl, Sh, (B,), dtype=torch.int32, device='cuda')
+    sizes = (lengths + (K - 1)).floor_divide(K)
+    
+    # block table
+    table = torch.zeros(B, T, dtype=torch.int32, device='cuda')
+    sequence_ids, position_ids = (
+        torch.arange(T, dtype=torch.int32, device='cuda')[None, :]
+        .expand(B, -1)
+        .lt(sizes.view(-1, 1))
+        .nonzero(as_tuple=True)
+    )
+    table[sequence_ids, position_ids] = (
+        torch.randperm(N, device='cuda')
+        [:sequence_ids.size(0)]
+        .sort()
+        .values
+        .int()
+    )
+    
+    # buffer tensors
+    partials, lse, out = mla_buffers(query, T, Zc)
+    
+    # CUDA events
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_trials)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_trials)]
-
+    
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
-
+    
     # warmup
     for _ in range(num_warmup):
-        mla_decode.mla_decode(Q, Cache, Lengths, Table, O, Sz)
+        flash_mla_decode(
+            query=query,
+            latent_cache=cache,
+            cache_seqlens=lengths,
+            block_table=table,
+            softmax_scale=Sz,
+            latent_dim=Zc,
+            rope_dim=Zr,
+            partials=partials,
+            lse=lse
+        )
     
     torch.cuda.synchronize()
-
-    # CUDA events
+    
+    # benchmark runs
     for i in range(num_trials):
         start_events[i].record()
-        mla_decode.mla_decode(Q, Cache, Lengths, Table, O, Sz)
+        flash_mla_decode(
+            query=query,
+            latent_cache=cache,
+            cache_seqlens=lengths,
+            block_table=table,
+            softmax_scale=Sz,
+            latent_dim=Zc,
+            rope_dim=Zr,
+            partials=partials,
+            lse=lse
+        )
         torch.cuda.synchronize()
         end_events[i].record()
     
     torch.cuda.synchronize()
     
-    # CUDA events give times in milliseconds, convert to microseconds
+    # latencies (converting ms to us)
     latencies_us = [s.elapsed_time(e) * 1000 for s, e in zip(start_events, end_events)]
     avg_latency_us = np.mean(latencies_us)
     
@@ -65,21 +133,50 @@ def run_benchmark(config: BenchConfig, num_warmup: int = 5, num_trials: int = 10
 
 def plot_results(x_values, y_values, x_label, title, subtitle, output_path):
     plt.figure(figsize=(10, 7))
-    plt.plot(x_values, y_values, 'o-', linewidth=2, markersize=8)
+    
+    success_x = []
+    success_y = []
+    failed_x = []
+    
+    for x, y in zip(x_values, y_values):
+        if y == 0: 
+            failed_x.append(x)
+        else: 
+            success_x.append(x)
+            success_y.append(y)
+    
+    # successful runs with connected lines
+    if success_x:
+        plt.plot(success_x, success_y, 'o-', linewidth=2, markersize=8, label='Successful runs')
+    
+    # failed runs with red crosses
+    if failed_x:
+        # empty list for y-values to place crosses at the bottom
+        plt.plot(failed_x, [0] * len(failed_x), 'rx', markersize=10, label='OOM/Failed')
+    
     plt.grid(True, alpha=0.3)
     plt.xlabel(x_label)
     plt.ylabel('Latency (μs)')
     
-    # Ensure y-axis starts at 0
-    plt.ylim(bottom=0)
+    # y-axis limits with padding for labels
+    if success_y:
+        plt.ylim(bottom=0, top=max(success_y) * 1.15)
+    else:
+        plt.ylim(bottom=0, top=100)  # Default range if all runs failed
     
-    # Main title and subtitle
     plt.suptitle(title, fontsize=14, y=0.95)
     plt.title(subtitle, fontsize=10, pad=10)
     
-    # Add value labels above each point
-    for x, y in zip(x_values, y_values):
-        plt.text(x, y + (max(y_values) * 0.02), f'{y:.0f}', ha='center')
+    # add value labels
+    for x, y in zip(success_x, success_y):
+        plt.text(x, y + (max(success_y) * 0.02), f'{y:.0f}', ha='center')
+    
+    # add "OOM" labels for failed runs
+    for x in failed_x:
+        plt.text(x, 0, 'OOM', ha='center', va='bottom', color='red')
+    
+    if failed_x:
+        plt.legend()
     
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -91,7 +188,6 @@ def generate_configs():
     new_tokens = [1, 5, 8, 16, 32]
     cache_pages = [1000, 5000, 10000, 20000, 50000]
     
-    # base configuration
     base_config = BenchConfig(
         batch_size=18,
         new_tokens=5,
@@ -102,7 +198,6 @@ def generate_configs():
         cache_pages=10000
     )
     
-    # Generate batch size configs
     batch_configs = [BenchConfig(
         batch_size=b,
         new_tokens=base_config.new_tokens,
@@ -113,7 +208,6 @@ def generate_configs():
         cache_pages=base_config.cache_pages
     ) for b in batch_sizes]
     
-    # Generate new tokens configs
     token_configs = [BenchConfig(
         batch_size=base_config.batch_size,
         new_tokens=t,
@@ -124,7 +218,6 @@ def generate_configs():
         cache_pages=base_config.cache_pages
     ) for t in new_tokens]
     
-    # Generate cache pages configs
     cache_configs = [BenchConfig(
         batch_size=base_config.batch_size,
         new_tokens=base_config.new_tokens,
@@ -142,16 +235,14 @@ def generate_configs():
     }
 
 def main():
-    print("Starting MLA Decode Kernel Benchmark")
+    print("Starting Flash MLA Decode Kernel Benchmark")
     print("-" * 80)
     
-    # Create output directory
-    os.makedirs('tk_benchmarks', exist_ok=True)
+    os.makedirs('triton_benchmarks', exist_ok=True)
     
     configs = generate_configs()
     results = {}
     
-    # Run benchmarks and collect results
     for param_name, (x_values, param_configs) in configs.items():
         print(f"\nBenchmarking {param_name} variations")
         latencies = []
@@ -168,31 +259,30 @@ def main():
         
         results[param_name] = (x_values, latencies)
     
-    base_config = configs['batch'][1][0]  # Get base config for reference
+    base_config = configs['batch'][1][0]
     
-    # Generate plots with configuration subtitles
     plot_results(
         results['batch'][0], results['batch'][1],
-        'Batch Size', 'MLA Decode Latency vs Batch Size',
+        'Batch Size', 'Flash MLA Decode Latency vs Batch Size',
         f'Fixed params: NT={base_config.new_tokens}, D_QK={base_config.d_qk}, D_VO={base_config.d_vo}, '
         f'PS={base_config.page_size}, ML={base_config.max_length}, CP={base_config.cache_pages}',
-        'tk_benchmarks/batch_size_latency.png'
+        'triton_benchmarks/batch_size_latency.png'
     )
     
     plot_results(
         results['tokens'][0], results['tokens'][1],
-        'New Tokens', 'MLA Decode Latency vs New Tokens',
+        'New Tokens', 'Flash MLA Decode Latency vs New Tokens',
         f'Fixed params: B={base_config.batch_size}, D_QK={base_config.d_qk}, D_VO={base_config.d_vo}, '
         f'PS={base_config.page_size}, ML={base_config.max_length}, CP={base_config.cache_pages}',
-        'tk_benchmarks/new_tokens_latency.png'
+        'triton_benchmarks/new_tokens_latency.png'
     )
     
     plot_results(
         results['cache'][0], results['cache'][1],
-        'Cache Pages', 'MLA Decode Latency vs Cache Pages',
+        'Cache Pages', 'Flash MLA Decode Latency vs Cache Pages',
         f'Fixed params: B={base_config.batch_size}, NT={base_config.new_tokens}, D_QK={base_config.d_qk}, '
         f'D_VO={base_config.d_vo}, PS={base_config.page_size}, ML={base_config.max_length}',
-        'tk_benchmarks/cache_pages_latency.png'
+        'triton_benchmarks/cache_pages_latency.png'
     )
 
 if __name__ == "__main__":
