@@ -25,7 +25,7 @@ struct mla_decode_layout {
         o_global O;
         const float softmax_scale;
         int dynamic_shared_memory() { return 224000; }
-        dim3 grid()  { return dim3(Q.batch * Q.rows); }
+        dim3 grid()  { return dim3(Q.batch * ((Q.depth + 3) / 4)); }
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
     };
     struct input_block    { cache_tile c; };
@@ -34,7 +34,7 @@ struct mla_decode_layout {
         sv_bf<64> max_vec_last_scaled, norm_vec;
         semaphore mma_semaphore;
     };
-    struct common_state   { int batch, head; };
+    struct common_state   { int batch, seq_idx; };
     struct consumer_state {
         col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
         col_vec<rt_fl<16, cache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
@@ -52,8 +52,8 @@ struct mla_decode_template {
             return;
         }
         int task_id = blockIdx.x;
-        args.common.batch = task_id / args.globals.Q.rows; task_id -= args.common.batch * args.globals.Q.rows;
-        args.common.head  = task_id;
+        args.common.batch    = task_id / ((args.globals.Q.depth + 3) / 4); task_id -= args.common.batch * ((args.globals.Q.depth + 3) / 4);
+        args.common.seq_idx  = task_id;
         args.num_iters = (args.globals.Lengths[args.common.batch] + layout::NUM_ROWS - 1) / layout::NUM_ROWS;
     }
     struct producer {
@@ -74,21 +74,24 @@ struct mla_decode_template {
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<NUM_WORKERS>();
-            warpgroup::load<1, false>(args.scratch.q, args.globals.Q, {args.common.batch, 0, args.common.head, 0});
-            rt_fl<16, layout::o_tile::cols> o_reg;
-            zero(args.state.norm_vec);
-            neg_infty(args.state.max_vec);
             args.state.o_tmem           = args.tmem.subtile<tmem<float, 64, layout::VO_Dd2>>(16*warpgroup::groupid(), 0); // Start, vertical stride
             args.state.att_tmem         = args.tmem.subtile<tmem<float, 64, layout::cache_tile::rows>>(0, 256); // Halfway across.
             args.state.att_tmem_bf16[0] = args.tmem.subtile<tmem<bf16,  64, layout::cache_tile::rows>>(0, 256); // Halfway across.
             args.state.att_tmem_bf16[1] = args.tmem.subtile<tmem<bf16,  64, layout::cache_tile::rows>>(16, 256); // Halfway across.
-            zero(o_reg);
-            warpgroup::store_async(args.state.o_tmem, o_reg);
-            if(args.task_iter == 0 && group<8>::warpid() == 0) {
+            if(warpgroup::groupid() == 0) {
+                auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
+                load(q_st, args.globals.Q, {args.common.batch, 4*args.common.seq_idx + warpgroup::warpid(), 0, 0});
+                zero(args.state.norm_vec);
+                neg_infty(args.state.max_vec);
+            }
+            else if(args.task_iter == 0 && warpgroup::warpid() == 0) {
                 init_semaphore(args.scratch.mma_semaphore, 0, 2);
             }
+            rt_fl<16, layout::o_tile::cols> o_reg;
+            zero(o_reg);
+            warpgroup::store_async(args.state.o_tmem, o_reg);
             tm_store_wait();
-            warpgroup::sync(warpgroup::groupid());
+            group<8>::sync(10);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
             // 1.44269504089f is from exp2
@@ -157,11 +160,9 @@ struct mla_decode_template {
             auto (&o_smem)[2] = reinterpret_cast<typename layout::o_tile(&)[2]>(args.scratch.q);
             warpgroup::store(o_smem[warpgroup::groupid()], o_reg);
             warpgroup::sync(warpgroup::groupid());
-            if(warpgroup::warpid() == 0) {
-                tma::store_async<1>(args.globals.O, o_smem[warpgroup::groupid()], {args.common.batch, 0, args.common.head, warpgroup::groupid()});
-            }
-            tma::store_async_read_wait();
-            __syncwarp();
+            auto o_st = subtile_inplace<16, layout::VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
+            store(args.globals.O, o_st, {args.common.batch, 4*args.common.seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            warpgroup::sync(warpgroup::groupid());
             if(warpgroup::laneid() == 0) arrive(args.finish_finished); // done!
         }
     };
