@@ -102,18 +102,19 @@ struct mla_decode_template {
             args.num_iters = -1;
             return;
         }
-        if(threadIdx.x == 0) printf("block %d, task_iter %d, op: %d\n", blockIdx.x, args.task_iter, args.globals.Ops[kittens::coord<>{0, blockIdx.x, args.task_iter, 0}]);
+        // if(threadIdx.x == 0) printf("block %d, task_iter %d, op: %d\n", blockIdx.x, args.task_iter, args.globals.Ops[kittens::coord<>{0, blockIdx.x, args.task_iter, 0}]);
         args.common.raw.op = args.globals.Ops[kittens::coord<>{0, blockIdx.x, args.task_iter, 0}];
         #pragma unroll
         for(int i = 0; i < 7; i++) {
             args.common.raw.data[i] = args.globals.Ops[kittens::coord<>{0, blockIdx.x, args.task_iter, i+1}];
         }
-        if(threadIdx.x == 0) printf("block %d, task_iter %d, AFTERLOAD op: %d\n", blockIdx.x, args.task_iter, args.common.raw.op);
+        // if(threadIdx.x == 0) printf("block %d, task_iter %d, AFTERLOAD op: %d\n", blockIdx.x, args.task_iter, args.common.raw.op);
         switch(args.common.raw.op) {
             case layout::common_state::opcode::op_stop:
                 args.num_iters = -1;
                 break;
             case layout::common_state::opcode::op_partial:
+                // here, partial is the input cache tile
                 args.num_iters = (args.common.partial.length + layout::NUM_ROWS - 1) / layout::NUM_ROWS;
                 break;
             case layout::common_state::opcode::op_reduction:
@@ -143,6 +144,7 @@ struct mla_decode_template {
                     int global_load_idx = args.iter % 4;
                     int next_page_id = args.globals.Table[coord<>{args.common.partial.uid, args.iter / 4}];
                     tma::expect(args.inputs_arrived, args.input.partial.c);
+                    // cache shape is 1, # pages, page size, QK_D
                     tma::load_async(args.input.partial.c, args.globals.Cache, {next_page_id, global_load_idx, 0}, args.inputs_arrived);
                 }
                 warpgroup::sync(5);
@@ -167,12 +169,27 @@ struct mla_decode_template {
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
                 if(warpgroup::groupid() == 0) {
                     auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
-                    load(q_st, args.globals.Q, {args.common.partial.q_batch_idx, 4*args.common.partial.q_seq_idx + warpgroup::warpid(), 0, 0});
+                    int num_valid_Q_tokens = int(args.globals.Q.depth) * int(args.globals.Q.rows);
+                    if ((4*args.common.partial.q_seq_idx + warpgroup::warpid()) * q_st.rows < num_valid_Q_tokens) {
+                        // TODO: need to put in the partial load and store
+                        load(q_st, args.globals.Q, {args.common.partial.q_batch_idx, 4*args.common.partial.q_seq_idx + warpgroup::warpid(), 0, 0});
+                    }
+                    else {
+                        zero(q_st);
+                    }
                     zero(args.state.partial.norm_vec);
                     neg_infty(args.state.partial.max_vec);
                 }
                 zero(args.state.partial.o);
                 group<8>::sync(10);
+                // if (threadIdx.x == 0) {
+                //     for (int i = 0; i < args.scratch.q.rows; i++) {
+                //         for (int j = 0; j < 100; j++) {
+                //             printf("%f ", __bfloat162float(args.scratch.q.data[i * args.scratch.q.cols + j]));
+                //         }
+                //         printf("\n");
+                //     }
+                // }
             }
             else if(args.common.raw.op == layout::common_state::opcode::op_reduction) {
                 // Actually, nothing to do here!
@@ -248,6 +265,9 @@ struct mla_decode_template {
                         {args.common.reduction.dst.tensor.batch_idx, 4*args.common.reduction.dst.tensor.seq_idx + args.iter, 0, group<8>::warpid()});
                 }
                 else {
+                    // if (threadIdx.x == 0) {
+                    //     printf("store to O_scratch, 254: %d, %d\n", args.common.reduction.dst.uniform.uid, group<8>::warpid());
+                    // }
                     store(args.globals.O_scratch, args.state.reduction.o[0], {args.common.reduction.dst.uniform.uid, 0, group<8>::warpid()});
                     if(warpgroup::warpid() == 0) {
                         store(args.globals.Lvec_scratch, sum_lvec, {args.common.reduction.dst.uniform.uid, 0});
@@ -264,14 +284,32 @@ struct mla_decode_template {
                 group<8>::sync(10);
                 warpgroup::load(args.state.partial.norm_vec, args.scratch.vec[1]);
                 div_row(args.state.partial.o, args.state.partial.o, args.state.partial.norm_vec);
+                // if (threadIdx.x == 0) {
+                //     printf("partial dst: %d, %d\n", args.common.partial.dst.uniform.type, args.common.partial.dst.uniform.uid);
+                // }
                 if(args.common.partial.dst.uniform.type >= 0) { // batch is meaningful
                     auto (&o_smem)[2] = reinterpret_cast<typename layout::o_tile_d2(&)[2]>(args.scratch.q);
                     warpgroup::store(o_smem[warpgroup::groupid()], args.state.partial.o);
                     warpgroup::sync(warpgroup::groupid());
                     auto o_st = subtile_inplace<16, layout::VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
-                    store(args.globals.O, o_st, {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+                    // if (threadIdx.x == 0) {
+                    //     printf("store to O line 280: %d, %d\n", args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid());
+                    //     printf("O shapes: %d, %d, %d, %d\n", int(args.globals.O.batch), int(args.globals.O.depth), int(args.globals.O.rows), int(args.globals.O.cols));
+                    //     printf("O subtile shape: %d, %d\n", int(o_st.rows), int(o_st.cols));
+                    // }
+                    int num_valid_O_tokens = int(args.globals.O.depth) * int(args.globals.O.rows);
+                    if ((4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
+                        // todo: need the partial store
+                        store(args.globals.O, o_st, {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4, 0, warpgroup::groupid()});
+                    }
+                    // if (threadIdx.x % 32 == 0) {
+                    //     printf("output O: %d, %d, %d, %d, thread %d\n", int(args.common.partial.dst.tensor.batch_idx), int(4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4), 0, int(warpgroup::groupid()), threadIdx.x);
+                    // }
                 }
                 else { // write out directly to O scratch, without going through smem
+                    // if (threadIdx.x == 0) {
+                    //     printf("store to O_scratch line 284: %d, %d\n", args.common.partial.dst.uniform.uid, group<8>::warpid());
+                    // }
                     warpgroup::store(args.globals.O_scratch, args.state.partial.o, {args.common.partial.dst.uniform.uid, 0, 0});
                 }
                 warpgroup::sync(warpgroup::groupid());

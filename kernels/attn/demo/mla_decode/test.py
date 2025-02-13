@@ -10,6 +10,8 @@ OP_STOP, OP_PARTIAL, OP_REDUCTION = 0, 1, 2
 D_QK, D_VO = 576, 512
 PAGE_SIZE = 256
 
+B, NEW_TOKENS, H = 1, 1, 16
+
 # Initialize arguments
 # &mla_decode_layout::globals::Ops,
 Ops = torch.tensor([
@@ -23,27 +25,32 @@ Ops = torch.tensor([
         0           # padding to 32 bytes
     ],
     [OP_STOP,0,0,0,0,0,0,0] # Nop
-])
+], dtype=torch.bfloat16)
 Stops = torch.zeros_like(Ops) # Just stop instructions
 Ops = torch.stack([Ops]+[Stops]*147, dim=0).cuda() # Stack a single Ops and 147 copies of Nops on top of each other to make a tensor
-print(Ops)
+# print(Ops)
 # &mla_decode_layout::globals::Q,
-Q = torch.randn((1, 1, 16, D_QK), dtype=torch.bfloat16).cuda()
+Q = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
+crazy_buffer = torch.full((100_000,), 2.0, dtype=torch.bfloat16).cuda()
 # &mla_decode_layout::globals::Cache,
-Cache = torch.randn((100, PAGE_SIZE, D_QK), dtype=torch.bfloat16).cuda() # some big random-ass cache
+Cache = torch.ones((100, PAGE_SIZE, D_QK), dtype=torch.bfloat16).cuda() # some big random-ass cache
 # &mla_decode_layout::globals::Table,
-Table = torch.randint(0, Cache.shape[0], (1, 1), dtype=torch.int32).cuda() # we can increase this number over time
-Table[0, 0] = 0 # actually, for very first debugging, just use the first cache page
+Table = torch.randint(0, Cache.shape[0], (B, 1), dtype=torch.int32).cuda() # we can increase this number over time
+for i in range(B):
+    Table[i, 0] = i
 # &mla_decode_layout::globals::O,
-O = torch.zeros((1, 1, 16, D_VO), dtype=torch.bfloat16).cuda()
+# O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda()
+O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda()
+dead_buffer = torch.zeros((100_000), dtype=torch.bfloat16).cuda()
 # &mla_decode_layout::globals::O_scratch,
-O_scratch = torch.empty((1, 64, D_VO), dtype=torch.bfloat16).cuda()
+O_scratch = torch.zeros((B, 64, D_VO), dtype=torch.float32).cuda()
 # &mla_decode_layout::globals::Lvec_scratch,
-Lvec_scratch = torch.empty((1, 64), dtype=torch.bfloat16).cuda()
+Lvec_scratch = torch.zeros((B, 64), dtype=torch.float32).cuda()
 # &mla_decode_layout::globals::Semaphore,
-Semaphore = torch.zeros((1,), dtype=torch.int32).cuda()
+Semaphore = torch.zeros((B,), dtype=torch.int32).cuda()
 # &mla_decode_layout::globals::softmax_scale
 softmax_scale = 1.0 / (D_QK ** 0.5)
+
 
 print('Starting')
 print('ops shape', Ops.shape)
@@ -54,8 +61,13 @@ print('o shape', O.shape)
 print('o_scratch shape', O_scratch.shape)
 print('lvec_scratch shape', Lvec_scratch.shape)
 
+breakpoint()
+
 mla_decode.mla_decode(Ops, Q, Cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale)
 torch.cuda.synchronize()
+
+breakpoint()
+
 print('Finished')
 
 print(O)
