@@ -16,11 +16,11 @@ union location {
     } tensor;
 };
 struct mla_decode_layout {
-    static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256;
+    static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
     using q_tile              = st_bf<64, QK_D>;
-    using q_global            = kittens::gl<bf16, -1, -1, -1, QK_D>; // B * R * H * D_QK
+    using q_global            = kittens::gl<bf16, -1, -1, 1, QK_D>; // B * (R * H) * D_QK
     using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
-    using cache_global        = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
+    using cache_global        = kittens::gl<bf16, -1, PAGE_SIZE, 1, QK_D, cache_tile>; // #page * pagesize * 1 * QK_D
     using ops_global          = kittens::gl<bf16, 1, -1, -1, 8>;
     using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
     using o_tile_d2           = st_bf<64, VO_Dd2>;
@@ -135,19 +135,25 @@ struct mla_decode_template {
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
-            warpgroup::producer_registers();
+            // warpgroup::producer_registers();
         }
         __device__ static inline void load(producer_load_args<layout> args) {
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
                 if(warpgroup::warpid() == 0) {
+                    int global_load_idx = args.iter % layout::ITERS_PER_PAGE;
+                    int next_page_id = args.globals.Table[coord<>{args.common.partial.uid, args.iter / layout::ITERS_PER_PAGE}];
                     // next page we need to load?
-                    int global_load_idx = args.iter % 4;
-                    int next_page_id = args.globals.Table[coord<>{args.common.partial.uid, args.iter / 4}];
                     tma::expect(args.inputs_arrived, args.input.partial.c);
                     // cache shape is 1, # pages, page size, QK_D
-                    tma::load_async(args.input.partial.c, args.globals.Cache, {next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.partial.c, args.globals.Cache, {next_page_id, global_load_idx, 0, 0}, args.inputs_arrived);
                 }
                 warpgroup::sync(5);
+                // int global_load_idx = args.iter % layout::ITERS_PER_PAGE;
+                // int next_page_id = args.globals.Table[coord<>{args.common.partial.uid, args.iter / layout::ITERS_PER_PAGE}];
+                // if (warpgroup::laneid() == 0) {
+                //     printf("load %d, %d, %d\n", args.iter, next_page_id, global_load_idx);
+                //     printf("cache shape: %d, %d\n", int(args.input.partial.c.rows), int(args.input.partial.c.cols));
+                // }
             }
             else if(args.common.raw.op == layout::common_state::opcode::op_reduction) {
                 if(warpgroup::warpid() == 0) {
@@ -165,7 +171,7 @@ struct mla_decode_template {
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
-            warpgroup::consumer_registers<NUM_WORKERS>();
+            // warpgroup::consumer_registers<NUM_WORKERS>();
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
                 if(warpgroup::groupid() == 0) {
                     auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
@@ -177,19 +183,21 @@ struct mla_decode_template {
                     else {
                         zero(q_st);
                     }
+                    if (threadIdx.x == 0) {
+                        for (int i = 0; i < q_st.rows; i++) {
+                            for (int j = 0; j < 4; j++) {
+                                printf("%f ", __bfloat162float(q_st.data[i * q_st.cols + j]));
+                            }
+                            printf("\n");
+                        }
+                        // print q global shape
+                        printf("Q global shape: %d, %d, %d, %d\n", int(args.globals.Q.batch), int(args.globals.Q.depth), int(args.globals.Q.rows), int(args.globals.Q.cols));
+                    }
                     zero(args.state.partial.norm_vec);
                     neg_infty(args.state.partial.max_vec);
                 }
                 zero(args.state.partial.o);
                 group<8>::sync(10);
-                // if (threadIdx.x == 0) {
-                //     for (int i = 0; i < args.scratch.q.rows; i++) {
-                //         for (int j = 0; j < 100; j++) {
-                //             printf("%f ", __bfloat162float(args.scratch.q.data[i * args.scratch.q.cols + j]));
-                //         }
-                //         printf("\n");
-                //     }
-                // }
             }
             else if(args.common.raw.op == layout::common_state::opcode::op_reduction) {
                 // Actually, nothing to do here!
@@ -206,13 +214,13 @@ struct mla_decode_template {
                     warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.partial.c);
                     mul(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec, SOFTMAX_TEMPERATURE);
                     warpgroup::mma_async_wait();
-                    // softmax
-                    if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
-                        right_fill(att_block_fp32, att_block_fp32, args.common.partial.length - args.iter*layout::NUM_ROWS, base_types::constants<float>::neg_infty());
-                    }
-                    if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
-                        warpgroup::tril(att_block_fp32, att_block_fp32, args.common.partial.length - args.iter*layout::NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
-                    }
+                    // // softmax
+                    // if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
+                    //     right_fill(att_block_fp32, att_block_fp32, args.common.partial.length - args.iter*layout::NUM_ROWS, base_types::constants<float>::neg_infty());
+                    // }
+                    // if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
+                    //     warpgroup::tril(att_block_fp32, att_block_fp32, args.common.partial.length - args.iter*layout::NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
+                    // }
                     row_max(args.state.partial.max_vec, att_block_fp32, args.state.partial.max_vec); // accumulate onto the max_vec
                     mul(args.state.partial.max_vec_scaled, args.state.partial.max_vec, SOFTMAX_TEMPERATURE);
                     mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
@@ -223,9 +231,9 @@ struct mla_decode_template {
                     warpgroup::store(args.scratch.vec[0], args.state.partial.max_vec_last_scaled);
                     mul(args.state.partial.norm_vec, args.state.partial.norm_vec, args.state.partial.max_vec_last_scaled);
                     row_sum(args.state.partial.norm_vec, att_block_fp32, args.state.partial.norm_vec); // accumulate onto the norm_vec
-                    rt_bf<16, layout::cache_tile::rows> att_block_bf16;
-                    copy(att_block_bf16, att_block_fp32);
-                    warpgroup::store(args.scratch.att_block, att_block_bf16);
+                    // rt_bf<16, layout::cache_tile::rows> att_block_bf16;
+                    // copy(att_block_bf16, att_block_fp32);
+                    warpgroup::store(args.scratch.att_block, att_block_fp32);
                 }
                 group<8>::sync(10);
                 warpgroup::load(args.state.partial.max_vec_last_scaled, args.scratch.vec[0]);
@@ -297,6 +305,13 @@ struct mla_decode_template {
                     //     printf("O shapes: %d, %d, %d, %d\n", int(args.globals.O.batch), int(args.globals.O.depth), int(args.globals.O.rows), int(args.globals.O.cols));
                     //     printf("O subtile shape: %d, %d\n", int(o_st.rows), int(o_st.cols));
                     // }
+                    if (threadIdx.x == 0) {
+                        printf("O tile: ");
+                        for (int i = 0; i < 10; i++) {
+                            printf("%f %f ", args.state.partial.o.tiles[0][0].data[i].x, args.state.partial.o.tiles[0][0].data[i].y);
+                        }
+                        printf("\n");
+                    }
                     int num_valid_O_tokens = int(args.globals.O.depth) * int(args.globals.O.rows);
                     if ((4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
                         // todo: need the partial store
