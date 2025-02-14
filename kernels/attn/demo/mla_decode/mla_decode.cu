@@ -18,14 +18,14 @@ union location {
 struct mla_decode_layout {
     static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
     using q_tile              = st_bf<64, QK_D>;
-    using q_global            = kittens::gl<bf16, -1, -1, 1, QK_D>; // B * (R * H) * D_QK
+    using q_global            = kittens::gl<bf16, 1, -1, -1, QK_D>; // 1 * B * (R * H) * D_QK
     using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
     using cache_global        = kittens::gl<bf16, -1, PAGE_SIZE, 1, QK_D, cache_tile>; // #page * pagesize * 1 * QK_D
     using ops_global          = kittens::gl<bf16, 1, -1, -1, 8>;
     using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
     using o_tile_d2           = st_bf<64, VO_Dd2>;
     using o_tile_fl           = st_fl<16, VO_D>;
-    using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2>; // B * R * H * D_VO
+    using o_global            = kittens::gl<bf16, 1, -1, -1, VO_D, o_tile_d2>; // B * (R * H) * D_VO
     using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
     using lvec_scratch_global = kittens::gl<float, 1, 1, -1, 64, sv_fl<16>>; // For partial O's
     using semaphore_global    = kittens::gl<int, 1, 1, 1, -1>; // 1 * 1 * 1 * uid
@@ -173,20 +173,22 @@ struct mla_decode_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             // warpgroup::consumer_registers<NUM_WORKERS>();
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
-                if(warpgroup::groupid() == 0) {
-                    auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
-                    int num_valid_Q_tokens = int(args.globals.Q.depth) * int(args.globals.Q.rows);
-                    if ((4*args.common.partial.q_seq_idx + warpgroup::warpid()) * q_st.rows < num_valid_Q_tokens) {
-                        // TODO: need to put in the partial load and store
-                        load(q_st, args.globals.Q, {args.common.partial.q_batch_idx, 4*args.common.partial.q_seq_idx + warpgroup::warpid(), 0, 0});
-                    }
-                    else {
-                        zero(q_st);
-                    }
+                if(warpgroup::warpid() == 0) {
+                    // auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
+                    // int num_valid_Q_tokens = int(args.globals.Q.depth) * int(args.globals.Q.rows);
+                    // if ((4*args.common.partial.q_seq_idx + warpgroup::warpid()) * q_st.rows < num_valid_Q_tokens) {
+                    //     // TODO: need to put in the partial load and store
+                    //     load(q_st, args.globals.Q, {args.common.partial.q_batch_idx, 4*args.common.partial.q_seq_idx + warpgroup::warpid(), 0});
+                    // }
+                    // else {
+                    //     zero(q_st);
+                    // }
+                    // TODO: the 4 * is probably wrong...
+                    load(args.scratch.q, args.globals.Q, {args.common.partial.q_batch_idx, 4 * args.common.partial.q_seq_idx, 0});
                     if (threadIdx.x == 0) {
-                        for (int i = 0; i < q_st.rows; i++) {
+                        for (int i = 0; i < args.scratch.q.rows; i++) {
                             for (int j = 0; j < 4; j++) {
-                                printf("%f ", __bfloat162float(q_st.data[i * q_st.cols + j]));
+                                printf("%f ", __bfloat162float(args.scratch.q.data[i * args.scratch.q.cols + j]));
                             }
                             printf("\n");
                         }
@@ -299,24 +301,37 @@ struct mla_decode_template {
                     auto (&o_smem)[2] = reinterpret_cast<typename layout::o_tile_d2(&)[2]>(args.scratch.q);
                     warpgroup::store(o_smem[warpgroup::groupid()], args.state.partial.o);
                     warpgroup::sync(warpgroup::groupid());
-                    auto o_st = subtile_inplace<16, layout::VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
+                    // auto o_st = subtile_inplace<16, layout::VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
                     // if (threadIdx.x == 0) {
                     //     printf("store to O line 280: %d, %d\n", args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid());
                     //     printf("O shapes: %d, %d, %d, %d\n", int(args.globals.O.batch), int(args.globals.O.depth), int(args.globals.O.rows), int(args.globals.O.cols));
                     //     printf("O subtile shape: %d, %d\n", int(o_st.rows), int(o_st.cols));
                     // }
+                    // if (threadIdx.x == 0) {
+                    //     printf("O tile: ");
+                    //     for (int i = 0; i < 10; i++) {
+                    //         printf("%f %f ", args.state.partial.o.tiles[0][0].data[i].x, args.state.partial.o.tiles[0][0].data[i].y);
+                    //     }
+                    //     printf("\n");
+                    // }
+                    // int num_valid_O_tokens = int(args.globals.O.depth) * int(args.globals.O.rows);
+                    // TODO: the 4 * is probably wrong...
                     if (threadIdx.x == 0) {
-                        printf("O tile: ");
-                        for (int i = 0; i < 10; i++) {
-                            printf("%f %f ", args.state.partial.o.tiles[0][0].data[i].x, args.state.partial.o.tiles[0][0].data[i].y);
+                        printf("O_smem tile\n");
+                        for (int i = 0; i < o_smem[0].rows; i++) {
+                            for (int j = 0; j < 10; j++) {
+                                printf("%f ", __bfloat162float(o_smem[0].data[i * o_smem[0].cols + j]));
+                            }
+                            printf("\n");
                         }
-                        printf("\n");
                     }
-                    int num_valid_O_tokens = int(args.globals.O.depth) * int(args.globals.O.rows);
-                    if ((4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
-                        // todo: need the partial store
-                        store(args.globals.O, o_st, {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4, 0, warpgroup::groupid()});
+                    if (warpgroup::warpid() == 0 || warpgroup::warpid() == 4) {
+                        store(args.globals.O, o_smem[warpgroup::groupid()], {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx, warpgroup::groupid()});
                     }
+                    // if ((4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
+                    //     // todo: need the partial store
+                    //     store(args.globals.O, o_st, {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4, 0, warpgroup::groupid()});
+                    // }
                     // if (threadIdx.x % 32 == 0) {
                     //     printf("output O: %d, %d, %d, %d, thread %d\n", int(args.common.partial.dst.tensor.batch_idx), int(4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4), 0, int(warpgroup::groupid()), threadIdx.x);
                     // }

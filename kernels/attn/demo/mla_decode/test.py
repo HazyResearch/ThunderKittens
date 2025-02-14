@@ -57,10 +57,13 @@ cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda(
 # query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 
 # query growing by H and D_QK
+# query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 query = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 # linearly scale query by H and D_QK increasing
+# query = -1 * query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
 query = query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
-# query = query * torch.arange(D_QK, dtype=torch.bfloat16).cuda()[None, None, None, :] / D_QK
+# query = -1 * query * torch.randn((H,), dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
+# query = query * torch.randn((D_QK,), dtype=torch.bfloat16).cuda()[None, None, None, :]
 
 crazy_buffer = torch.randn((100_000,), dtype=torch.bfloat16).cuda()
 
@@ -116,7 +119,7 @@ padded_value[sequence_ids, position_ids] = expanded[..., :D_VO]
 
 entry_ids = table[sequence_ids, position_ids.floor_divide(PAGE_SIZE)]
 column_ids = position_ids.fmod(PAGE_SIZE)
-breakpoint()
+# breakpoint()
 cache[entry_ids, column_ids] = latent
 
 
@@ -175,7 +178,7 @@ print('lvec_scratch shape', Lvec_scratch.shape)
 
 # breakpoint()
 
-mla_decode.mla_decode(Ops, query.view(B, -1, 1, D_QK), cache, table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale)
+mla_decode.mla_decode(Ops, query.view(B, -1, D_QK), cache, table, O.view(B, -1, D_VO), O_scratch, Lvec_scratch, Semaphore, softmax_scale)
 torch.cuda.synchronize()
 
 # breakpoint()
@@ -196,10 +199,12 @@ ref = sdpa(
     enable_gqa=False,
 )
 
-breakpoint()
+# breakpoint()
 
 print(ref)
 print(torch.mean(ref.abs()))
+
+breakpoint()
 
 
 # sizes = (Lengths + (PAGE_SIZE - 1)).floor_divide(PAGE_SIZE).to(device='cuda', dtype=torch.int32)
