@@ -60,8 +60,8 @@ cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda(
 # query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 query = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 # linearly scale query by H and D_QK increasing
-# query = -1 * query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
-query = query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
+query = -1 * query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
+# query = query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
 # query = -1 * query * torch.randn((H,), dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
 # query = query * torch.randn((D_QK,), dtype=torch.bfloat16).cuda()[None, None, None, :]
 

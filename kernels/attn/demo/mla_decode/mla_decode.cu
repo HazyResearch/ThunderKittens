@@ -183,8 +183,8 @@ struct mla_decode_template {
                     // else {
                     //     zero(q_st);
                     // }
-                    // TODO: the 4 * is probably wrong...
-                    load(args.scratch.q, args.globals.Q, {args.common.partial.q_batch_idx, 4 * args.common.partial.q_seq_idx, 0});
+                    // TODO: the / 4 needs to change for different num heads
+                    load(args.scratch.q, args.globals.Q, {args.common.partial.q_batch_idx, args.common.partial.q_seq_idx / 4, 0});
                     if (threadIdx.x == 0) {
                         for (int i = 0; i < args.scratch.q.rows; i++) {
                             for (int j = 0; j < 4; j++) {
@@ -195,9 +195,10 @@ struct mla_decode_template {
                         // print q global shape
                         printf("Q global shape: %d, %d, %d, %d\n", int(args.globals.Q.batch), int(args.globals.Q.depth), int(args.globals.Q.rows), int(args.globals.Q.cols));
                     }
-                    zero(args.state.partial.norm_vec);
-                    neg_infty(args.state.partial.max_vec);
+                    zero(args.scratch.vec[0]);
                 }
+                zero(args.state.partial.norm_vec);
+                neg_infty(args.state.partial.max_vec);
                 zero(args.state.partial.o);
                 group<8>::sync(10);
             }
@@ -210,6 +211,11 @@ struct mla_decode_template {
             // 1.44269504089f is from exp2
             const float SOFTMAX_TEMPERATURE = args.globals.softmax_scale * 1.44269504089f;
             if (args.common.raw.op == layout::common_state::opcode::op_partial) {
+                int total_q_tokens = int(args.globals.Q.rows) / 16;
+                int valid_q_tokens = total_q_tokens - args.common.partial.q_seq_idx;
+                if (threadIdx.x == 0) {
+                    printf("valid_q_tokens: %d\n", valid_q_tokens);
+                }
                 if(warpgroup::groupid() == 0) {
                     // A = Q @ K.T
                     rt_fl<16, layout::cache_tile::rows> att_block_fp32;
@@ -223,23 +229,46 @@ struct mla_decode_template {
                     // if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
                     //     warpgroup::tril(att_block_fp32, att_block_fp32, args.common.partial.length - args.iter*layout::NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
                     // }
-                    row_max(args.state.partial.max_vec, att_block_fp32, args.state.partial.max_vec); // accumulate onto the max_vec
-                    mul(args.state.partial.max_vec_scaled, args.state.partial.max_vec, SOFTMAX_TEMPERATURE);
-                    mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
-                    sub_row(att_block_fp32, att_block_fp32, args.state.partial.max_vec_scaled);
-                    exp2(att_block_fp32, att_block_fp32);
-                    sub(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_scaled);
-                    exp2(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_last_scaled);
-                    warpgroup::store(args.scratch.vec[0], args.state.partial.max_vec_last_scaled);
-                    mul(args.state.partial.norm_vec, args.state.partial.norm_vec, args.state.partial.max_vec_last_scaled);
-                    row_sum(args.state.partial.norm_vec, att_block_fp32, args.state.partial.norm_vec); // accumulate onto the norm_vec
-                    // rt_bf<16, layout::cache_tile::rows> att_block_bf16;
-                    // copy(att_block_bf16, att_block_fp32);
+                    // todo: the / 16 needs to change for different num heads
+                    if (warpgroup::warpid() < valid_q_tokens) {
+                        row_max(args.state.partial.max_vec, att_block_fp32, args.state.partial.max_vec); // accumulate onto the max_vec
+                        if (threadIdx.x == 0) {
+                            printf("max_vec: ");
+                            for (int i = 0; i < args.state.partial.max_vec.length; i++) {
+                                printf("%f ", args.state.partial.max_vec[i]);
+                            }
+                            printf("\n");
+                        }
+                        mul(args.state.partial.max_vec_scaled, args.state.partial.max_vec, SOFTMAX_TEMPERATURE);
+                        mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
+                        sub_row(att_block_fp32, att_block_fp32, args.state.partial.max_vec_scaled);
+                        exp2(att_block_fp32, att_block_fp32);
+                        sub(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_scaled);
+                        exp2(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec_last_scaled);
+                        warpgroup::store(args.scratch.vec[0], args.state.partial.max_vec_last_scaled);
+                        mul(args.state.partial.norm_vec, args.state.partial.norm_vec, args.state.partial.max_vec_last_scaled);
+                        row_sum(args.state.partial.norm_vec, att_block_fp32, args.state.partial.norm_vec); // accumulate onto the norm_vec
+                        if (threadIdx.x == 0) {
+                            printf("norm_vec: ");
+                            for (int i = 0; i < args.state.partial.norm_vec.length; i++) {
+                                printf("%f ", args.state.partial.norm_vec[i]);
+                            }
+                            printf("\n");
+                        }
+                        // rt_bf<16, layout::cache_tile::rows> att_block_bf16;
+                        // copy(att_block_bf16, att_block_fp32);
+                    } else {
+                        zero(att_block_fp32);
+                    }
                     warpgroup::store(args.scratch.att_block, att_block_fp32);
                 }
                 group<8>::sync(10);
                 warpgroup::load(args.state.partial.max_vec_last_scaled, args.scratch.vec[0]);
-                mul_row(args.state.partial.o, args.state.partial.o, args.state.partial.max_vec_last_scaled); // normalize o_reg before mma
+                if (warpgroup::warpid() < valid_q_tokens) {
+                    mul_row(args.state.partial.o, args.state.partial.o, args.state.partial.max_vec_last_scaled); // normalize o_reg before mma
+                } else {
+                    zero(args.state.partial.o);
+                }
                 // O += A @ V
                 auto (&v_tile)[2] = reinterpret_cast<typename layout::v_tile(&)[2]>(args.input.partial.c);
                 warpgroup::mma_AB(args.state.partial.o, args.scratch.att_block, v_tile[warpgroup::groupid()]);
@@ -326,7 +355,7 @@ struct mla_decode_template {
                         }
                     }
                     if (warpgroup::warpid() == 0 || warpgroup::warpid() == 4) {
-                        store(args.globals.O, o_smem[warpgroup::groupid()], {args.common.partial.dst.tensor.batch_idx, 4*args.common.partial.dst.tensor.seq_idx, warpgroup::groupid()});
+                        store(args.globals.O, o_smem[warpgroup::groupid()], {args.common.partial.dst.tensor.batch_idx, args.common.partial.dst.tensor.seq_idx / 4, warpgroup::groupid()});
                     }
                     // if ((4*args.common.partial.dst.tensor.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
                     //     // todo: need the partial store
