@@ -200,7 +200,23 @@ struct mla_decode_template {
                 zero(args.state.partial.norm_vec);
                 neg_infty(args.state.partial.max_vec);
                 zero(args.state.partial.o);
+                warpgroup::sync(warpgroup::groupid());
                 group<8>::sync(10);
+                if (warpgroup::laneid() == 0 && warpgroup::groupid() == 0) {
+                    printf("norm_vec init: ");
+                    for (int i = 0; i < args.state.partial.norm_vec.length; i++) {
+                        printf("%f ", *(float*)args.state.partial.norm_vec[i]);
+                    }
+                    printf("\n");
+                }
+                group<8>::sync(10);
+                if (warpgroup::laneid() == 0 && warpgroup::groupid() == 0) {
+                    printf("max_vec init: ");
+                    for (int i = 0; i < args.state.partial.max_vec.length; i++) {
+                        printf("%f ", *(float*)args.state.partial.max_vec[i]);
+                    }
+                    printf("\n");
+                }
             }
             else if(args.common.raw.op == layout::common_state::opcode::op_reduction) {
                 // Actually, nothing to do here!
@@ -235,7 +251,7 @@ struct mla_decode_template {
                         if (threadIdx.x == 0) {
                             printf("max_vec: ");
                             for (int i = 0; i < args.state.partial.max_vec.length; i++) {
-                                printf("%f ", args.state.partial.max_vec[i]);
+                                printf("%f ", *(float*)args.state.partial.max_vec[i]);
                             }
                             printf("\n");
                         }
@@ -251,7 +267,7 @@ struct mla_decode_template {
                         if (threadIdx.x == 0) {
                             printf("norm_vec: ");
                             for (int i = 0; i < args.state.partial.norm_vec.length; i++) {
-                                printf("%f ", args.state.partial.norm_vec[i]);
+                                printf("%f ", *(float*)args.state.partial.norm_vec[i]);
                             }
                             printf("\n");
                         }
