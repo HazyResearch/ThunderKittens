@@ -102,7 +102,7 @@ table[sequence_ids, position_ids] = (
 # Prefill Latent Cache & Extract Padded.
 
 # latent = torch.ones(total, 1, D_QK, dtype=torch.bfloat16).cuda()
-latent = torch.randn(total, 1, D_QK, dtype=torch.bfloat16).cuda()
+latent = torch.randn(total, 1, D_QK, dtype=torch.bfloat16).cuda() * 10
 expanded = latent.expand(total, H, D_QK)
 
 sequence_ids, position_ids = (
@@ -186,8 +186,7 @@ torch.cuda.synchronize()
 
 print('Finished')
 
-print(O)
-print(torch.mean(O.abs()))
+print("TK", O)
 
 ref = sdpa(
     query=query.transpose(1, 2),
@@ -202,11 +201,15 @@ ref = sdpa(
 
 # breakpoint()
 
-print(ref)
-print(torch.mean(ref.abs()))
+print("ref", ref)
+
+print('ref mean', torch.mean(ref.abs()))
+
+print('TK mean', torch.mean(O.abs()))
+
+print('max abs diff', torch.max(torch.abs(O - ref)))
 
 breakpoint()
-
 
 # sizes = (Lengths + (PAGE_SIZE - 1)).floor_divide(PAGE_SIZE).to(device='cuda', dtype=torch.int32)
 
