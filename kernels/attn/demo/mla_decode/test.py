@@ -208,6 +208,7 @@ print('ref mean', torch.mean(ref.abs()))
 print('TK mean', torch.mean(O.abs()))
 
 print('max abs diff', torch.max(torch.abs(O - ref)))
+print('avg abs diff', torch.mean(torch.abs(O - ref)))
 
 breakpoint()
 

@@ -135,7 +135,7 @@ struct mla_decode_template {
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
-            // warpgroup::producer_registers();
+            warpgroup::producer_registers();
         }
         __device__ static inline void load(producer_load_args<layout> args) {
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
@@ -171,7 +171,7 @@ struct mla_decode_template {
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
-            // warpgroup::consumer_registers<NUM_WORKERS>();
+            warpgroup::consumer_registers<NUM_WORKERS>();
             if(args.common.raw.op == layout::common_state::opcode::op_partial) {
                 if(warpgroup::warpid() == 0) {
                     // auto q_st = subtile_inplace<16, layout::QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
