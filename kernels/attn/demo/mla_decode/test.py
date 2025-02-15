@@ -57,10 +57,10 @@ cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda(
 # query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 
 # query growing by H and D_QK
-# query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
-query = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
+query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
+# query = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
 # linearly scale query by H and D_QK increasing
-query = -1 * query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
+# query = -1 * query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] - 10.
 # query = query * torch.arange(H, dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
 # query = -1 * query * torch.randn((H,), dtype=torch.bfloat16).cuda()[None, None, :, None] + 1.
 # query = query * torch.randn((D_QK,), dtype=torch.bfloat16).cuda()[None, None, None, :]
@@ -101,7 +101,8 @@ table[sequence_ids, position_ids] = (
 
 # Prefill Latent Cache & Extract Padded.
 
-latent = torch.ones(total, 1, D_QK, dtype=torch.bfloat16).cuda()
+# latent = torch.ones(total, 1, D_QK, dtype=torch.bfloat16).cuda()
+latent = torch.randn(total, 1, D_QK, dtype=torch.bfloat16).cuda()
 expanded = latent.expand(total, H, D_QK)
 
 sequence_ids, position_ids = (
@@ -178,7 +179,7 @@ print('lvec_scratch shape', Lvec_scratch.shape)
 
 # breakpoint()
 
-mla_decode.mla_decode(Ops, query.view(B, -1, D_QK), cache, table, O.view(B, -1, D_VO), O_scratch, Lvec_scratch, Semaphore, softmax_scale)
+mla_decode.mla_decode(Ops, query.view(B, -1, D_QK), cache.view(NUM_PAGES, -1, D_QK), table, O.view(B, -1, D_VO), O_scratch, Lvec_scratch, Semaphore, softmax_scale)
 torch.cuda.synchronize()
 
 # breakpoint()
@@ -197,7 +198,7 @@ ref = sdpa(
     is_causal=False,
     scale=Sz,
     enable_gqa=False,
-)
+).transpose(1, 2)
 
 # breakpoint()
 
