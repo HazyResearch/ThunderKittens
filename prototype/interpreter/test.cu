@@ -85,10 +85,14 @@ template<typename _config> struct OpB {
 
 int main() {
     int instructions[3] = {1, 2, 0};
+    std::vector<int> instructions_vec(132*3);
+    for(int i = 0; i < 132*3; i++) {
+        instructions_vec[i] = instructions[i % 3];
+    }
     int *instructions_d;
-    cudaMalloc(&instructions_d, sizeof(int) * 3);
-    cudaMemcpy(instructions_d, instructions, sizeof(int) * 3, cudaMemcpyHostToDevice);
-    kittens::gl<int, 1, -1, -1, 1> instructions_gl{instructions_d, nullptr, 1, 3, nullptr};
+    cudaMalloc(&instructions_d, sizeof(int) * 3*132);
+    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * 3*132, cudaMemcpyHostToDevice);
+    kittens::gl<int, 1, -1, -1, 1> instructions_gl{instructions_d, nullptr, 132, 3, nullptr};
     config::globals G{instructions_gl};
     kittens::prototype::interpreter::run<config, OpA<config>, OpB<config>>(G);
     cudaError_t err = cudaGetLastError();
