@@ -21,6 +21,9 @@ template<typename T> concept kittens_layout = requires {
     typename T::globals;
     typename T::input_block;
 };
+template<typename T> concept store_kittens_layout = kittens_layout<T> && requires {
+    T::output_block;
+};
 
 // Now we need to be able to put together a complete pc layout from a (possibly partially specialized) pc layout.
 namespace detail {
