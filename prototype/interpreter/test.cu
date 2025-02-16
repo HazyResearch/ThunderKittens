@@ -24,7 +24,7 @@ template<typename _config> struct OpA {
     };
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         args.num_iters = -1;
-        if(threadIdx.x == 0) printf("block %d running op A\n", blockIdx.x);
+        if(threadIdx.x == 0) printf("block %d running op A (%d)\n", blockIdx.x, opcode);
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
@@ -57,7 +57,7 @@ template<typename _config> struct OpB {
     };
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         args.num_iters = -1;
-        if(threadIdx.x == 0) printf("block %d running op B\n", blockIdx.x);
+        if(threadIdx.x == 0) printf("block %d running op B (%d)\n", blockIdx.x, opcode);
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
@@ -84,15 +84,16 @@ template<typename _config> struct OpB {
 
 
 int main() {
-    int instructions[3] = {1, 2, 0};
-    std::vector<int> instructions_vec(132*3);
-    for(int i = 0; i < 132*3; i++) {
-        instructions_vec[i] = instructions[i % 3];
+    constexpr int NUM_INSTRUCTIONS = 5;
+    int instructions[NUM_INSTRUCTIONS] = {1, 2, 1, 0, 2}; // last 2 should not execute.
+    std::vector<int> instructions_vec(132*NUM_INSTRUCTIONS);
+    for(int i = 0; i < 132*NUM_INSTRUCTIONS; i++) {
+        instructions_vec[i] = instructions[i % NUM_INSTRUCTIONS];
     }
     int *instructions_d;
-    cudaMalloc(&instructions_d, sizeof(int) * 3*132);
-    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * 3*132, cudaMemcpyHostToDevice);
-    kittens::gl<int, 1, -1, -1, 1> instructions_gl{instructions_d, nullptr, 132, 3, nullptr};
+    cudaMalloc(&instructions_d, sizeof(int) * NUM_INSTRUCTIONS*132);
+    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * NUM_INSTRUCTIONS*132, cudaMemcpyHostToDevice);
+    kittens::gl<int, 1, -1, -1, 1> instructions_gl{instructions_d, nullptr, 132, NUM_INSTRUCTIONS, nullptr};
     config::globals G{instructions_gl};
     kittens::prototype::interpreter::run<config, OpA<config>, OpB<config>>(G);
     cudaError_t err = cudaGetLastError();
