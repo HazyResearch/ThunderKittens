@@ -26,7 +26,7 @@ Ops = torch.tensor([
         0           # padding to 32 bytes
     ],
     [OP_STOP,0,0,0,0,0,0,0] # Nop
-], dtype=torch.bfloat16)
+], dtype=torch.int32)
 Stops = torch.zeros_like(Ops) # Just stop instructions
 Ops = torch.stack([Ops]+[Stops]*147, dim=0).cuda() # Stack a single Ops and 147 copies of Nops on top of each other to make a tensor
 # print(Ops)
@@ -156,7 +156,7 @@ if True:
 
 # &mla_decode_layout::globals::O,
 # O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda()
-O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda()
+O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
 dead_buffer = torch.zeros((100_000), dtype=torch.bfloat16).cuda()
 # &mla_decode_layout::globals::O_scratch,
 O_scratch = torch.zeros((B, 64, D_VO), dtype=torch.float32).cuda()
@@ -179,7 +179,10 @@ print('lvec_scratch shape', Lvec_scratch.shape)
 
 # breakpoint()
 
-mla_decode.mla_decode(Ops, query.view(B, -1, D_QK), cache.view(NUM_PAGES, -1, D_QK), table, O.view(B, -1, D_VO), O_scratch, Lvec_scratch, Semaphore, softmax_scale)
+print('Running')
+mla_decode.mla_decode(Ops, query, cache.view(NUM_PAGES, -1, D_QK), table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale)
+# mla_decode.mla_decode(Ops, query.view(B, -1, D_QK), cache.view(NUM_PAGES, -1, D_QK), table, O.view(B, -1, D_VO), O_scratch, Lvec_scratch, Semaphore, softmax_scale)
+print('Launched')
 torch.cuda.synchronize()
 
 # breakpoint()

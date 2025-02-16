@@ -10,20 +10,24 @@ namespace interpreter {
 template<kittens_layout T> struct uniform_args {
     using CKL = complete_kittens_layout<T>;
     typename CKL::common_state_t & common; // scratch for the coordinates of the task.
+    int & task_iter; // which task are we on?
     int & num_iters; // how many iters are there for this task?
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
+        int & _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch
     ) : common(_common),
+        task_iter(_task_iter),
         num_iters(_num_iters),
         globals(_globals),
         scratch(_scratch) {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
+        task_iter(_args.task_iter),
         num_iters(_args.num_iters),
         globals(_args.globals),
         scratch(_args.scratch) {}
