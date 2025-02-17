@@ -65,7 +65,8 @@ def get_inputs(tokenizer, batch, context_length, task_name):
         
         answer_pos = -1
         if type(answer) == list: answer = answer[0]
-        if(answer == "" or len(answer) <= 1): return instances, new_doc_set
+        if(answer == "" or len(answer) < 1): 
+            return instances, new_doc_set
         answer_pattern = re.compile(re.escape(answer), re.IGNORECASE)
         if answer_match := answer_pattern.search(context):
             if answer_pos == -1 or answer_pos > answer_match.start():
@@ -147,7 +148,8 @@ def main(args):
         preds = tokenizer.batch_decode(preds)
         seen_inputs = tokenizer.batch_decode(inputs)
         for inp, p, k, v in zip(seen_inputs, preds, questions, targets):
-            correct = v.lower() in p.lower()
+            correct = p.lower().strip().startswith(v.lower().strip())
+            print(f"Correct: {correct}; Prediction: {p}; Value: {v}")
             results.append(correct)
             preds_list.append(p.split("\n")[0])
             values_list.append(v.split("\n")[0])
@@ -172,7 +174,13 @@ if __name__ == "__main__":
     parser.add_argument(
         '--model_name', type=str, default="based", choices= ["attn", "based"], help='Name of the model'
     )
-    parser.add_argument('--task_name', type=str, default="hazyresearch/based-fda", help='Name of the task/dataset')
+    parser.add_argument(
+        '--task_name', 
+        type=str, 
+        default="hazyresearch/based-fda", 
+        choices=["hazyresearch/based-fda", "hazyresearch/based-swde"],
+        help='Name of the task/dataset'
+    )
 
     args = parser.parse_args()
     main(args)
