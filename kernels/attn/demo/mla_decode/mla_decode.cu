@@ -25,7 +25,7 @@ struct mla_decode_layout {
     using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
     using o_tile_d2           = st_bf<64, VO_Dd2>;
     using o_tile_fl           = st_fl<16, VO_D>;
-    using o_global            = kittens::gl<bf16, 1, -1, -1, VO_D, o_tile_d2>; // B * (R * H) * D_VO
+    using o_global            = kittens::gl<bf16, 1, -1, -1,  VO_D, o_tile_d2>; // B * (R * H) * D_VO
     using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
     using lvec_scratch_global = kittens::gl<float, 1, 1, -1, 64, sv_fl<16>>; // For partial O's
     using semaphore_global    = kittens::gl<int, 1, 1, 1, -1>; // 1 * 1 * 1 * uid
@@ -186,6 +186,7 @@ struct mla_decode_template {
                     // TODO: the / 4 needs to change for different num heads
                     load(args.scratch.q, args.globals.Q, {args.common.partial.q_batch_idx, args.common.partial.q_seq_idx / 4, 0});
                     zero(args.scratch.vec[0]);
+
                 }
                 zero(args.state.partial.norm_vec);
                 neg_infty(args.state.partial.max_vec);

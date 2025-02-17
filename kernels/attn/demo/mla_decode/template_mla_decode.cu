@@ -17,8 +17,8 @@ using o_tile_d2           = st_bf<64, VO_Dd2>;
 using o_tile_fl           = st_fl<16, VO_D>;
 using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2>; // B * R * H * D_VO
 using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
-using lvec_scratch_global = kittens::gl<float, 1, 1, -1, 64, sv_fl<16>>; // For partial O's
-using semaphore_global    = kittens::gl<int, 1, 1, 1, -1>; // 1 * 1 * 1 * uid
+using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
+using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>; // 1 * 1 * 1 * uid
 
 struct config {
     struct globals {
@@ -76,12 +76,12 @@ struct partial_template {
     static constexpr int opcode = 1;
     static constexpr int INPUT_PIPE_STAGES = 2;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.uid = args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 1}];
-        args.common.dst = {args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 2}], args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 3}]};
-        args.common.q_batch_idx = args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 4}];
-        args.common.q_seq_idx = args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 5}];
-        args.common.length = args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 6}];
-        args.num_iters = (args.common.length + NUM_ROWS - 1) / NUM_ROWS;
+        args.common.uid         =  args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 1}];
+        args.common.dst         = {args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 2}], args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 3}]};
+        args.common.q_batch_idx =  args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 4}];
+        args.common.q_seq_idx   =  args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 5}];
+        args.common.length      =  args.globals.instructions[kittens::coord<>{0, blockIdx.x, args.task_iter, 6}];
+        args.num_iters          = (args.common.length + NUM_ROWS - 1) / NUM_ROWS;
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
@@ -100,7 +100,8 @@ struct partial_template {
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
-            if(group<8>::warpid() == 0) {
+            __shared__ kittens::semaphore q_load;  
+            if(group<8>::warpid() < WARPGROUP_WARPS) {
                 // auto q_st = subtile_inplace<16, QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
                 // int num_valid_Q_tokens = int(args.globals.Q.depth) * int(args.globals.Q.rows);
                 // if ((4*args.common.q_seq_idx + warpgroup::warpid()) * q_st.rows < num_valid_Q_tokens) {
@@ -111,7 +112,7 @@ struct partial_template {
                 //     zero(q_st);
                 // }
                 // TODO: the / 4 needs to change for different num heads
-                load(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx, 0, 0});
+                warpgroup::load(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx, 0, 0});
                 zero(args.scratch.vec[0]);
             }
             zero(args.state.norm_vec);
