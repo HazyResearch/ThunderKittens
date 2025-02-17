@@ -8,7 +8,7 @@ using namespace kittens::prototype::interpreter;
 
 static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
 using q_tile              = st_bf<64, QK_D>;
-using q_global            = kittens::gl<bf16, -1, -1, -1, QK_D>; // B * R * H * D_QK
+using q_global            = kittens::gl<bf16, -1, -1, -1, QK_D, q_tile>; // B * R * H * D_QK
 using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
 using cache_global        = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
 using instructions_global = kittens::gl<int, 1, -1, -1, 8>;
@@ -94,27 +94,16 @@ struct partial_template {
                 // cache shape is 1, # pages, page size, QK_D
                 tma::load_async(args.input.c, args.globals.Cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
             }
+            else if(args.iter == 0 && warpgroup::warpid() == 1) {
+                tma::expect(args.inputs_arrived, args.scratch.q);
+                tma::load_async(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx, 0, 0}, args.inputs_arrived);
+            }
             else if(laneid() == 0) arrive(args.inputs_arrived);
             warpgroup::sync(5);
         }
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
-            __shared__ kittens::semaphore q_load;  
-            if(group<8>::warpid() < WARPGROUP_WARPS) {
-                // auto q_st = subtile_inplace<16, QK_D>(args.scratch.q, {warpgroup::warpid(), 0});
-                // int num_valid_Q_tokens = int(args.globals.Q.depth) * int(args.globals.Q.rows);
-                // if ((4*args.common.q_seq_idx + warpgroup::warpid()) * q_st.rows < num_valid_Q_tokens) {
-                //     // TODO: need to put in the partial load and store
-                //     load(q_st, args.globals.Q, {args.common.q_batch_idx, 4*args.common.q_seq_idx + warpgroup::warpid(), 0});
-                // }
-                // else {
-                //     zero(q_st);
-                // }
-                // TODO: the / 4 needs to change for different num heads
-                warpgroup::load(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx, 0, 0});
-                zero(args.scratch.vec[0]);
-            }
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
@@ -159,7 +148,6 @@ struct partial_template {
             warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_smem[warpgroup::groupid()]);
             warpgroup::mma_async_wait();
             if(warpgroup::laneid() == 0) arrive(args.inputs_finished, WARPGROUP_WARPS); // done!
-            warpgroup::sync(warpgroup::groupid());
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             if(warpgroup::groupid() == 0) {

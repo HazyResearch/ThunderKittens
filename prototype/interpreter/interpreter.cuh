@@ -268,6 +268,29 @@ template<typename Op> __device__ void run_op_consumer(const typename Op::config:
     }
 }
 
+template<typename config, typename... ops>
+struct dispatch_producer {
+    __device__ static inline void run(int opcode, const typename config::globals &globals, persistent_state &ps) {} // do nothing, base case
+};
+template<typename config, typename op, typename... ops>
+struct dispatch_producer<config, op, ops...> {
+    __device__ static inline void run(int opcode, const typename config::globals &globals, persistent_state &ps) {
+        if(opcode == op::opcode) run_op_producer<op>(globals, ps);
+        else dispatch_producer<config, ops...>::run(opcode, globals, ps);
+    }
+};
+template<typename config, typename... ops>
+struct dispatch_consumer {
+    __device__ static inline void run(int opcode, const typename config::globals &globals, persistent_state &ps) {} // do nothing, base case
+};
+template<typename config, typename op, typename... ops>
+struct dispatch_consumer<config, op, ops...> {
+    __device__ static inline void run(int opcode, const typename config::globals &globals, persistent_state &ps) {
+        if(opcode == op::opcode) run_op_consumer<op>(globals, ps);
+        else dispatch_consumer<config, ops...>::run(opcode, globals, ps);
+    }
+};
+
 template<typename config, typename... ops> __launch_bounds__((NUM_CONSUMER_WARPS+NUM_PRODUCER_WARPS)*WARP_THREADS, 1)
 __global__ void kernel(const __grid_constant__ typename config::globals globals) {
     extern __shared__ int __shm[];
@@ -295,36 +318,14 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
         warpgroup::consumer_registers<NUM_CONSUMER_WARPS / WARPGROUP_WARPS>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
             int opcode = globals.instructions[kittens::coord<>{blockIdx.x, ps.task_iter, 0}];
-            auto tryOp = [&globals, &ps, opcode](auto op) -> bool {
-                using OpType = std::decay_t<decltype(op)>;
-                if (opcode == OpType::opcode) {
-                    run_op_consumer<OpType>(globals, ps);
-                    return true;
-                }
-                return false;
-            };
-            if(opcode == 0) {
-                return; // Exit for a STOP instruction
-            }
-            (tryOp(ops{}) || ...); // Otherwise, try to run the operation.
+            dispatch_consumer<config, ops...>::run(opcode, globals, ps);
         }
     }
     else {
         warpgroup::decrease_registers<24>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
             int opcode = globals.instructions[kittens::coord<>{blockIdx.x, ps.task_iter, 0}];
-            auto tryOp = [&globals, &ps, opcode](auto op) -> bool {
-                using OpType = std::decay_t<decltype(op)>;
-                if (opcode == OpType::opcode) {
-                    run_op_producer<OpType>(globals, ps);
-                    return true;
-                }
-                return false;
-            };
-            if(opcode == 0) {
-                return; // Exit for a STOP instruction
-            }
-            (tryOp(ops{}) || ...); // Otherwise, try to run the operation.
+            dispatch_producer<config, ops...>::run(opcode, globals, ps);
         }
     }
 }
