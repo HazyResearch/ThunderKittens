@@ -163,6 +163,14 @@ export PATH=${CUDA_HOME}/bin:${PATH}
 export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 ```
 
+Sometimes there's a libc10.so error:
+```
+# take the PRINTED_PATH from below
+python -c "import torch; print(torch.file)"
+# and run the command below
+export LD_LIBRARY_PATH=PRINTED_PATH/lib:$LD_LIBRARY_PATH
+```
+
 ### Installing pre-existing kernels
 
 We've provided a number of TK kernels in the `kernels/` folder! To use these with PyTorch bindings:
