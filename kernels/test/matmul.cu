@@ -136,13 +136,13 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 template<typename mmt>
-void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
+void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using global_layout = typename mmt::layout::global_layout;
     using globals  = typename mmt::layout::globals;
     // printf("M: %d, N: %d, K: %d\n", M, N, K);
-    global_layout Ag{d_A, 1, nullptr, M, K};
-    global_layout Bg{d_B, 1, nullptr, K, N};
-    global_layout Cg{d_C, 1, nullptr, M, N};
+    global_layout Ag{d_A, B, nullptr, M, K};
+    global_layout Bg{d_B, B, nullptr, K, N};
+    global_layout Cg{d_C, B, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
@@ -213,7 +213,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
-        inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, 1, M, N, K, grid, block);
     }
 
     // Start timing
@@ -223,7 +223,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     constexpr int ITERS = (NCU ? 1 : 10);
     for(int i = 0; i < ITERS; i++) {
-        inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, 1, M, N, K, grid, block);
     }
     cudaDeviceSynchronize();
 
