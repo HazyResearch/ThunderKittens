@@ -53,9 +53,9 @@ struct partial_layout {
         int length;
     };
     struct consumer_state {
-        rt_fl<16, VO_Dd2> o;
         col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
         col_vec<rt_fl<16, cache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
+        rt_fl<16, VO_Dd2> o;
     };
 };
 struct reduction_layout {
@@ -107,75 +107,136 @@ struct partial_template {
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
+            group<8>::sync(10);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
             // 1.44269504089f is from exp2
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
             int total_q_tokens = int(args.globals.Q.rows) / 16;
             int valid_q_tokens = total_q_tokens - args.common.q_seq_idx;
-            // if(warpgroup::groupid() == 0) {
-            //     // A = Q @ K.T
-            //     rt_fl<16, cache_tile::rows> att_block_fp32;
-            //     warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.c);
-            //     mul(args.state.max_vec_last_scaled, args.state.max_vec, SOFTMAX_TEMPERATURE);
-            //     warpgroup::mma_async_wait();
-            //     // // softmax
-            //     // if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
-            //     //     right_fill(att_block_fp32, att_block_fp32, args.common.length - args.iter*NUM_ROWS, base_types::constants<float>::neg_infty());
-            //     // }
-            //     // if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
-            //     //     warpgroup::tril(att_block_fp32, att_block_fp32, args.common.length - args.iter*NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
-            //     // }
-            //     row_max(args.state.max_vec, att_block_fp32, args.state.max_vec); // accumulate onto the max_vec
-            //     mul(args.state.max_vec_scaled, args.state.max_vec, SOFTMAX_TEMPERATURE);
-            //     mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
-            //     sub_row(att_block_fp32, att_block_fp32, args.state.max_vec_scaled);
-            //     exp2(att_block_fp32, att_block_fp32);
-            //     sub(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled, args.state.max_vec_scaled);
-            //     exp2(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled);
-            //     warpgroup::store(args.scratch.vec[0], args.state.max_vec_last_scaled);
-            //     mul(args.state.norm_vec, args.state.norm_vec, args.state.max_vec_last_scaled);
-            //     row_sum(args.state.norm_vec, att_block_fp32, args.state.norm_vec); // accumulate onto the norm_vec
-            //     warpgroup::store(args.scratch.att_block, att_block_fp32);
-            // }
+
+            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec, local_norm_vec;
+            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec_last_scaled, local_max_vec_scaled;
+
+            copy(local_max_vec, args.state.max_vec);
+            copy(local_norm_vec, args.state.norm_vec);
+            copy(local_max_vec_last_scaled, args.state.max_vec_last_scaled);
+            copy(local_max_vec_scaled, args.state.max_vec_scaled);
+
+            if(warpgroup::groupid() == 0) {
+                // A = Q @ K.T
+                rt_fl<16, cache_tile::rows> att_block_fp32;
+                warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.c);
+
+                // mul(args.state.max_vec_last_scaled, args.state.max_vec, SOFTMAX_TEMPERATURE);
+                mul(local_max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
+
+                warpgroup::mma_async_wait();
+                // // softmax
+                // if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
+                //     right_fill(att_block_fp32, att_block_fp32, args.common.length - args.iter*NUM_ROWS, base_types::constants<float>::neg_infty());
+                // }
+                // if(args.iter >= args.num_iters-2) { // Need to (possibly) do a causal mask.
+                //     warpgroup::tril(att_block_fp32, att_block_fp32, args.common.length - args.iter*NUM_ROWS - args.globals.Q.depth, base_types::constants<float>::neg_infty());
+                // }
+
+                // row_max(args.state.max_vec, att_block_fp32, args.state.max_vec); // accumulate onto the max_vec
+                // mul(args.state.max_vec_scaled, args.state.max_vec, SOFTMAX_TEMPERATURE);
+                row_max(local_max_vec, att_block_fp32, local_max_vec);
+                mul(local_max_vec_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
+
+                mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
+                // sub_row(att_block_fp32, att_block_fp32, args.state.max_vec_scaled);
+                sub_row(att_block_fp32, att_block_fp32, local_max_vec_scaled);
+                
+                exp2(att_block_fp32, att_block_fp32);
+                
+                // sub(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled, args.state.max_vec_scaled);
+                // exp2(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled);
+                // warpgroup::store(args.scratch.vec[0], args.state.max_vec_last_scaled);
+                sub(local_max_vec_last_scaled, local_max_vec_last_scaled, local_max_vec_scaled);
+                exp2(local_max_vec_last_scaled, local_max_vec_last_scaled);
+                warpgroup::store(args.scratch.vec[0], local_max_vec_last_scaled);
+                
+                // mul(args.state.norm_vec, args.state.norm_vec, args.state.max_vec_last_scaled);
+                // row_sum(args.state.norm_vec, att_block_fp32, args.state.norm_vec); // accumulate onto the norm_vec
+                // warpgroup::store(args.scratch.att_block, att_block_fp32);
+                mul(local_norm_vec, local_norm_vec, local_max_vec_last_scaled);
+                row_sum(local_norm_vec, att_block_fp32, local_norm_vec);
+                warpgroup::store(args.scratch.att_block, att_block_fp32);
+            }
             group<8>::sync(10);
-            warpgroup::load(args.state.max_vec_last_scaled, args.scratch.vec[0]);
+
+            // warpgroup::load(args.state.max_vec_last_scaled, args.scratch.vec[0]);
+            warpgroup::load(local_max_vec_last_scaled, args.scratch.vec[0]);
 
             // mul_row(args.state.o, args.state.o, args.state.max_vec_last_scaled); // normalize o_reg before mma
+            mul_row(args.state.o, args.state.o, local_max_vec_last_scaled); // normalize o_reg before mma
+
             // O += A @ V
             auto (&v_smem)[2] = reinterpret_cast<v_tile(&)[2]>(args.input.c);
             warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_smem[warpgroup::groupid()]);
+
+            copy(args.state.max_vec, local_max_vec);
+            copy(args.state.norm_vec, local_norm_vec);
+            copy(args.state.max_vec_last_scaled, local_max_vec_last_scaled);
+            copy(args.state.max_vec_scaled, local_max_vec_scaled);
+
             warpgroup::mma_async_wait();
             if(warpgroup::laneid() == 0) arrive(args.inputs_finished, WARPGROUP_WARPS); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
-            if(warpgroup::groupid() == 0) {
-                warpgroup::store(args.scratch.vec[1], args.state.norm_vec);
+
+            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec, local_norm_vec;
+            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec_last_scaled, local_max_vec_scaled;
+
+            copy(local_norm_vec, args.state.norm_vec);
+            copy(local_max_vec_last_scaled, args.state.max_vec_last_scaled);
+            copy(local_max_vec_scaled, args.state.max_vec_scaled);
+            copy(local_max_vec, args.state.max_vec);
+
+            // if(warpgroup::groupid() == 0) {
+            //     warpgroup::store(args.scratch.vec[1], args.state.norm_vec);
+            // }
+            if (warpgroup::groupid() == 0) {
+                warpgroup::store(args.scratch.vec[1], local_norm_vec); 
             }
+
             group<8>::sync(10);
-            warpgroup::load(args.state.norm_vec, args.scratch.vec[1]);
+
+            // warpgroup::load(args.state.norm_vec, args.scratch.vec[1]);
             // div_row(args.state.o, args.state.o, args.state.norm_vec);
+            warpgroup::load(local_norm_vec, args.scratch.vec[1]);
+            div_row(args.state.o, args.state.o, local_norm_vec);
+
             if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                 auto (&o_smem)[2] = reinterpret_cast<o_tile_d2(&)[2]>(args.scratch.q);
-                // warpgroup::store(o_smem[warpgroup::groupid()], args.state.o);
-                // warpgroup::sync(warpgroup::groupid());
-                // // auto o_st = subtile_inplace<16, VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
-                // warpgroup::store(args.globals.O, o_smem[warpgroup::groupid()], {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, warpgroup::groupid()});
-                warpgroup::store(args.globals.O, args.state.o, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, warpgroup::groupid()});
+                warpgroup::store(o_smem[warpgroup::groupid()], args.state.o);
+                warpgroup::sync(warpgroup::groupid());
+                // auto o_st = subtile_inplace<16, VO_Dd2>(o_smem[warpgroup::groupid()], {warpgroup::warpid(), 0});
+                if (warpgroup::warpid() == 0) {
+                    store(args.globals.O, o_smem[warpgroup::groupid()], {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, warpgroup::groupid()});
+                }
                 // if ((4*args.common.dst.seq_idx + warpgroup::warpid() % 4) * o_st.rows < num_valid_O_tokens) {
                 //     // todo: need the partial store
                 //     store(args.globals.O, o_st, {args.common.dst.batch_idx, 4*args.common.dst.seq_idx + warpgroup::warpid() % 4, 0, warpgroup::groupid()});
                 // }
             }
-            // else { // write out directly to O scratch, without going through smem
-            //     warpgroup::store(args.globals.O_scratch, args.state.o, {args.common.dst.seq_idx, 0, 0});
-            // }
+            else { // write out directly to O scratch, without going through smem
+                warpgroup::store(args.globals.O_scratch, args.state.o, {args.common.dst.seq_idx, 0, 0});
+            }
             warpgroup::sync(warpgroup::groupid());
             if(args.common.dst.batch_idx < 0) {
                 if(group<8>::laneid() == 0) {
                     args.globals.semaphore[{args.common.dst.seq_idx}] = 1;
                 }
             }
+
+            copy(args.state.max_vec, local_max_vec);
+            copy(args.state.norm_vec, local_norm_vec);
+            copy(args.state.max_vec_last_scaled, local_max_vec_last_scaled);
+            copy(args.state.max_vec_scaled, local_max_vec_scaled);
+            
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
         }
     };
