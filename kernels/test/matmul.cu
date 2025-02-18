@@ -7,11 +7,11 @@ using namespace kittens::prototype::lcf;
 template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
     using  base_tile      = st_bf<64, 64>;
-    using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile>;
+    using  global_layout  = gl<bf16, -1, 1, -1, -1, base_tile>;
     struct globals        { global_layout A, B, C; };
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
-    struct common_state   { int2 coord; };
+    struct common_state   { int batch; int2 coord; };
     struct consumer_state { rt_fl<16, 64> accum[N_BLOCK]; };
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
@@ -30,7 +30,9 @@ struct matmul_template {
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
+
         int task_id = args.task_iter*gridDim.x + blockIdx.x;
+        args.common.batch = 0;
         if (task_id < super_rows * Cblocks) // 32*16 = 512
             args.common.coord = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M, (task_id%super_repeat)/SUPER_M }; 
         else if (task_id < Rblocks*Cblocks) { // 512
@@ -54,10 +56,10 @@ struct matmul_template {
                 tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < M_BLOCK; i++)
                     tma::load_async(args.input.a[i], args.globals.A,
-                                    {args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                                    {args.common.batch, 0, args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 for(int i = 0; i < N_BLOCK; i++)
                     tma::load_async(args.input.b[i], args.globals.B,
-                                    {args.common.coord.y+i, args.iter}, args.inputs_arrived);
+                                    {args.common.batch, 0, args.common.coord.y+i, args.iter}, args.inputs_arrived);
             }
         }
     };
@@ -87,7 +89,7 @@ struct matmul_template {
             if(warpgroup::warpid() == 0) {
                 for(int i = 0; i < N_BLOCK; i++) {
                     tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-                                   {args.common.coord.x, args.common.coord.y+i});
+                                   {args.common.batch, 0, args.common.coord.x, args.common.coord.y+i});
                     tma::store_async_read_wait();
                 }
             }
@@ -127,9 +129,9 @@ void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, di
     using global_layout = typename mmt::layout::global_layout;
     using globals  = typename mmt::layout::globals;
     // printf("M: %d, N: %d, K: %d\n", M, N, K);
-    global_layout Ag{d_A, nullptr, nullptr, M, K};
-    global_layout Bg{d_B, nullptr, nullptr, K, N};
-    global_layout Cg{d_C, nullptr, nullptr, M, N};
+    global_layout Ag{d_A, 1, nullptr, M, K};
+    global_layout Bg{d_B, 1, nullptr, K, N};
+    global_layout Cg{d_C, 1, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
