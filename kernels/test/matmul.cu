@@ -26,17 +26,28 @@ struct matmul_template {
     }
       // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
+        int Rblocks = args.globals.C.rows / (M_BLOCK*64);
+        int Cblocks = args.globals.C.cols / (N_BLOCK*64);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
 
+        int blocks_per_batch = Rblocks*Cblocks;
+
         int task_id = args.task_iter*gridDim.x + blockIdx.x;
-        args.common.batch = 0;
-        if (task_id < super_rows * Cblocks) // 32*16 = 512
-            args.common.coord = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M, (task_id%super_repeat)/SUPER_M }; 
+        int batch_idx = task_id / blocks_per_batch;
+        int batch_task = task_id % blocks_per_batch;
+        if (batch_idx >= args.globals.A.batch) {
+            args.num_iters = -1;
+            return;
+        }
+        args.common.batch = batch_idx;
+        if (task_id < super_rows * Cblocks) { // 32*16 = 512
+            int x = SUPER_M*(batch_task/super_repeat) + task_id%SUPER_M;
+            args.common.coord = { x, (batch_task%super_repeat)/SUPER_M };
+        }
         else if (task_id < Rblocks*Cblocks) { // 512
-            int remainder_id = task_id - super_rows*Cblocks;
+            int remainder_id = batch_task - super_rows*Cblocks;
             args.common.coord = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
         }
         else { // Id is too high, no more work to do

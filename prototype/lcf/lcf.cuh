@@ -98,7 +98,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
     common_state common;
 
-    if (laneid() == 0) printf("Warp %d entering %s path\n", warpid(), warpid() >= NUM_CONSUMER_WARPS ? "producer" : "consumer");
+    // if (laneid() == 0) printf("Warp %d entering %s path\n", warpid(), warpid() >= NUM_CONSUMER_WARPS ? "producer" : "consumer");
 
     if(warpid() >= NUM_CONSUMER_WARPS) { // code path for producer warps
         using producers = group<NUM_PRODUCER_WARPS>;
