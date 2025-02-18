@@ -12,6 +12,7 @@ D_QK, D_VO = 576, 512
 PAGE_SIZE = 256
 
 B, NEW_TOKENS, H = 1, 1, 16
+LENGTH = 5
 
 # Initialize arguments
 # &mla_decode_layout::globals::Ops,
@@ -22,13 +23,26 @@ Ops = torch.tensor([
         0, 0,       # Batch, seq of dst (positive batch, as no reduction)
         0,          # q_batch_idx
         0,          # q_seq_idx
-        PAGE_SIZE,        # Let's use the whole cache page
+        LENGTH,        # Let's use the whole cache page
         0           # padding to 32 bytes
     ],
     [OP_STOP,0,0,0,0,0,0,0] # Nop
 ], dtype=torch.int32)
+# Ops2 = torch.tensor([
+#     [
+#         OP_PARTIAL, # Opcode
+#         1,          # UID
+#         0, 0,       # Batch, seq of dst (positive batch, as no reduction)
+#         0,          # q_batch_idx
+#         0,          # q_seq_idx
+#         PAGE_SIZE,        # Let's use the whole cache page
+#         0           # padding to 32 bytes
+#     ],
+#     [OP_STOP,0,0,0,0,0,0,0] # Nop
+# ], dtype=torch.int32)
+Ops2 = torch.zeros_like(Ops) # Just stop instructions
 Stops = torch.zeros_like(Ops) # Just stop instructions
-Ops = torch.stack([Ops]+[Stops]*147, dim=0).cuda() # Stack a single Ops and 147 copies of Nops on top of each other to make a tensor
+Ops = torch.stack([Ops,Ops2]+[Stops]*130, dim=0).cuda().contiguous() # Stack a single Ops and 147 copies of Nops on top of each other to make a tensor
 # print(Ops)
 
 
@@ -72,7 +86,7 @@ crazy_buffer = torch.randn((100_000,), dtype=torch.bfloat16).cuda()
 # Define Sequence Length and Block Size(s).
 
 # lengths = torch.randint(Sl, Sh, (B,), dtype=torch.int32)
-lengths = torch.full((B,), 256, dtype=torch.int32, device='cuda')
+lengths = torch.full((B,), LENGTH, dtype=torch.int32, device='cuda')
 sizes = (lengths + (PAGE_SIZE - 1)).floor_divide(PAGE_SIZE)
 
 total = lengths.sum().item()
@@ -139,8 +153,16 @@ if True:
     mask = (
         torch.arange(maximum, dtype=torch.int32, device='cuda')[None, None, None, :]
         .expand(B, H, NEW_TOKENS, -1)
-        .lt(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1))
+        .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1))
     )
+
+print('mask', mask)
+print('padded_key', padded_key.shape)
+print('padded_value', padded_value.shape)
+print('table0', table[0])
+print('cache', cache[table[0],:,0,0])
+print('pk', padded_key[0])
+print('query', query.shape, '\n', query)
 
 # &mla_decode_layout::globals::Q,
 # Q = torch.ones((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()

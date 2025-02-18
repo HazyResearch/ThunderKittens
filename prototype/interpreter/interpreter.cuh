@@ -191,8 +191,6 @@ template<typename Op> __device__ void run_op_consumer(const typename Op::config:
         finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)(scratch_smem) - sizeof(finish_block))/1024)*1024);
         static_assert(sizeof(scratch_alloc_block) + sizeof(finish_block) <= MAX_BLOCK_SHARED_MEMORY, "Finish block is too large for shared memory.");
 
-        int danger_stage = ps.max_finish_offset/sizeof(input_alloc_block);
-        ps.max_finish_offset = (uint64_t)(finish_smem) - (uint64_t)(ps.shmem);
         common_state common;
 
         using consumers = group<NUM_CONSUMER_WARPS>;
@@ -241,8 +239,6 @@ template<typename Op> __device__ void run_op_consumer(const typename Op::config:
         finish_block  (*finish_smem) = reinterpret_cast<finish_block*>((((uint64_t)(scratch_smem) - sizeof(finish_block))/1024)*1024);
         static_assert(sizeof(scratch_alloc_block) + sizeof(finish_block) <= MAX_BLOCK_SHARED_MEMORY, "Finish block is too large for shared memory.");
         
-        int danger_stage = ps.max_finish_offset/sizeof(input_alloc_block);
-        ps.max_finish_offset = (uint64_t)(finish_smem) - (uint64_t)(ps.shmem);
         common_state common;
 
         using consumers = group<NUM_CONSUMER_WARPS>;
@@ -317,14 +313,16 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     if(warpid() < NUM_CONSUMER_WARPS) {
         warpgroup::consumer_registers<NUM_CONSUMER_WARPS / WARPGROUP_WARPS>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
-            int opcode = globals.instructions[kittens::coord<>{blockIdx.x, ps.task_iter, 0}];
+            int opcode = globals.instructions[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 0}];
+            if(opcode == 0) return; // Stop Op
             dispatch_consumer<config, ops...>::run(opcode, globals, ps);
         }
     }
     else {
         warpgroup::decrease_registers<24>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
-            int opcode = globals.instructions[kittens::coord<>{blockIdx.x, ps.task_iter, 0}];
+            int opcode = globals.instructions[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 0}];
+            if(opcode == 0) return; // Stop Op
             dispatch_producer<config, ops...>::run(opcode, globals, ps);
         }
     }

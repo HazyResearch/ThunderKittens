@@ -128,6 +128,7 @@ struct partial_template {
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
                     const int length = args.common.length - args.iter*NUM_ROWS;
+                    if(laneid() == 0) printf("block %d, warp %d, iter %d/%d, right fill from column %d\n", blockIdx.x, warpid(), args.iter, args.num_iters, length);
                     right_fill(att_block_fp32, att_block_fp32, length, base_types::constants<float>::neg_infty());
                 }
 
