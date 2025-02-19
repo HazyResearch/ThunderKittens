@@ -14,7 +14,7 @@ OP_REDUCTION = 2
 D_QK = 576
 D_VO = 512
 PAGE_SIZE = 256
-NUM_ROWS = 32  # as in the kernel
+NUM_ROWS  = 32
 
 # We simulate a cache containing LENGTH tokens.
 LENGTH = 128
@@ -164,7 +164,7 @@ key_t   = padded_key.transpose(1, 2)
 value_t = padded_value.transpose(1, 2)
 # Build an attention mask that allows all keys (shape: (B, H, NEW_TOKENS, LENGTH)).
 mask = torch.ones((B, H, NEW_TOKENS, LENGTH), device='cuda', dtype=torch.bool)
-ref = F.scaled_dot_product_attention(query_t, key_t, value_t,
+ref  = F.scaled_dot_product_attention(query_t, key_t, value_t,
                                      attn_mask=mask,
                                      dropout_p=0.0,
                                      is_causal=False,

@@ -114,7 +114,7 @@ struct partial_template {
             col_vec<rt_fl<16, cache_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, cache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
-            copy(local_max_vec, args.state.max_vec);
+            copy(local_max_vec,  args.state.max_vec);
             copy(local_norm_vec, args.state.norm_vec);
 
             if(warpgroup::groupid() == 0) {
