@@ -19,7 +19,7 @@ import mla_decode
 
 def main():
     parser = argparse.ArgumentParser(description="Thunderkittens MLA Decode End-to-End Benchmark (Multi–Page)")
-    parser.add_argument("--batch", type=int, default=32, help="Batch size (number of output batches)")
+    parser.add_argument("--batch", type=int, default=132, help="Batch size (number of output batches)")
     parser.add_argument("--tokens_per_batch", type=int, default=4, help="New tokens per batch (tasks per batch)")
     parser.add_argument("--iterations", type=int, default=1000, help="Number of kernel launches for timing")
     parser.add_argument("--length", type=int, default=1024, help="Number of tokens in the cache (across pages)")
