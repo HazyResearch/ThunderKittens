@@ -14,81 +14,108 @@ OP_REDUCTION = 2
 D_QK = 576
 D_VO = 512
 PAGE_SIZE = 256
-NUM_ROWS = 32
+NUM_ROWS = 32  # as in the kernel
 
-# we simulate a cache containing LENGTH tokens.
+# We simulate a cache containing LENGTH tokens.
 LENGTH = 128
 
-# run in non–batch mode so that partial results are written to scratch.
-# two partial ops (for two segments) will be issued with unique uids.
+# Run in non–batch mode so that partial results are written to scratch.
+# We'll issue four partial ops (for four segments) with unique uids.
 uid1 = 100
 uid2 = 101
+uid3 = 102
+uid4 = 103
+# For intermediate reduction results, we use new uids:
+uidA = 200  # result of reducing uid1 and uid2
+uidB = 201  # result of reducing uid3 and uid4
 
+# We'll eventually combine uidA and uidB to produce the final result (stored at scratch index 0).
 # one batch, one new token, and H=16 heads.
 B = 1
 NEW_TOKENS = 1
 H = 16
 
-# scale factor.
+# Scale factor.
 softmax_scale = 1.0 / math.sqrt(D_QK)
 
 #----------------------------------------------------------------------------
 # Build the instructions tensor.
 #
-# The global instructions type is gl<int, 1, -1, -1, 8>
-# we create a tensor of shape (1, grid, num_task_iters, 8). 
+# Our global instructions type is gl<int, 1, -1, -1, 8>.
+# We create a tensor of shape (1, grid, num_task_iters, 8).
+# Here we need three task iterations:
+#   - task_iter 0: partial ops,
+#   - task_iter 1: first–level reductions,
+#   - task_iter 2: final reduction.
 grid = 132
-num_task_iters = 2  # one task iteration for the partial op, one for reduction
+num_task_iters = 3  
 instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device='cuda')
 
-# only fill block 0 with work; the rest are stops
-
-# Partial op 1 (for segment 1): placed in block 0, task_iter 0.
+# --- Task Iteration 0: Partial Ops ---
+# Place four partial ops in different blocks.
 instructions[0, 0, 0, :] = torch.tensor(
     [OP_PARTIAL, uid1, -1, uid1, 0, 0, LENGTH, 0],
     dtype=torch.int32, device='cuda')
-
-# Partial op 2 (for segment 2): placed in block 1, task_iter 0.
 instructions[0, 1, 0, :] = torch.tensor(
     [OP_PARTIAL, uid2, -1, uid2, 0, 0, LENGTH, 0],
     dtype=torch.int32, device='cuda')
-
-# Reduction op: placed in block 0, task_iter 1, combining results from uid1 and uid2.
-instructions[0, 0, 1, :] = torch.tensor(
-    [OP_REDUCTION, -1, 0, uid1, uid2, 0, 0, 0],
+instructions[0, 2, 0, :] = torch.tensor(
+    [OP_PARTIAL, uid3, -1, uid3, 0, 0, LENGTH, 0],
     dtype=torch.int32, device='cuda')
+instructions[0, 3, 0, :] = torch.tensor(
+    [OP_PARTIAL, uid4, -1, uid4, 0, 0, LENGTH, 0],
+    dtype=torch.int32, device='cuda')
+# The remaining blocks in task_iter 0 remain OP_STOP.
 
-# The remaining instructions (other blocks/task_iters) remain OP_STOP.
+# --- Task Iteration 1: First-Level Reductions ---
+# Reduction op in block 0: combine partials from uid1 and uid2, output to uidA.
+instructions[0, 0, 1, :] = torch.tensor(
+    [OP_REDUCTION, -1, uidA, uid1, uid2, 0, 0, 0],
+    dtype=torch.int32, device='cuda')
+# Reduction op in block 1: combine partials from uid3 and uid4, output to uidB.
+instructions[0, 1, 1, :] = torch.tensor(
+    [OP_REDUCTION, -1, uidB, uid3, uid4, 0, 0, 0],
+    dtype=torch.int32, device='cuda')
+# The remaining blocks in task_iter 1 remain OP_STOP.
 
-# prepare global buffers
+# --- Task Iteration 2: Final Reduction ---
+# In block 0, combine the two intermediate reduction results (uidA and uidB)
+# to produce the final result at scratch coordinate 0.
+instructions[0, 0, 2, :] = torch.tensor(
+    [OP_REDUCTION, -1, 0, uidA, uidB, 0, 0, 0],
+    dtype=torch.int32, device='cuda')
+# All remaining instructions in task_iter 2 remain OP_STOP.
+
+#----------------------------------------------------------------------------
+# Prepare global buffers.
+#
 # Q global: expected shape (B, NEW_TOKENS, H, D_QK).
 q = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16, device='cuda')
 
-# Cache global: non–batch mode we allocate shape (1, num_pages, PAGE_SIZE, D_QK)
+# Cache global: For non–batch mode we allocate shape (1, num_pages, PAGE_SIZE, D_QK).
 num_pages = 1
 cache = torch.randn((1, num_pages, PAGE_SIZE, D_QK), dtype=torch.bfloat16, device='cuda')
-# fill the cache with "latent" keys
-# create a latent tensor of shape (LENGTH, 1, D_QK)
+# Fill the cache with "latent" keys.
 latent = torch.randn((LENGTH, 1, D_QK), dtype=torch.bfloat16, device='cuda') * 10
 
-# reference we need to build padded_key and padded_value:
-#   – expand latent to (LENGTH, H, D_QK)
+# For reference we build padded_key and padded_value:
+#   – Expand latent to (LENGTH, H, D_QK)
 expanded = latent.expand(LENGTH, H, D_QK)
 #   – padded_key: shape (B, LENGTH, H, D_QK)
 padded_key = expanded.unsqueeze(0).clone()
 #   – padded_value: shape (B, LENGTH, H, D_VO); take the first D_VO channels.
 padded_value = expanded[:, :, :D_VO].unsqueeze(0).clone()
-# fill cache - for simplicity, assume all tokens go to page 0, positions 0..(LENGTH-1).
+# Fill cache – for simplicity, assume all tokens go to page 0, positions 0..(LENGTH-1).
 cache[0, 0, :LENGTH, :] = latent.squeeze(1)
 
-# table global: for non–batch mode, expected shape (1, 1, max_uid, 1).
+# Table global: for non–batch mode, expected shape (1, 1, max_uid, 1).
 max_uid = 1024
 table = torch.zeros((1, 1, max_uid, 1), dtype=torch.int32, device='cuda')
 
 # O global: shape (B, NEW_TOKENS, H, D_VO). (Not used in non–batch mode.)
 O = torch.empty((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16, device='cuda')
 
-# O_scratch global: declared as gl<float, 1, -1, 64, D_VO, o_tile_fl>
+# O_scratch global: gl<float, 1, -1, 64, D_VO, o_tile_fl>
 # Expected external shape: (1, max_uid, 64, D_VO)
 O_scratch = torch.empty((1, max_uid, 64, D_VO), dtype=torch.float32, device='cuda')
 
@@ -111,20 +138,20 @@ print("Semaphore shape:", semaphore.shape)
 
 #----------------------------------------------------------------------------
 # Launch the kernel.
-print("Launching kernel (partial + reduction run in non–batch mode)...")
+print("Launching kernel (multi–level reduction run in non–batch mode)...")
 mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
 torch.cuda.synchronize()
 print("Kernel execution finished.")
 
 #----------------------------------------------------------------------------
 # In non–batch mode the partial and reduction ops write their results to scratch.
-# Our reduction op was set with dst.seq_idx = 0, so we expect its final output
+# Our final reduction op was set with dst.seq_idx = 0, so we expect its final output
 # to appear at scratch coordinate corresponding to uid 0.
 #
 # The reduction-template stores final results in tiles of type st_fl<16, D_VO> (i.e. 16 rows).
-# We assume that a single warp group did the work so that the final output is in O_scratch[0, 0, 0:16, :].
+# We assume that a single warpgroup did the final reduction so that the final output is in O_scratch[0, 0, 0:16, :].
 final_out = O_scratch[0, 0, 0:16, :].to(torch.bfloat16)
-print("\nFinal output from reduction op (extracted from O_scratch[0,0,0:16,:]):")
+print("\nFinal output from multi–level reduction op (extracted from O_scratch[0,0,0:16,:]):")
 print(final_out)
 
 #----------------------------------------------------------------------------
@@ -148,7 +175,7 @@ print("\nReference output (sdpa):")
 print(ref)
 
 #----------------------------------------------------------------------------
-# Compare final result (from reduction op) with reference.
+# Compare final result (from the multi–level reduction) with the reference.
 abs_diff = torch.abs(final_out - ref[0, 0])
 print("\nMean absolute difference:", torch.mean(abs_diff).item())
 print("Max absolute difference:", torch.max(abs_diff).item())
