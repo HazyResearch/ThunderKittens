@@ -34,7 +34,7 @@ struct persistent_state {
     uint32_t semaphore_bitfield;
 };
 
-template<typename Op> __device__ void run_op_producer(const typename Op::config::globals &globals, persistent_state &ps) {
+template<typename Op> __device__ inline void run_op_producer(const typename Op::config::globals &globals, persistent_state &ps) {
     static_assert(kernel_template<Op>, "interpreter producer kernel template parameter does not satisfy concept requirements");
     using L              = typename Op::layout;
     using CKL            = complete_kittens_layout<L>; // complete the layout by filling in the optional types with empty
@@ -154,7 +154,7 @@ template<typename Op> __device__ void run_op_producer(const typename Op::config:
         producers::sync(14); // producer warps must finish before consumer warps can proceed
     }
 }
-template<typename Op> __device__ void run_op_consumer(const typename Op::config::globals &globals, persistent_state &ps) {
+template<typename Op> __device__ inline void run_op_consumer(const typename Op::config::globals &globals, persistent_state &ps) {
     static_assert(kernel_template<Op>, "interpreter consumer kernel template parameter does not satisfy concept requirements");
     using L              = typename Op::layout;
     using CKL            = complete_kittens_layout<L>; // complete the layout by filling in the optional types with empty
