@@ -47,11 +47,10 @@ def main():
 
     # We use a 3–iteration instructions tensor.
     num_task_iters = 3
-    # The grid size controls the total number of tasks (blocks) scheduled.
-    # In this end-to-end benchmark, we will only populate instructions for the first few tasks.
     B = args.batch
     T = args.tokens_per_batch
-    grid = args.grid if args.grid is not None else B * (T+3//4)
+    # Pack up to 4 tokens per instruction:
+    grid = args.grid if args.grid is not None else B * ((T+3)//4)
 
     # Allocate the instructions tensor with shape (1, grid, num_task_iters, 8).
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
@@ -67,11 +66,10 @@ def main():
     # Final reduction writes its output to scratch at index 0.
 
     # --- Task Iteration 0: Partial Ops ---
-    # Populate the first 4 tasks (if available) with partial op instructions.
     if grid >= 4:
         for i, uid in enumerate([uid1, uid2, uid3, uid4]):
             # Instruction layout:
-            #   [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, length, 0]
+            # [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, length, 0]
             # Use -1 for dst.batch_idx to indicate non–batch mode (write to scratch).
             instructions[0, i, 0, 0] = OP_PARTIAL
             instructions[0, i, 0, 1] = uid
@@ -79,30 +77,23 @@ def main():
             instructions[0, i, 0, 3] = uid         # use uid as destination sequence index
             instructions[0, i, 0, 4] = 0           # q_batch_idx (dummy)
             instructions[0, i, 0, 5] = 0           # q_seq_idx (dummy)
-            instructions[0, i, 0, 6] = args.length # cache length (number of tokens)
+            instructions[0, i, 0, 6] = args.length # cache length
             instructions[0, i, 0, 7] = 0
 
     # --- Task Iteration 1: First-Level Reductions ---
-    # Populate two tasks with reduction instructions.
     if grid >= 2:
-        # Reduction op combines partial results from uid1 and uid2 into uidA.
         instructions[0, 0, 1, :] = torch.tensor(
             [OP_REDUCTION, -1, uidA, uid1, uid2, 0, 0, 0],
             dtype=torch.int32, device="cuda")
-        # Reduction op combines partial results from uid3 and uid4 into uidB.
         instructions[0, 1, 1, :] = torch.tensor(
             [OP_REDUCTION, -1, uidB, uid3, uid4, 0, 0, 0],
             dtype=torch.int32, device="cuda")
 
     # --- Task Iteration 2: Final Reduction ---
-    # Populate task 0 with final reduction op that combines uidA and uidB.
     instructions[0, 0, 2, :] = torch.tensor(
         [OP_REDUCTION, -1, 0, uidA, uidB, 0, 0, 0],
         dtype=torch.int32, device="cuda")
 
-    # (Any tasks not explicitly filled remain as OP_STOP.)
-
-    # Print configuration summary.
     print("End-to-end decode benchmark configuration:")
     print(f"  Batch size: {B}")
     print(f"  Tokens per batch: {T}")
@@ -115,61 +106,42 @@ def main():
     print(f"  Final reduction output written to scratch index 0")
     print(f"  Iterations: {args.iterations}")
 
-    # Softmax scale factor (used in the kernel).
+    # Softmax scale factor.
     softmax_scale = 1.0 / math.sqrt(args.d_qk)
     print(f"  Softmax scale: {softmax_scale}")
 
     #----------------------------------------------------------------------------
     # Global Buffers
-    # Q global: shape (B, T, heads, D_QK)
     q = torch.randn((B, T, args.heads, args.d_qk), dtype=torch.bfloat16, device="cuda")
     
-    # Cache global: support for multiple pages.
     num_pages = math.ceil(args.length / args.page_size)
     print(f"  Number of cache pages: {num_pages}")
     cache = torch.randn((1, num_pages, args.page_size, args.d_qk),
                         dtype=torch.bfloat16, device="cuda")
-    # Generate latent keys for args.length tokens.
     latent = torch.randn((args.length, 1, args.d_qk), dtype=torch.bfloat16, device="cuda") * 10
     for p in range(num_pages):
         start = p * args.page_size
         end = min(args.length, (p + 1) * args.page_size)
         cache[0, p, :end - start, :] = latent[start:end, 0, :]
 
-    # (Optional) Build a padded key for reference (not used by the kernel).
     expanded = latent.expand(args.length, args.heads, args.d_qk)
-    padded_key = expanded.unsqueeze(0).clone()  # shape (1, args.length, heads, D_QK)
+    padded_key = expanded.unsqueeze(0).clone()
 
-    # Table global: shape (1, 1, uid_max, num_pages)
-    # We need to provide a mapping from each op’s uid to its page indices.
     uid_max = (1000 + grid) if args.max_uid is None else args.max_uid
     table = torch.zeros((1, 1, uid_max, num_pages), dtype=torch.int32, device="cuda")
-    # For each op’s uid that we use, fill its table entry with page IDs (0, 1, 2, …).
-    # (The kernel will use table[uid, iter/ITERS_PER_PAGE] to determine which page to load.)
     for uid in [uid1, uid2, uid3, uid4, uidA, uidB]:
         for p in range(num_pages):
             table[0, 0, uid, p] = p
 
-    # O global: shape (B, T, heads, D_VO)
     O = torch.empty((B, T, args.heads, args.d_vo), dtype=torch.bfloat16, device="cuda")
-
-    # O_scratch global: shape (1, uid_max, 64, D_VO)
     O_scratch = torch.empty((1, uid_max, 64, args.d_vo), dtype=torch.float32, device="cuda")
-
-    # Lvec_scratch global: shape (1, 1, uid_max, 64)
     Lvec_scratch = torch.empty((1, 1, uid_max, 64), dtype=torch.float32, device="cuda")
-
-    # Semaphore global: shape (1, 1, 1, uid_max)
     semaphore = torch.zeros((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
 
-    #----------------------------------------------------------------------------
-    # Warm-up the kernel (to amortize one-time setup costs)
     print("Warming up the kernel...")
     mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
 
-    #----------------------------------------------------------------------------
-    # Benchmark loop using CUDA events.
     iterations = args.iterations
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
     end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
@@ -180,7 +152,6 @@ def main():
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
         torch.cuda.synchronize()
         end_events[i].record()
-
     elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(iterations)]
     avg_time_us = (sum(elapsed_ms) * 1e3) / iterations    
     print(f"Kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
