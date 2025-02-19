@@ -16,7 +16,7 @@ using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
 using o_tile              = st_bf<64, VO_D>;
 using o_tile_d2           = st_bf<64, VO_Dd2>;
 using o_tile_fl           = st_fl<16, VO_D>;
-using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2>; // B * R * H * D_VO
+using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2, st_bf<16, VO_D>>; // B * R * H * D_VO
 using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
 using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
 using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>;              // 1 * 1 * 1 * uid
@@ -57,15 +57,6 @@ struct partial_layout {
         col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
         rt_fl<16, VO_Dd2> o;
     };
-};
-struct reduction_layout {
-    using globals = config::globals;
-    struct input_block { o_tile_fl o[2]; sv_fl<16> lvec[2]; sv_fl<16> padding[14]; };
-    struct common_state {
-        location dst;
-        int src_uid[2];
-    };
-    struct consumer_state {};
 };
 struct partial_template {
     using config = config;
@@ -205,6 +196,16 @@ struct partial_template {
         }
     };
 };
+struct reduction_layout {
+    using globals = config::globals;
+    struct input_block  { o_tile_fl o[2]; sv_fl<16> lvec[2]; sv_fl<16> padding[14]; };
+    struct output_block { o_tile_fl o; sv_fl<16> lvec; sv_fl<16> padding[15]; };
+    struct common_state {
+        location dst;
+        int src_uid[2];
+    };
+    struct consumer_state {};
+};
 struct reduction_template {
     using config = config;
     using layout = reduction_layout;
@@ -225,29 +226,44 @@ struct reduction_template {
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
-            if(warpgroup::warpid() == 0) {
+            if(warpgroup::warpid() == args.iter%4) {
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o[0], args.input.o[1], args.input.lvec[0], args.input.lvec[1]);
                 tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.iter, 0}, args.inputs_arrived);
                 tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.iter}, args.inputs_arrived);
                 tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.iter}, args.inputs_arrived);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
-            else if(laneid() == 0) arrive(args.inputs_arrived);
-            warpgroup::sync(5);
+        }
+        __device__ static inline void store(producer_store_args<layout> args) {
+            if(warpgroup::warpid() == args.iter%4) {
+                if(args.common.dst.batch_idx >= 0) {
+                    tma::store_async(args.globals.O, reinterpret_cast<st_bf<16, VO_D>&>(args.output.o),
+                        {args.common.dst.batch_idx, args.common.dst.seq_idx + args.iter, 0, group<8>::warpid()});
+                }
+                else {
+                    tma::store_async(args.globals.O_scratch, args.output.o, {args.common.dst.seq_idx, args.iter, group<8>::warpid()});
+                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {args.common.dst.seq_idx, args.iter});
+                }
+                tma::store_async_wait();
+                __syncwarp();
+                if(laneid() == 0) arrive(args.outputs_finished, 4);
+            }
         }
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {}
         __device__ static inline void compute(consumer_compute_args<layout> args) {
+            col_vec<rt_fl<16, cache_tile::rows>> lvec[2], max_lvec, sum_lvec;
             auto o1_st = subtile_inplace<16, VO_D/8>(args.input.o[0], {0, group<8>::warpid()});
             auto o2_st = subtile_inplace<16, VO_D/8>(args.input.o[1], {0, group<8>::warpid()});
-            col_vec<rt_fl<16, cache_tile::rows>> lvec[2], max_lvec, sum_lvec;
             rt_fl<16, VO_D / 8> o[2];
             load(o[0], o1_st);
             load(o[1], o2_st);
             load(lvec[0], args.input.lvec[0]);
             load(lvec[1], args.input.lvec[1]);
+            __syncwarp();
             if(laneid() == 0) arrive(args.inputs_finished); // done!
             max(max_lvec, lvec[0], lvec[1]);
             sub(lvec[0], lvec[0], max_lvec);
@@ -263,15 +279,19 @@ struct reduction_template {
             log2(sum_lvec, sum_lvec);
             add(sum_lvec, sum_lvec, max_lvec);
             if(args.common.dst.batch_idx >= 0) {
-                store(args.globals.O, o[0],
-                    {args.common.dst.batch_idx, args.common.dst.seq_idx + args.iter, 0, group<8>::warpid()});
+                auto &o_smem = reinterpret_cast<st_bf<16, VO_D>&>(args.output.o);
+                auto o_st = subtile_inplace<16, VO_D/8>(o_smem, {0, group<8>::warpid()});
+                store(o_st, o[0]);
             }
             else {
-                store(args.globals.O_scratch, o[0], {args.common.dst.seq_idx, args.iter, group<8>::warpid()});
-                if(warpgroup::warpid() == 0) {
-                    store(args.globals.Lvec_scratch, sum_lvec, {args.common.dst.seq_idx, args.iter});
+                auto o_st = subtile_inplace<16, VO_D/8>(args.output.o, {0, group<8>::warpid()});
+                store(o_st, o[0]);
+                if(group<8>::warpid() == 0) {
+                    store(args.output.lvec, sum_lvec);
                 }
             }
+            __syncwarp();
+            if(laneid() == 0) arrive(args.outputs_arrived); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             // Increment the semaphore for the next stage, if this is not the last one.
@@ -290,7 +310,8 @@ struct reduction_template {
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
+    py::bind_kernel<interpreter::kernel<config, reduction_template>>(m, "mla_decode",
+    // py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
         &config::globals::Cache,
