@@ -33,9 +33,9 @@ def main():
     T = args.tokens_per_batch
     
     # grid as: (number of SMs * sm_iters) groups, each group has 4 partial ops.
-    grid = args.grid if args.grid is not None else B * args.sm_iters * ((T + 3) // 4)
+    grid = args.grid if args.grid is not None else B * ((T + 3) // 4)
 
-    num_task_iters = 1  
+    num_task_iters = args.sm_iters
     OP_STOP    = 0
     OP_PARTIAL = 1
 
@@ -50,14 +50,14 @@ def main():
         batch_idx = i % B
         token_idx = i // B  # within SM, groups are sequential
         uid = base_uid + i
-        instructions[0, i, 0, 0] = OP_PARTIAL
-        instructions[0, i, 0, 1] = uid
-        instructions[0, i, 0, 2] = batch_idx
-        instructions[0, i, 0, 3] = token_idx
-        instructions[0, i, 0, 4] = batch_idx
-        instructions[0, i, 0, 5] = token_idx
-        instructions[0, i, 0, 6] = args.length
-        instructions[0, i, 0, 7] = 0
+        instructions[0, i, :, 0] = OP_PARTIAL
+        instructions[0, i, :, 1] = uid
+        instructions[0, i, :, 2] = batch_idx
+        instructions[0, i, :, 3] = token_idx
+        instructions[0, i, :, 4] = batch_idx
+        instructions[0, i, :, 5] = token_idx
+        instructions[0, i, :, 6] = args.length
+        instructions[0, i, :, 7] = 0
 
     print("Partial benchmark configuration:")
     print(f"  Batch (SM count): {B}")
@@ -107,12 +107,12 @@ def main():
     end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
 
     print("Starting partial benchmark...")
+    start_events[0].record()
     for i in range(iterations):
-        start_events[i].record()
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
-        torch.cuda.synchronize()
-        end_events[i].record()
-    elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(iterations)]
+    torch.cuda.synchronize()
+    end_events[0].record()
+    elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(1)]
     avg_time_us = (sum(elapsed_ms) * 1e3) / iterations
     print(f"Partial kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
 
