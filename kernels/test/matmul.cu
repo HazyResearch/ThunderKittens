@@ -122,16 +122,15 @@ constexpr bool NCU = false;
 #include <omp.h>
 
 void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int b_idx = 0; b_idx < B; b_idx++) {
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
+    #pragma omp parallel for collapse(3) // otherwise the CPU version takes for everrrrrr
+    for (int b_idx = 0; b_idx < B; b_idx++) { // b
+        for (int m_idx = 0; m_idx < M; m_idx++) { // i
+            for (int n_idx = 0; n_idx < N; n_idx++) { // j
                 float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += a[b_idx * M * K + i * K + k] * b[b_idx * K * N + j * K + k];
-                    // sum += a[i * K + k] * b[k * N + j];
+                for (int k_idx = 0; k_idx < K; k_idx++) { // k
+                    sum += a[b_idx * M * K + m_idx * K + k_idx] * b[b_idx * K * N + k_idx * N + n_idx];
                 }
-                c[b_idx * M * K + i * N + j] = sum;
+                c[b_idx * M * N + m_idx * N + n_idx] = sum;
             }
         }
     }
@@ -268,8 +267,8 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     for (int i = 0; i < B * M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if(error > 1.0) { // large because of bf16 vs fp32 numerics
-            // I'm not actually sure how to derive the batch correctly
-            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+            int b = i / (M * N), row = i % (M * N) / N, col = i % N;
+            if(error_count < 20) std::cout << "Error at batch " << b << " row " << row << " col " << col << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
