@@ -121,16 +121,18 @@ constexpr bool NCU = false;
 #include <cuda_bf16.h>
 #include <omp.h>
 
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
+void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k];
-                // sum += a[i * K + k] * b[k * N + j];
+    for (int b_idx = 0; b_idx < B; b_idx++) {
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0fu
+                for (int k = 0; k < K; k++) {
+                    sum += a[b_idx * M * K + i * K + k] * b[b_idx * K * N + j * K + k];
+                    // sum += a[i * K + k] * b[k * N + j];
+                }
+                c[b_idx * M * K + i * N + j] = sum;
             }
-            c[i * N + j] = sum;
         }
     }
 }
@@ -148,17 +150,17 @@ void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, si
 }
 
 template<typename mmt>
-int run_benchmark(size_t M, size_t N, size_t K) {
+int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     cudaError_t cudaStatus;
 
-    std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+    std::cout << "--------------------  B=" << B << " M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Block size: " << mmt::M_BLOCK*64 << "x" << mmt::N_BLOCK*64 << "\n";
 
     // Allocate host memory
-    float *h_A = new float[M * K];
-    float *h_B = new float[K * N];
-    float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
+    float *h_A = new float[B * M * K];
+    float *h_B = new float[B * K * N];
+    float *h_C = new float[B * M * N];
+    float *h_C_ref = new float[B * M * N];
 
     std::cout << "Allocated host memory" << std::endl;
 
@@ -168,21 +170,21 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::uniform_real_distribution<> dis(-0.5, 0.5);
 
     // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen);
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
+    for (int i = 0; i < B * M * K; ++i) h_A[i] = dis(gen);
+    for (int i = 0; i < B * K * N; ++i) h_B[i] = dis(gen);
 
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+    if(true) cpu_gemm(h_A, h_B, h_C_ref, B, M, N, K);
 
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
     // Allocate device memory
     __nv_bfloat16 *d_A, *d_B, *d_C;
-    cudaMalloc(&d_A, M*K*sizeof(__nv_bfloat16));
-    cudaMalloc(&d_B, K*N*sizeof(__nv_bfloat16));
-    cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_A, B*M*K*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_B, B*K*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_C, B*M*N*sizeof(__nv_bfloat16));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -195,8 +197,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Allocated device memory" << std::endl;
 
     // Convert to __nv_bfloat16 and copy to device
-    __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
-    __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[K * N];
+    __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[B * M * K];
+    __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[B * K * N];
     for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
     for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
 
