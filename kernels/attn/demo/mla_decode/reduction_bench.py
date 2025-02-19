@@ -29,12 +29,12 @@ def main():
     args = parser.parse_args()
 
     # total number of reduction ops (blocks) to launch:
-    grid = args.num_iters * args.sm_iters
-    num_task_iters = 1
+    grid = args.num_iters
+    num_task_iters = args.sm_iters
     OP_REDUCTION = 2
 
     # a base for source UIDs (for example, 1100).
-    base_uid = 1100
+    base_uid = 0
     # For each reduction op, we use two source UIDs:
     #    src_uid0 = base_uid + 2*i
     #    src_uid1 = base_uid + 2*i + 1
@@ -43,7 +43,7 @@ def main():
     uid_max = computed_max if args.max_uid is None else args.max_uid
 
     # instructions tensor of shape (1, grid, num_task_iters, 8)
-    instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
+    instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cpu")
     for i in range(grid):
         src_uid0 = base_uid + 2 * i
         src_uid1 = base_uid + 2 * i + 1
@@ -52,14 +52,15 @@ def main():
         
         # layout:
         # [opcode, dst_batch, dst_seq, src_uid0, src_uid1, work_iters, 0, 0]
-        instructions[0, i, 0, 0] = OP_REDUCTION
-        instructions[0, i, 0, 1] = -1               # dst_batch < 0: non–batch mode (write to scratch)
-        instructions[0, i, 0, 2] = dst_seq
-        instructions[0, i, 0, 3] = src_uid0
-        instructions[0, i, 0, 4] = src_uid1
-        instructions[0, i, 0, 5] = args.work_iters  # pack the work_iters parameter here
-        instructions[0, i, 0, 6] = 0
-        instructions[0, i, 0, 7] = 0
+        instructions[0, i, :, 0] = OP_REDUCTION
+        instructions[0, i, :, 1] = -1               # dst_batch < 0: non–batch mode (write to scratch)
+        instructions[0, i, :, 2] = dst_seq
+        instructions[0, i, :, 3] = src_uid0
+        instructions[0, i, :, 4] = src_uid1
+        instructions[0, i, :, 5] = args.work_iters  # pack the work_iters parameter here
+        instructions[0, i, :, 6] = 0
+        instructions[0, i, :, 7] = 0
+    instructions = instructions.cuda()
 
     print("Reduction benchmark configuration:")
     print(f"  Base SM count (num_iters): {args.num_iters}")
@@ -84,35 +85,35 @@ def main():
     # scratch buffers: O_scratch and Lvec_scratch.
     O_scratch = torch.empty((1, uid_max, 64, args.d_vo), dtype=torch.float32, device="cuda")
     Lvec_scratch = torch.empty((1, 1, uid_max, 64), dtype=torch.float32, device="cuda")
-    semaphore = torch.zeros((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
+    semaphore = torch.ones((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
 
-    # each reduction op, fill scratch buffers for each of the two source UIDs.
-    for i in range(grid):
-        src_uid0 = base_uid + 2 * i
-        src_uid1 = base_uid + 2 * i + 1
-        # each source UID, fill O_scratch and Lvec_scratch for as many iterations as specified.
-        for uid in [src_uid0, src_uid1]:
-            for it in range(args.work_iters):
-                O_scratch[0, uid, it, :] = torch.randn((args.d_vo,), dtype=torch.float32, device="cuda")
-            Lvec_scratch[0, 0, uid, :] = torch.randn((64,), dtype=torch.float32, device="cuda")
-            semaphore[0, 0, 0, uid] = 1
+    # # each reduction op, fill scratch buffers for each of the two source UIDs.
+    # for i in range(grid):
+    #     src_uid0 = base_uid + 2 * i
+    #     src_uid1 = base_uid + 2 * i + 1
+    #     # each source UID, fill O_scratch and Lvec_scratch for as many iterations as specified.
+    #     for uid in [src_uid0, src_uid1]:
+    #         for it in range(args.work_iters):
+    #             O_scratch[0, uid, it, :] = torch.randn((args.d_vo,), dtype=torch.float32, device="cuda")
+    #         Lvec_scratch[0, 0, uid, :] = torch.randn((64,), dtype=torch.float32, device="cuda")
+    #         semaphore[0, 0, 0, uid] = 1
 
     print("Warming up reduction kernel...")
     mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
 
     iterations = args.iterations
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
-    end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
+    start_events = torch.cuda.Event(enable_timing=True)
+    end_events   = torch.cuda.Event(enable_timing=True)
 
     print("Starting reduction benchmark...")
+    start_events.record()
     for i in range(iterations):
-        start_events[i].record()
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
-        torch.cuda.synchronize()
-        end_events[i].record()
-    elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(iterations)]
-    avg_time_us = (sum(elapsed_ms) * 1e3) / iterations
+    torch.cuda.synchronize()
+    end_events.record()
+    elapsed_ms = start_events.elapsed_time(end_events)
+    avg_time_us = elapsed_ms * 1e3 / iterations
     print(f"Reduction kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
 
 if __name__ == "__main__":

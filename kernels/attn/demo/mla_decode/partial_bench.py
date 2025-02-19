@@ -13,6 +13,8 @@ import argparse
 import math
 import mla_decode
 
+torch.manual_seed(0)
+
 def main():
     parser = argparse.ArgumentParser(description="Thunderkittens MLA Decode Partial Benchmark")
     parser.add_argument("--batch", type=int, default=132, help="Batch size (typically number of SMs)")
@@ -41,7 +43,7 @@ def main():
 
     # tensor shape: (1, grid, num_task_iters, 8)
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
-    base_uid = 1000
+    base_uid = 0
     uid_max = (base_uid + grid) if args.max_uid is None else args.max_uid
 
     # instruction corresponds to one partial op.
@@ -81,17 +83,8 @@ def main():
     print(f"  Number of cache pages: {num_pages}")
     cache = torch.randn((1, num_pages, args.page_size, args.d_qk),
                         dtype=torch.bfloat16, device="cuda")
-    latent = torch.randn((args.length, 1, args.d_qk), dtype=torch.bfloat16, device="cuda") * 10
-    for p in range(num_pages):
-        start = p * args.page_size
-        end = min(args.length, (p + 1) * args.page_size)
-        cache[0, p, :end - start, :] = latent[start:end, 0, :]
 
-    table = torch.zeros((1, 1, uid_max, num_pages), dtype=torch.int32, device="cuda")
-    for i in range(grid):
-        uid = base_uid + i
-        for p in range(num_pages):
-            table[0, 0, uid, p] = p
+    table = torch.randint(0, num_pages, (1, 1, uid_max, num_pages), dtype=torch.int32, device="cuda")
 
     O = torch.empty((B, T, args.heads, args.d_vo), dtype=torch.bfloat16, device="cuda")
     O_scratch = torch.empty((1, uid_max, 64, args.d_vo), dtype=torch.float32, device="cuda")
@@ -103,17 +96,17 @@ def main():
     torch.cuda.synchronize()
 
     iterations = args.iterations
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
-    end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
+    start_events = torch.cuda.Event(enable_timing=True)
+    end_events   = torch.cuda.Event(enable_timing=True)
 
     print("Starting partial benchmark...")
-    start_events[0].record()
+    start_events.record()
     for i in range(iterations):
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
-    end_events[0].record()
-    elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(1)]
-    avg_time_us = (sum(elapsed_ms) * 1e3) / iterations
+    end_events.record()
+    elapsed_ms = start_events.elapsed_time(end_events)
+    avg_time_us = elapsed_ms * 1e3 / iterations
     print(f"Partial kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
 
 if __name__ == "__main__":
