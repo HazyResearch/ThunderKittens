@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Usage:
     python tk_bench_reduction.py --batch 132 --iterations 1000

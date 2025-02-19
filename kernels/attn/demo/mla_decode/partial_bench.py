@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Usage:
     python tk_bench_partial.py --batch 32 --tokens_per_batch 4 --iterations 1000
