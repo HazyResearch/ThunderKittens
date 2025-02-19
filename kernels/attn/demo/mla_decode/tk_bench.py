@@ -2,6 +2,14 @@
 """
 Usage:
     python tk_bench.py --batch 32 --tokens_per_batch 4 --iterations 1000
+
+This script benchmarks an end-to-end decode operation by scheduling a
+complete group of ops:
+  - Task Iteration 0: Four partial ops.
+  - Task Iteration 1: Two first-level reductions combining the partial results.
+  - Task Iteration 2: One final reduction combining the two intermediate results.
+Non–batch mode is used (destination batch index = -1) so that partial results
+are written to scratch buffers.
 """
 
 import torch
@@ -10,7 +18,7 @@ import math
 import mla_decode
 
 def main():
-    parser = argparse.ArgumentParser(description="Thunderkittens MLA Decode Benchmark (Multi–Page)")
+    parser = argparse.ArgumentParser(description="Thunderkittens MLA Decode End-to-End Benchmark (Multi–Page)")
     parser.add_argument("--batch", type=int, default=32, help="Batch size (number of output batches)")
     parser.add_argument("--tokens_per_batch", type=int, default=4, help="New tokens per batch (tasks per batch)")
     parser.add_argument("--iterations", type=int, default=1000, help="Number of kernel launches for timing")
@@ -24,55 +32,87 @@ def main():
     parser.add_argument("--grid", type=int, default=None, help="Grid size (overrides batch*tokens_per_batch if set)")
     args = parser.parse_args()
 
+    # For an end-to-end decode group we assume a fixed pattern:
+    # - 4 partial ops (iteration 0)
+    # - 2 reduction ops (iteration 1)
+    # - 1 final reduction op (iteration 2)
+    # Other tasks (if any) are treated as no–ops (OP_STOP).
+    #
+    # (In non–batch mode the destination index is encoded by a negative batch value.)
+    #
+    # Define opcodes.
+    OP_STOP    = 0
+    OP_PARTIAL = 1
+    OP_REDUCTION = 2
+
+    # We use a 3–iteration instructions tensor.
+    num_task_iters = 3
+    # The grid size controls the total number of tasks (blocks) scheduled.
+    # In this end-to-end benchmark, we will only populate instructions for the first few tasks.
     B = args.batch
     T = args.tokens_per_batch
     grid = args.grid if args.grid is not None else B * T
 
-    num_task_iters = 3  
-    # Assume a 3–iteration instruction tensor (iter 0: partial op, iter 1 & 2: OP_STOP)
-
-    # Define opcodes.
-    OP_STOP = 0
-    OP_PARTIAL = 1
-
-    # Instructions tensor:
-    # Type is gl<int, 1, -1, -1, 8>, shape (1, grid, num_task_iters, 8)
+    # Allocate the instructions tensor with shape (1, grid, num_task_iters, 8).
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
-    base_uid = 1000
-    # Optionally auto–compute max_uid if not provided.
-    uid_max = (base_uid + grid) if args.max_uid is None else args.max_uid
+    # For this end-to-end example we use fixed UIDs:
+    # Partial op UIDs.
+    uid1 = 100
+    uid2 = 101
+    uid3 = 102
+    uid4 = 103
+    # Reduction op UIDs.
+    uidA = 200  # intermediate result combining uid1 and uid2
+    uidB = 201  # intermediate result combining uid3 and uid4
+    # Final reduction writes its output to scratch at index 0.
 
-    # For each task (i.e. each tblock) in grid, fill task iteration 0 with a partial op.
-    # Instruction layout for a partial op is:
-    #   [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, length, 0]
-    #
-    # In batch mode (dst.batch_idx >= 0) the final results are written to the global O buffer.
-    for i in range(grid):
-        # DISTRIBUTE tasks evenly over batches.
-        batch_idx = i % B         # destination batch index (>=0)
-        token_idx = i // B        # token index within the batch
-        uid = base_uid + i
-        instructions[0, i, 0, 0] = OP_PARTIAL      # opcode = OP_PARTIAL (1)
-        instructions[0, i, 0, 1] = uid             # unique uid for this op
-        instructions[0, i, 0, 2] = batch_idx        # destination: batch index (>=0 for batch mode)
-        instructions[0, i, 0, 3] = token_idx        # destination: sequence (token) index
-        instructions[0, i, 0, 4] = batch_idx        # q_batch_idx (from Q global)
-        instructions[0, i, 0, 5] = token_idx        # q_seq_idx (from Q global)
-        instructions[0, i, 0, 6] = args.length      # number of tokens (cache length)
-        instructions[0, i, 0, 7] = 0                # unused
+    # --- Task Iteration 0: Partial Ops ---
+    # Populate the first 4 tasks (if available) with partial op instructions.
+    if grid >= 4:
+        for i, uid in enumerate([uid1, uid2, uid3, uid4]):
+            # Instruction layout:
+            #   [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, length, 0]
+            # Use -1 for dst.batch_idx to indicate non–batch mode (write to scratch).
+            instructions[0, i, 0, 0] = OP_PARTIAL
+            instructions[0, i, 0, 1] = uid
+            instructions[0, i, 0, 2] = -1         # non–batch mode destination
+            instructions[0, i, 0, 3] = uid         # use uid as destination sequence index
+            instructions[0, i, 0, 4] = 0           # q_batch_idx (dummy)
+            instructions[0, i, 0, 5] = 0           # q_seq_idx (dummy)
+            instructions[0, i, 0, 6] = args.length # cache length (number of tokens)
+            instructions[0, i, 0, 7] = 0
 
-    # Task iterations 1 and 2 remain zeros (OP_STOP).
+    # --- Task Iteration 1: First-Level Reductions ---
+    # Populate two tasks with reduction instructions.
+    if grid >= 2:
+        # Reduction op combines partial results from uid1 and uid2 into uidA.
+        instructions[0, 0, 1, :] = torch.tensor(
+            [OP_REDUCTION, -1, uidA, uid1, uid2, 0, 0, 0],
+            dtype=torch.int32, device="cuda")
+        # Reduction op combines partial results from uid3 and uid4 into uidB.
+        instructions[0, 1, 1, :] = torch.tensor(
+            [OP_REDUCTION, -1, uidB, uid3, uid4, 0, 0, 0],
+            dtype=torch.int32, device="cuda")
+
+    # --- Task Iteration 2: Final Reduction ---
+    # Populate task 0 with final reduction op that combines uidA and uidB.
+    instructions[0, 0, 2, :] = torch.tensor(
+        [OP_REDUCTION, -1, 0, uidA, uidB, 0, 0, 0],
+        dtype=torch.int32, device="cuda")
+
+    # (Any tasks not explicitly filled remain as OP_STOP.)
 
     # Print configuration summary.
-    print("Benchmark configuration:")
+    print("End-to-end decode benchmark configuration:")
     print(f"  Batch size: {B}")
     print(f"  Tokens per batch: {T}")
-    print(f"  Grid size (number of tasks): {grid}")
+    print(f"  Grid size (tasks): {grid}")
     print(f"  Task iterations: {num_task_iters}")
     print(f"  Cache length: {args.length}")
     print(f"  D_QK: {args.d_qk}, D_VO: {args.d_vo}, Heads: {args.heads}")
     print(f"  Page size: {args.page_size}, NUM_ROWS: {args.num_rows}")
-    print(f"  UID range: {base_uid} to {uid_max-1}")
+    print(f"  UIDs: partial ops {uid1}, {uid2}, {uid3}, {uid4}; reductions: {uidA}, {uidB}")
+    print(f"  Final reduction output written to scratch index 0")
     print(f"  Iterations: {args.iterations}")
 
     # Softmax scale factor (used in the kernel).
@@ -84,34 +124,29 @@ def main():
     # Q global: shape (B, T, heads, D_QK)
     q = torch.randn((B, T, args.heads, args.d_qk), dtype=torch.bfloat16, device="cuda")
     
-    # For the cache we now support multiple pages.
-    # Compute the number of pages needed to store args.length tokens.
+    # Cache global: support for multiple pages.
     num_pages = math.ceil(args.length / args.page_size)
     print(f"  Number of cache pages: {num_pages}")
-
-    # Cache global: shape (1, num_pages, page_size, D_QK)
-    cache = torch.randn((1, num_pages, args.page_size, args.d_qk), dtype=torch.bfloat16, device="cuda")
+    cache = torch.randn((1, num_pages, args.page_size, args.d_qk),
+                        dtype=torch.bfloat16, device="cuda")
     # Generate latent keys for args.length tokens.
     latent = torch.randn((args.length, 1, args.d_qk), dtype=torch.bfloat16, device="cuda") * 10
-
-    # Fill each page of the cache with the corresponding slice of latent keys.
     for p in range(num_pages):
         start = p * args.page_size
-        end = min(args.length, (p+1) * args.page_size)
-        # Note: latent slice shape: (num_tokens_in_page, 1, d_qk)
-        # We squeeze the singleton dimension to match cache slice shape: (num_tokens_in_page, d_qk)
-        cache[0, p, :end-start, :] = latent[start:end, 0, :]
+        end = min(args.length, (p + 1) * args.page_size)
+        cache[0, p, :end - start, :] = latent[start:end, 0, :]
 
-    # Optionally build a padded key (not used by the kernel directly) for reference.
+    # (Optional) Build a padded key for reference (not used by the kernel).
     expanded = latent.expand(args.length, args.heads, args.d_qk)
     padded_key = expanded.unsqueeze(0).clone()  # shape (1, args.length, heads, D_QK)
 
-    # Table global: now allocate shape (1, 1, uid_max, num_pages)
+    # Table global: shape (1, 1, uid_max, num_pages)
+    # We need to provide a mapping from each op’s uid to its page indices.
+    uid_max = (1000 + grid) if args.max_uid is None else args.max_uid
     table = torch.zeros((1, 1, uid_max, num_pages), dtype=torch.int32, device="cuda")
-    # For each op’s uid, fill its table entry with consecutive page IDs.
-    # (The kernel uses: next_page_id = table[uid, iter/ITERS_PER_PAGE])
-    for i in range(grid):
-        uid = base_uid + i
+    # For each op’s uid that we use, fill its table entry with page IDs (0, 1, 2, …).
+    # (The kernel will use table[uid, iter/ITERS_PER_PAGE] to determine which page to load.)
+    for uid in [uid1, uid2, uid3, uid4, uidA, uidB]:
         for p in range(num_pages):
             table[0, 0, uid, p] = p
 
@@ -128,7 +163,7 @@ def main():
     semaphore = torch.zeros((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
 
     #----------------------------------------------------------------------------
-    # Warm-up the kernel (to amortize any one–time setup cost)
+    # Warm-up the kernel (to amortize one-time setup costs)
     print("Warming up the kernel...")
     mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
@@ -137,9 +172,9 @@ def main():
     # Benchmark loop using CUDA events.
     iterations = args.iterations
     start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    end_event   = torch.cuda.Event(enable_timing=True)
 
-    print("Starting benchmark...")
+    print("Starting end-to-end benchmark...")
     start_event.record()
     for _ in range(iterations):
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
@@ -148,7 +183,6 @@ def main():
 
     elapsed_ms = start_event.elapsed_time(end_event)
     avg_time_us = (elapsed_ms * 1e3) / iterations    
-
     print(f"Kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
 
 if __name__ == "__main__":
