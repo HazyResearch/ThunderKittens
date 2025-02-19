@@ -265,21 +265,24 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     std::cout << "Converted result back to float" << std::endl;
 
     // Check result
-    float max_error = 0.0f;
+    float max_abs_error = 0.0f;
+    float max_rel_error = 0.0f;
     int error_count = 0;
     for (int i = 0; i < B * M * N; ++i) {
-        float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 1.0) { // large because of bf16 vs fp32 numerics
+        float abs_error = std::abs(h_C[i] - h_C_ref[i]);
+        float rel_error = std::abs(abs_error / h_C_ref[i]);
+        if(rel_error > .01 && abs_error > 0.1) { // large because of bf16 vs fp32 numerics
             int b = i / (M * N), row = i % (M * N) / N, col = i % N;
             if(error_count < 20) std::cout << "Error at batch " << b << " row " << row << " col " << col << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
-        max_error = std::max(max_error, error);
+        max_abs_error = std::max(max_abs_error, abs_error);
+        max_rel_error = std::max(max_rel_error, rel_error);
     }
 
     std::cout << "Total elements: " << M*N << std::endl;
-    std::cout << "Max error: " << max_error << std::endl;
+    std::cout << "Max relative error: " << max_rel_error * 100 << "%, max absolute error: " << max_abs_error <<std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up
