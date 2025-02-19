@@ -19,7 +19,7 @@ using o_tile_fl           = st_fl<16, VO_D>;
 using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2>; // B * R * H * D_VO
 using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
 using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
-using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>; // 1 * 1 * 1 * uid
+using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>;              // 1 * 1 * 1 * uid
 
 struct config {
     struct globals {
@@ -128,7 +128,7 @@ struct partial_template {
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
                     const int length = args.common.length - args.iter*NUM_ROWS;
-                    if(laneid() == 0) printf("block %d, warp %d, iter %d/%d, right fill from column %d\n", blockIdx.x, warpid(), args.iter, args.num_iters, length);
+                    // if(laneid() == 0) printf("block %d, warp %d, iter %d/%d, right fill from column %d\n", blockIdx.x, warpid(), args.iter, args.num_iters, length);
                     right_fill(att_block_fp32, att_block_fp32, length, base_types::constants<float>::neg_infty());
                 }
 
@@ -196,6 +196,7 @@ struct partial_template {
             }
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
+                asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() == 0) {
                     args.globals.semaphore[{args.common.dst.seq_idx}] = 1;
                 }
@@ -276,6 +277,7 @@ struct reduction_template {
             // Increment the semaphore for the next stage, if this is not the last one.
             warpgroup::sync(warpgroup::groupid()); // Make sure memory has been flushed to global memory.
             if(args.common.dst.batch_idx < 0) {
+                asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() == 0) {
                     args.globals.semaphore[{args.common.dst.seq_idx}] = 1;
                 }

@@ -1,147 +1,154 @@
-import torch
 import mla_decode
+import torch
+import math
+import torch.nn.functional as F
 
-def main():
-    device = torch.device("cuda")
-    
-    #---------------------------------------------------------------------------
-    # Kernel Constants (must match the C++ code)
-    QK_D = 576
-    VO_D = 512
-    NUM_ROWS = 32
-    PAGE_SIZE = 256
-    ITERS_PER_PAGE = PAGE_SIZE // NUM_ROWS  # 8
+torch.manual_seed(0)
 
-    # Define sizes for the global views:
-    batch = 1            # B in Q and O
-    seq_len = 32         # R in Q and O
-    grid = 132           # as set in config::globals::grid()
-    num_task_iters = 2   # task iterations per block (partial then reduction)
-    num_pages = 1        # for Cache
-    max_uid = 1024       # maximum uid index for scratch buffers
+#----------------------------------------------------------------------------
+# Opcodes and dimensions.
+OP_STOP      = 0
+OP_PARTIAL   = 1
+OP_REDUCTION = 2
 
-    #---------------------------------------------------------------------------
-    # Global Buffers (using 4-D tensors as required by our gl<> types)
-    #
-    # instructions_global: gl<int, 1, -1, -1, 8>
-    #   Expected external shape: (1, grid, num_task_iters, 8)
-    instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device=device)
-    
-    # q_global: gl<bf16, -1, -1, -1, QK_D>
-    #   Expected external shape: (B, R, H, QK_D); we use H = 1.
-    q = torch.randn((batch, seq_len, 1, QK_D), dtype=torch.bfloat16, device=device)
-    
-    # cache_global: gl<bf16, 1, -1, PAGE_SIZE, QK_D>
-    #   Expected external shape: (1, num_pages, PAGE_SIZE, QK_D)
-    cache = torch.randn((1, num_pages, PAGE_SIZE, QK_D), dtype=torch.bfloat16, device=device)
-    
-    # table_global: gl<int, 1, 1, -1, -1>
-    #   Expected external shape: (1, 1, max_uid, 1)
-    table = torch.zeros((1, 1, max_uid, 1), dtype=torch.int32, device=device)
-    
-    # o_global: gl<bf16, -1, -1, -1, VO_D>
-    #   Expected external shape: (B, R, H, VO_D)
-    O = torch.empty((batch, seq_len, 1, VO_D), dtype=torch.bfloat16, device=device)
-    
-    # o_scratch_global: gl<float, 1, -1, 64, VO_D>
-    #   Expected external shape: (1, max_uid, 64, VO_D)
-    O_scratch = torch.empty((1, max_uid, 64, VO_D), dtype=torch.float32, device=device)
-    
-    # lvec_scratch_global: gl<float, 1, 1, -1, 64>
-    #   Expected external shape: (1, 1, max_uid, 64)
-    Lvec_scratch = torch.empty((1, 1, max_uid, 64), dtype=torch.float32, device=device)
-    
-    # semaphore_global: gl<int, 1, 1, 1, -1>
-    #   Expected external shape: (1, 1, 1, max_uid)
-    semaphore = torch.zeros((1, 1, 1, max_uid), dtype=torch.int32, device=device)
-    
-    softmax_scale = 1.0
+D_QK = 576
+D_VO = 512
+PAGE_SIZE = 256
+NUM_ROWS = 32
 
-    #---------------------------------------------------------------------------
-    # Set up Instructions:
-    #
-    # The instructions layout (last dim = 8) is interpreted as follows:
-    #   For a partial op (opcode 1):
-    #     [0]: opcode (1)
-    #     [1]: uid (scratch index)
-    #     [2]: dst.batch_idx (set to -1 for non-batch mode)
-    #     [3]: dst.seq_idx (we use uid so that scratch buffers are indexed by uid)
-    #     [4]: q_batch_idx
-    #     [5]: q_seq_idx
-    #     [6]: length (e.g. 128)
-    #     [7]: unused
-    #
-    #   For a reduction op (opcode 2):
-    #     [0]: opcode (2)
-    #     [1]: dst.batch_idx (non-batch: -1)
-    #     [2]: dst.seq_idx (destination index; here 0)
-    #     [3]: src_uid[0]
-    #     [4]: src_uid[1]
-    #     [5]-[7]: unused
-    #
-    # --- Partial op 1 (uid 100) ---
-    instructions[0, 0, 0, 0] = 1      # opcode for partial op
-    instructions[0, 0, 0, 1] = 100    # uid for this op
-    instructions[0, 0, 0, 2] = -1     # dst.batch_idx (non-batch mode)
-    instructions[0, 0, 0, 3] = 100    # dst.seq_idx (using uid for scratch index)
-    instructions[0, 0, 0, 4] = 0      # q_batch_idx
-    instructions[0, 0, 0, 5] = 0      # q_seq_idx
-    instructions[0, 0, 0, 6] = 128    # length (example value)
-    instructions[0, 0, 0, 7] = 0
+# we simulate a cache containing LENGTH tokens.
+LENGTH = 128
 
-    # --- Partial op 2 (uid 101) ---
-    instructions[0, 1, 0, 0] = 1      # opcode for partial op
-    instructions[0, 1, 0, 1] = 101    # uid for this op
-    instructions[0, 1, 0, 2] = -1     # dst.batch_idx (non-batch mode)
-    instructions[0, 1, 0, 3] = 101    # dst.seq_idx (using uid)
-    instructions[0, 1, 0, 4] = 0      # q_batch_idx
-    instructions[0, 1, 0, 5] = 0      # q_seq_idx
-    instructions[0, 1, 0, 6] = 128    # length
-    instructions[0, 1, 0, 7] = 0
+# run in non–batch mode so that partial results are written to scratch.
+# two partial ops (for two segments) will be issued with unique uids.
+uid1 = 100
+uid2 = 101
 
-    # --- Reduction op ---
-    # Place the reduction op in grid index 0, task_iter 1.
-    instructions[0, 0, 1, 0] = 2      # opcode for reduction op
-    instructions[0, 0, 1, 1] = -1     # dst.batch_idx (non-batch)
-    instructions[0, 0, 1, 2] = 0      # dst.seq_idx (destination index)
-    instructions[0, 0, 1, 3] = 100    # src_uid[0]
-    instructions[0, 0, 1, 4] = 101    # src_uid[1]
-    instructions[0, 0, 1, 5] = 0
-    instructions[0, 0, 1, 6] = 0
-    instructions[0, 0, 1, 7] = 0
+# one batch, one new token, and H=16 heads.
+B = 1
+NEW_TOKENS = 1
+H = 16
 
-    #---------------------------------------------------------------------------
-    # Simulate Partial Op Outputs:
-    #
-    # In non-batch mode, the partial kernel writes its outputs to scratch buffers
-    # at an index equal to its uid. (The kernel uses store() with coordinates:
-    #   O_scratch: {dst.seq_idx, 0, warpgroup::groupid()}
-    #   Lvec_scratch: {dst.seq_idx, 0})
-    #
-    # Here we “pre-fill” these scratch buffers for uid 100 and 101.
-    for uid in [100, 101]:
-        # For O_scratch, the dynamic (second) dimension is used to index uid.
-        # We simulate a single tile (64 rows) filled with a constant value.
-        O_scratch[0, uid, :, :].fill_(float(uid))
-        # For Lvec_scratch, the dynamic (third) dimension is used to index uid.
-        Lvec_scratch[0, 0, uid, :].fill_(float(uid))
-    
-    # Also, set the semaphores for uid 100 and 101 so the reduction op does not wait.
-    semaphore[0, 0, 0, 100] = 1
-    semaphore[0, 0, 0, 101] = 1
+# scale factor.
+softmax_scale = 1.0 / math.sqrt(D_QK)
 
-    #---------------------------------------------------------------------------
-    # Launch the Kernel.
-    mla_decode.mla_decode(
-        instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale
-    )
-    
-    #---------------------------------------------------------------------------
-    # For debugging, print slices from the scratch buffers.
-    print("O_scratch for uid 100:")
-    print(O_scratch[0, 100])
-    print("\nLvec_scratch for uid 100:")
-    print(Lvec_scratch[0, 0, 100])
-    
-if __name__ == '__main__':
-    main()
+#----------------------------------------------------------------------------
+# Build the instructions tensor.
+#
+# The global instructions type is gl<int, 1, -1, -1, 8>
+# we create a tensor of shape (1, grid, num_task_iters, 8). 
+grid = 132
+num_task_iters = 2  # one task iteration for the partial op, one for reduction
+instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device='cuda')
+
+# only fill block 0 with work; the rest are stops
+
+# Partial op 1 (for segment 1): placed in block 0, task_iter 0.
+instructions[0, 0, 0, :] = torch.tensor(
+    [OP_PARTIAL, uid1, -1, uid1, 0, 0, LENGTH, 0],
+    dtype=torch.int32, device='cuda')
+
+# Partial op 2 (for segment 2): placed in block 1, task_iter 0.
+instructions[0, 1, 0, :] = torch.tensor(
+    [OP_PARTIAL, uid2, -1, uid2, 0, 0, LENGTH, 0],
+    dtype=torch.int32, device='cuda')
+
+# Reduction op: placed in block 0, task_iter 1, combining results from uid1 and uid2.
+instructions[0, 0, 1, :] = torch.tensor(
+    [OP_REDUCTION, -1, 0, uid1, uid2, 0, 0, 0],
+    dtype=torch.int32, device='cuda')
+
+# The remaining instructions (other blocks/task_iters) remain OP_STOP.
+
+# prepare global buffers
+# Q global: expected shape (B, NEW_TOKENS, H, D_QK).
+q = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16, device='cuda')
+
+# Cache global: non–batch mode we allocate shape (1, num_pages, PAGE_SIZE, D_QK)
+num_pages = 1
+cache = torch.randn((1, num_pages, PAGE_SIZE, D_QK), dtype=torch.bfloat16, device='cuda')
+# fill the cache with "latent" keys
+# create a latent tensor of shape (LENGTH, 1, D_QK)
+latent = torch.randn((LENGTH, 1, D_QK), dtype=torch.bfloat16, device='cuda') * 10
+
+# reference we need to build padded_key and padded_value:
+#   – expand latent to (LENGTH, H, D_QK)
+expanded = latent.expand(LENGTH, H, D_QK)
+#   – padded_key: shape (B, LENGTH, H, D_QK)
+padded_key = expanded.unsqueeze(0).clone()
+#   – padded_value: shape (B, LENGTH, H, D_VO); take the first D_VO channels.
+padded_value = expanded[:, :, :D_VO].unsqueeze(0).clone()
+# fill cache - for simplicity, assume all tokens go to page 0, positions 0..(LENGTH-1).
+cache[0, 0, :LENGTH, :] = latent.squeeze(1)
+
+# table global: for non–batch mode, expected shape (1, 1, max_uid, 1).
+max_uid = 1024
+table = torch.zeros((1, 1, max_uid, 1), dtype=torch.int32, device='cuda')
+
+# O global: shape (B, NEW_TOKENS, H, D_VO). (Not used in non–batch mode.)
+O = torch.empty((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16, device='cuda')
+
+# O_scratch global: declared as gl<float, 1, -1, 64, D_VO, o_tile_fl>
+# Expected external shape: (1, max_uid, 64, D_VO)
+O_scratch = torch.empty((1, max_uid, 64, D_VO), dtype=torch.float32, device='cuda')
+
+# Lvec_scratch global: expected shape (1, 1, max_uid, 64)
+Lvec_scratch = torch.empty((1, 1, max_uid, 64), dtype=torch.float32, device='cuda')
+
+# Semaphore global: expected shape (1, 1, 1, max_uid)
+semaphore = torch.zeros((1, 1, 1, max_uid), dtype=torch.int32, device='cuda')
+
+#----------------------------------------------------------------------------
+# Print buffer shapes.
+print("Instructions shape:", instructions.shape)
+print("q shape:", q.shape)
+print("cache shape:", cache.shape)
+print("table shape:", table.shape)
+print("O shape:", O.shape)
+print("O_scratch shape:", O_scratch.shape)
+print("Lvec_scratch shape:", Lvec_scratch.shape)
+print("Semaphore shape:", semaphore.shape)
+
+#----------------------------------------------------------------------------
+# Launch the kernel.
+print("Launching kernel (partial + reduction run in non–batch mode)...")
+mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
+torch.cuda.synchronize()
+print("Kernel execution finished.")
+
+#----------------------------------------------------------------------------
+# In non–batch mode the partial and reduction ops write their results to scratch.
+# Our reduction op was set with dst.seq_idx = 0, so we expect its final output
+# to appear at scratch coordinate corresponding to uid 0.
+#
+# The reduction-template stores final results in tiles of type st_fl<16, D_VO> (i.e. 16 rows).
+# We assume that a single warp group did the work so that the final output is in O_scratch[0, 0, 0:16, :].
+final_out = O_scratch[0, 0, 0:16, :].to(torch.bfloat16)
+print("\nFinal output from reduction op (extracted from O_scratch[0,0,0:16,:]):")
+print(final_out)
+
+#----------------------------------------------------------------------------
+# Compute reference output using PyTorch's scaled_dot_product_attention.
+#
+# Our query is from q (B, NEW_TOKENS, H, D_QK). For reference, we use the full cached keys.
+# Transpose to (B, H, NEW_TOKENS, D_QK) for query and (B, H, LENGTH, D_QK) for keys.
+query_t = q.transpose(1, 2)
+key_t   = padded_key.transpose(1, 2)
+value_t = padded_value.transpose(1, 2)
+# Build an attention mask that allows all keys (shape: (B, H, NEW_TOKENS, LENGTH)).
+mask = torch.ones((B, H, NEW_TOKENS, LENGTH), device='cuda', dtype=torch.bool)
+ref = F.scaled_dot_product_attention(query_t, key_t, value_t,
+                                     attn_mask=mask,
+                                     dropout_p=0.0,
+                                     is_causal=False,
+                                     scale=softmax_scale)
+# Transpose back to (B, NEW_TOKENS, H, D_VO)
+ref = ref.transpose(1, 2)
+print("\nReference output (sdpa):")
+print(ref)
+
+#----------------------------------------------------------------------------
+# Compare final result (from reduction op) with reference.
+abs_diff = torch.abs(final_out - ref[0, 0])
+print("\nMean absolute difference:", torch.mean(abs_diff).item())
+print("Max absolute difference:", torch.max(abs_diff).item())
