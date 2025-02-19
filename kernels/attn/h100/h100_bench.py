@@ -46,12 +46,12 @@ def benchmark_attention(configurations):
         
         # Warmup for forward pass
         for _ in range(10):
-            tk.mha_forward(q, k, v, o, causal)
+            tk.mha_forward(q, k, v, causal)
             
         # Time the forward pass
         for i in range(10):          
             start_events_fwd[i].record()
-            _, l_vec = tk.mha_forward(q, k, v, o, causal)
+            _, l_vec = tk.mha_forward(q, k, v, causal)
             end_events_fwd[i].record()
 
         torch.cuda.synchronize()
