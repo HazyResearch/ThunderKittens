@@ -108,18 +108,18 @@ def main():
 
     # Benchmark loop using CUDA events.
     iterations = args.iterations
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event   = torch.cuda.Event(enable_timing=True)
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
+    end_events   = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
 
     print("Starting partial benchmark...")
-    start_event.record()
-    for _ in range(iterations):
+    for i in range(iterations):
+        start_events[i].record()
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
-    torch.cuda.synchronize()
-    end_event.record()
+        torch.cuda.synchronize()
+        end_events[i].record()
 
-    elapsed_ms = start_event.elapsed_time(end_event)
-    avg_time_us = (elapsed_ms * 1e3) / iterations
+    elapsed_ms = [start_events[i].elapsed_time(end_events[i]) for i in range(iterations)]
+    avg_time_us = (sum(elapsed_ms) * 1e3) / iterations
     print(f"Partial kernel average execution time: {avg_time_us:.2f} us over {iterations} iterations.")
 
 if __name__ == "__main__":
