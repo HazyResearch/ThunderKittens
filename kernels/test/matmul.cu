@@ -34,20 +34,20 @@ struct matmul_template {
 
         int blocks_per_batch = Rblocks*Cblocks;
 
-        int task_id = args.task_iter*gridDim.x + blockIdx.x;
-        int batch_idx = task_id / blocks_per_batch;
-        int batch_task = task_id % blocks_per_batch;
+        int global_block_id = args.task_iter*gridDim.x + blockIdx.x;
+        int batch_idx = global_block_id / blocks_per_batch;
+        int block_idx_in_batch = global_block_id % blocks_per_batch;
         if (batch_idx >= args.globals.A.batch) {
             args.num_iters = -1;
             return;
         }
         args.common.batch = batch_idx;
-        if (task_id < super_rows * Cblocks) { // 32*16 = 512
-            int x = SUPER_M*(batch_task/super_repeat) + task_id%SUPER_M;
-            args.common.coord = { x, (batch_task%super_repeat)/SUPER_M };
+        if (block_idx_in_batch < super_rows * Cblocks) { // 32*16 = 512
+            int x = SUPER_M*(block_idx_in_batch/super_repeat) + block_idx_in_batch%SUPER_M;
+            args.common.coord = { x, (block_idx_in_batch%super_repeat)/SUPER_M };
         }
-        else if (task_id < Rblocks*Cblocks) { // 512
-            int remainder_id = batch_task - super_rows*Cblocks;
+        else if (block_idx_in_batch < Rblocks*Cblocks) { // 512
+            int remainder_id = block_idx_in_batch - super_rows*Cblocks;
             args.common.coord = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
         }
         else { // Id is too high, no more work to do
