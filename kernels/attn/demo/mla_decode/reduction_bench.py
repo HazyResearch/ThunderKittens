@@ -28,12 +28,12 @@ def main():
     parser.add_argument("--max_uid", type=int, default=None, help="Maximum UID (if not provided, computed automatically)")
     args = parser.parse_args()
 
-    # Total number of reduction ops (blocks) to launch:
+    # total number of reduction ops (blocks) to launch:
     grid = args.num_iters * args.sm_iters
     num_task_iters = 1
     OP_REDUCTION = 2
 
-    # Use a base for source UIDs (for example, 1100).
+    # a base for source UIDs (for example, 1100).
     base_uid = 1100
     # For each reduction op, we use two source UIDs:
     #    src_uid0 = base_uid + 2*i
@@ -42,16 +42,18 @@ def main():
     computed_max = base_uid + 2 * grid
     uid_max = computed_max if args.max_uid is None else args.max_uid
 
-    # Create the instructions tensor of shape (1, grid, num_task_iters, 8)
+    # instructions tensor of shape (1, grid, num_task_iters, 8)
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
     for i in range(grid):
         src_uid0 = base_uid + 2 * i
         src_uid1 = base_uid + 2 * i + 1
-        dst_seq = i  # each reduction writes its result to a unique scratch index
-        # Instruction layout:
+        dst_seq = i  
+        # each reduction writes its result to a unique scratch index
+        
+        # layout:
         # [opcode, dst_batch, dst_seq, src_uid0, src_uid1, work_iters, 0, 0]
         instructions[0, i, 0, 0] = OP_REDUCTION
-        instructions[0, i, 0, 1] = -1         # dst_batch < 0: non–batch mode (write to scratch)
+        instructions[0, i, 0, 1] = -1               # dst_batch < 0: non–batch mode (write to scratch)
         instructions[0, i, 0, 2] = dst_seq
         instructions[0, i, 0, 3] = src_uid0
         instructions[0, i, 0, 4] = src_uid1
@@ -69,26 +71,26 @@ def main():
     print(f"  Maximum UID: {uid_max}")
     print(f"  Kernel iterations: {args.iterations}")
 
-    # Softmax scale (required by the kernel interface but not used in reduction)
+    # softmax scale (required by the kernel interface but not used in reduction)
     softmax_scale = 1.0 / math.sqrt(args.d_qk)
     print(f"  Softmax scale: {softmax_scale}")
 
-    # Dummy global buffers for inputs not used by reduction.
+    # dummy global buffers for inputs not used by reduction.
     q = torch.randn((1, 1, args.heads, args.d_qk), dtype=torch.bfloat16, device="cuda")
     cache = torch.randn((1, 1, 256, args.d_qk), dtype=torch.bfloat16, device="cuda")
     table = torch.zeros((1, 1, uid_max, 1), dtype=torch.int32, device="cuda")
     O = torch.empty((1, 1, args.heads, args.d_vo), dtype=torch.bfloat16, device="cuda")
 
-    # Allocate scratch buffers: O_scratch and Lvec_scratch.
+    # scratch buffers: O_scratch and Lvec_scratch.
     O_scratch = torch.empty((1, uid_max, 64, args.d_vo), dtype=torch.float32, device="cuda")
     Lvec_scratch = torch.empty((1, 1, uid_max, 64), dtype=torch.float32, device="cuda")
     semaphore = torch.zeros((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
 
-    # For each reduction op, fill scratch buffers for each of the two source UIDs.
+    # each reduction op, fill scratch buffers for each of the two source UIDs.
     for i in range(grid):
         src_uid0 = base_uid + 2 * i
         src_uid1 = base_uid + 2 * i + 1
-        # For each source UID, fill O_scratch and Lvec_scratch for as many iterations as specified.
+        # each source UID, fill O_scratch and Lvec_scratch for as many iterations as specified.
         for uid in [src_uid0, src_uid1]:
             for it in range(args.work_iters):
                 O_scratch[0, uid, it, :] = torch.randn((args.d_vo,), dtype=torch.float32, device="cuda")

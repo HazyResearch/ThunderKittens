@@ -31,21 +31,21 @@ def main():
 
     B = args.batch
     T = args.tokens_per_batch
-    # Compute grid as: (number of SMs * sm_iters) groups, each group has 4 partial ops.
+    
+    # grid as: (number of SMs * sm_iters) groups, each group has 4 partial ops.
     grid = args.grid if args.grid is not None else B * args.sm_iters * ((T + 3) // 4)
 
     num_task_iters = 1  
     OP_STOP    = 0
     OP_PARTIAL = 1
 
-    # Instructions tensor shape: (1, grid, num_task_iters, 8)
+    # tensor shape: (1, grid, num_task_iters, 8)
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
     base_uid = 1000
     uid_max = (base_uid + grid) if args.max_uid is None else args.max_uid
 
-    # Each instruction corresponds to one partial op.
-    # The layout is:
-    # [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, cache_length, 0]
+    # instruction corresponds to one partial op.
+    # layout: [opcode, uid, dst.batch_idx, dst.seq_idx, q_batch_idx, q_seq_idx, cache_length, 0]
     for i in range(grid):
         batch_idx = i % B
         token_idx = i // B  # within SM, groups are sequential

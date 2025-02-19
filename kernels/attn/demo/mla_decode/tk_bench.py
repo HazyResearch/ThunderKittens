@@ -32,14 +32,15 @@ def main():
     parser.add_argument("--page_size", type=int, default=256, help="Page size (tokens per page in cache)")
     parser.add_argument("--num_rows", type=int, default=32, help="NUM_ROWS parameter")
     parser.add_argument("--max_uid", type=int, default=None, help="Maximum UID (if not provided, computed automatically)")
-    # We no longer use --grid directly; grid will be computed from groups.
+ 
     args = parser.parse_args()
 
     # Number of groups = (number of SMs) * (sm_iters)
     num_groups = args.batch * args.sm_iters
-    # In our design, each group uses 4 instructions (one per partial op).
+    # each group uses 4 instructions (one per partial op).
     grid = num_groups * 4
-    num_task_iters = 3  # 3 iterations: partial, first-level reduction, final reduction
+    num_task_iters = 3  
+    # 3 iterations: partial, first-level reduction, final reduction
 
     # Define opcodes.
     OP_STOP    = 0
@@ -54,10 +55,10 @@ def main():
     base_redux   = 200
     base_final   = 300
 
-    # Create the instructions tensor of shape (1, grid, num_task_iters, 8) and initialize to OP_STOP.
+    # instructions tensor of shape (1, grid, num_task_iters, 8) and initialize to OP_STOP.
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
 
-    # For each group, fill the instructions.
+    # each group, fill the instructions.
     for g in range(num_groups):
         group_offset = g * 4  # each group occupies 4 consecutive instruction slots.
         # Partial op UIDs for this group:
