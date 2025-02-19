@@ -14,7 +14,7 @@ def main():
     parser.add_argument("--batch", type=int, default=32, help="Batch size (number of output batches)")
     parser.add_argument("--tokens_per_batch", type=int, default=4, help="New tokens per batch (tasks per batch)")
     parser.add_argument("--iterations", type=int, default=1000, help="Number of kernel launches for timing")
-    parser.add_argument("--length", type=int, default=128, help="Number of tokens in the cache")
+    parser.add_argument("--length", type=int, default=256, help="Number of tokens in the cache")
     parser.add_argument("--d_qk", type=int, default=576, help="Dimension for Q/K")
     parser.add_argument("--d_vo", type=int, default=512, help="Dimension for V/O")
     parser.add_argument("--heads", type=int, default=16, help="Number of attention heads")
