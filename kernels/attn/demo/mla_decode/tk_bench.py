@@ -51,7 +51,7 @@ def main():
     # In this end-to-end benchmark, we will only populate instructions for the first few tasks.
     B = args.batch
     T = args.tokens_per_batch
-    grid = args.grid if args.grid is not None else B * T
+    grid = args.grid if args.grid is not None else B * (T+3//4)
 
     # Allocate the instructions tensor with shape (1, grid, num_task_iters, 8).
     instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
@@ -178,8 +178,8 @@ def main():
     start_event.record()
     for _ in range(iterations):
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
-    end_event.record()
     torch.cuda.synchronize()
+    end_event.record()
 
     elapsed_ms = start_event.elapsed_time(end_event)
     avg_time_us = (elapsed_ms * 1e3) / iterations    

@@ -102,8 +102,8 @@ def main():
     start_event.record()
     for _ in range(iterations):
         mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
-    end_event.record()
     torch.cuda.synchronize()
+    end_event.record()
 
     elapsed_ms = start_event.elapsed_time(end_event)
     avg_time_us = (elapsed_ms * 1e3) / iterations
