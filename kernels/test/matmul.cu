@@ -21,8 +21,8 @@ struct matmul_template {
     using wide_tile = st_bf<64, 64*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
-    template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
-        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
+    template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int B, int M, int N, int K) {
+        return dim3(PERISISTENT_GRID ? 132 : B*M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
       // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -126,7 +126,7 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
     for (int b_idx = 0; b_idx < B; b_idx++) {
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
-                float sum = 0.0fu
+                float sum = 0.0f;
                 for (int k = 0; k < K; k++) {
                     sum += a[b_idx * M * K + i * K + k] * b[b_idx * K * N + j * K + k];
                     // sum += a[i * K + k] * b[k * N + j];
@@ -199,11 +199,11 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     // Convert to __nv_bfloat16 and copy to device
     __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[B * M * K];
     __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[B * K * N];
-    for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
-    for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
+    for (int i = 0; i < B * M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
+    for (int i = 0; i < B * K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
 
-    cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_A, h_A_bf16, B*M*K*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_bf16, B*K*N*2, cudaMemcpyHostToDevice);
 
     std::cout << "Copied matrices to device" << std::endl;
 
@@ -211,11 +211,11 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     // Launch kernel
-    dim3 grid(mmt::grid(M, N, K));
+    dim3 grid(mmt::grid(B, M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
-        inner_run<mmt>(d_A, d_B, d_C, 1, M, N, K, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, B, M, N, K, grid, block);
     }
 
     // Start timing
@@ -225,7 +225,7 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
 
     constexpr int ITERS = (NCU ? 1 : 10);
     for(int i = 0; i < ITERS; i++) {
-        inner_run<mmt>(d_A, d_B, d_C, 1, M, N, K, grid, block);
+        inner_run<mmt>(d_A, d_B, d_C, B, M, N, K, grid, block);
     }
     cudaDeviceSynchronize();
 
@@ -237,7 +237,7 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     double useconds = diff.count() * 1e6 / ITERS;
 
     // Calculate TFLOPs
-    double flops = double(2.0) * M * N * K; // 2 FLOPs per multiply-add
+    double flops = double(2.0) * B * M * N * K; // 2 FLOPs per multiply-add
     double tflops = (flops / useconds) / 1e6;
 
     std::cout << "Avg Kernel execution time: " << useconds << " us\n";
@@ -252,22 +252,23 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     }
 
     // Copy result back to host
-    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
-    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
+    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[B * M * N];
+    cudaMemcpy(h_C_bf16, d_C, B*M*N*2, cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
-    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
+    for (int i = 0; i < B * M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
 
     std::cout << "Converted result back to float" << std::endl;
 
     // Check result
     float max_error = 0.0f;
     int error_count = 0;
-    for (int i = 0; i < M * N; ++i) {
+    for (int i = 0; i < B * M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if(error > 1.0) { // large because of bf16 vs fp32 numerics
+            // I'm not actually sure how to derive the batch correctly
             if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
@@ -297,6 +298,6 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
 int main() {
     int N;
     N = 4096;
-    run_benchmark<matmul_template<2,4,8>>(N, N, N);
+    run_benchmark<matmul_template<2,4,8>>(2, N, N, N);
     return 0;
 }
