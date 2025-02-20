@@ -42,7 +42,7 @@ def main():
     OP_PARTIAL = 1
 
     # tensor shape: (1, grid, num_task_iters, 8)
-    instructions = torch.zeros((1, grid, num_task_iters, 8), dtype=torch.int32, device="cuda")
+    instructions = torch.zeros((1, grid, num_task_iters, 16), dtype=torch.int32, device="cuda")
     base_uid = 0
     uid_max = (base_uid + grid) if args.max_uid is None else args.max_uid
 
@@ -87,9 +87,9 @@ def main():
     table = torch.randint(0, num_pages, (1, 1, uid_max, num_pages), dtype=torch.int32, device="cuda")
 
     O = torch.empty((B, T, args.heads, args.d_vo), dtype=torch.bfloat16, device="cuda")
-    O_scratch = torch.empty((1, uid_max, 64, args.d_vo), dtype=torch.float32, device="cuda")
-    Lvec_scratch = torch.empty((1, 1, uid_max, 64), dtype=torch.float32, device="cuda")
-    semaphore = torch.zeros((1, 1, 1, uid_max), dtype=torch.int32, device="cuda")
+    O_scratch = torch.empty((uid_max, T, 16, args.d_vo), dtype=torch.float32, device="cuda")
+    Lvec_scratch = torch.empty((1, uid_max, T, 16), dtype=torch.float32, device="cuda")
+    semaphore = torch.zeros((1, 1, uid_max, T), dtype=torch.int32, device="cuda")
 
     print("Warming up partial kernel...")
     mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)

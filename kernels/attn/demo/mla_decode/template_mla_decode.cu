@@ -11,19 +11,18 @@ using q_tile              = st_bf<64, QK_D>;
 using q_global            = kittens::gl<bf16, -1, -1, -1, QK_D, q_tile>; // B * R * H * D_QK
 using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
 using cache_global        = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
-using instructions_global = kittens::gl<int, 1, -1, -1, 8>;
+using instructions_global = kittens::gl<int, 1, -1, -1, 16>;
 using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
 using o_tile              = st_bf<64, VO_D>;
-using o_tile_d2           = st_bf<64, VO_Dd2>;
 using o_tile_fl           = st_fl<16, VO_D>;
-using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2, st_bf<16, VO_D>>; // B * R * H * D_VO
+using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, st_bf<16, VO_Dd2>, st_bf<16, VO_D/8>>; // B * NEWTOKENS * H * D_VO
 
 // using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
 // using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
-using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, o_tile_fl>; // For partial O's
+using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, st_fl<16, VO_D/8>, st_fl<16,256>>; // For partial O's
 using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
 
-using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>;              // 1 * 1 * 1 * uid
+using semaphore_global    = kittens::gl<int,   1,  1,  -1, -1>;              // 1 * 1 * uid * NEWTOKENS
 
 struct config {
     struct globals {
@@ -43,13 +42,14 @@ struct config {
 };
 
 struct location {
-    int batch_idx; // batch_idx >=0, otherwise it's the negative index into scratch
+    int batch_idx; // batch_idx >=0, otherwise it's the negative index, minus one, into scratch
     int seq_idx;
 };
 struct partial_layout {
     using globals = config::globals;
     struct input_block { cache_tile c; };
     struct scratch_block { q_tile q; st_bf<64, cache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
+    struct finish_block { st_fl<16, 256> o[4][2]; sv_fl<16> lvec[4]; };
     struct common_state {
         int uid;
         location dst;
@@ -173,27 +173,31 @@ struct partial_template {
             div_row(args.state.o, args.state.o, local_norm_vec);
 
             if(args.common.dst.batch_idx >= 0) { // batch is meaningful
-                auto &o_smem = reinterpret_cast<o_tile&>(args.scratch.q);
-                auto o_st = subtile_inplace<16, VO_Dd2>(o_smem, {warpgroup::warpid(), warpgroup::groupid()});
-                store(o_st, args.state.o);
+                auto &o_smem = reinterpret_cast<st_bf<16, VO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
+                store(o_smem, args.state.o);
                 __syncwarp();
-                store(args.globals.O, o_st, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             else { // write out directly to O scratch, without going through smem
                 if(warpgroup::groupid() == 0) {
                     mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
                     log2(local_norm_vec, local_norm_vec);
                     add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
-                    store(args.globals.Lvec_scratch, local_norm_vec, {args.common.dst.seq_idx, warpgroup::warpid(), 0});
+                    store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
+                    __syncwarp();
+                    tma::store_async(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0});
                 }
 
-                store(args.globals.O_scratch, args.state.o, {args.common.dst.seq_idx, warpgroup::warpid(), 0, warpgroup::groupid()});
+                store(args.finish.o[warpgroup::warpid()][warpgroup::groupid()], args.state.o);
+                __syncwarp();
+                tma::store_async(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
+            tma::store_async_wait(); // not just read wait
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
                 asm volatile("fence.sc.sys;");
-                if(group<8>::laneid() == 0) {
-                    args.globals.semaphore[{args.common.dst.seq_idx}] = 1;
+                if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth) {
+                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = 1;
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
@@ -202,124 +206,159 @@ struct partial_template {
 };
 struct reduction_layout {
     using globals = config::globals;
-    struct input_block  { o_tile_fl o[2]; sv_fl<16> lvec[2]; sv_fl<16> padding[14]; };
-    struct output_block { o_tile_fl o; sv_fl<16> lvec; sv_fl<16> padding[15]; };
+    struct input_block   { st_fl<16, VO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
+    struct scratch_block { st_fl<16, VO_D/8> o[8]; sv_fl<16> lvec; }; // used both for setup load and finish store
     struct common_state {
         int uid;
-        location dst;
-        int src_uid[2];
-        int src_batch[2];
+        // int num_iters; // same as the number of active load_uid's, marked here for instruction clarity but we just use args.num_iters instead.
+        location dst; // again, negative batch means we're writing to O scratch, seq_idx is consistent
+        int src_uid;
     };
-    struct consumer_state {};
+    struct producer_state {
+        int load_uid[10];
+    };
+    struct consumer_state {
+        rt_fl<16, VO_D/8> o;
+        col_vec<rt_fl<16, cache_tile::rows>> lvec;
+    };
 };
 struct reduction_template {
     using config = config;
     using layout = reduction_layout;
     static constexpr int opcode = 2;
-    static constexpr int INPUT_PIPE_STAGES = 2;
+    static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.uid           = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
-        args.common.dst           = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}], args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}]};
-        args.common.src_uid[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
-        args.common.src_uid[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
-        args.common.src_batch[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6}];
-        args.common.src_batch[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 7}];
-        args.num_iters = 1;
-        // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
-        if(threadIdx.x == 0) { // easier to have a single thread spin
-            while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid[0]}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
-            while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid[1]}] == 0) {}
-        }
-        group<12>::sync(11); // all warps must sync here.
+        args.common.uid     =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
+        args.num_iters      =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}];
+        args.common.dst     = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}],
+                               args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}]};
+        args.common.src_uid =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
     }
     struct producer {
-        __device__ static inline void setup(producer_setup_args<layout> args) {}
-        __device__ static inline void load(producer_load_args<layout> args) {
-            if(warpgroup::warpid() == args.iter%4) {
-                // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.o[0], args.input.o[1], args.input.lvec[0], args.input.lvec[1]);
-                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_batch[0], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_batch[1], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_batch[0], args.common.dst.seq_idx, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_batch[1], args.common.dst.seq_idx, 0}, args.inputs_arrived);
-                if(laneid() == 0) arrive(args.inputs_arrived, 3);
+        __device__ static inline void setup(producer_setup_args<layout> args) {
+            #pragma unroll
+            for(int i = 0; i < 10; i++) {
+                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5+i}];
             }
         }
-        __device__ static inline void store(producer_store_args<layout> args) {
+        __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
-                if(args.common.dst.batch_idx >= 0) {
-                    tma::store_async(args.globals.O, reinterpret_cast<st_bf<16, VO_D>&>(args.output.o),
-                        {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
-                }
-                else {
-                    tma::store_async(args.globals.O_scratch, args.output.o, {-args.common.dst.batch_idx, args.common.dst.seq_idx, 0});
-                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {-args.common.dst.batch_idx, args.common.dst.seq_idx});
-                }
-                tma::store_async_wait();
+                // spinloop until we're ready
+                int load_uid = args.state.load_uid[args.iter];
+                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid}] == 0) {}
                 __syncwarp();
-                if(laneid() == 0) arrive(args.outputs_finished, 4);
+                // next page we need to load?
+                tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
+                #pragma unroll
+                for(int i = 0; i < 8; i++) {
+                    tma::load_async(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, 0, i}, args.inputs_arrived);
+                }
+                tma::load_async(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
     };
     struct consumer {
-        __device__ static inline void setup(consumer_setup_args<layout> args) {}
+        __device__ static inline void setup(consumer_setup_args<layout> args) {
+            // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
+            if(threadIdx.x == 0) { // easier to have a single thread spin
+                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
+            }
+            group<8>::sync(11); // all warps must sync here.
+            load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
+            if(warpid() == 0) {
+                load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0});
+            }
+            load_async_wait();
+            __syncwarp();
+            load(args.state.o, args.scratch.o[group<8>::warpid()]);
+            group<8>::sync(11); // all warps must sync here.
+            load(args.state.lvec, args.scratch.lvec);
+        }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
-            col_vec<rt_fl<16, cache_tile::rows>> lvec[2], max_lvec, sum_lvec;
-            auto o1_st = subtile_inplace<16, VO_D/8>(args.input.o[0], {0, group<8>::warpid()});
-            auto o2_st = subtile_inplace<16, VO_D/8>(args.input.o[1], {0, group<8>::warpid()});
-            rt_fl<16, VO_D / 8> o[2];
-            load(o[0], o1_st);
-            load(o[1], o2_st);
-            load(lvec[0], args.input.lvec[0]);
-            load(lvec[1], args.input.lvec[1]);
+            col_vec<rt_fl<16, cache_tile::rows>> lvec, max_lvec, sum_lvec;
+            rt_fl<16, VO_D / 8> o;
+            load(o, args.input.o[group<8>::warpid()]);
+            load(lvec, args.input.lvec);
             __syncwarp();
             if(laneid() == 0) arrive(args.inputs_finished); // done!
-            max(max_lvec, lvec[0], lvec[1]);
-            sub(lvec[0], lvec[0], max_lvec);
-            sub(lvec[1], lvec[1], max_lvec);
-            exp2(lvec[0], lvec[0]);
-            exp2(lvec[1], lvec[1]);
-            add(sum_lvec, lvec[0], lvec[1]);
-            div(lvec[0], lvec[0], sum_lvec);
-            div(lvec[1], lvec[1], sum_lvec);
-            mul_row(o[0], o[0], lvec[0]);
-            mul_row(o[1], o[1], lvec[1]);
-            add(o[0], o[0], o[1]);
+            max(max_lvec, args.state.lvec, lvec);
+            sub(args.state.lvec, args.state.lvec, max_lvec);
+            sub(lvec, lvec, max_lvec);
+            exp2(args.state.lvec, args.state.lvec);
+            exp2(lvec, lvec);
+            add(sum_lvec, args.state.lvec, lvec);
+            div(args.state.lvec, args.state.lvec, sum_lvec);
+            div(lvec, lvec, sum_lvec);
+            mul_row(args.state.o, args.state.o, args.state.lvec);
+            mul_row(o, o, lvec);
+            add(args.state.o, args.state.o, o);
             log2(sum_lvec, sum_lvec);
-            add(sum_lvec, sum_lvec, max_lvec);
-            if(args.common.dst.batch_idx >= 0) {
-                auto &o_smem = reinterpret_cast<st_bf<16, VO_D>&>(args.output.o);
-                auto o_st = subtile_inplace<16, VO_D/8>(o_smem, {0, group<8>::warpid()});
-                store(o_st, o[0]);
-            }
-            else {
-                auto o_st = subtile_inplace<16, VO_D/8>(args.output.o, {0, group<8>::warpid()});
-                store(o_st, o[0]);
-                if(group<8>::warpid() == 0) {
-                    store(args.output.lvec, sum_lvec);
-                }
-            }
-            __syncwarp();
-            if(laneid() == 0) arrive(args.outputs_arrived); // done!
+            add(args.state.lvec, sum_lvec, max_lvec);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
+            if(args.common.dst.batch_idx >= 0) {
+                auto &o_smem = reinterpret_cast<st_bf<16, VO_D/8>&>(args.scratch.o[group<8>::warpid()]);
+                store(o_smem, args.state.o);
+                __syncwarp();
+                tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
+            }
+            else {
+                store(args.scratch.o[group<8>::warpid()], args.state.o);
+                if(group<8>::warpid() == 0) store(args.scratch.lvec, args.state.lvec);
+                __syncwarp();
+                tma::store_async(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0, group<8>::warpid()});
+                if(group<8>::warpid() == 0) tma::store_async(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
+            }
+            tma::store_async_wait();
+            group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
-            warpgroup::sync(warpgroup::groupid()); // Make sure memory has been flushed to global memory.
             if(args.common.dst.batch_idx < 0) {
                 asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() == 0) {
-                    args.globals.semaphore[{args.common.dst.seq_idx}] = 1;
+                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = 1;
                 }
-                __syncwarp();
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
         }
     };
 };
+struct dummy_layout {
+    using globals = config::globals;
+    struct input_block {};
+};
+struct dummy_template {
+    using config = config;
+    using layout = dummy_layout;
+    static constexpr int opcode = 3;
+    static constexpr int INPUT_PIPE_STAGES = 1;
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        // if(blockIdx.x == 0 && threadIdx.x == 0) {
+        //     printf("task_iter: %d, num_iters: %d\n", args.task_iter, args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}]);
+        // }
+        args.num_iters = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
+    }
+    struct producer {
+        __device__ static inline void setup(producer_setup_args<layout> args) {}
+        __device__ static inline void load(producer_load_args<layout> args) {}
+    };
+    struct consumer {
+        __device__ static inline void setup(consumer_setup_args<layout> args) {}
+        __device__ static inline void compute(consumer_compute_args<layout> args) {}
+        __device__ static inline void finish(consumer_finish_args<layout> args) {}
+    };
+};
+
+struct dummy_globals {
+    dim3 grid() { return dim3(132); }
+    dim3 block() { return dim3(1024); }
+    float f;
+};
+__global__ void dummy_kernel(__grid_constant__ const dummy_globals globals) {}
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
+    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template, dummy_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
         &config::globals::Cache,
@@ -330,4 +369,5 @@ PYBIND11_MODULE(mla_decode, m) {
         &config::globals::semaphore,
         &config::globals::Softmax_scale
     );
+    py::bind_kernel<dummy_kernel>(m, "dummy_kernel", &dummy_globals::f);
 }
