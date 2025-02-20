@@ -117,6 +117,16 @@ struct matmul_template {
     };
 };
 
+#include "pyutils/pyutils.cuh"
+PYBIND11_MODULE(batch_matmul, m) {
+    m.doc() = "batch_matmul python module";
+    py::bind_kernel<lcf::kernel<matmul_template>>(m, "matmul",
+        &matmul_layout::globals::A,
+        &matmul_layout::globals::B,
+        &matmul_layout::globals::C
+    );
+}
+
 
 constexpr bool NCU = false;
 #include <iostream>
