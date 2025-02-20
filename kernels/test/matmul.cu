@@ -21,7 +21,7 @@ struct matmul_template {
     using wide_tile = st_bf<64, 64*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
-    template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int B, int M, int N, int K) {
+    template<bool PERISISTENT_GRID=false> __host__ static inline dim3 grid(int B, int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : B*M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
       // ThunderKittens template functions
@@ -128,7 +128,7 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
             for (int n_idx = 0; n_idx < N; n_idx++) { // j
                 float sum = 0.0f;
                 for (int k_idx = 0; k_idx < K; k_idx++) { // k
-                    sum += a[b_idx * M * K + m_idx * K + k_idx] * b[b_idx * K * N + k_idx * N + n_idx];
+                    sum += a[b_idx * M * K + m_idx * K + k_idx] * b[b_idx * K * N + n_idx * K + k_idx];
                 }
                 c[b_idx * M * N + m_idx * N + n_idx] = sum;
             }
@@ -142,7 +142,7 @@ void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, si
     using globals  = typename mmt::layout::globals;
     // printf("M: %d, N: %d, K: %d\n", M, N, K);
     global_layout Ag{d_A, B, nullptr, M, K};
-    global_layout Bg{d_B, B, nullptr, K, N};
+    global_layout Bg{d_B, B, nullptr, N, K};
     global_layout Cg{d_C, B, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
@@ -157,7 +157,7 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
 
     // Allocate host memory
     float *h_A = new float[B * M * K];
-    float *h_B = new float[B * K * N];
+    float *h_B = new float[B * N * K];
     float *h_C = new float[B * M * N];
     float *h_C_ref = new float[B * M * N];
 
