@@ -21,7 +21,7 @@ using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2, st_bf
 // using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
 // using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
 using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, o_tile_fl>; // For partial O's
-using lvec_scratch_global = kittens::gl<float, 1,  -1, -1, 16, sv_fl<16>>; // For partial O's
+using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
 
 using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>;              // 1 * 1 * 1 * uid
 
@@ -43,7 +43,7 @@ struct config {
 };
 
 struct location {
-    int batch_idx; // batch_idx >=0
+    int batch_idx; // batch_idx >=0, otherwise it's the negative index into scratch
     int seq_idx;
 };
 struct partial_layout {
@@ -123,7 +123,6 @@ struct partial_template {
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
                     const int length = args.common.length - args.iter*NUM_ROWS;
-                    // if(laneid() == 0) printf("block %d, warp %d, iter %d/%d, right fill from column %d\n", blockIdx.x, warpid(), args.iter, args.num_iters, length);
                     right_fill(att_block_fp32, att_block_fp32, length, base_types::constants<float>::neg_infty());
                 }
 
@@ -208,7 +207,6 @@ struct reduction_layout {
     struct common_state {
         location dst;
         int src_uid[2];
-        int q_seq_idx;
     };
     struct consumer_state {};
 };
@@ -221,7 +219,6 @@ struct reduction_template {
         args.common.dst        = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}], args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}]};
         args.common.src_uid[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}];
         args.common.src_uid[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
-        args.common.q_seq_idx  = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
         args.num_iters = 1;
         // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
         if(threadIdx.x == 0) { // easier to have a single thread spin
@@ -236,10 +233,10 @@ struct reduction_template {
             if(warpgroup::warpid() == args.iter%4) {
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o[0], args.input.o[1], args.input.lvec[0], args.input.lvec[1]);
-                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.common.q_seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.common.q_seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.common.q_seq_idx, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.common.q_seq_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.common.dst.seq_idx, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
@@ -250,8 +247,8 @@ struct reduction_template {
                         {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
                 }
                 else {
-                    tma::store_async(args.globals.O_scratch, args.output.o, {args.common.dst.seq_idx, args.common.q_seq_idx, group<8>::warpid()});
-                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {args.common.dst.seq_idx, args.common.q_seq_idx});
+                    tma::store_async(args.globals.O_scratch, args.output.o, {-args.common.dst.batch_idx, args.common.dst.seq_idx, 0});
+                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {-args.common.dst.batch_idx, args.common.dst.seq_idx});
                 }
                 tma::store_async_wait();
                 __syncwarp();
@@ -317,8 +314,7 @@ struct reduction_template {
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    py::bind_kernel<interpreter::kernel<config, reduction_template>>(m, "mla_decode",
-    // py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
+    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
         &config::globals::Cache,
