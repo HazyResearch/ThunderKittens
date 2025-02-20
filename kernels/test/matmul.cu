@@ -1,6 +1,9 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
-
+int getenv(const char* name, int default_value) {
+  auto value = std::getenv(name);
+  return (value == nullptr || value[0] == '\0') ? default_value : std::stoi(value);
+}
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
@@ -297,6 +300,9 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
 int main() {
     int N;
     N = 4096;
-    run_benchmark<matmul_template<2,4,8>>(2, N, N, N);
+    int K = getenv("K", N);
+    int M = getenv("M", N);
+    int B = getenv("B", 2);
+    run_benchmark<matmul_template<2,4,8>>(B, M, N, K);
     return 0;
 }
