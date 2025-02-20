@@ -205,8 +205,10 @@ struct reduction_layout {
     struct input_block  { o_tile_fl o[2]; sv_fl<16> lvec[2]; sv_fl<16> padding[14]; };
     struct output_block { o_tile_fl o; sv_fl<16> lvec; sv_fl<16> padding[15]; };
     struct common_state {
+        int uid;
         location dst;
         int src_uid[2];
+        int src_batch[2];
     };
     struct consumer_state {};
 };
@@ -216,9 +218,12 @@ struct reduction_template {
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 2;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.dst        = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}], args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}]};
-        args.common.src_uid[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}];
-        args.common.src_uid[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
+        args.common.uid           = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
+        args.common.dst           = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}], args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}]};
+        args.common.src_uid[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
+        args.common.src_uid[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
+        args.common.src_batch[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6}];
+        args.common.src_batch[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 7}];
         args.num_iters = 1;
         // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
         if(threadIdx.x == 0) { // easier to have a single thread spin
@@ -233,10 +238,10 @@ struct reduction_template {
             if(warpgroup::warpid() == args.iter%4) {
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o[0], args.input.o[1], args.input.lvec[0], args.input.lvec[1]);
-                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.common.dst.seq_idx, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_batch[0], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_batch[1], args.common.dst.seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_batch[0], args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_batch[1], args.common.dst.seq_idx, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
