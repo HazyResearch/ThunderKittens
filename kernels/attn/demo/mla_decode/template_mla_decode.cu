@@ -17,8 +17,12 @@ using o_tile              = st_bf<64, VO_D>;
 using o_tile_d2           = st_bf<64, VO_Dd2>;
 using o_tile_fl           = st_fl<16, VO_D>;
 using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, o_tile_d2, st_bf<16, VO_D>>; // B * R * H * D_VO
-using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
-using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
+
+// using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
+// using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
+using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, o_tile_fl>; // For partial O's
+using lvec_scratch_global = kittens::gl<float, 1,  -1, -1, 16, sv_fl<16>>; // For partial O's
+
 using semaphore_global    = kittens::gl<int,   1,  1,  1, -1>;              // 1 * 1 * 1 * uid
 
 struct config {
@@ -181,9 +185,10 @@ struct partial_template {
                     mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
                     log2(local_norm_vec, local_norm_vec);
                     add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
-                    warpgroup::store(args.globals.Lvec_scratch, local_norm_vec, {args.common.dst.seq_idx, 0});
+                    store(args.globals.Lvec_scratch, local_norm_vec, {args.common.dst.seq_idx, warpgroup::warpid(), 0});
                 }
-                warpgroup::store(args.globals.O_scratch, args.state.o, {args.common.dst.seq_idx, 0, warpgroup::groupid()});
+
+                store(args.globals.O_scratch, args.state.o, {args.common.dst.seq_idx, warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
@@ -203,6 +208,7 @@ struct reduction_layout {
     struct common_state {
         location dst;
         int src_uid[2];
+        int q_seq_idx;
     };
     struct consumer_state {};
 };
@@ -215,7 +221,8 @@ struct reduction_template {
         args.common.dst        = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}], args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}]};
         args.common.src_uid[0] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}];
         args.common.src_uid[1] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
-        args.num_iters = 4;
+        args.common.q_seq_idx  = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
+        args.num_iters = 1;
         // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
         if(threadIdx.x == 0) { // easier to have a single thread spin
             while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid[0]}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
@@ -229,10 +236,10 @@ struct reduction_template {
             if(warpgroup::warpid() == args.iter%4) {
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o[0], args.input.o[1], args.input.lvec[0], args.input.lvec[1]);
-                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.iter}, args.inputs_arrived);
-                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.iter}, args.inputs_arrived);
+                tma::load_async(args.input.o[0], args.globals.O_scratch, {args.common.src_uid[0], args.common.q_seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.o[1], args.globals.O_scratch, {args.common.src_uid[1], args.common.q_seq_idx, 0, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[0], args.globals.Lvec_scratch, {args.common.src_uid[0], args.common.q_seq_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.lvec[1], args.globals.Lvec_scratch, {args.common.src_uid[1], args.common.q_seq_idx, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
@@ -240,11 +247,11 @@ struct reduction_template {
             if(warpgroup::warpid() == args.iter%4) {
                 if(args.common.dst.batch_idx >= 0) {
                     tma::store_async(args.globals.O, reinterpret_cast<st_bf<16, VO_D>&>(args.output.o),
-                        {args.common.dst.batch_idx, args.common.dst.seq_idx + args.iter, 0, group<8>::warpid()});
+                        {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
                 }
                 else {
-                    tma::store_async(args.globals.O_scratch, args.output.o, {args.common.dst.seq_idx, args.iter, group<8>::warpid()});
-                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {args.common.dst.seq_idx, args.iter});
+                    tma::store_async(args.globals.O_scratch, args.output.o, {args.common.dst.seq_idx, args.common.q_seq_idx, group<8>::warpid()});
+                    tma::store_async(args.globals.Lvec_scratch, args.output.lvec, {args.common.dst.seq_idx, args.common.q_seq_idx});
                 }
                 tma::store_async_wait();
                 __syncwarp();
