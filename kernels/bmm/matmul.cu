@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+
 int getenv(const char* name, int default_value) {
   auto value = std::getenv(name);
   return (value == nullptr || value[0] == '\0') ? default_value : std::stoi(value);
@@ -138,6 +139,39 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
         }
     }
 }
+
+#include "pyutils/torch_helpers.cuh"
+
+torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B) {
+    CHECK_INPUT(A);
+    CHECK_INPUT(B);
+    TORCH_CHECK(A.size(0) == B.size(0), "Batch size mismatch");
+    TORCH_CHECK(A.size(2) == B.size(2), "Inner dimensions mismatch");
+    uint batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(1);
+    torch::Tensor C = torch::empty({batch, M, N}, A.options());
+
+    // M_BLOCK, N_BLOCK, SUPER_M
+    using mmt = matmul_template<2, 4, 8>;
+
+    using global_layout = typename mmt::layout::global_layout;
+    using globals = typename mmt::layout::globals;
+    global_layout Ag = {reinterpret_cast<bf16*>(A.data_ptr<c10::BFloat16>()), batch, nullptr, M, K};
+    global_layout Bg = {reinterpret_cast<bf16*>(B.data_ptr<c10::BFloat16>()), batch, nullptr, K, N};
+    global_layout Cg = {reinterpret_cast<bf16*>(C.data_ptr<c10::BFloat16>()), batch, nullptr, M, N};
+    globals G{Ag, Bg, Cg};
+
+    dim3 grid(mmt::grid(batch, M, N, K));
+    dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
+    cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, MAX_SHARED_MEMORY-1024);
+    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+    return C;
+}
+
+
+// PYBIND11_MODULE(batch_matmul, m) {
+//     m.doc() = "batch_matmul python module";
+//     m.def("batch_matmul", &batch_matmul_python, "[B, M, K] @ [B, N, K].T -> [B, M, N]", pybind11::arg("A"), pybind11::arg("B"));
+// }
 
 template<typename mmt>
 void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
