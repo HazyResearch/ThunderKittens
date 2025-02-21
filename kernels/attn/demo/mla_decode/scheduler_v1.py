@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 This script demonstrates a scheduling strategy for a batch of tasks (representing
 partial and reduction instructions) operating on multiple sequences. Each task is
@@ -59,11 +60,9 @@ def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
     
     Returns a list of tasks for this sequence and the next available task uid.
     """
-    
     chunk_size = chunk_pages * page_size
     tasks = []
     partial_tasks = [[] for _ in range((new_tokens+3)//4)]
-    
     # Create PARTIAL tasks (with no dependencies)
     for i in range(0, length, chunk_size):
         chunk_length = min(chunk_size, length - i)
@@ -209,7 +208,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
         raise ValueError("Cycle detected in task dependencies!")
     return tasks
 
-def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int):
+def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 132):
     OP_PARTIAL, OP_REDUCTION = 1, 2
     """
     @dataclass
@@ -249,13 +248,15 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int):
         return torch.tensor(task.args["table"]+[0]*(max_num_pages-len(task.args["table"])), dtype=torch.int32)
     # collect the stats we need to intialize tensors
     num_instructions = max(t.uid for t in tasks)+1
-    num_processors = max(t.processor for t in tasks)+1
     max_num_pages = max(len(t.args["table"]) for t in tasks if t.task_type == "partial")
     processor_tasks = [[] for _ in range(num_processors)]
     for task in tasks:
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
+    # for pid in range(num_processors):
+    #     print(f"Processor {pid} has {len(processor_tasks[pid])} tasks")
+    #     print(processor_tasks[pid])
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
     Table = torch.zeros((num_instructions, max_num_pages), dtype=torch.int32)
@@ -345,15 +346,16 @@ def sample_schedule_generator(page_size = 256, new_tokens = 7) -> List[Task]:
 
     # Sequence parameters (batch_id, length, chunk_size).
     sequences = [
-        # (1, 1024,  1),
-        (1, 4671,  1),
-        (2, 45096, 3),
-        (3, 1750,  1),
-        (4, 1701,  1)
+        (0, 256,  1),
     ]
-    sequences += [
-        (i, 1000, 4) for i in range(5, 100)
-    ]
+    #     (1, 4671,  1),
+    #     (2, 45096, 3),
+    #     (3, 1750,  1),
+    #     (4, 1701,  1)
+    # ]
+    # sequences += [
+    #     (i, 1000, 4) for i in range(5, 100)
+    # ]
     sequences.sort(key=lambda x: x[1], reverse=True)
     for batch_id, length, chunk_pages in sequences:
         seq_tasks, next_task_id = generate_sequence_tasks(
@@ -372,7 +374,7 @@ def sample_schedule_generator(page_size = 256, new_tokens = 7) -> List[Task]:
 
 def main(schedule_generator: Callable[[], List[Task]],
          scheduler: Callable[[List[Task], int], List[Task]],
-         num_processors: int = 16):
+         num_processors: int = 132):
     """
     Runs the schedule generator to produce a DAG of tasks, schedules them using
     the provided scheduler, verifies dependency correctness, and visualizes the
@@ -386,9 +388,10 @@ def main(schedule_generator: Callable[[], List[Task]],
     tasks = schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS)
     scheduled_tasks = scheduler(tasks, num_processors=num_processors)
     verify_dependencies(scheduled_tasks)
-    visualize_schedule(scheduled_tasks, num_processors=num_processors)
-    Instructions, Table, O_scratch, L_scratch, Semaphore = create_arguments_from_task_schedule(scheduled_tasks, NEW_TOKENS)
-    print(Instructions.shape, Table.shape, O_scratch.shape, L_scratch.shape, Semaphore.shape)
+    # visualize_schedule(scheduled_tasks, num_processors=num_processors)
+    Instructions, Table, O_scratch, L_scratch, Semaphore = create_arguments_from_task_schedule(scheduled_tasks, NEW_TOKENS, num_processors)
+    print(Instructions)
+    print(Table)
 
 if __name__ == '__main__':
     # Use the new priority-based scheduler.
