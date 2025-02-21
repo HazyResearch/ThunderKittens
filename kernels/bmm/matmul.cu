@@ -120,10 +120,12 @@ struct matmul_template {
 #include "pyutils/pyutils.cuh"
 PYBIND11_MODULE(batch_matmul, m) {
     m.doc() = "batch_matmul python module";
-    py::bind_kernel<lcf::kernel<matmul_template>>(m, "matmul",
-        &matmul_template<>::layout::globals::A,
-        &matmul_template<>::layout::globals::B,
-        &matmul_template<>::layout::globals::C
+    using mmt = typename matmul_template<>;
+    using globals_t = typename mmt::layout::globals;
+    py::bind_kernel<lcf::kernel<mmt>>(m, "matmul",
+        &globals_t::A,
+        &globals_t::B,
+        &globals_t::C
     );
 
 }
