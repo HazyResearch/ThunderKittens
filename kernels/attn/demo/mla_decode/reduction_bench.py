@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description="Thunderkittens MLA Decode Reduction Benchmark (Fill GPU)")
     parser.add_argument("--grid_size", type=int, default=132, help="Base number of SMs (reduction ops per SM will be multiplied by --sm_iters)")
     parser.add_argument("--sm_iters", type=int, default=10, help="Number of reduction instructions each SM performs")
-    parser.add_argument("--num_iters", type=int, default=1, help="Number of sequential reductions each reduction instruction performs")
+    parser.add_argument("--num_iters", type=int, default=10, help="Number of sequential reductions each reduction instruction performs")
     parser.add_argument("--iterations", type=int, default=1000, help="Number of kernel launches for timing")
     parser.add_argument("--d_qk", type=int, default=576, help="Dimension for Q/K")
     parser.add_argument("--d_vo", type=int, default=512, help="Dimension for V/O")
@@ -95,8 +95,7 @@ def main():
     #         semaphore[0, 0, 0, uid] = 1
 
     print("Warming up reduction kernel...")
-    mla_decode.dummy_kernel(1.0)
-    # mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
+    mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
 
     iterations = args.iterations
@@ -106,8 +105,7 @@ def main():
     print("Starting reduction benchmark...")
     start_events.record()
     for i in range(iterations):
-        mla_decode.dummy_kernel(1.0)
-        # mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
+        mla_decode.mla_decode(instructions, q, cache, table, O, O_scratch, Lvec_scratch, semaphore, softmax_scale)
     torch.cuda.synchronize()
     end_events.record()
     elapsed_ms = start_events.elapsed_time(end_events)
