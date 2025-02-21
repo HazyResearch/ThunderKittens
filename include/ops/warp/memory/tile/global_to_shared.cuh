@@ -29,7 +29,7 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int dst_num_elem = dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
     constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
-    constexpr bool needs_bounds_check = (dst_num_elem % (N_THREADS*elem_per_memcpy) != 0);
+    constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
@@ -88,7 +88,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
     constexpr int src_num_elem = src.height*src.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
     constexpr int total_calls = (src_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
-    constexpr bool needs_bounds_check = (src_num_elem % (N_THREADS*elem_per_memcpy) != 0);
+    constexpr bool needs_bounds_check = src_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[unit_coord];
@@ -146,7 +146,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int dst_num_elem = dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
     constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
-    constexpr bool needs_bounds_check = (dst_num_elem % (N_THREADS*elem_per_memcpy) != 0);
+    constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
