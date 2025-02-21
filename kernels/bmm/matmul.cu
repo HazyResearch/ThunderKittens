@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+
 int getenv(const char* name, int default_value) {
   auto value = std::getenv(name);
   return (value == nullptr || value[0] == '\0') ? default_value : std::stoi(value);
@@ -117,18 +118,6 @@ struct matmul_template {
     };
 };
 
-#include "pyutils/pyutils.cuh"
-PYBIND11_MODULE(batch_matmul, m) {
-    m.doc() = "batch_matmul python module";
-    using globals_t = typename matmul_template<>::layout::globals;
-    py::bind_kernel<lcf::kernel<matmul_template<>>>(m, "matmul",
-        &globals_t::A,
-        &globals_t::B,
-        &globals_t::C
-    );
-
-}
-
 
 constexpr bool NCU = false;
 #include <iostream>
@@ -149,6 +138,40 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
             }
         }
     }
+}
+
+
+#include "pyutils/pyutils.cuh"
+#include "pyutils/torch_helpers.cuh"
+
+torch::Tensor batch_matmul_python(torch::Tensor A, torch::Tensor B) {
+    TORCH_CHECK(A.size(0) == B.size(0), "Batch size mismatch");
+    TORCH_CHECK(A.size(2) == B.size(1), "Inner dimensions mismatch");
+    int batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(2);
+    torch::Tensor C = torch::empty({batch, M, N}, A.options());
+
+    // M_BLOCK, N_BLOCK, SUPER_M
+    using mmt = matmul_template<2, 4, 8>;
+
+    using global_layout = typename mnt::layout::global_layout;
+    using globals = typename mnt::layout::globals;
+    using globals_t = typename mmt::layout::globals;
+    global_layout Ag = {A.data_ptr<bf>(), batch, nullptr, M, K};
+    global_layout Ag = {B.data_ptr<bf>(), batch, nullptr, K, N};
+    global_layout Ag = {C.data_ptr<bf>(), batch, nullptr, M, N};
+    globals G{Ag, Bg, Cg};
+
+    dim3 grid(mmt::grid(B, M, N, K));
+    dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
+
+    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
+    return C;
+}
+
+
+PYBIND11_MODULE(batch_matmul, m) {
+    m.doc() = "batch_matmul python module";
+    m.def("batch_matmul", &batch_matmul_python, "[B, M, K] @ [B, N, K].T -> [B, M, N]", py::arg("A"), py::arg("B"));
 }
 
 template<typename mmt>
