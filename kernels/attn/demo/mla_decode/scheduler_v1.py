@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 This script demonstrates a scheduling strategy for a batch of tasks (representing
 partial and reduction instructions) operating on multiple sequences. Each task is
