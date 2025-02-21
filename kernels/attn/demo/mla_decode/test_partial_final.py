@@ -207,7 +207,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 L_scratch.cuda(), Semaphore.cuda())
     return Instructions, Table, O_scratch, L_scratch, Semaphore
 
-def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1) -> List[Task]:
+def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, length: int = 1) -> List[Task]:
     """
     For demonstration, we schedule one sequence (batch 0) with length 256.
     Using new_tokens=1 yields one partial task (and no merge tasks).
@@ -218,7 +218,7 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1) -> List
     table = list(range(1000))
     # One sequence: (batch_id, length, chunk_pages)
     sequences = [
-        (0, 256, 1),
+        (0, length, 1),
     ]
     for batch_id, length, chunk_pages in sequences:
         seq_tasks, next_task_id = generate_sequence_tasks(
@@ -239,13 +239,13 @@ def main():
     D_QK, D_VO = 576, 512
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 1, 16  # single token (naive single partial op)
-    LENGTH = 10                 # sequence length
+    LENGTH = 5                 # sequence length
     NUM_PAGES = 100              # number of pages in cache
 
     torch.manual_seed(0)
 
     # scheduled tasks and build kernel args
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS)
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, length=LENGTH)
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=1)
     Instructions, Table, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=1
