@@ -23,10 +23,10 @@ from typing import List, Callable, Tuple, Dict
 import torch
 
 # Cost parameters.
-m1 = 0.0454
-b1 = 10
+m1 = 0.0454*0.7
+b1 = 2
 m2 = 0.366
-b2 = 10
+b2 = 2
 
 @dataclass
 class Task:
@@ -156,9 +156,6 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
     processors: List[Tuple[float, int]] = [(0, pid) for pid in range(num_processors)]
     heapq.heapify(processors)
 
-    # For reduction tasks, maintain a round-robin pointer (cycling through seq_ids).
-    merge_rr_pointer = 0
-
     while ready:
         # Get next available processor.
         current_time, proc_id = heapq.heappop(processors)
@@ -193,7 +190,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
             finish_time = start_time + chosen_task.duration
         else:
             start_time = max(current_time, tasks_by_id[chosen_task.dependencies[0]].finish)
-            finish_time = max([max(current_time, tasks_by_id[chosen_task.dependencies[i]].finish) + b2 + (len(chosen_task.dependencies)-i)*m2 for i in range(1, len(chosen_task.dependencies))])
+            finish_time = max([max(current_time + b2, tasks_by_id[chosen_task.dependencies[i]].finish) + (len(chosen_task.dependencies)-i)*m2 for i in range(1, len(chosen_task.dependencies))])
         chosen_task.start = start_time
         chosen_task.finish = finish_time
         chosen_task.processor = proc_id
@@ -258,9 +255,9 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int):
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
-    for pid in range(num_processors):
-        print(f"Processor {pid} has {len(processor_tasks[pid])} tasks")
-        print(processor_tasks[pid])
+    # for pid in range(num_processors):
+    #     print(f"Processor {pid} has {len(processor_tasks[pid])} tasks")
+    #     print(processor_tasks[pid])
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
     Table = torch.zeros((num_instructions, max_num_pages), dtype=torch.int32)
@@ -315,7 +312,7 @@ def visualize_schedule(tasks: List[Task], num_processors: int):
         y_coord = proc_id * 10
         for task in tasks_on_proc:
             ax.broken_barh(
-                [(task.start, task.duration)],
+                [(task.start, task.finish-task.start)],
                 (y_coord, height),
                 facecolors=colors.get(task.task_type, 'gray')
             )
@@ -352,13 +349,13 @@ def sample_schedule_generator(page_size = 256, new_tokens = 7) -> List[Task]:
     sequences = [
         # (1, 1024,  1),
         (1, 4671,  1),
-        (2, 45096, 2),
+        (2, 45096, 3),
         (3, 1750,  1),
         (4, 1701,  1)
     ]
-    # sequences += [
-    #     (i, (PAGE_SIZE-1+1701)//PAGE_SIZE,  4) for i in range(5, 100)
-    # ]
+    sequences += [
+        (i, 1000, 4) for i in range(5, 100)
+    ]
     sequences.sort(key=lambda x: x[1], reverse=True)
     for batch_id, length, chunk_pages in sequences:
         seq_tasks, next_task_id = generate_sequence_tasks(
