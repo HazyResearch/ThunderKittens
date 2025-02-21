@@ -235,7 +235,7 @@ struct reduction_template {
         __device__ static inline void setup(producer_setup_args<layout> args) {
             #pragma unroll
             for(int i = 0; i < 10; i++) {
-                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5+i}];
+                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6+i}];
             }
         }
         __device__ static inline void load(producer_load_args<layout> args) {
