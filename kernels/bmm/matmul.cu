@@ -140,11 +140,9 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
     }
 }
 
-
-#include "pyutils/pyutils.cuh"
 #include "pyutils/torch_helpers.cuh"
 
-torch::Tensor batch_matmul_python(torch::Tensor A, torch::Tensor B) {
+torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B) {
     TORCH_CHECK(A.size(0) == B.size(0), "Batch size mismatch");
     TORCH_CHECK(A.size(2) == B.size(1), "Inner dimensions mismatch");
     int batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(2);
@@ -169,10 +167,10 @@ torch::Tensor batch_matmul_python(torch::Tensor A, torch::Tensor B) {
 }
 
 
-PYBIND11_MODULE(batch_matmul, m) {
-    m.doc() = "batch_matmul python module";
-    m.def("batch_matmul", &batch_matmul_python, "[B, M, K] @ [B, N, K].T -> [B, M, N]", py::arg("A"), py::arg("B"));
-}
+// PYBIND11_MODULE(batch_matmul, m) {
+//     m.doc() = "batch_matmul python module";
+//     m.def("batch_matmul", &batch_matmul_python, "[B, M, K] @ [B, N, K].T -> [B, M, N]", pybind11::arg("A"), pybind11::arg("B"));
+// }
 
 template<typename mmt>
 void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
