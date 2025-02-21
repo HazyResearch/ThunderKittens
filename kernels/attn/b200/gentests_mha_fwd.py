@@ -9,7 +9,7 @@ import math
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
 H = 1
-N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
+N = 8192 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
 
 softmax_scale = 1 / math.sqrt(D)
@@ -54,10 +54,10 @@ o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
 fn = f'{TESTNAME}_{N}_{D}.txt'
 with open(fn, 'w') as f:
     # inputs
-    qf = q.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy() #
-    kf = k.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-    vf = v.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-    of = o.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+    qf = q.to(torch.float32).flatten().detach().cpu().numpy() #
+    kf = k.to(torch.float32).flatten().detach().cpu().numpy()
+    vf = v.to(torch.float32).flatten().detach().cpu().numpy()
+    of = o.to(torch.float32).flatten().detach().cpu().numpy()
     
     for i in trange(B*H*N*D):
         f.write(repr(qf[i]))
