@@ -12,7 +12,7 @@ D_QK, D_VO = 576, 512
 PAGE_SIZE = 256
 
 B, NEW_TOKENS, H = 1, 4, 16
-LENGTH = 5
+LENGTH = 512
 
 # Initialize arguments
 # &mla_decode_layout::globals::Ops,
@@ -55,8 +55,7 @@ Sz = 1 / math.sqrt(D_QK)
 NUM_PAGES, PAGE_SIZE = 100, 256
 
 # Sequence Length Specific(s).
-# T = 32_768 // PAGE_SIZE
-T = 1
+T = 32_768 // PAGE_SIZE
 
 # Initialize Input(s) and Cache(s).
 cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
@@ -82,6 +81,7 @@ sequence_ids, position_ids = (
     .lt(sizes.view(-1, 1))
     .nonzero(as_tuple=True)
 )
+print("sequence_ids:", sequence_ids.shape)
 
 table[sequence_ids, position_ids] = (
     torch.randperm(NUM_PAGES, device='cuda')

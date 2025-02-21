@@ -52,7 +52,9 @@ struct partial_layout {
         location dst;
         int q_batch_idx;
         int q_seq_idx;
-        int length;
+        int start_pos; // MUST BE A MULTIPLE OF PAGE_SIZE
+        int end_pos; // One past the last position to load
+        int length; // the length of the overall sequence in question
     };
     struct consumer_state {
         col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
@@ -70,16 +72,18 @@ struct partial_template {
                                    args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}]};
         args.common.q_batch_idx =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
         args.common.q_seq_idx   =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
-        args.common.length      =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6}];
-        args.num_iters          = (args.common.length + NUM_ROWS - 1) / NUM_ROWS;
-        args.common.length -= (args.globals.Q.depth - (args.common.q_seq_idx + warpgroup::warpid()) - 1); // adjust for the causal mask
+        args.common.start_pos   =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6}];
+        args.common.end_pos     =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 7}];
+        args.common.length      =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 8}];
+        args.num_iters          = (args.common.end_pos - args.common.start_pos + NUM_ROWS - 1) / NUM_ROWS;
+        args.common.length    -= (args.globals.Q.depth - (args.common.q_seq_idx + warpgroup::warpid()) - 1); // adjust for the causal mask
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
                 int global_load_idx = args.iter % ITERS_PER_PAGE;
-                int next_page_id = args.globals.Table[coord<>{args.common.uid, args.iter / ITERS_PER_PAGE}];
+                int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, (args.common.start_pos/PAGE_SIZE) + (args.iter/ITERS_PER_PAGE)}];
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.c);
                 // cache shape is 1, # pages, page size, QK_D
@@ -119,8 +123,8 @@ struct partial_template {
                 warpgroup::mma_async_wait();
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
-                    const int length = args.common.length - args.iter*NUM_ROWS;
-                    right_fill(att_block_fp32, att_block_fp32, length, base_types::constants<float>::neg_infty());
+                    const int length = args.common.length - args.common.start_pos - args.iter*NUM_ROWS;
+                    right_fill(att_block_fp32, att_block_fp32, length, -9999999999.f);
                 }
 
                 row_max(local_max_vec, att_block_fp32, local_max_vec);
@@ -235,14 +239,14 @@ struct reduction_template {
         __device__ static inline void setup(producer_setup_args<layout> args) {
             #pragma unroll
             for(int i = 0; i < 10; i++) {
-                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5+i}];
+                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6+i}];
             }
         }
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
                 // spinloop until we're ready
                 int load_uid = args.state.load_uid[args.iter];
-                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid}] == 0) {}
+                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] == 0) {}
                 __syncwarp();
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
@@ -259,7 +263,7 @@ struct reduction_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
             if(threadIdx.x == 0) { // easier to have a single thread spin
-                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
+                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
             }
             group<8>::sync(11); // all warps must sync here.
             load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
