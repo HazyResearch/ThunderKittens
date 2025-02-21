@@ -8,9 +8,9 @@ from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 
 m1 = 0.0454
-b1 = 10
+b1 = 12
 m2 = 0.366
-b2 = 10
+b2 = 8
 
 # ----------------------------------------------------------------------
 # Scheduling code (task generation, scheduling, and argument creation)
@@ -61,9 +61,10 @@ def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
                 duration=duration,
                 dependencies=[],
                 tok_ids=tok_ids,
-                args={"table": page_table[i//page_size : (i+chunk_length+page_size-1)//page_size],
+                args={"start": i,
+                      "end": i+chunk_length,
                       "write_scratch": (chunk_length != length),
-                      "length": chunk_length}
+                      "length": length}
             )
             tasks.append(task)
             partial_tasks[n].append(task)
@@ -124,7 +125,7 @@ def visualize_schedule(tasks: List[Task], num_processors: int):
                 (y_coord, height),
                 facecolors=colors.get(task.task_type, 'gray')
             )
-            ax.text(task.start + task.duration/2, y_coord + height/2,
+            ax.text((task.start + task.finish)/2, y_coord + height/2,
                     task.name, ha='center', va='center', fontsize=8, color='black')
     ax.set_xlabel("Time")
     ax.set_ylabel("Processors")
@@ -177,7 +178,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
             finish_time = start_time + chosen_task.duration
         else:
             start_time = max(current_time, tasks_by_id[chosen_task.dependencies[0]].finish)
-            finish_time = max([max(current_time + b2, tasks_by_id[chosen_task.dependencies[i]].finish) + (len(chosen_task.dependencies)-i)*m2
+            finish_time = max([max(start_time + b2, tasks_by_id[chosen_task.dependencies[i]].finish) + (len(chosen_task.dependencies)-i)*m2
                                for i in range(1, len(chosen_task.dependencies))])
         chosen_task.start = start_time
         chosen_task.finish = finish_time
@@ -202,7 +203,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 min(task.tok_ids),  # start token
                 task.batch_id,
                 min(task.tok_ids),  # duplicate start token
-                task.args["length"]] + [0]*9
+                task.args["start"], task.args["end"], task.args["length"]] + [0]*7
 
     def make_merge_arg(task: Task) -> List[int]:
         args_list = [OP_REDUCTION,
@@ -212,12 +213,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                      task.tok_ids[0]] + task.dependencies
         return args_list + [0]*(16 - len(args_list))
 
-    def make_table_entry(task: Task, max_num_pages: int) -> List[int]:
-        entry = task.args["table"] + [0]*(max_num_pages - len(task.args["table"]))
-        return entry
-
     num_instructions = max(t.uid for t in tasks) + 1
-    max_num_pages = max(len(t.args["table"]) for t in tasks if t.task_type == "partial")
     processor_tasks = [[] for _ in range(num_processors)]
     for task in tasks:
         processor_tasks[task.processor].append(task)
@@ -225,7 +221,6 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         processor_tasks[pid].sort(key=lambda t: t.start)
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
-    Table = torch.zeros((num_instructions, max_num_pages), dtype=torch.int32)
     O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32)
     L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32)
     Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32)
@@ -233,13 +228,12 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
                 Instructions[pid, tid, :] = torch.tensor(make_partial_arg(task), dtype=torch.int32)
-                Table[task.uid, :] = torch.tensor(make_table_entry(task, max_num_pages), dtype=torch.int32)
             elif task.task_type == "reduction":
                 Instructions[pid, tid, :] = torch.tensor(make_merge_arg(task), dtype=torch.int32)
     if torch.cuda.is_available():
-        return (Instructions.cuda(), Table.cuda(), O_scratch.cuda(),
+        return (Instructions.cuda(), O_scratch.cuda(),
                 L_scratch.cuda(), Semaphore.cuda())
-    return Instructions, Table, O_scratch, L_scratch, Semaphore
+    return Instructions, O_scratch, L_scratch, Semaphore
 
 def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths: List[int] = None, partial_pages: List[int] = None, table: list = None) -> List[Task]:
     """
@@ -247,8 +241,6 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
     Using new_tokens=1 yields one partial task (and no merge tasks).
     The page table is passed in dynamically (if not provided, a default is used).
     """
-    if table is None:
-        table = list(range(1000))
     if partial_pages is None:
         partial_pages = [1 if length < 8192 else 2 for length in lengths]
     tasks = []
@@ -265,8 +257,7 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
             length=seq_length,
             chunk_pages=chunk_pages,
             m1=m1, b1=b1, b2=b2,
-            starting_id=next_task_id,
-            page_table=table
+            starting_id=next_task_id
         )
         tasks.extend(seq_tasks)
     return tasks
@@ -277,9 +268,9 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
 def main():
     D_QK, D_VO = 576, 512
     PAGE_SIZE = 256
-    B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
+    B, NEW_TOKENS, H = 1, 7, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
-    LENGTH = 32768               # sequence length
+    LENGTH = 45096                 # sequence length
     NUM_PAGES = 1000             # number of pages in cache
     NUM_PROCESSORS = 132         # number of processors
 
@@ -296,14 +287,16 @@ def main():
     )
     randperm = torch.randperm(NUM_PAGES, device='cuda')[:(LENGTH+PAGE_SIZE-1)//PAGE_SIZE].sort().values.int()
     table_tensor[sequence_ids, pos_ids] = randperm
-    page_table_list = table_tensor[0].tolist()
 
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH], table=page_table_list, partial_pages=[1000])
+    # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], partial_pages=[1, 2, 1, 1])
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH], partial_pages=[2])
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=NUM_PROCESSORS)
     visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
-    Instructions, Table, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
+    Instructions, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS
     )
+    Table = table_tensor
+    print(Instructions[:4])
 
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     total = LENGTH  # for one sequence
@@ -327,12 +320,6 @@ def main():
     cache[entry_ids, column_ids] = latent
 
     query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
-
-    bounds = (torch.arange(NEW_TOKENS, dtype=torch.int32, device='cuda')[None, :] +
-              lengths[:, None] - NEW_TOKENS)
-    mask = (torch.arange(maximum, dtype=torch.int32, device='cuda')[None, None, None, :]
-            .expand(B, H, NEW_TOKENS, -1)
-            .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1)))
 
     O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
 
@@ -380,11 +367,17 @@ def main():
     print(f"Average kernel execution time: {avg_time*1000:.3f} us")
     print(f"Total time for {num_iters} iterations: {elapsed_time*1000:.3f} us\n")
 
+    bounds = (torch.arange(NEW_TOKENS, dtype=torch.int32, device='cuda')[None, :] +
+              lengths[:, None] - NEW_TOKENS)
+    mask = (torch.arange(maximum, dtype=torch.int32, device='cuda')[None, None, None, :]
+            .expand(B, H, NEW_TOKENS, -1)
+            .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1)))
+
     from torch.nn.functional import scaled_dot_product_attention as sdpa
     ref = sdpa(
-        query=query.transpose(1, 2),
-        key=padded_key.transpose(1, 2),
-        value=padded_value.transpose(1, 2),
+        query=query.transpose(1, 2).float(),
+        key=padded_key.transpose(1, 2).float(),
+        value=padded_value.transpose(1, 2).float(),
         attn_mask=mask,
         dropout_p=0.0,
         is_causal=False,
