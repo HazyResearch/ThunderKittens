@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 This script demonstrates a scheduling strategy for a batch of tasks (representing
 partial and reduction instructions) operating on multiple sequences. Each task is
@@ -23,10 +22,10 @@ from typing import List, Callable, Tuple, Dict
 import torch
 
 # Cost parameters.
-m1 = 0.0454*0.7
-b1 = 2
+m1 = 0.0454
+b1 = 10
 m2 = 0.366
-b2 = 2
+b2 = 10
 
 @dataclass
 class Task:
@@ -60,9 +59,11 @@ def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
     
     Returns a list of tasks for this sequence and the next available task uid.
     """
+    
     chunk_size = chunk_pages * page_size
     tasks = []
     partial_tasks = [[] for _ in range((new_tokens+3)//4)]
+    
     # Create PARTIAL tasks (with no dependencies)
     for i in range(0, length, chunk_size):
         chunk_length = min(chunk_size, length - i)
@@ -255,9 +256,6 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int):
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
-    # for pid in range(num_processors):
-    #     print(f"Processor {pid} has {len(processor_tasks[pid])} tasks")
-    #     print(processor_tasks[pid])
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
     Table = torch.zeros((num_instructions, max_num_pages), dtype=torch.int32)
