@@ -121,10 +121,11 @@ struct matmul_template {
 PYBIND11_MODULE(batch_matmul, m) {
     m.doc() = "batch_matmul python module";
     py::bind_kernel<lcf::kernel<matmul_template>>(m, "matmul",
-        &matmul_layout::globals::A,
-        &matmul_layout::globals::B,
-        &matmul_layout::globals::C
+        &matmul_template<>::layout::globals::A,
+        &matmul_template<>::layout::globals::B,
+        &matmul_template<>::layout::globals::C
     );
+
 }
 
 
