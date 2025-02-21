@@ -598,7 +598,7 @@ kv_store(auto &kg_smem, auto &kg_reg,
 }
 
 template<int D, bool is_causal>
-__global__ __launch_bounds__(BWD_NUM_WORKERS*kittens::WARP_THREADS, bwd_attend_ker_tile_dims<D>::blocks_sm)
+__global__ __cluster_dims__(2) __launch_bounds__(BWD_NUM_WORKERS*kittens::WARP_THREADS, bwd_attend_ker_tile_dims<D>::blocks_sm)
 void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
