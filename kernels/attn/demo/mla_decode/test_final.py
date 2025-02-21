@@ -241,7 +241,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 L_scratch.cuda(), Semaphore.cuda())
     return Instructions, Table, O_scratch, L_scratch, Semaphore
 
-def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, length: int = 256, table: list = None) -> List[Task]:
+def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths: List[int] = None, partial_pages: List[int] = None, table: list = None) -> List[Task]:
     """
     For demonstration, we schedule one sequence (batch 0) with a specified length.
     Using new_tokens=1 yields one partial task (and no merge tasks).
@@ -249,11 +249,13 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, length:
     """
     if table is None:
         table = list(range(1000))
+    if partial_pages is None:
+        partial_pages = [1 if length < 8192 else 2 for length in lengths]
     tasks = []
     next_task_id = 0
     # One sequence: (batch_id, length, chunk_pages)
     sequences = [
-        (0, length, 1),
+        (i, length, pp) for i, (length, pp) in enumerate(zip(lengths, partial_pages))
     ]
     for batch_id, seq_length, chunk_pages in sequences:
         seq_tasks, next_task_id = generate_sequence_tasks(
@@ -275,14 +277,15 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, length:
 def main():
     D_QK, D_VO = 576, 512
     PAGE_SIZE = 256
-    B, NEW_TOKENS, H = 1, 1, 16  # single token (naive single partial op)
-    LENGTH = 65536               # sequence length
+    B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
+    MAX_LENGTH = 65536
+    LENGTH = 32768               # sequence length
     NUM_PAGES = 1000             # number of pages in cache
     NUM_PROCESSORS = 132         # number of processors
 
     torch.manual_seed(0)
 
-    T = LENGTH // PAGE_SIZE
+    T = MAX_LENGTH // PAGE_SIZE
     table_tensor = torch.zeros(B, T, dtype=torch.int32).cuda()
     lengths = torch.full((B,), LENGTH, dtype=torch.int32, device='cuda')
     sizes = (lengths + (PAGE_SIZE - 1)) // PAGE_SIZE
@@ -295,7 +298,7 @@ def main():
     table_tensor[sequence_ids, pos_ids] = randperm
     page_table_list = table_tensor[0].tolist()
 
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, length=LENGTH, table=page_table_list)
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH], table=page_table_list, partial_pages=[1000])
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=NUM_PROCESSORS)
     visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
     Instructions, Table, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
