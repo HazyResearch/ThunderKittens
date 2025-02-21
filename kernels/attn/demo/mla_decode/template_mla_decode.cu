@@ -17,12 +17,9 @@ using o_tile              = st_bf<64, VO_D>;
 using o_tile_fl           = st_fl<16, VO_D>;
 using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, st_bf<16, VO_Dd2>, st_bf<16, VO_D/8>>; // B * NEWTOKENS * H * D_VO
 
-// using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
-// using lvec_scratch_global = kittens::gl<float, 1,  1, -1,   64, sv_fl<16>>; // For partial O's
 using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, st_fl<16, VO_D/8>, st_fl<16,256>>; // For partial O's
 using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
-
-using semaphore_global    = kittens::gl<int,   1,  1,  -1, -1>;              // 1 * 1 * uid * NEWTOKENS
+using semaphore_global    = kittens::gl<int,   1,  1,  -1, -1>;            // 1 * 1 * uid * NEWTOKENS
 
 struct config {
     struct globals {
