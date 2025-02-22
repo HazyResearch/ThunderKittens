@@ -145,21 +145,20 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
 torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B) {
     TORCH_CHECK(A.size(0) == B.size(0), "Batch size mismatch");
     TORCH_CHECK(A.size(2) == B.size(1), "Inner dimensions mismatch");
-    int batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(2);
+    uint batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(2);
     torch::Tensor C = torch::empty({batch, M, N}, A.options());
 
     // M_BLOCK, N_BLOCK, SUPER_M
     using mmt = matmul_template<2, 4, 8>;
 
-    using global_layout = typename mnt::layout::global_layout;
-    using globals = typename mnt::layout::globals;
-    using globals_t = typename mmt::layout::globals;
-    global_layout Ag = {A.data_ptr<bf>(), batch, nullptr, M, K};
-    global_layout Ag = {B.data_ptr<bf>(), batch, nullptr, K, N};
-    global_layout Ag = {C.data_ptr<bf>(), batch, nullptr, M, N};
+    using global_layout = typename mmt::layout::global_layout;
+    using globals = typename mmt::layout::globals;
+    global_layout Ag = {reinterpret_cast<bf16*>(A.data_ptr<c10::BFloat16>()), batch, nullptr, M, K};
+    global_layout Bg = {reinterpret_cast<bf16*>(B.data_ptr<c10::BFloat16>()), batch, nullptr, K, N};
+    global_layout Cg = {reinterpret_cast<bf16*>(C.data_ptr<c10::BFloat16>()), batch, nullptr, M, N};
     globals G{Ag, Bg, Cg};
 
-    dim3 grid(mmt::grid(B, M, N, K));
+    dim3 grid(mmt::grid(batch, M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
 
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
