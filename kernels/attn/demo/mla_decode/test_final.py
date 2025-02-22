@@ -295,14 +295,14 @@ def main():
     table_tensor[sequence_ids, pos_ids] = randperm
 
     # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], partial_pages=[1, 2, 1, 1])
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH], partial_pages=[2])
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH])
+    
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=NUM_PROCESSORS)
-    visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
+    # visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
     Instructions, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS
     )
     Table = table_tensor
-    print(Instructions[:4])
 
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     total = LENGTH  # for one sequence
@@ -317,15 +317,13 @@ def main():
         .lt(torch.tensor([LENGTH], device='cuda').view(-1, 1))
         .nonzero(as_tuple=True)
     )
-    padded_key[seq_ids, pos_ids] = expanded
-    padded_value[seq_ids, pos_ids] = expanded[..., :D_VO]
 
     # cache from latent using the page table.
     entry_ids  = table_tensor[seq_ids, pos_ids.floor_divide(PAGE_SIZE)]
     column_ids = pos_ids.fmod(PAGE_SIZE)
-    cache[entry_ids, column_ids] = latent
+    cache[entry_ids, column_ids] = latent / math.sqrt(D_QK)
 
-    query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda()
+    query = torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda() / math.sqrt(D_QK)
 
     O = torch.zeros((B, NEW_TOKENS, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
 
@@ -382,6 +380,10 @@ def main():
             .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1)))
 
     from torch.nn.functional import scaled_dot_product_attention as sdpa
+    
+    padded_key[seq_ids, pos_ids] = expanded / math.sqrt(D_QK)
+    padded_value[seq_ids, pos_ids] = expanded[..., :D_VO] / math.sqrt(D_QK)
+    
     ref = sdpa(
         query=query.transpose(1, 2).float(),
         key=padded_key.transpose(1, 2).float(),
