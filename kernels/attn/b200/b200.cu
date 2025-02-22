@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "pyutils/pyutils.cuh"
 #include <iostream>
 
 constexpr int NUM_CONSUMERS = (2); 
@@ -55,6 +56,10 @@ template<int D=128> struct fwd_globals {
     v_gl v;
     l_gl l;
     o_gl o;
+
+    int dynamic_shared_memory() { return 226000; }
+    dim3 grid()  { return dim3(148); }
+    dim3 block() { return dim3(NUM_THREADS); }
 };
 
 template<int D=128> struct softmax_registers {
@@ -801,4 +806,12 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     }
 }
 
-#include "harness.impl"
+// #include "harness.impl"
+
+PYBIND11_MODULE(b200_attn, m) {
+    m.doc() = "b200 attention kernels";
+    py::bind_kernel<fwd_attend_ker<128, false>>(m, "fwd_attend_ker_128_noncausal", &fwd_globals<128>::q, &fwd_globals<128>::k, &fwd_globals<128>::v, &fwd_globals<128>::l, &fwd_globals<128>::o);
+    // py::bind_kernel<fwd_attend_ker<128, true>>(m, "fwd_attend_ker_128_causal", &fwd_globals<128>::q, &fwd_globals<128>::k, &fwd_globals<128>::v, &fwd_globals<128>::l, &fwd_globals<128>::o);
+    // py::bind_kernel<bwd_attend_ker<128, false>>(m, "bwd_attend_ker_128_noncausal", &bwd_globals<128>::q, &bwd_globals<128>::k, &bwd_globals<128>::v, &bwd_globals<128>::og, &bwd_globals<128>::qg, &bwd_globals<128>::kg, &bwd_globals<128>::vg, &bwd_globals<128>::l, &bwd_globals<128>::d, &bwd_globals<128>::N, &bwd_globals<128>::hr);
+    // py::bind_kernel<bwd_attend_ker<128, true>>(m, "bwd_attend_ker_128_causal", &bwd_globals<128>::q, &bwd_globals<128>::k, &bwd_globals<128>::v, &bwd_globals<128>::og, &bwd_globals<128>::qg, &bwd_globals<128>::kg, &bwd_globals<128>::vg, &bwd_globals<128>::l, &bwd_globals<128>::d, &bwd_globals<128>::N, &bwd_globals<128>::hr);
+}
