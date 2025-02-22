@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 
-m1 = 0.0454
-b1 = 12
+m1 = 0.0454*0.7
+b1 = 10
 m2 = 0.366
 b2 = 8
 
@@ -162,7 +162,11 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
         ready_partial = [t for t in ready if t.task_type == "partial"]
         ready_merge   = [t for t in ready if t.task_type == "reduction"]
 
-        if ready_partial:
+        filtered_merge = [t for t in ready_merge if current_time+1 >= tasks_by_id[t.dependencies[0]].finish]
+        if filtered_merge:
+            filtered_merge.sort(key=lambda t: (-t.duration, t.uid))
+            chosen_task = filtered_merge[0]
+        elif ready_partial:
             ready_partial.sort(key=lambda t: (-seq_total_work[t.batch_id], t.uid))
             chosen_task = ready_partial[0]
         elif ready_merge:
@@ -219,11 +223,13 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
+    print('Final finish time:', max(t.finish for t in tasks))
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
     O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32)
     L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32)
     Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32)
+    # Semaphore = torch.zeros((2, num_instructions, new_tokens), dtype=torch.int32)
     for pid in range(num_processors):
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
@@ -270,7 +276,7 @@ def main():
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 7, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
-    LENGTH = 45096                 # sequence length
+    LENGTH = 65536                 # sequence length
     NUM_PAGES = 1000             # number of pages in cache
     NUM_PROCESSORS = 132         # number of processors
 
@@ -331,7 +337,7 @@ def main():
     mla_decode.mla_decode(Instructions, query,
                           cache_view,
                           Table, O, O_scratch, Lvec_scratch, Semaphore,
-                          softmax_scale)
+                          softmax_scale, 1)
     torch.cuda.synchronize()
     print("Kernel execution finished.")
     print("Kernel output O:\n", O)
@@ -343,20 +349,22 @@ def main():
     print(f"\nTiming kernel over {num_iters} iterations...")
     
     # Warmup
-    for _ in range(5):
+    for _ in range(4):
         mla_decode.mla_decode(Instructions, query,
                             cache_view,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
-                            softmax_scale)
+                            softmax_scale, _%2)
+        print(f'ran warmup kernel #{_}')
 
-    torch.cuda.synchronize()
+        torch.cuda.synchronize()
     start_event.record()
     
     for _ in range(num_iters):
         mla_decode.mla_decode(Instructions, query,
                             cache_view,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
-                            softmax_scale)
+                            softmax_scale, _%2)
+        # print(f'ran kernel #{_}')
     
     torch.cuda.synchronize()
     end_event.record()

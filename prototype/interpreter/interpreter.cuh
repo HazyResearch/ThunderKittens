@@ -31,6 +31,7 @@ struct persistent_state {
     int *shmem;
     int max_finish_offset;
     kittens::semaphore *inputs_arrived, *outputs_arrived, *inputs_finished, *outputs_finished, *finish_finished;
+    int *instruction;
     uint32_t semaphore_bitfield;
 };
 
@@ -78,7 +79,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
@@ -132,7 +133,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
@@ -196,7 +197,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
@@ -244,7 +245,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
@@ -287,14 +288,38 @@ struct dispatch_consumer<config, op, ops...> {
     }
 };
 
+template<typename config, int ints_per_instruction=16> __device__ void inline load_instructions(int *instructions, int task_iter, const typename config::globals &globals, kittens::semaphore &bar) {
+    if(laneid() == 0) {
+        constexpr int bytes = ints_per_instruction*sizeof(int);
+        tma::expect_bytes(bar, bytes);
+        uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+        uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(instructions));
+        uint64_t src_ptr  = (uint64_t)(&globals.instructions[kittens::coord<>{(int)(blockIdx.x), task_iter, 0}]);
+        asm volatile (
+            "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes"
+            " [%0], [%1], %3, [%2];"
+            :
+            : "r"(dst_ptr), "l"(src_ptr), "r"(mbar_ptr), "n"(bytes)
+            : "memory"
+        );
+    }
+}
+
 template<typename config, typename... ops> __launch_bounds__((NUM_CONSUMER_WARPS+NUM_PRODUCER_WARPS)*WARP_THREADS, 1)
 __global__ void kernel(const __grid_constant__ typename config::globals globals) {
+    __shared__ __align__(16) int instructions[2][16];
+    __shared__ kittens::semaphore inputs_arrived[8], inputs_finished[8], outputs_arrived[8], outputs_finished[8], finish_finished, instruction_arrived[2], instruction_finished[2];
+    if(warpid() == 0) {
+        init_semaphore(instruction_arrived[0], 0, 1);
+        init_semaphore(instruction_arrived[1], 0, 1);
+        init_semaphore(instruction_finished[0], NUM_PRODUCER_WARPS+NUM_CONSUMER_WARPS, 0);
+        init_semaphore(instruction_finished[1], NUM_PRODUCER_WARPS+NUM_CONSUMER_WARPS, 0);
+    }
     extern __shared__ int __shm[];
     persistent_state ps;
     ps.shmem = &__shm[0];
     ps.max_finish_offset = 1000000; // out of bounds, which is to say, no need to stall on the first instruction
     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
-    __shared__ kittens::semaphore inputs_arrived[8], inputs_finished[8], outputs_arrived[8], outputs_finished[8], finish_finished;
     ps.semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
     if(warpid() < 8) {
         init_semaphore(inputs_arrived[warpid()], NUM_PRODUCER_WARPS, 0);
@@ -308,22 +333,37 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     ps.outputs_arrived = &outputs_arrived[0];
     ps.outputs_finished = &outputs_finished[0];
     ps.finish_finished = &finish_finished;
-    using everyone = group<NUM_CONSUMER_WARPS+NUM_PRODUCER_WARPS>;
-    everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
-    if(warpid() < NUM_CONSUMER_WARPS) {
-        warpgroup::consumer_registers<NUM_CONSUMER_WARPS / WARPGROUP_WARPS>();
+    kittens::barrier<NUM_CONSUMER_WARPS+NUM_PRODUCER_WARPS> everyone_barrier(15);
+    arrive_and_wait(everyone_barrier); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+    if(warpid() < NUM_CONSUMER_WARPS) { // CONSUMER WARPS
+        warpgroup::increase_registers<232>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
-            int opcode = globals.instructions[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 0}];
+            ps.instruction = &instructions[ps.task_iter%2][0];
+            wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
+            int opcode = ps.instruction[0];
             if(opcode == 0) return; // Stop Op
             dispatch_consumer<config, ops...>::run(opcode, globals, ps);
+            if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
-    else {
-        warpgroup::decrease_registers<24>();
+    else { // PRODUCER WARPS
+        warpgroup::decrease_registers<40>();
+        if(warpgroup::warpid() == 2) {
+            load_instructions<config>(&instructions[0][0], 0, globals, instruction_arrived[0]); // load the instructions for the first task
+        }
+        ps.instruction = &instructions[1][0];
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows; ps.task_iter++) {
-            int opcode = globals.instructions[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 0}];
+            if(warpgroup::warpid() == 2 && ps.task_iter+1 < globals.instructions.rows) { // warp #2 doesn't get enough love
+                wait(instruction_finished[(ps.task_iter+1)%2], ((ps.task_iter+3)/2)%2);
+                __syncwarp();
+                load_instructions<config>(ps.instruction, ps.task_iter+1, globals, instruction_arrived[(ps.task_iter+1)%2]); // load next instruction into previous location
+            }
+            ps.instruction = &instructions[ps.task_iter%2][0]; // Update to the new one
+            wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
+            int opcode = ps.instruction[0];
             if(opcode == 0) return; // Stop Op
             dispatch_producer<config, ops...>::run(opcode, globals, ps);
+            if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
 }

@@ -19,7 +19,7 @@ using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, st_bf<16, VO_Dd2
 
 using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, st_fl<16, VO_D/8>, st_fl<16,256>>; // For partial O's
 using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
-using semaphore_global    = kittens::gl<int,   1,  1,  -1, -1>;            // 1 * 1 * uid * NEWTOKENS
+using semaphore_global    = kittens::gl<int,    1,  1,  -1, -1>;            // 1 * 1 * uid * NEWTOKENS
 
 struct config {
     struct globals {
@@ -31,7 +31,9 @@ struct config {
         o_scratch_global O_scratch;
         lvec_scratch_global Lvec_scratch;
         semaphore_global semaphore;
+        // semaphore_global dirty_semaphore; // semaphore that needs to be cleaned.
         const float Softmax_scale;
+        int tic;
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
@@ -67,14 +69,14 @@ struct partial_template {
     static constexpr int opcode = 1;
     static constexpr int INPUT_PIPE_STAGES = 2;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.uid         =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
-        args.common.dst         = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}],
-                                   args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}]};
-        args.common.q_batch_idx =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}];
-        args.common.q_seq_idx   =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
-        args.common.start_pos   =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6}];
-        args.common.end_pos     =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 7}];
-        args.common.length      =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 8}];
+        args.common.uid         =  args.instruction[1];
+        args.common.dst         = {args.instruction[2],
+                                   args.instruction[3]};
+        args.common.q_batch_idx =  args.instruction[4];
+        args.common.q_seq_idx   =  args.instruction[5];
+        args.common.start_pos   =  args.instruction[6];
+        args.common.end_pos     =  args.instruction[7];
+        args.common.length      =  args.instruction[8];
         args.num_iters          = (args.common.end_pos - args.common.start_pos + NUM_ROWS - 1) / NUM_ROWS;
         args.common.length    -= (args.globals.Q.depth - (args.common.q_seq_idx + warpgroup::warpid()) - 1); // adjust for the causal mask
     }
@@ -196,9 +198,10 @@ struct partial_template {
             tma::store_async_wait(); // not just read wait
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
-                asm volatile("fence.sc.sys;");
+                // asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth) {
-                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = 1;
+                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
+                    // args.globals.dirty_semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = 0; // clean me
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
@@ -229,24 +232,24 @@ struct reduction_template {
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.common.uid     =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
-        args.num_iters      =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 2}];
-        args.common.dst     = {args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 3}],
-                               args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 4}]};
-        args.common.src_uid =  args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 5}];
+        args.common.uid     =  args.instruction[1];
+        args.num_iters      =  args.instruction[2];
+        args.common.dst     = {args.instruction[3],
+                               args.instruction[4]};
+        args.common.src_uid =  args.instruction[5];
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
             #pragma unroll
             for(int i = 0; i < 10; i++) {
-                args.state.load_uid[i] = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 6+i}];
+                args.state.load_uid[i] = args.instruction[6+i];
             }
         }
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
                 // spinloop until we're ready
                 int load_uid = args.state.load_uid[args.iter];
-                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] == 0) {}
+                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] != args.globals.tic) {}
                 __syncwarp();
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
@@ -263,7 +266,7 @@ struct reduction_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
             if(threadIdx.x == 0) { // easier to have a single thread spin
-                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] == 0) {} // note volatile, L1 is not guaranteed to be coherent.
+                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] != args.globals.tic) {} // note volatile, L1 is not guaranteed to be coherent.
             }
             group<8>::sync(11); // all warps must sync here.
             load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
@@ -315,51 +318,20 @@ struct reduction_template {
             group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
             if(args.common.dst.batch_idx < 0) {
-                asm volatile("fence.sc.sys;");
+                // asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() == 0) {
-                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = 1;
+                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = args.globals.tic;
+                    // args.globals.dirty_semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = 0; // clean me
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
         }
     };
 };
-struct dummy_layout {
-    using globals = config::globals;
-    struct input_block {};
-};
-struct dummy_template {
-    using config = config;
-    using layout = dummy_layout;
-    static constexpr int opcode = 3;
-    static constexpr int INPUT_PIPE_STAGES = 1;
-    __device__ static inline void common_setup(common_setup_args<layout> args) {
-        // if(blockIdx.x == 0 && threadIdx.x == 0) {
-        //     printf("task_iter: %d, num_iters: %d\n", args.task_iter, args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}]);
-        // }
-        args.num_iters = args.globals.instructions[kittens::coord<>{0, (int)(blockIdx.x), args.task_iter, 1}];
-    }
-    struct producer {
-        __device__ static inline void setup(producer_setup_args<layout> args) {}
-        __device__ static inline void load(producer_load_args<layout> args) {}
-    };
-    struct consumer {
-        __device__ static inline void setup(consumer_setup_args<layout> args) {}
-        __device__ static inline void compute(consumer_compute_args<layout> args) {}
-        __device__ static inline void finish(consumer_finish_args<layout> args) {}
-    };
-};
-
-struct dummy_globals {
-    dim3 grid() { return dim3(132); }
-    dim3 block() { return dim3(1024); }
-    float f;
-};
-__global__ void dummy_kernel(__grid_constant__ const dummy_globals globals) {}
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template, dummy_template>>(m, "mla_decode",
+    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
         &config::globals::Cache,
@@ -368,7 +340,8 @@ PYBIND11_MODULE(mla_decode, m) {
         &config::globals::O_scratch,
         &config::globals::Lvec_scratch,
         &config::globals::semaphore,
-        &config::globals::Softmax_scale
+        // &config::globals::dirty_semaphore,
+        &config::globals::Softmax_scale,
+        &config::globals::tic
     );
-    py::bind_kernel<dummy_kernel>(m, "dummy_kernel", &dummy_globals::f);
 }

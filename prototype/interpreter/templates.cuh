@@ -14,23 +14,27 @@ template<kittens_layout T> struct uniform_args {
     int & num_iters; // how many iters are there for this task?
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
+    int *instruction;
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
         int & _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
-        typename CKL::scratch_block_t& _scratch
+        typename CKL::scratch_block_t& _scratch,
+        int * _instruction
     ) : common(_common),
         task_iter(_task_iter),
         num_iters(_num_iters),
         globals(_globals),
-        scratch(_scratch) {}
+        scratch(_scratch),
+        instruction(_instruction) {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
         task_iter(_args.task_iter),
         num_iters(_args.num_iters),
         globals(_args.globals),
-        scratch(_args.scratch) {}
+        scratch(_args.scratch),
+        instruction(_args.instruction) {}
 };
 
 // Setup args are the same as uniform args
