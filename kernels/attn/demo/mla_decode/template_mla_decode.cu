@@ -31,7 +31,6 @@ struct config {
         o_scratch_global O_scratch;
         lvec_scratch_global Lvec_scratch;
         semaphore_global semaphore;
-        // semaphore_global dirty_semaphore; // semaphore that needs to be cleaned.
         const float Softmax_scale;
         int tic;
         int dynamic_shared_memory() { return 226000; }
@@ -198,10 +197,8 @@ struct partial_template {
             tma::store_async_wait(); // not just read wait
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
-                // asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth) {
                     args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
-                    // args.globals.dirty_semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = 0; // clean me
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
@@ -318,10 +315,8 @@ struct reduction_template {
             group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
             if(args.common.dst.batch_idx < 0) {
-                // asm volatile("fence.sc.sys;");
                 if(group<8>::laneid() == 0) {
                     args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = args.globals.tic;
-                    // args.globals.dirty_semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = 0; // clean me
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
@@ -340,7 +335,6 @@ PYBIND11_MODULE(mla_decode, m) {
         &config::globals::O_scratch,
         &config::globals::Lvec_scratch,
         &config::globals::semaphore,
-        // &config::globals::dirty_semaphore,
         &config::globals::Softmax_scale,
         &config::globals::tic
     );
