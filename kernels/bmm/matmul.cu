@@ -12,7 +12,8 @@ template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
     using  base_tile      = st_bf<64, 64>;
     using  global_layout  = gl<bf16, -1, 1, -1, -1, base_tile>;
-    struct globals        { global_layout A, B, C; };
+    using  rank_layout    = gl<int, -1, 1, 1, 1>;  // Add rank layout for the [B] tensor
+    struct globals        { global_layout A, B, C; rank_layout rank; };
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
     struct common_state   { int batch; int2 coord; };
@@ -25,7 +26,7 @@ struct matmul_template {
     using wide_tile = st_bf<64, 64*N_BLOCK>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
-    template<bool PERISISTENT_GRID=false> __host__ static inline dim3 grid(int B, int M, int N, int K) {
+    template<bool PERISISTENT_GRID=false> __host__ static inline dim3 grid(int B, int M, int N) {
         return dim3(PERISISTENT_GRID ? 132 : B*M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
       // ThunderKittens template functions
@@ -68,13 +69,26 @@ struct matmul_template {
         }
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
+                // Get the rank for this batch
+                int batch_rank = 0;
+                if (laneid() == 0) {
+                    batch_rank = args.globals.rank[{args.common.batch, 0, 0, 0}];
+                }
+                batch_rank = __shfl_sync(0xffffffff, batch_rank, 0);
+                
                 tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < M_BLOCK; i++)
                     tma::load_async(args.input.a[i], args.globals.A,
-                                    {args.common.batch, 0, args.common.coord.x+i, args.iter}, args.inputs_arrived);
-                for(int i = 0; i < N_BLOCK; i++)
-                    tma::load_async(args.input.b[i], args.globals.B,
-                                    {args.common.batch, 0, args.common.coord.y+i, args.iter}, args.inputs_arrived);
+                                    {0, 0, args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                for(int i = 0; i < N_BLOCK; i++) {
+                    if (i < batch_rank) {
+                        tma::load_async(args.input.b[i], args.globals.B,
+                                       {args.common.batch, 0, i, args.iter}, args.inputs_arrived);
+                    } else {
+                        // Zero out tiles beyond the effective rank
+                        zero(args.input.b[i]);
+                    }
+                }
             }
         }
     };
@@ -85,27 +99,49 @@ struct matmul_template {
                 zero(args.state.accum[n]);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
+            // Get the rank for this batch
+            int batch_rank = 0;
+            if (laneid() == 0) {
+                batch_rank = args.globals.rank[{args.common.batch, 0, 0, 0}];
+            }
+            batch_rank = __shfl_sync(0xffffffff, batch_rank, 0);
+            
             for(int n = 0; n < N_BLOCK; n++) {
-                warpgroup::mma_ABt(
-                    args.state.accum[n],
-                    args.input.a[warpgroup::groupid()],
-                    args.input.b[n]
-                );
+                if (n < batch_rank) {
+                    warpgroup::mma_ABt(
+                        args.state.accum[n],
+                        args.input.a[warpgroup::groupid()],
+                        args.input.b[n]
+                    );
+                }
             }
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
+            // Get the rank for this batch
+            int batch_rank = 0;
+            if (laneid() == 0) {
+                batch_rank = args.globals.rank[{args.common.batch, 0, 0, 0}];
+            }
+            batch_rank = __shfl_sync(0xffffffff, batch_rank, 0);
+            
             for(int n = 0; n < N_BLOCK; n++) {
-                warpgroup::store(args.finish.c[warpgroup::groupid()][n], args.state.accum[n]);
+                if (n < batch_rank) {
+                    warpgroup::store(args.finish.c[warpgroup::groupid()][n], args.state.accum[n]);
+                } else {
+                    zero(args.finish.c[warpgroup::groupid()][n]);
+                }
             }
             warpgroup::sync(warpgroup::groupid()+4);
             
             if(warpgroup::warpid() == 0) {
                 for(int i = 0; i < N_BLOCK; i++) {
-                    tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
-                                   {args.common.batch, 0, args.common.coord.x, args.common.coord.y+i});
-                    tma::store_async_read_wait();
+                    if (i < batch_rank) {
+                        tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
+                                       {args.common.batch, 0, args.common.coord.x, args.common.coord.y+i});
+                        tma::store_async_read_wait();
+                    }
                 }
             }
 
@@ -142,31 +178,39 @@ void cpu_gemm(float* a, float* b, float* c, int B, int M, int N, int K) {
 
 #include "pyutils/torch_helpers.cuh"
 
-torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B) {
+torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor rank) {
     CHECK_INPUT(A);
     CHECK_INPUT(B);
-    TORCH_CHECK(A.size(0) == B.size(0), "Batch size mismatch");
-    TORCH_CHECK(A.size(2) == B.size(2), "Inner dimensions mismatch");
-    uint batch = A.size(0), M = A.size(1), K = A.size(2), N = B.size(1);
-    torch::Tensor C = torch::empty({batch, M, N}, A.options());
+    CHECK_INPUT(rank);
+    TORCH_CHECK(A.dim() == 2, "A must be 2D");
+    TORCH_CHECK(B.dim() == 3, "B must be 3D");
+    TORCH_CHECK(rank.dim() == 1, "rank must be 1D");
+    TORCH_CHECK(A.size(1) == B.size(2), "Inner dimensions mismatch");
+    TORCH_CHECK(B.size(0) == rank.size(0), "Batch size mismatch between B and rank");
+    
+    uint batch = B.size(0), M = A.size(0), R = B.size(1), K = A.size(1);
+    torch::Tensor C = torch::empty({batch, M, R}, A.options());
 
     // M_BLOCK, N_BLOCK, SUPER_M
     using mmt = matmul_template<2, 4, 8>;
 
     using global_layout = typename mmt::layout::global_layout;
+    using rank_layout = typename mmt::layout::rank_layout;
     using globals = typename mmt::layout::globals;
-    global_layout Ag = {reinterpret_cast<bf16*>(A.data_ptr<c10::BFloat16>()), batch, nullptr, M, K};
-    global_layout Bg = {reinterpret_cast<bf16*>(B.data_ptr<c10::BFloat16>()), batch, nullptr, K, N};
-    global_layout Cg = {reinterpret_cast<bf16*>(C.data_ptr<c10::BFloat16>()), batch, nullptr, M, N};
-    globals G{Ag, Bg, Cg};
+    
+    global_layout Ag = {reinterpret_cast<bf16*>(A.data_ptr<c10::BFloat16>()), 1, nullptr, M, K};
+    global_layout Bg = {reinterpret_cast<bf16*>(B.data_ptr<c10::BFloat16>()), batch, nullptr, R, K};
+    global_layout Cg = {reinterpret_cast<bf16*>(C.data_ptr<c10::BFloat16>()), batch, nullptr, M, R};
+    rank_layout rankg = {reinterpret_cast<int*>(rank.data_ptr<int>()), batch, nullptr, 1, 1};
+    
+    globals G{Ag, Bg, Cg, rankg};
 
-    dim3 grid(mmt::grid(batch, M, N, K));
+    dim3 grid(mmt::grid(batch, M, R));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, MAX_SHARED_MEMORY-1024);
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
     return C;
 }
-
 
 // PYBIND11_MODULE(batch_matmul, m) {
 //     m.doc() = "batch_matmul python module";
@@ -247,7 +291,7 @@ int run_benchmark(size_t B, size_t M, size_t N, size_t K) {
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     // Launch kernel
-    dim3 grid(mmt::grid(B, M, N, K));
+    dim3 grid(mmt::grid(B, M, N));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup

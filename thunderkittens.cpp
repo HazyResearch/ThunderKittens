@@ -136,7 +136,8 @@ extern torch::Tensor fp8_gemm(
 #ifdef TK_COMPILE_BMM
 extern torch::Tensor batch_matmul(
     const torch::Tensor a,
-    const torch::Tensor b
+    const torch::Tensor b,
+    const torch::Tensor rank
 );
 #endif
 
