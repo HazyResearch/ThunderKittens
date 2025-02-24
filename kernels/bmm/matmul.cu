@@ -201,7 +201,7 @@ torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor rank)
     global_layout Ag = {reinterpret_cast<bf16*>(A.data_ptr<c10::BFloat16>()), 1, nullptr, M, K};
     global_layout Bg = {reinterpret_cast<bf16*>(B.data_ptr<c10::BFloat16>()), batch, nullptr, R, K};
     global_layout Cg = {reinterpret_cast<bf16*>(C.data_ptr<c10::BFloat16>()), batch, nullptr, M, R};
-    rank_layout rankg = {reinterpret_cast<int*>(rank.data_ptr<int>()), batch, nullptr, 1, 1};
+    rank_layout rankg = {reinterpret_cast<int*>(rank.data_ptr<int>()), batch, nullptr, nullptr, nullptr};
     
     globals G{Ag, Bg, Cg, rankg};
 
@@ -217,6 +217,7 @@ torch::Tensor batch_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor rank)
 //     m.def("batch_matmul", &batch_matmul_python, "[B, M, K] @ [B, N, K].T -> [B, M, N]", pybind11::arg("A"), pybind11::arg("B"));
 // }
 
+/*
 template<typename mmt>
 void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t B, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using global_layout = typename mmt::layout::global_layout;
@@ -387,3 +388,4 @@ int main() {
     run_benchmark<matmul_template<2,4,8>>(B, M, N, K);
     return 0;
 }
+*/
