@@ -10,6 +10,10 @@
 
 #pragma once
 
+#ifdef KITTENS_BLACKWELL
+#include <cuda_fp4.h>
+#endif
+
 #ifdef KITTENS_HOPPER
 #include <cuda_fp8.h>
 #endif
@@ -55,6 +59,20 @@ using fp8e5m2_2 = __nv_fp8x2_e5m2;
 using fp8e4m3_4 = __nv_fp8x4_e4m3;
 using fp8e5m2_4 = __nv_fp8x4_e5m2;
 #endif
+#ifdef KITTENS_BLACKWELL
+/**
+ * @brief float4 floating-point type.
+ */
+using fp4e2m1 = __nv_fp4_e2m1;
+/**
+ * @brief 2-packed float4 floating-point type.
+ */
+using fp4e2m1_2 = __nv_fp4x2_e2m1;
+/**
+ * @brief 4-packed float4 floating-point type.
+ */
+using fp4e2m1_4 = __nv_fp4x4_e2m1;
+#endif
 
 namespace ducks {
 /**
@@ -64,7 +82,12 @@ namespace ducks {
  */
 namespace base_types {
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_BLACKWELL)
+template<typename T>
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4> || std::is_same_v<T, fp4e2m1_4>;
+template<typename T>
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2> || std::is_same_v<T, fp4e2m1>;
+#elif defined(KITTENS_HOPPER)
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4>; // could add half_2 later if implemented.
 template<typename T>
@@ -143,6 +166,20 @@ template<> struct constants<half_2> {
     static __device__ inline constexpr half_2 pos_infty() { return half_2{constants<half>::pos_infty(), constants<half>::pos_infty()}; }
     static __device__ inline constexpr half_2 neg_infty() { return half_2{constants<half>::neg_infty(), constants<half>::neg_infty()}; }
 };
+#ifdef KITTENS_BLACKWELL
+template<> struct constants<fp4e2m1> {
+    static __device__ inline constexpr fp4e2m1 zero() { return std::bit_cast<fp4e2m1>(uint8_t(0x00)); }
+    static __device__ inline constexpr fp4e2m1 one() { return std::bit_cast<fp4e2m1>(uint8_t(0x08)); } // do the packing myself?
+};
+template<> struct constants<fp4e2m1_2> {
+    static __device__ inline constexpr fp4e2m1_2 zero() { return std::bit_cast<fp4e2m1_2>(uint8_t(0x00)); }
+    static __device__ inline constexpr fp4e2m1_2 one() { return std::bit_cast<fp4e2m1_2>(uint8_t(0x22)); }
+};
+template<> struct constants<fp4e2m1_4> {
+    static __device__ inline constexpr fp4e2m1_4 zero() { return std::bit_cast<fp4e2m1_4>(uint16_t(0x0000)); }
+    static __device__ inline constexpr fp4e2m1_4 one() { return std::bit_cast<fp4e2m1_4>(uint16_t(0x0202)); }
+};
+#endif
 #ifdef KITTENS_HOPPER
 template<> struct constants<fp8e4m3> {
     static __device__ inline constexpr fp8e4m3 zero() { return std::bit_cast<__nv_fp8_e4m3>(uint8_t(0x00)); }
@@ -253,6 +290,18 @@ template<> struct packing<float4> {
 template<> struct packing<int4> {
     static __device__ inline constexpr int num() { return 4; }
 };
+#ifdef KITTENS_BLACKWELL
+template<> struct packing<fp4e2m1> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = fp4e2m1;
+    using packed_type = fp4e2m1_4;
+};
+template<> struct packing<fp4e2m1_4> {
+    static __device__ inline constexpr int num() { return 4; }
+    using unpacked_type = fp4e2m1;
+    using packed_type = fp4e2m1_4;
+};
+#endif
 #ifdef KITTENS_HOPPER
 template<> struct packing<fp8e4m3> {
     static __device__ inline constexpr int num() { return 1; }
@@ -354,6 +403,55 @@ template<> struct convertor<half_2, bf16_2> {
         return __float22half2_rn(__bfloat1622float2(u));
     }
 };
+#ifdef KITTENS_BLACKWELL
+// fp4e2m1
+template<> struct convertor<fp4e2m1_4, float4> {
+    static __host__ __device__ inline fp4e2m1_4 convert(const float4& u) {
+        return __nv_fp4x4_e2m1(u); 
+    }
+};
+template<> struct convertor<float4, fp4e2m1_4> {
+    static __host__ __device__ inline float4 convert(const fp4e2m1_4& u) {
+        __nv_fp4_e2m1 *vals = reinterpret_cast<__nv_fp4_e2m1*>(const_cast<__nv_fp4x4_e2m1*>(&u));
+        return make_float4(float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]));
+    }
+};
+template<> struct convertor<fp4e2m1_2, float2> {
+    static __host__ __device__ inline fp4e2m1_2 convert(const float2& u) {
+        return __nv_fp4x2_e2m1(u); 
+    }
+};
+template<> struct convertor<float2, fp4e2m1_2> {
+    static __host__ __device__ inline float2 convert(const fp4e2m1_2& u) {
+        __nv_fp4_e2m1 *vals = reinterpret_cast<__nv_fp4_e2m1*>(const_cast<__nv_fp4x2_e2m1*>(&u));
+        return make_float2(float(vals[0]), float(vals[1]));
+    }
+};
+template<> struct convertor<fp4e2m1, float> {
+    static __host__ __device__ inline fp4e2m1 convert(const float & u) {
+        return __nv_fp4_e2m1(u);
+    }
+};
+template<> struct convertor<float, fp4e2m1> {
+    static __host__ __device__ inline float convert(const fp4e2m1 & u) {
+        return float(u);
+    }
+};
+template<> struct convertor<bf16_2, fp4e2m1_4> {
+    static __host__ __device__ inline bf16_2 convert(const fp4e2m1_4 & u) {
+        float4 f4 = convertor<float4, fp4e2m1_4>::convert(u);
+        float2 f2 = make_float2(f4.x, f4.y);
+        return __float22bfloat162_rn(f2);
+    }
+};
+template<> struct convertor<fp4e2m1_4, bf16_2> {
+    static __host__ __device__ inline fp4e2m1_4 convert(const bf16_2 & u) {
+        float2 f2 = __bfloat1622float2(u);
+        float4 f4 = make_float4(f2.x, f2.y, 0.0f, 0.0f);
+        return __nv_fp4x4_e2m1(f4);
+    }
+};
+#endif
 #ifdef KITTENS_HOPPER
 // fp8e4m3
 template<> struct convertor<fp8e4m3_4, float4> {
