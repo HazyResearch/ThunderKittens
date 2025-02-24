@@ -133,6 +133,14 @@ extern torch::Tensor fp8_gemm(
 );
 #endif
 
+#ifdef TK_COMPILE_BMM
+extern torch::Tensor batch_matmul(
+    const torch::Tensor a,
+    const torch::Tensor b,
+    const torch::Tensor rank
+);
+#endif
+
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
@@ -180,4 +188,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("fp8_gemm", fp8_gemm, "FP8 GEMM TK. Takes tensors (a, b). Both tensors are bf16. Returns (B, H, N, 128) in bf16.");
 #endif
 
+#ifdef TK_COMPILE_BMM
+    m.def("batch_matmul", batch_matmul, "BF16 BMM TK. [B, N, K] @ [B, M, K].T -> [B, N, M].");
+#endif
 }
