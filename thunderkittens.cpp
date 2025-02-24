@@ -134,9 +134,8 @@ extern torch::Tensor fp8_gemm(
 #endif
 
 #ifdef TK_COMPILE_BMM
-extern torch::Tensor batch_matmul(
-    const torch::Tensor a,
-    const torch::Tensor b
+extern torch::Tensor multi_lora_matmul(
+    torch::Tensor A, torch::Tensor B, torch::Tensor ranks
 );
 #endif
 
@@ -188,6 +187,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #endif
 
 #ifdef TK_COMPILE_BMM
-    m.def("batch_matmul", batch_matmul, "BF16 BMM TK. [B, N, K] @ [B, M, K].T -> [B, N, M].");
+    m.def("multi_lora_matmul", multi_lora_matmul, "BF16 BMM TK. [N, K] @ [B, r, K].T -> [B, N, r].");
 #endif
 }
