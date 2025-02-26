@@ -14,6 +14,8 @@ N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
 causal = False if len(sys.argv) <= 4 else sys.argv[4] == 'causal'
 
+print(f"Running {sys.argv[1]} with B={B}, H={H}, N={N}, D={D}, causal={causal}")
+
 assert D == 128
 
 softmax_scale = 1 / math.sqrt(D)
