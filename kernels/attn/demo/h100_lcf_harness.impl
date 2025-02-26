@@ -2,9 +2,9 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 256;
+constexpr int ATTN_B = 1;
 constexpr int ATTN_H = 1;
-constexpr int ATTN_N = 924; // 768*2; // 4096;
+constexpr int ATTN_N = 2048; // 768*2; // 4096;
 constexpr int ATTN_D = 128; // hardcoded into this kernel
 constexpr int ITER   = 10;
 

@@ -1,6 +1,25 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
 
+/*
+
+consumer_state.att_block in a warp looks like this:
+
+[ 
+  x x x x x x ... 192 or 128 columns ... x x x x x x
+  ... 16 rows of it
+  x x x x x x ... 192 or 128 columns ... x x x x x x
+]
+
+Logically in a warpgroup, it looks like this:
+[
+  x x x x x x ... 192 or 128 columns ... x x x x x x
+  ... 64 rows of it
+  x x x x x x ... 192 or 128 columns ... x x x x x x
+]
+
+*/
+
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
@@ -21,7 +40,7 @@ template<int D, int NUM_WORKERS> struct attn_fwd_layout {
         rt_bf<16, kv_tile::rows> att_block_mma;
     };
 };
-template<int D> struct attn_fwd_template {
+template<int D, bool causal> struct attn_fwd_template {
     static constexpr int NUM_CONSUMER_WARPS = 12, NUM_WORKERS = NUM_CONSUMER_WARPS/4, INPUT_PIPE_STAGES = 2;
     using layout = attn_fwd_layout<D, NUM_WORKERS>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -57,27 +76,45 @@ template<int D> struct attn_fwd_template {
             warpgroup::sync(warpgroup::groupid());
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
-            constexpr float TEMPERATURE_SCALE = (D == 128) ? 0.08838834764f*1.44269504089f : 0.125f*1.44269504089f;
-            // A = Q @ K.T
-            warpgroup::mm_ABt(args.state.att_block, args.scratch.q[warpgroup::groupid()], args.input.k);
-            mul(args.state.max_vec_last_scaled, args.state.max_vec, TEMPERATURE_SCALE);
-            warpgroup::mma_async_wait();
-            // softmax
-            right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
-            row_max(args.state.max_vec, args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
-            mul(args.state.max_vec_scaled, args.state.max_vec, TEMPERATURE_SCALE);
-            mul(args.state.att_block, args.state.att_block, TEMPERATURE_SCALE);
-            sub_row(args.state.att_block, args.state.att_block, args.state.max_vec_scaled);
-            exp2(args.state.att_block, args.state.att_block);
-            sub(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled, args.state.max_vec_scaled);
-            exp2(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled);
-            mul(args.state.norm_vec, args.state.norm_vec, args.state.max_vec_last_scaled);
-            row_sum(args.state.norm_vec, args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
-            mul_row(args.state.o_reg, args.state.o_reg, args.state.max_vec_last_scaled); // normalize o_reg before mma
-            copy(args.state.att_block_mma, args.state.att_block); // convert to bf16 for mma
-            // O += A @ V
-            warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v);
-            warpgroup::mma_async_wait();
+            /*
+            How to know whether to skip a whole block if it's causal?
+            Q index is (args.common.seq*NUM_WORKERS+warpgroup::groupid()) * layout::qo_tile::rows
+            K and V index is (args.iter*layout::kv_tile::rows) * args.globals.K.depth
+
+            We can skip this block if:
+            * causal is True and K/V index is greater than Q index
+            * which happens when args.iter*layout::kv_tile::rows > args.common.seq*NUM_WORKERS+warpgroup::groupid()
+            */
+            if (!causal || (causal && args.iter*layout::kv_tile::rows > args.common.seq*NUM_WORKERS+warpgroup::groupid())) {
+                if (warpgroup::laneid() == 0) {
+                    printf("warpgroup_id: %d, iter: %d, seq: %d, kv_idx: %d, q_idx: %d\n", warpgroup::groupid(), args.iter, args.common.seq, args.iter*layout::kv_tile::rows, args.common.seq*NUM_WORKERS+warpgroup::groupid());
+                }
+                constexpr float TEMPERATURE_SCALE = (D == 128) ? 0.08838834764f*1.44269504089f : 0.125f*1.44269504089f;
+                // A = Q @ K.T
+                warpgroup::mm_ABt(args.state.att_block, args.scratch.q[warpgroup::groupid()], args.input.k);
+                mul(args.state.max_vec_last_scaled, args.state.max_vec, TEMPERATURE_SCALE);
+                warpgroup::mma_async_wait();
+                // softmax
+                right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
+                if (causal) {
+                    // we need to do a causal mask here
+
+                }
+                row_max(args.state.max_vec, args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
+                mul(args.state.max_vec_scaled, args.state.max_vec, TEMPERATURE_SCALE);
+                mul(args.state.att_block, args.state.att_block, TEMPERATURE_SCALE);
+                sub_row(args.state.att_block, args.state.att_block, args.state.max_vec_scaled);
+                exp2(args.state.att_block, args.state.att_block);
+                sub(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled, args.state.max_vec_scaled);
+                exp2(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled);
+                mul(args.state.norm_vec, args.state.norm_vec, args.state.max_vec_last_scaled);
+                row_sum(args.state.norm_vec, args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
+                mul_row(args.state.o_reg, args.state.o_reg, args.state.max_vec_last_scaled); // normalize o_reg before mma
+                copy(args.state.att_block_mma, args.state.att_block); // convert to bf16 for mma
+                // O += A @ V
+                warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v);
+                warpgroup::mma_async_wait();
+            }
             if(laneid() == 0) arrive(args.inputs_finished); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
