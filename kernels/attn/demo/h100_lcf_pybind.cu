@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "pyutils/pyutils.cuh"
 
 /*
 
@@ -28,7 +29,13 @@ template<int D, int NUM_WORKERS> struct attn_fwd_layout {
     using kv_tile   = st_bf<D==64?192:128, D>;
     using qo_global = kittens::gl<bf16, -1, -1, -1, D, qo_tile>;
     using kv_global = kittens::gl<bf16, -1, -1, -1, D, kv_tile>;
-    struct globals { qo_global O, Q; kv_global K, V; };
+    struct globals {
+        qo_global O, Q;
+        kv_global K, V;
+        int dynamic_shared_memory() { return MAX_SHARED_MEMORY - 2000; }
+        dim3 grid()  { return dim3(132); }
+        dim3 block() { return dim3((12+4)*WARP_THREADS); }
+    };
     struct input_block    { kv_tile k, v; };
     struct scratch_block  { qo_tile q[NUM_WORKERS]; };
     struct common_state   { int batch, head, seq; };
@@ -138,4 +145,18 @@ template<int D, bool causal> struct attn_fwd_template {
 };
 // kernel is kittens::prototype::lcf::kernel<attn_fwd_template<HEAD_DIM>>;
 
-#include "h100_lcf_harness.impl"
+PYBIND11_MODULE(attn_fwd_pybind, m) {
+    m.doc() = "TK Attention Forward Demo";
+    py::bind_kernel<kittens::prototype::lcf::kernel<attn_fwd_template<128, false>>>(m, "fwd_128_noncausal",
+        &attn_fwd_layout<128, 3>::globals::O,
+        &attn_fwd_layout<128, 3>::globals::Q,
+        &attn_fwd_layout<128, 3>::globals::K,
+        &attn_fwd_layout<128, 3>::globals::V
+    );
+    py::bind_kernel<kittens::prototype::lcf::kernel<attn_fwd_template<128, true>>>(m, "fwd_128_causal",
+        &attn_fwd_layout<128, 3>::globals::O,
+        &attn_fwd_layout<128, 3>::globals::Q,
+        &attn_fwd_layout<128, 3>::globals::K,
+        &attn_fwd_layout<128, 3>::globals::V
+    );
+}

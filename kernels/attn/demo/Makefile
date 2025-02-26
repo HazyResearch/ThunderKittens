@@ -13,12 +13,21 @@ TARGET=attn_fwd
 SRC=h100_lcf.cu
 endif
 
+TARGET_PYBIND=attn_fwd_pybind
+PYBIND_FLAGS=$(shell python3 -m pybind11 --includes) $(shell python3-config --ldflags) -shared -fPIC -lpython3.12
+SRC_PYBIND=h100_lcf_pybind.cu
+
 # Default target
-all: $(TARGET)
+all: $(TARGET) $(TARGET_PYBIND)
+
+pybind: $(TARGET_PYBIND)
 
 $(TARGET): $(SRC)
 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)
 
+$(TARGET_PYBIND): $(SRC_PYBIND)
+	$(NVCC) $(SRC_PYBIND) $(NVCCFLAGS) $(PYBIND_FLAGS) -o $(TARGET_PYBIND)$(shell python3-config --extension-suffix)
+
 # Clean target
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET_PYBIND)$(shell python3-config --extension-suffix)

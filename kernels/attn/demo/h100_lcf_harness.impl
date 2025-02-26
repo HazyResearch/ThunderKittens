@@ -4,9 +4,10 @@
 
 constexpr int ATTN_B = 1;
 constexpr int ATTN_H = 1;
-constexpr int ATTN_N = 2048; // 768*2; // 4096;
+constexpr int ATTN_N = 256; // 768*2; // 4096;
 constexpr int ATTN_D = 128; // hardcoded into this kernel
-constexpr int ITER   = 10;
+constexpr int ITER   = 1;
+constexpr bool CAUSAL = true;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -37,7 +38,7 @@ constexpr uint64_t ATTN_FLOPS =
 int main(int argc, char **argv) {
     // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
     // which may increase the probability of L2 cache hits on KV
-    using ker_template = attn_fwd_template<ATTN_D>;
+    using ker_template = attn_fwd_template<ATTN_D, CAUSAL>;
 
     std::cout << "Entered main!" << std::endl;
 
@@ -109,10 +110,10 @@ int main(int argc, char **argv) {
     dim3 grid(132, 1, 1);
     // dim3 bad_grid(grid.z, grid.y, grid.x);
     std::cout << "Grid size: " << grid.x << " x " << grid.y << " x " << grid.z << std::endl;
-    // warmup
-    for(int j = 0; j < ITER; j++)
-        prototype::lcf::kernel<ker_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
-    cudaDeviceSynchronize();
+    // // warmup
+    // for(int j = 0; j < ITER; j++)
+    //     prototype::lcf::kernel<ker_template><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+    // cudaDeviceSynchronize();
     
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
