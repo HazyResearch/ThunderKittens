@@ -330,7 +330,6 @@ def main():
     softmax_scale = 1.0 / math.sqrt(D_QK)
     
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
-    breakpoint()
     '''
     Changes to the interface:
     - QRot is now (B, NEW_TOKENS, H, D_QRot)
@@ -407,7 +406,7 @@ def main():
         enable_gqa=False,
     ).transpose(1, 2)
     
-    print("Reference output:\n", ref)
+    # print("Reference output:\n", ref)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean:", torch.mean(O.abs()))
     print("Max absolute diff:", torch.max(torch.abs(O - ref)))
