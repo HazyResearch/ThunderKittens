@@ -10,18 +10,24 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
-using q_tile              = st_bf<64, QK_D>;
-using q_global            = kittens::gl<bf16, -1, -1, -1, QK_D, q_tile>; // B * R * H * D_QK
-using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
-using cache_global        = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
+static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
+using qrot_tile           = st_bf<64, QKRot_D>;
+using qvo_tile            = st_bf<64, QVO_D>;
+using q_global            = kittens::gl<bf16, -1, -1, -1, QKRot_D, qrot_tile>; // B * R * H * D_QKRot_D
+using qv_global           = kittens::gl<bf16, -1, -1, -1, QVO_D, qvo_tile>; // B * R * H * D_QVO_D
+using kcache_tile         = st_bf<NUM_ROWS, QKRot_D>;
+using vcache_tile         = st_bf<NUM_ROWS, QVO_D>; // we need the v_tile for later
+using vcache_tile2        = st_bf<NUM_ROWS, QVO_Dd2>; // we need the v_tile for later
+using kcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKRot_D, kcache_tile>; // 1 * #page * pagesize * QKRot_D
+using vcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QVO_D, vcache_tile>; // 1 * #page * pagesize * QVO_D
+using ops_global          = kittens::gl<bf16, 1, -1, -1, 8>;
 using instructions_global = kittens::gl<int, 1, -1, -1, 32>;
 using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
-using o_tile              = st_bf<64, VO_D>;
-using o_tile_fl           = st_fl<16, VO_D>;
-using o_global            = kittens::gl<bf16, -1, -1, -1, VO_D, st_bf<16, VO_Dd2>, st_bf<16, VO_D/8>>; // B * NEWTOKENS * H * D_VO
+using o_tile              = st_bf<64, QVO_D>;
+using o_tile_fl           = st_fl<16, QVO_D>;
+using o_global            = kittens::gl<bf16, -1, -1, -1, QVO_D, st_bf<16, QVO_Dd2>, st_bf<16, QVO_D/8>>; // B * NEWTOKENS * H * D_VO
 
-using o_scratch_global    = kittens::gl<float, -1, -1, 16, VO_D, st_fl<16, VO_D/8>, st_fl<16,256>>; // For partial O's
+using o_scratch_global    = kittens::gl<float, -1, -1, 16, QVO_D, st_fl<16, QVO_D/8>, st_fl<16,256>>; // For partial O's
 using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
 using semaphore_global    = kittens::gl<int,    1,  1,  -1, -1>;            // 1 * 1 * uid * NEWTOKENS
 
@@ -30,7 +36,9 @@ struct config {
         using instructions_global = instructions_global;
         instructions_global instructions;
         q_global Q;
-        cache_global Cache;
+        qv_global QV;
+        kcache_global K_cache;
+        vcache_global V_cache;
         table_global Table;
         o_global O;
         o_scratch_global O_scratch;
@@ -51,9 +59,9 @@ struct location {
 };
 struct partial_layout {
     using globals = config::globals;
-    struct input_block { cache_tile c; };
-    struct scratch_block { q_tile q; st_bf<64, cache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
-    struct finish_block { st_fl<16, 256> o[4][2]; sv_fl<16> lvec[4]; };
+    struct input_block { kcache_tile kcache; vcache_tile vcache; };
+    struct scratch_block { qrot_tile qrot; qvo_tile qvo; st_bf<64, kcache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
+    struct finish_block { st_fl<16, QVO_Dd2> o[4][2]; sv_fl<16> lvec[4]; };
     struct common_state {
         int uid;
         location dst;
@@ -64,8 +72,8 @@ struct partial_layout {
         int length; // the length of the overall sequence in question
     };
     struct consumer_state {
-        col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
-        rt_fl<16, VO_Dd2> o;
+        col_vec<rt_fl<16, kcache_tile::rows>> max_vec, norm_vec;
+        rt_fl<16, QVO_Dd2> o;
     };
 };
 struct partial_template {
@@ -92,9 +100,10 @@ struct partial_template {
                 int global_load_idx = args.iter % ITERS_PER_PAGE;
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, (args.common.start_pos/PAGE_SIZE) + (args.iter/ITERS_PER_PAGE)}];
                 // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.c);
+                tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
                 // cache shape is 1, # pages, page size, QK_D
-                tma::load_async(args.input.c, args.globals.Cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
             }
             else if(laneid() == 0) arrive(args.inputs_arrived);
             warpgroup::sync(5);
@@ -106,8 +115,11 @@ struct partial_template {
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
-            auto q_st = subtile_inplace<16, QK_D/2>(args.scratch.q, {warpgroup::warpid(), warpgroup::groupid()});
-            load_async(q_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            if (warpgroup::groupid() == 0) {
+                load_async(args.scratch.qrot, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            }
+            auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
+            load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             load_async_wait();
             group<8>::sync(10);
         }
@@ -115,16 +127,17 @@ struct partial_template {
             // 1.44269504089f is from exp2
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
 
-            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec, local_norm_vec;
-            col_vec<rt_fl<16, cache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
+            col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
+            col_vec<rt_fl<16, kcache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
             copy(local_max_vec,  args.state.max_vec);
             copy(local_norm_vec, args.state.norm_vec);
 
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
-                rt_fl<16, cache_tile::rows> att_block_fp32;
-                warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.c);
+                rt_fl<16, kcache_tile::rows> att_block_fp32;
+                warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
+                warpgroup::mma_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
 
                 mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
@@ -157,8 +170,8 @@ struct partial_template {
             mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
 
             // O += A @ V
-            auto (&v_smem)[2] = reinterpret_cast<v_tile(&)[2]>(args.input.c);
-            warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_smem[warpgroup::groupid()]);
+            auto (&v_tile)[2] = reinterpret_cast<vcache_tile2(&)[2]>(args.input.vcache);
+            warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_tile[warpgroup::groupid()]);
 
             copy(args.state.max_vec, local_max_vec);
             copy(args.state.norm_vec, local_norm_vec);
@@ -171,7 +184,7 @@ struct partial_template {
             else internal_compute<false>(args);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
-            col_vec<rt_fl<16, cache_tile::rows>> local_max_vec, local_norm_vec;
+            col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
 
             copy(local_norm_vec, args.state.norm_vec);
             copy(local_max_vec, args.state.max_vec);
@@ -182,7 +195,7 @@ struct partial_template {
             div_row(args.state.o, args.state.o, local_norm_vec);
 
             if(args.common.dst.batch_idx >= 0) { // batch is meaningful
-                auto &o_smem = reinterpret_cast<st_bf<16, VO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
+                auto &o_smem = reinterpret_cast<st_bf<16, QVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
                 tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
@@ -215,8 +228,8 @@ struct partial_template {
 };
 struct reduction_layout {
     using globals = config::globals;
-    struct input_block   { st_fl<16, VO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
-    struct scratch_block { st_fl<16, VO_D/8> o[8]; sv_fl<16> lvec; }; // used both for setup load and finish store
+    struct input_block   { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
+    struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; }; // used both for setup load and finish store
     struct common_state {
         int uid;
         // int num_iters; // same as the number of active load_uid's, marked here for instruction clarity but we just use args.num_iters instead.
@@ -227,8 +240,8 @@ struct reduction_layout {
         int load_uid[26];
     };
     struct consumer_state {
-        rt_fl<16, VO_D/8> o;
-        col_vec<rt_fl<16, cache_tile::rows>> lvec;
+        rt_fl<16, QVO_D/8> o;
+        col_vec<rt_fl<16, kcache_tile::rows>> lvec;
     };
 };
 struct reduction_template {
@@ -286,8 +299,8 @@ struct reduction_template {
             load(args.state.lvec, args.scratch.lvec);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
-            col_vec<rt_fl<16, cache_tile::rows>> lvec, max_lvec, sum_lvec;
-            rt_fl<16, VO_D / 8> o;
+            col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
+            rt_fl<16, QVO_D / 8> o;
             load(o, args.input.o[group<8>::warpid()]);
             load(lvec, args.input.lvec);
             __syncwarp();
@@ -308,7 +321,7 @@ struct reduction_template {
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             if(args.common.dst.batch_idx >= 0) {
-                auto &o_smem = reinterpret_cast<st_bf<16, VO_D/8>&>(args.scratch.o[group<8>::warpid()]);
+                auto &o_smem = reinterpret_cast<st_bf<16, QVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
                 tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
@@ -377,7 +390,9 @@ PYBIND11_MODULE(mla_decode, m) {
     py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
-        &config::globals::Cache,
+        &config::globals::QV,
+        &config::globals::K_cache,
+        &config::globals::V_cache,
         &config::globals::Table,
         &config::globals::O,
         &config::globals::O_scratch,
