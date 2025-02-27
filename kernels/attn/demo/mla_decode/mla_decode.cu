@@ -15,24 +15,42 @@ union location {
         int seq_idx;
     } tensor;
 };
+/*
+Inputs:
+Q: B * (R * H) * QKRot_D
+K_cache: #page * page_size * QKRot_D
+V_cache: #page * page_size * QVO_D
+Q_v: B * (R * H) * QVO_D
+
+(not implemented yet)
+K_new: B * (R * H) * QRot_D
+V_new: B * (R * H) * QVO_D
+*/
 struct mla_decode_layout {
-    static constexpr int QK_D = 576, VO_D = 512, VO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
-    using q_tile              = st_bf<64, QK_D>;
-    using q_global            = kittens::gl<bf16, 1, -1, -1, QK_D>; // 1 * B * (R * H) * D_QK
-    using cache_tile          = st_bf<NUM_ROWS, QK_D>; using v_tile = st_bf<NUM_ROWS, VO_Dd2>; // we need the v_tile for later
-    using cache_global        = kittens::gl<bf16, 1, -1, PAGE_SIZE, QK_D, cache_tile>; // 1 * #page * pagesize * QK_D
+    static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = VO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
+    using qrot_tile           = st_bf<64, QKRot_D>;
+    using qvo_tile            = st_bf<64, QVO_D>;
+    using q_global            = kittens::gl<bf16, 1, -1, -1, QKRot_D>; // 1 * B * (R * H) * D_QKRot_D
+    using qv_global           = kittens::gl<bf16, 1, -1, -1, QVO_D>; // 1 * B * (R * H) * D_QVO_D
+    using kcache_tile         = st_bf<NUM_ROWS, QKRot_D>;
+    using vcache_tile         = st_bf<NUM_ROWS, QVO_Dd>;
+    using vcache_tile2        = st_bf<NUM_ROWS, QVO_Dd2>;
+    using kcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKRot_D, kcache_tile>; // 1 * #page * pagesize * QKRot_D
+    using vcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QVO_D, vcache_tile>; // 1 * #page * pagesize * QVO_D
     using ops_global          = kittens::gl<bf16, 1, -1, -1, 8>;
     using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
-    using o_tile_d2           = st_bf<64, VO_Dd2>;
-    using o_tile_fl           = st_fl<16, VO_D>;
-    using o_global            = kittens::gl<bf16, 1, -1, -1,  VO_D, o_tile_d2>; // B * (R * H) * D_VO
-    using o_scratch_global    = kittens::gl<float, 1, -1, 64, VO_D, o_tile_fl>; // For partial O's
+    using o_tile_d2           = st_bf<64, QVO_Dd2>;
+    using o_tile_fl           = st_fl<16, QVO_D>;
+    using o_global            = kittens::gl<bf16, 1, -1, -1,  QVO_D, o_tile_d2>; // B * (R * H) * D_VO
+    using o_scratch_global    = kittens::gl<float, 1, -1, 64, QVO_D, o_tile_fl>; // For partial O's
     using lvec_scratch_global = kittens::gl<float, 1, 1, -1, 64, sv_fl<16>>; // For partial O's
     using semaphore_global    = kittens::gl<int, 1, 1, 1, -1>; // 1 * 1 * 1 * uid
     struct globals {
         ops_global Ops;
         q_global Q;
-        cache_global Cache;
+        qv_global QV;
+        kcache_global K_cache;
+        vcache_global V_cache;
         table_global Table;
         o_global O;
         o_scratch_global O_scratch;
@@ -45,7 +63,8 @@ struct mla_decode_layout {
     };
     union input_block {
         struct partial {
-            cache_tile c;
+            kcache_tile kcache;
+            vcache_tile vcache;
         } partial;
         struct reduction {
             o_tile_fl o[2];
@@ -54,8 +73,9 @@ struct mla_decode_layout {
         } reduction;
     };
     struct scratch_block  { 
-        q_tile q;
-        st_bf<64, cache_tile::rows> att_block;
+        qrot_tile qrot;
+        qvo_tile qvo;
+        st_bf<64, kcache_tile::rows> att_block;
         sv_fl<64> vec[2];
     };
     union common_state {
@@ -83,13 +103,13 @@ struct mla_decode_layout {
     };
     union consumer_state {
         struct {
-            col_vec<rt_fl<16, cache_tile::rows>> max_vec, norm_vec;
-            col_vec<rt_fl<16, cache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
-            rt_fl<16, VO_Dd2> o;
+            col_vec<rt_fl<16, kcache_tile::rows>> max_vec, norm_vec;
+            col_vec<rt_fl<16, kcache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
+            rt_fl<16, QVO_Dd2> o;
         } partial;
         struct {
-            col_vec<rt_fl<16, cache_tile::rows>> lvec[2];
-            rt_fl<16, VO_D / 8> o[2];
+            col_vec<rt_fl<16, kcache_tile::rows>> lvec[2];
+            rt_fl<16, QVO_D / 8> o[2];
         } reduction;
         __device__ inline consumer_state() : partial{} {} // Default constructor initializing partial member
     };
@@ -143,9 +163,10 @@ struct mla_decode_template {
                     int global_load_idx = args.iter % layout::ITERS_PER_PAGE;
                     int next_page_id = args.globals.Table[coord<>{args.common.partial.uid, args.iter / layout::ITERS_PER_PAGE}];
                     // next page we need to load?
-                    tma::expect(args.inputs_arrived, args.input.partial.c);
+                    tma::expect(args.inputs_arrived, args.input.partial.kcache, args.input.partial.vcache);
                     // cache shape is 1, # pages, page size, QK_D
-                    tma::load_async(args.input.partial.c, args.globals.Cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.partial.kcache, args.globals.K_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.partial.vcache, args.globals.V_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
                 }
                 warpgroup::sync(5);
                 // int global_load_idx = args.iter % layout::ITERS_PER_PAGE;
@@ -184,7 +205,8 @@ struct mla_decode_template {
                     //     zero(q_st);
                     // }
                     // TODO: the / 4 needs to change for different num heads
-                    load(args.scratch.q, args.globals.Q, {args.common.partial.q_batch_idx, args.common.partial.q_seq_idx / 4, 0});
+                    load(args.scratch.qrot, args.globals.Q, {args.common.partial.q_batch_idx, args.common.partial.q_seq_idx / 4, 0});
+                    load(args.scratch.qvo, args.globals.QV, {args.common.partial.q_batch_idx, args.common.partial.q_seq_idx / 4, 0});
                     zero(args.scratch.vec[0]);
 
                 }
@@ -207,8 +229,10 @@ struct mla_decode_template {
                 if(warpgroup::groupid() == 0) {
                     // A = Q @ K.T
                     rt_fl<16, layout::cache_tile::rows> att_block_fp32;
-                    warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.partial.c);
+                    warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.partial.kcache);
                     mul(args.state.partial.max_vec_last_scaled, args.state.partial.max_vec, SOFTMAX_TEMPERATURE);
+                    warpgroup::mma_async_wait();
+                    warpgroup::mm_ABt(att_block_fp32, args.scratch.qvo, args.input.partial.vcache);
                     warpgroup::mma_async_wait();
                     // // softmax
                     // if(args.iter == args.num_iters-1) { // need to mask out a bunch of entries in the last page
@@ -238,7 +262,7 @@ struct mla_decode_template {
                     zero(args.state.partial.o);
                 }
                 // O += A @ V
-                auto (&v_tile)[2] = reinterpret_cast<typename layout::v_tile(&)[2]>(args.input.partial.c);
+                auto (&v_tile)[2] = reinterpret_cast<typename layout::vcache_tile(&)[2]>(args.input.partial.vcache);
                 warpgroup::mma_AB(args.state.partial.o, args.scratch.att_block, v_tile[warpgroup::groupid()]);
                 warpgroup::mma_async_wait();
                 if(warpgroup::laneid() == 0) arrive(args.inputs_finished); // done!
@@ -368,7 +392,9 @@ PYBIND11_MODULE(mla_decode, m) {
     py::bind_kernel<lcf::kernel<mla_decode_template>>(m, "mla_decode",
         &mla_decode_layout::globals::Ops,
         &mla_decode_layout::globals::Q,
-        &mla_decode_layout::globals::Cache,
+        &mla_decode_layout::globals::QV,
+        &mla_decode_layout::globals::K_cache,
+        &mla_decode_layout::globals::V_cache,
         &mla_decode_layout::globals::Table,
         &mla_decode_layout::globals::O,
         &mla_decode_layout::globals::O_scratch,

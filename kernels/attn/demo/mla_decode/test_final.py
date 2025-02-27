@@ -272,7 +272,7 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
 # Main test script (integrating the reference page table creation)
 # ----------------------------------------------------------------------
 def main():
-    D_QK, D_VO = 576, 512
+    D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 7, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
@@ -330,10 +330,22 @@ def main():
     softmax_scale = 1.0 / math.sqrt(D_QK)
     
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
+    breakpoint()
+    '''
+    Changes to the interface:
+    - QRot is now (B, NEW_TOKENS, H, D_QRot)
+    - QV is now (B, NEW_TOKENS, H, D_VO)
+    - K_cache is now (B, NUM_PAGES, PAGE_SIZE, D_QRot)
+    - V_cache is now (B, NUM_PAGES, PAGE_SIZE, D_VO)
+    '''
+    query_rot = query[..., :D_QRot].contiguous()
+    query_v = query[..., D_QRot:].contiguous()
+    K_cache = cache_view[..., :D_QRot].contiguous()
+    V_cache = cache_view[..., D_QRot:].contiguous()
 
     print("Launching MLA decode kernel...")
-    mla_decode.mla_decode(Instructions, query,
-                          cache_view,
+    mla_decode.mla_decode(Instructions, query_rot, query_v,
+                          K_cache, V_cache,
                           Table, O, O_scratch, Lvec_scratch, Semaphore,
                           softmax_scale, 1)
     torch.cuda.synchronize()
@@ -348,8 +360,8 @@ def main():
     
     # Warmup
     for _ in range(4):
-        mla_decode.mla_decode(Instructions, query,
-                            cache_view,
+        mla_decode.mla_decode(Instructions, query_rot, query_v,
+                            K_cache, V_cache,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
                             softmax_scale, _%2)
         print(f'ran warmup kernel #{_}')
@@ -358,8 +370,8 @@ def main():
     start_event.record()
     
     for _ in range(num_iters):
-        mla_decode.mla_decode(Instructions, query,
-                            cache_view,
+        mla_decode.mla_decode(Instructions, query_rot, query_v,
+                            K_cache, V_cache,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
                             softmax_scale, _%2)
         # print(f'ran kernel #{_}')
