@@ -1,5 +1,6 @@
 import mla_decode
 import torch
+import numpy as np
 import math
 import heapq
 import time
@@ -7,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 
-m1 = 0.0454*0.7
+m1 = 0.0454
 b1 = 10
 m2 = 0.366
 b2 = 8
@@ -32,7 +33,7 @@ class Task:
 def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
                             m1: float, b1: float, b2: float,
                             starting_id: int = 0, new_tokens: int = 1,
-                            page_size: int = 256, page_table: list = []) -> Tuple[List[Task], int]:
+                            page_size: int = 256) -> Tuple[List[Task], int]:
     """
     Generates tasks for one sequence.
       - Creates PARTIAL tasks that process contiguous chunks.
@@ -71,12 +72,13 @@ def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
             starting_id += 1
 
     for new_token in range(new_tokens):
+        TREE_BASE = 12
         n_idx = new_token // 4
         merge_tasks = []
-        for i in range(0, len(partial_tasks[n_idx])-1, 2):
-            dep = [partial_tasks[n_idx][i].uid, partial_tasks[n_idx][i+1].uid]
-            if i+3 == len(partial_tasks[n_idx]):
-                dep.append(partial_tasks[n_idx][i+2].uid)
+        for i in range(0, len(partial_tasks[n_idx])-1, TREE_BASE):
+            dep = [partial_tasks[n_idx][j].uid for j in range(i, min(i+TREE_BASE, len(partial_tasks[n_idx])))]
+            if i+TREE_BASE+1 == len(partial_tasks[n_idx]):
+                dep.append(partial_tasks[n_idx][i+TREE_BASE].uid)
             merge_tasks.append(Task(
                 uid=starting_id,
                 batch_id=batch_id,
@@ -91,10 +93,10 @@ def generate_sequence_tasks(batch_id: int, length: int, chunk_pages: int,
         tasks.extend(merge_tasks)
         while len(merge_tasks) > 0:
             next_merge_tasks = []
-            for i in range(0, len(merge_tasks)-1, 2):
-                new_dep = [merge_tasks[i+1].uid]
-                if i+3 == len(merge_tasks):
-                    new_dep.append(merge_tasks[i+2].uid)
+            for i in range(0, len(merge_tasks)-1, TREE_BASE):
+                new_dep = [merge_tasks[j].uid for j in range(i+1, min(i+TREE_BASE, len(merge_tasks)))]
+                if i+TREE_BASE+1 == len(merge_tasks):
+                    new_dep.append(merge_tasks[i+TREE_BASE].uid)
                 merge_tasks[i].dependencies.extend(new_dep)
                 merge_tasks[i].duration = b2 + m2*(len(merge_tasks[i].dependencies)-1)
                 next_merge_tasks.append(merge_tasks[i])
@@ -138,7 +140,7 @@ def visualize_schedule(tasks: List[Task], num_processors: int):
 def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task]:
     """
     Schedules tasks on available processors using a custom heuristic.
-    Updates each task’s start, finish, and processor.
+    Updates each task's start, finish, and processor.
     """
     tasks_by_id: Dict[int, Task] = {t.uid: t for t in tasks}
     in_degree: Dict[int, int] = {t.uid: len(t.dependencies) for t in tasks}
@@ -207,15 +209,16 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 min(task.tok_ids),  # start token
                 task.batch_id,
                 min(task.tok_ids),  # duplicate start token
-                task.args["start"], task.args["end"], task.args["length"]] + [0]*7
+                task.args["start"], task.args["end"], task.args["length"]] + [0]*23
 
     def make_merge_arg(task: Task) -> List[int]:
+        assert(len(task.dependencies) <= 11+16)
         args_list = [OP_REDUCTION,
                      task.uid,  # uid
                      len(task.dependencies)-1,  # number of dependencies minus one
                      -task.uid-1 if task.args["write_scratch"] else task.batch_id,
                      task.tok_ids[0]] + task.dependencies
-        return args_list + [0]*(16 - len(args_list))
+        return args_list + [0]*(32 - len(args_list))
 
     num_instructions = max(t.uid for t in tasks) + 1
     processor_tasks = [[] for _ in range(num_processors)]
@@ -224,22 +227,24 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
     print('Final finish time:', max(t.finish for t in tasks))
+    print('Max number of dependencies:', max(len(t.dependencies) for t in tasks))
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
-    Instructions = torch.zeros((num_processors, max_num_processor_instructions, 16), dtype=torch.int32)
-    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32)
-    L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32)
-    Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32)
-    # Semaphore = torch.zeros((2, num_instructions, new_tokens), dtype=torch.int32)
+    Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
+    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')
+    L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32, device='cpu')
+    Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cpu')
+    Timings = torch.zeros((num_processors, max_num_processor_instructions, 2), dtype=torch.int32, device='cpu')
     for pid in range(num_processors):
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
-                Instructions[pid, tid, :] = torch.tensor(make_partial_arg(task), dtype=torch.int32)
+                Instructions[pid, tid, :] = torch.tensor(make_partial_arg(task), dtype=torch.int32, device='cpu')
             elif task.task_type == "reduction":
-                Instructions[pid, tid, :] = torch.tensor(make_merge_arg(task), dtype=torch.int32)
+                Instructions[pid, tid, :] = torch.tensor(make_merge_arg(task), dtype=torch.int32, device='cpu')
     if torch.cuda.is_available():
         return (Instructions.cuda(), O_scratch.cuda(),
-                L_scratch.cuda(), Semaphore.cuda())
-    return Instructions, O_scratch, L_scratch, Semaphore
+                L_scratch.cuda(), Semaphore.cuda(),
+                Timings.cuda())
+    return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
 def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths: List[int] = None, partial_pages: List[int] = None, table: list = None) -> List[Task]:
     """
@@ -274,7 +279,7 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
 def main():
     D_QK, D_VO = 576, 512
     PAGE_SIZE = 256
-    B, NEW_TOKENS, H = 1, 7, 16  # single token (naive single partial op)
+    B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
     LENGTH = 65536                 # sequence length
     NUM_PAGES = 1000             # number of pages in cache
@@ -294,12 +299,12 @@ def main():
     randperm = torch.randperm(NUM_PAGES, device='cuda')[:(LENGTH+PAGE_SIZE-1)//PAGE_SIZE].sort().values.int()
     table_tensor[sequence_ids, pos_ids] = randperm
 
-    # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], partial_pages=[1, 2, 1, 1])
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH])
+    # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], partial_pages=[1, 1, 1, 1])
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH*1//2], partial_pages=[1])
     
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=NUM_PROCESSORS)
-    # visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
-    Instructions, O_scratch, Lvec_scratch, Semaphore = create_arguments_from_task_schedule(
+    visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS
     )
     Table = table_tensor
@@ -335,10 +340,11 @@ def main():
     mla_decode.mla_decode(Instructions, query,
                           cache_view,
                           Table, O, O_scratch, Lvec_scratch, Semaphore,
-                          softmax_scale, 1)
+                          softmax_scale, 1, Timings)
     torch.cuda.synchronize()
     print("Kernel execution finished.")
     print("Kernel output O:\n", O)
+    O1 = O.clone()
     
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
@@ -351,7 +357,7 @@ def main():
         mla_decode.mla_decode(Instructions, query,
                             cache_view,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
-                            softmax_scale, _%2)
+                            softmax_scale, _%2, Timings)
         print(f'ran warmup kernel #{_}')
 
         torch.cuda.synchronize()
@@ -361,8 +367,7 @@ def main():
         mla_decode.mla_decode(Instructions, query,
                             cache_view,
                             Table, O, O_scratch, Lvec_scratch, Semaphore,
-                            softmax_scale, _%2)
-        # print(f'ran kernel #{_}')
+                            softmax_scale, _%2, Timings)
     
     torch.cuda.synchronize()
     end_event.record()
@@ -400,6 +405,58 @@ def main():
     print("Kernel output mean:", torch.mean(O.abs()))
     print("Max absolute diff:", torch.max(torch.abs(O - ref)))
     print("Avg absolute diff:", torch.mean(torch.abs(O - ref)))
+    print("Initial kernel output mean:", torch.mean(O1.abs()))
+    print("Initial Max absolute diff:", torch.max(torch.abs(O1 - ref)))
+    print("Initial Avg absolute diff:", torch.mean(torch.abs(O1 - ref)))
+
+    # Convert cycles to microseconds (1.8 GHz = 1800 MHz = 1.8 cycles/ns = 0.0018 cycles/us)
+    timings_us = Timings.float() / 1800
+
+    # Get unique instruction types for coloring
+    instruction_types = Instructions[:,:,0].unique()
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(instruction_types)))
+    color_map = dict(zip(instruction_types.cpu().numpy(), colors))
+
+    # Create Gantt chart
+    fig, ax = plt.subplots(figsize=(15, 8))
+    
+    # For each processor
+    for proc in range(Timings.shape[0]):
+        for instr in range(Timings.shape[1]):
+            start = timings_us[proc, instr, 0].item()
+            duration = timings_us[proc, instr, 1].item() - start
+            if duration > 0:  # Only plot if there was actual work
+                instr_type = Instructions[proc,instr,0].item()
+                ax.barh(proc, duration, left=start, 
+                       color=color_map[instr_type],
+                       alpha=0.7)
+
+    # Customize the chart
+    ax.set_xlabel('Time (microseconds)')
+    ax.set_ylabel('Processor ID')
+    ax.set_title('Instruction Execution Timeline')
+
+    # Add legend
+    legend_elements = [plt.Rectangle((0,0),1,1, facecolor=color_map[t.item()], 
+                      label=f'Instruction {t.item()}')
+                      for t in instruction_types]
+    ax.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1, 0.5))
+
+    plt.tight_layout()
+    plt.savefig(f'instruction_timeline_{int(time.time())}.png')
+
+    # Print timing statistics
+    print("\nTiming Statistics (microseconds):")
+    print(f"Average instruction time: {timings_us.mean():.3f}")
+    print(f"Max instruction time: {timings_us.max():.3f}")
+    print(f"Total execution time: {timings_us.sum():.3f}")
+    print("\nBy instruction type:")
+    for instr_type in instruction_types:
+        mask = Instructions[:,:,0] == instr_type
+        mean_time = timings_us[mask].mean()
+        print(f"Instruction {instr_type.item()}: {mean_time:.3f}")
+
+    breakpoint()
 
 if __name__ == '__main__':
     main()
