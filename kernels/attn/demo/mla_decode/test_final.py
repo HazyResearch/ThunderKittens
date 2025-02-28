@@ -312,6 +312,8 @@ def main():
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     total = LENGTH  # for one sequence
     latent = (torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10)
+
+    latent[..., -D_QRot:] = 0.
     
     expanded = latent.expand(total, H, D_QK)
     maximum = LENGTH
@@ -335,6 +337,8 @@ def main():
     softmax_scale = 1.0 / math.sqrt(D_QK)
     
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
+
+    query[..., -D_QRot:] = 0.
     '''
     Changes to the interface:
     - QRot is now (B, NEW_TOKENS, H, D_QRot)
@@ -342,10 +346,10 @@ def main():
     - K_cache is now (B, NUM_PAGES, PAGE_SIZE, D_QRot)
     - V_cache is now (B, NUM_PAGES, PAGE_SIZE, D_VO)
     '''
-    query_rot = query[..., :D_QRot].contiguous()
-    query_v = query[..., D_QRot:].contiguous()
-    K_cache = cache_view[..., :D_QRot].contiguous()
-    V_cache = cache_view[..., D_QRot:].contiguous()
+    query_rot = query[..., -D_QRot:].contiguous()
+    query_v = query[..., :-D_QRot].contiguous()
+    K_cache = cache_view[..., -D_QRot:].contiguous()
+    V_cache = cache_view[..., :-D_QRot].contiguous()
 
     print("Launching MLA decode kernel...")
     mla_decode.mla_decode(Instructions, query_rot, query_v,
