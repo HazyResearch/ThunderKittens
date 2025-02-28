@@ -100,10 +100,10 @@ struct partial_template {
                 int global_load_idx = args.iter % ITERS_PER_PAGE;
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, (args.common.start_pos/PAGE_SIZE) + (args.iter/ITERS_PER_PAGE)}];
                 // next page we need to load?
-                // tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
-                tma::expect(args.inputs_arrived, args.input.vcache);
+                tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
+                // tma::expect(args.inputs_arrived, args.input.vcache);
                 // cache shape is 1, # pages, page size, QK_D
-                // tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
                 tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
             }
             else if(laneid() == 0) arrive(args.inputs_arrived);
@@ -116,10 +116,10 @@ struct partial_template {
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
-            // if (warpgroup::groupid() == 0) {
-            //     auto qrot_st = subtile_inplace<16, QKRot_D>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
-            //     load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            // }
+            if (warpgroup::groupid() == 0) {
+                auto qrot_st = subtile_inplace<16, QKRot_D>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
+                load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            }
             auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
             load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             load_async_wait();
@@ -138,8 +138,8 @@ struct partial_template {
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
                 rt_fl<16, kcache_tile::rows> att_block_fp32;
-                // warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
-                warpgroup::mm_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
+                warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
+                warpgroup::mma_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
 
                 mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 

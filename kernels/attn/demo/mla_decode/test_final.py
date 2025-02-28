@@ -313,8 +313,6 @@ def main():
     total = LENGTH  # for one sequence
     latent = (torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10)
 
-    latent[..., -D_QRot:] = 0.
-    
     expanded = latent.expand(total, H, D_QK)
     maximum = LENGTH
     padded_key = torch.zeros((B, maximum, H, D_QK), dtype=torch.bfloat16).cuda()
@@ -338,7 +336,6 @@ def main():
     
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
 
-    query[..., -D_QRot:] = 0.
     '''
     Changes to the interface:
     - QRot is now (B, NEW_TOKENS, H, D_QRot)
