@@ -276,12 +276,12 @@ def sample_schedule_generator(page_size: int = 256, new_tokens: int = 1, lengths
 # ----------------------------------------------------------------------
 # Main test script (integrating the reference page table creation)
 # ----------------------------------------------------------------------
-def main():
+def main(length: int = 65536):
     D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
-    LENGTH = 65536                 # sequence length
+    LENGTH = length               # sequence length
     NUM_PAGES = 1000             # number of pages in cache
     NUM_PROCESSORS = 132         # number of processors
 
@@ -300,7 +300,8 @@ def main():
     table_tensor[sequence_ids, pos_ids] = randperm
 
     # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], partial_pages=[1, 1, 1, 1])
-    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH*1//2], partial_pages=[1])
+    # tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH*1//2], partial_pages=[1])
+    tasks = sample_schedule_generator(page_size=PAGE_SIZE, new_tokens=NEW_TOKENS, lengths=[LENGTH], partial_pages=[1])
     
     scheduled_tasks = priority_schedule_tasks(tasks, num_processors=NUM_PROCESSORS)
     visualize_schedule(scheduled_tasks, num_processors=NUM_PROCESSORS)
@@ -355,7 +356,7 @@ def main():
                           softmax_scale, 1, Timings)
     torch.cuda.synchronize()
     print("Kernel execution finished.")
-    print("Kernel output O:\n", O)
+    # print("Kernel output O:\n", O)
     O1 = O.clone()
     
     start_event = torch.cuda.Event(enable_timing=True)
@@ -384,7 +385,7 @@ def main():
     torch.cuda.synchronize()
     end_event.record()
     torch.cuda.synchronize()
-    
+
     elapsed_time = start_event.elapsed_time(end_event)
     avg_time = elapsed_time / num_iters
     print(f"Average kernel execution time: {avg_time*1000:.3f} us")
@@ -411,7 +412,18 @@ def main():
         scale=softmax_scale,
         enable_gqa=False,
     ).transpose(1, 2)
-    
+
+    print("Testing correctness...")
+    diffs = []
+    for _ in range(num_iters * 10):
+        mla_decode.mla_decode(Instructions, query_rot, query_v,
+                            K_cache, V_cache,
+                            Table, O, O_scratch, Lvec_scratch, Semaphore,
+                            softmax_scale, _%2, Timings)
+        max_diff = torch.abs(O - ref).max()
+        mean_diff = torch.abs(O - ref).mean()
+        diffs.append((max_diff, mean_diff))
+
     # print("Reference output:\n", ref)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean:", torch.mean(O.abs()))
@@ -420,6 +432,11 @@ def main():
     print("Initial kernel output mean:", torch.mean(O1.abs()))
     print("Initial Max absolute diff:", torch.max(torch.abs(O1 - ref)))
     print("Initial Avg absolute diff:", torch.mean(torch.abs(O1 - ref)))
+
+    diffs_tensor = torch.tensor(diffs)
+    print(f"Max of max diffs over {num_iters*10} iterations:", diffs_tensor[:, 0].max())
+    print(f"Mean of mean diffs over {num_iters*10} iterations:", diffs_tensor[:, 1].mean())
+    print(f"Num iterations with nans: {((diffs_tensor[:, 0].isnan() | diffs_tensor[:, 1].isnan()).sum())}")
 
     # Convert cycles to microseconds (1.8 GHz = 1800 MHz = 1.8 cycles/ns = 0.0018 cycles/us)
     timings_us = Timings.float() / 1800
@@ -471,4 +488,6 @@ def main():
     breakpoint()
 
 if __name__ == '__main__':
-    main()
+    import sys
+    length = int(sys.argv[1]) if len(sys.argv) > 1 else 65536
+    main(length)
