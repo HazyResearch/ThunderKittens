@@ -103,7 +103,8 @@ struct partial_template {
                 int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
                 // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.vcache, args.input.kcache);
+                tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
+                // tma::expect(args.inputs_arrived, args.input.vcache);
                 // cache shape is 1, # pages, page size, QK_D
                 tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
                 tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
@@ -180,8 +181,8 @@ struct partial_template {
             mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
 
             // O += A @ V
-            auto (&v_tile)[2] = reinterpret_cast<vcache_tile2(&)[2]>(args.input.vcache);
-            warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_tile[warpgroup::groupid()]);
+            auto (&v_smem)[2] = reinterpret_cast<vcache_tile2(&)[2]>(args.input.vcache);
+            warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_smem[warpgroup::groupid()]);
 
             copy(args.state.max_vec, local_max_vec);
             copy(args.state.norm_vec, local_norm_vec);

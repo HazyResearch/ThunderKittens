@@ -15,12 +15,12 @@ from timings import save_gantt_chart
 # ----------------------------------------------------------------------
 # Main test script (integrating the reference page table creation)
 # ----------------------------------------------------------------------
-def main():
+def main(length: int = 65536):
     D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
-    LENGTH = 65536                 # sequence length
+    LENGTH = length               # sequence length
     NUM_PAGES = 1000             # number of pages in cache
     NUM_PROCESSORS = 132         # number of processors
 
@@ -38,32 +38,6 @@ def main():
     randperm = torch.randperm(NUM_PAGES, device='cuda')[:(LENGTH+PAGE_SIZE-1)//PAGE_SIZE].sort().values.int()
     table_tensor[sequence_ids, pos_ids] = randperm
 
-
-    # chunking_4671 = [544]*9
-    # chunking_1750 = [448]*4
-    # chunking_1701 = [448]*4
-    # chunking_45096 = [[288,320,320,320,384,384,384,416,416,416,416,448,448,448,448,448]]*7
-    # chunking_45096 = [
-    #     x+32*i-3*32 for i, piece in enumerate(chunking_45096) for x in piece
-    # ]
-    # chunking_45096.extend([min(45096-sum(chunking_45096)-i, 384) for i in range(0, 45096-sum(chunking_45096), 384)])
-    CHUNK_SIZE = 416
-    chunking_4671 = [CHUNK_SIZE]*math.ceil(4671/CHUNK_SIZE)
-    chunking_1750 = [CHUNK_SIZE]*math.ceil(1750/CHUNK_SIZE) # will cut at end
-    chunking_1701 = [CHUNK_SIZE]*math.ceil(1701/CHUNK_SIZE) # will cut at end
-    chunking_45096 = [CHUNK_SIZE]*math.ceil(45096/CHUNK_SIZE)
-    chunkings = [chunking_4671, chunking_45096, chunking_1750, chunking_1701]
-
-    # tasks = sample_schedule_generator(new_tokens=NEW_TOKENS, lengths=[4671, 45096, 1750, 1701], chunkings=chunkings)
-    # tasks, _ = generate_backward_tasks(
-    #     batch_id=0,
-    #     sequence_length=LENGTH,
-    #     num_processors=NUM_PROCESSORS,
-    #     final_time=None,
-    #     starting_id=0,
-    #     new_tokens=NEW_TOKENS
-    # )
-    # scheduled_tasks, _ = backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3], 0)
     # seq_lengths = sorted([LENGTH])
     seq_lengths = sorted([4671, 1750, 1701, 45096]*2)
     # Begin crappy heuristic to decide processor assignments.
@@ -79,7 +53,6 @@ def main():
     for batch_id, (seq_l, start_p, num_p) in enumerate(zip(seq_lengths, start_processors, num_processors)):
         new_tasks, partial_uid, reduction_uid = backward_schedule(list(range(start_p, start_p+num_p)), batch_id, seq_l, [0, 1, 2, 3], partial_uid, reduction_uid)
         scheduled_tasks.extend(new_tasks)
-    # scheduled_tasks, _ = backward_schedule(list(range(start_processors, start_processors+num_processors)), 0, 45096, [0, 1, 2, 3], 0)
     # scheduled_tasks, _ = backward_schedule(list(range(NUM_PROCESSORS)), 0, LENGTH, [0, 1, 2, 3], 0)
     # tasks = sample_schedule_generator(new_tokens=NEW_TOKENS, lengths=[LENGTH], chunkings=[512])
     # tasks = sample_schedule_generator(new_tokens=NEW_TOKENS, lengths=seq_lengths, chunkings=[416,416,416,416])
@@ -93,7 +66,7 @@ def main():
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     total = LENGTH  # for one sequence
     latent = (torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10)
-    
+
     expanded = latent.expand(total, H, D_QK)
     maximum = LENGTH
     padded_key = torch.zeros((B, maximum, H, D_QK), dtype=torch.bfloat16).cuda()
@@ -116,6 +89,7 @@ def main():
     softmax_scale = 1.0 / math.sqrt(D_QK)
     
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
+
     '''
     Changes to the interface:
     - QRot is now (B, NEW_TOKENS, H, D_QRot)
@@ -123,10 +97,10 @@ def main():
     - K_cache is now (B, NUM_PAGES, PAGE_SIZE, D_QRot)
     - V_cache is now (B, NUM_PAGES, PAGE_SIZE, D_VO)
     '''
-    query_rot = query[..., :D_QRot].contiguous()
-    query_v = query[..., D_QRot:].contiguous()
-    K_cache = cache_view[..., :D_QRot].contiguous()
-    V_cache = cache_view[..., D_QRot:].contiguous()
+    query_rot = query[..., -D_QRot:].contiguous()
+    query_v = query[..., :-D_QRot].contiguous()
+    K_cache = cache_view[..., -D_QRot:].contiguous()
+    V_cache = cache_view[..., :-D_QRot].contiguous()
 
     print("Launching MLA decode kernel...")
     mla_decode.mla_decode(Instructions, query_rot, query_v,
@@ -135,7 +109,7 @@ def main():
                           softmax_scale, 1, Timings)
     torch.cuda.synchronize()
     print("Kernel execution finished.")
-    print("Kernel output O:\n", O)
+    # print("Kernel output O:\n", O)
     O1 = O.clone()
     
     start_event = torch.cuda.Event(enable_timing=True)
@@ -164,7 +138,7 @@ def main():
     torch.cuda.synchronize()
     end_event.record()
     torch.cuda.synchronize()
-    
+
     elapsed_time = start_event.elapsed_time(end_event)
     avg_time = elapsed_time / num_iters
     print(f"Average kernel execution time: {avg_time*1000:.3f} us")
@@ -191,7 +165,18 @@ def main():
         scale=softmax_scale,
         enable_gqa=False,
     ).transpose(1, 2)
-    
+
+    print("Testing correctness...")
+    diffs = []
+    for _ in range(num_iters * 10):
+        mla_decode.mla_decode(Instructions, query_rot, query_v,
+                            K_cache, V_cache,
+                            Table, O, O_scratch, Lvec_scratch, Semaphore,
+                            softmax_scale, _%2, Timings)
+        max_diff = torch.abs(O - ref).max()
+        mean_diff = torch.abs(O - ref).mean()
+        diffs.append((max_diff, mean_diff))
+
     # print("Reference output:\n", ref)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean:", torch.mean(O.abs()))
@@ -206,4 +191,6 @@ def main():
     breakpoint()
 
 if __name__ == '__main__':
-    main()
+    import sys
+    length = int(sys.argv[1]) if len(sys.argv) > 1 else 65536
+    main(length)
