@@ -72,7 +72,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timing};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timings};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
@@ -126,7 +126,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timing};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timings};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
@@ -190,7 +190,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timing};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timings};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
@@ -238,7 +238,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timing};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction, ps.timings};
         Op::common_setup(unif);
         if(num_iters <= 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
@@ -308,6 +308,11 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     auto tmem_alloc = allocate_tmem<1>(); // NUM_BLOCKS is hardcoded as 1 for the interpreter.
     auto &all_tmem = reinterpret_cast<tmem<float, 128, 512>&>(tmem_alloc);
 #endif
+    __shared__ uint64_t timings[2][64]; // We'll allow 64 separate timing events, per instruction.
+    if(threadIdx.x < 64) { // 0 them all to start.
+        timings[0][threadIdx.x] = 0;
+        timings[1][threadIdx.x] = 0;
+    }
     __shared__ __align__(16) int instructions[2][globals.instructions.cols()];
     __shared__ kittens::semaphore inputs_arrived[8], inputs_finished[8], outputs_arrived[8], outputs_finished[8], finish_finished, instruction_arrived[2], instruction_finished[2];
     if(warpid() == 0) {
@@ -340,15 +345,18 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
         warpgroup::increase_registers<232>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows(); ps.task_iter++) {
             ps.instruction = &instructions[ps.task_iter%2][0];
+            ps.timings = &timings[ps.task_iter%2][0];
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
             if(opcode == 0) return; // Stop Op
             dispatch_consumer<config, ops...>::run(opcode, globals, ps);
-            if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
-            if(group<8>::laneid() == 0) {
-                globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 0}] = (int)(ps.timing.start - kernel_start);
-                globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, 1}] = (int)(ps.timing.end - kernel_start);
+            if(threadIdx.x < 64) {
+                if(ps.timings[threadIdx.x] != 0) {
+                    globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, (int)(threadIdx.x)}] = (int)(ps.timings[threadIdx.x] - kernel_start);
+                    ps.timings[threadIdx.x] = 0;
+                }
             }
+            if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
     else { // PRODUCER WARPS
@@ -364,6 +372,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
                 load_instructions<config>(ps.instruction, ps.task_iter+1, globals, instruction_arrived[(ps.task_iter+1)%2]); // load next instruction into previous location
             }
             ps.instruction = &instructions[ps.task_iter%2][0]; // Update to the new one
+            ps.timings = &timings[ps.task_iter%2][0];
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
             if(opcode == 0) return; // Stop Op

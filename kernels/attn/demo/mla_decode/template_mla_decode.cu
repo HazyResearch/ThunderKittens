@@ -10,7 +10,7 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256, ITERS_PER_PAGE = PAGE_SIZE / NUM_ROWS;
+static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256;
 using qrot_tile           = st_bf<64, QKRot_D>;
 using qvo_tile            = st_bf<64, QVO_D>;
 using q_global            = kittens::gl<bf16, -1, -1, -1, QKRot_D, qrot_tile>; // B * R * H * D_QKRot_D
@@ -46,7 +46,7 @@ struct config {
         semaphore_global semaphore;
         const float Softmax_scale;
         int tic;
-        gl<int, 1, -1, -1, 2> timings;
+        gl<int, 1, -1, -1, 64> timings;
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
@@ -80,8 +80,9 @@ struct partial_template {
     using config = config;
     using layout = partial_layout;
     static constexpr int opcode = 1;
-    static constexpr int INPUT_PIPE_STAGES = 2;
+    static constexpr int INPUT_PIPE_STAGES = 3;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
+        if(group<12>::laneid() == 0) args.timings[0] = clock64();
         args.common.uid         =  args.instruction[1];
         args.common.dst         = {args.instruction[2],
                                    args.instruction[3]};
@@ -96,48 +97,54 @@ struct partial_template {
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
+            if(args.iter == 1) group<12>::sync(10); // wait for the consumer to finish its setup, before we do the second load.
             if(warpgroup::warpid() == 0) {
-                int global_load_idx = args.iter % ITERS_PER_PAGE;
-                int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, (args.common.start_pos/PAGE_SIZE) + (args.iter/ITERS_PER_PAGE)}];
+                int pos = args.common.start_pos + NUM_ROWS*args.iter;
+                int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
+                int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
                 // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
+                tma::expect(args.inputs_arrived, args.input.vcache, args.input.kcache);
                 // cache shape is 1, # pages, page size, QK_D
-                tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
-                tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, global_load_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
-            else if(laneid() == 0) arrive(args.inputs_arrived);
+            else if(warpgroup::laneid() == 32 && args.iter < 24) args.timings[32+args.iter] = clock64();
             warpgroup::sync(5);
         }
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
-            args.timing.start = clock64();
+            if(group<8>::laneid() == 0) args.timings[1] = clock64();
+            auto qrot_st = subtile_inplace<16, QKRot_D/2>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
+            load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
+            load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
-            if (warpgroup::groupid() == 0) {
-                load_async(args.scratch.qrot, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            }
-            auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
-            load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             load_async_wait();
-            group<8>::sync(10);
+            group<12>::sync(10); // this <12> will allow us to prevent the second producer load from happening before this point.
+            if(group<8>::laneid() == 0) args.timings[2] = clock64();
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
             // 1.44269504089f is from exp2
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
+            if(group<8>::laneid() == 0 && args.iter < 24) args.timings[8+args.iter] = clock64();
 
             col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, kcache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
-            copy(local_max_vec,  args.state.max_vec);
-            copy(local_norm_vec, args.state.norm_vec);
+            kittens::barrier<8> cons_barrier(10);
 
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
                 rt_fl<16, kcache_tile::rows> att_block_fp32;
                 warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
                 warpgroup::mma_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
+
+                copy(local_max_vec,  args.state.max_vec);
+                copy(local_norm_vec, args.state.norm_vec);
 
                 mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
@@ -163,10 +170,13 @@ struct partial_template {
                 mul(local_norm_vec, local_norm_vec, max_vec_last_scaled);
                 row_sum(local_norm_vec, att_block_fp32, local_norm_vec);
                 warpgroup::store(args.scratch.att_block, att_block_fp32);
+                arrive(cons_barrier);
             }
-            group<8>::sync(10);
+            else {
+                arrive_and_wait(cons_barrier);
+                warpgroup::load(max_vec_last_scaled, args.scratch.max_vec);
+            }
 
-            warpgroup::load(max_vec_last_scaled, args.scratch.max_vec);
             mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
 
             // O += A @ V
@@ -188,6 +198,8 @@ struct partial_template {
 
             copy(local_norm_vec, args.state.norm_vec);
             copy(local_max_vec, args.state.max_vec);
+
+            if(group<8>::laneid() == 0) args.timings[62] = clock64(); // Start of store out.
 
             if (warpgroup::groupid() == 0) warpgroup::store(args.scratch.norm_vec, local_norm_vec);
             group<8>::sync(10);
@@ -218,26 +230,24 @@ struct partial_template {
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
                 if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth()) {
+                    // Todo: this can probably replaced by a st.async, which may prevent an expensive wait on the final finish barrier.
                     args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
-            args.timing.end = clock64();
+            else if(group<8> ::laneid() == 32) args.timings[63] = clock64();
         }
     };
 };
 struct reduction_layout {
     using globals = config::globals;
     struct input_block   { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
-    struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; }; // used both for setup load and finish store
+    struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; semaphore producer_block; }; // used both for setup load and finish store
     struct common_state {
         int uid;
         // int num_iters; // same as the number of active load_uid's, marked here for instruction clarity but we just use args.num_iters instead.
         location dst; // again, negative batch means we're writing to O scratch, seq_idx is consistent
         int src_uid;
-    };
-    struct producer_state {
-        int load_uid[26];
     };
     struct consumer_state {
         rt_fl<16, QVO_D/8> o;
@@ -250,25 +260,25 @@ struct reduction_template {
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
+        if(group<12>::laneid() == 0) args.timings[0] = clock64();
         args.common.uid     =  args.instruction[1];
         args.num_iters      =  args.instruction[2];
         args.common.dst     = {args.instruction[3],
                                args.instruction[4]};
         args.common.src_uid =  args.instruction[5];
+        if(warpid() == 0) init_semaphore(args.scratch.producer_block, 0, 1);
+        group<12>::sync(11);
     }
     struct producer {
-        __device__ static inline void setup(producer_setup_args<layout> args) {
-            #pragma unroll
-            for(int i = 0; i < 26; i++) {
-                args.state.load_uid[i] = args.instruction[6+i];
-            }
-        }
+        __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
                 // spinloop until we're ready
-                int load_uid = args.state.load_uid[args.iter];
+                int load_uid = args.instruction[6+args.iter];
                 if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] != args.globals.tic) {}
                 __syncwarp();
+                if(args.iter > 0) wait(args.scratch.producer_block, 0);
+                if(laneid() == 0 && args.iter < 24) args.timings[32+args.iter] = clock64();
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
                 #pragma unroll
@@ -287,7 +297,7 @@ struct reduction_template {
                 while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] != args.globals.tic) {} // note volatile, L1 is not guaranteed to be coherent.
             }
             group<8>::sync(11); // all warps must sync here.
-            args.timing.start = clock64(); // Now the instruction really starts.
+            if(group<8>::laneid() == 0) args.timings[1] = clock64();
             load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
             if(warpid() == 0) {
                 load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0});
@@ -295,10 +305,13 @@ struct reduction_template {
             load_async_wait();
             __syncwarp();
             load(args.state.o, args.scratch.o[group<8>::warpid()]);
-            group<8>::sync(11); // all warps must sync here.
+            group<8>::sync(11); // we use this to also stall the producer until the consumer is ready.
+            if(group<8>::laneid() == 0) arrive(args.scratch.producer_block);
+            if(group<8>::laneid() == 0) args.timings[2] = clock64();
             load(args.state.lvec, args.scratch.lvec);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
+            if(group<8>::laneid() == 0 && args.iter < 24) args.timings[8+args.iter] = clock64();
             col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
             rt_fl<16, QVO_D / 8> o;
             load(o, args.input.o[group<8>::warpid()]);
@@ -320,6 +333,7 @@ struct reduction_template {
             add(args.state.lvec, sum_lvec, max_lvec);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
+            if(group<8>::laneid() == 0) args.timings[62] = clock64();
             if(args.common.dst.batch_idx >= 0) {
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
                 store(o_smem, args.state.o);
@@ -342,48 +356,10 @@ struct reduction_template {
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
-            args.timing.end = clock64();
+            else if(group<8>::laneid() == 32) args.timings[63] = clock64();
         }
     };
 };
-// union task {
-//     struct {
-//         int type; // 1 for partial, 2 for reduction
-//         int batch_id;
-//         int token_ids[4];
-//         int start_pos, end_pos, seq_length; // only used for partial tasks.
-//         std::string name; // for debugging
-//         float start, finish;
-//         int processor; // -1 if not assigned
-//         bool write_scratch; // is output direct or to scratch?
-//     } partial;
-//     struct {
-//         int type; // 1 for partial, 2 for reduction
-//         int batch_id;
-//         int token_id;
-//         std::string name; // for debugging
-//         float start, finish;
-//         std::vector<int> dependencies; // for reductions.
-//         int processor; // -1 if not assigned
-//         bool write_scratch; // is output direct or to scratch?
-//     } reduction;
-// };
-// void make_schedule(int num_processors, std::vector<int> sequences) {
-//     std::sort(sequences.begin(), sequences.end(), [](int a, int b) { return a > b; }); // sort in descending order
-
-//     int total_partial_work = std::accumulate(sequences.begin(), sequences.end(), 0, [](int a, int b) { return a + ((b+NUM_ROWS-1) / NUM_ROWS); }); // in units of cache_tile's
-//     // We'd like to have partials scheduled so that they:
-//     // - Minimize the number of reductions we need to do.
-//     // - Balance the load across processors.
-
-//     // First we want to figure out how many partial's we want to actually schedule.
-//     int num_
-
-//     std::vector< std::vector<int> > schedule(num_processors);
-//     for(auto seq_len : sequences) {
-
-//     }
-// }
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
