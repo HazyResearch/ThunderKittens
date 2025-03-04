@@ -195,8 +195,8 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
-    print('Final finish time:', max(t.finish for t in tasks))
-    print('Max number of dependencies:', max(len(t.dependencies) for t in tasks))
+    # print('Final finish time:', max(t.finish for t in tasks))
+    # print('Max number of dependencies:', max(len(t.dependencies) for t in tasks))
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
     O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')

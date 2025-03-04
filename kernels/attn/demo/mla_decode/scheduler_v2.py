@@ -10,10 +10,14 @@ PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
 PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
-REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
+REDUCTION_STARTUP_TIME = 10.0       # Startup time for reduction operations
 REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
 REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
 REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
+# REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
+# REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
+# REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
+# REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
 
 SYNCHRONIZATION_COST = 0.5         # Synchronization cost between dependent operations
 
@@ -115,7 +119,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
 
     # current_cost = get_quality(available_inputs, num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
     current_cost = __get_quality__([-x[0] for x in available_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
-    print(f"Single reduction timing: {-current_cost} us")
+    # print(f"Single reduction timing: {-current_cost} us")
 
     while True:
         # Let's see what would happen if we added a new reduction task.
@@ -136,7 +140,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         heapq.heappush(speculative_inputs, (-new_task.next_input_time, new_task)) # None because it's speculative, anyways.
         heapq.heappush(speculative_inputs, (-((-neg_latest_time) - REDUCTION_COST_PER_STEP), parent_task)) # None because it's speculative, anyways.
         spec_cost = __get_quality__([-x[0] for x in speculative_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
-        print('Speculative cost: ', spec_cost)
+        # print('Speculative cost: ', spec_cost)
         if spec_cost > current_cost:
             available_inputs = speculative_inputs # Commit to this new solution.
             parent_task.dependencies = [new_task.uid] + parent_task.dependencies # Add to the start of the dependencies of the parent task.
@@ -145,11 +149,11 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             # Actually add the task. But in the meantime, we'll just pretend it's been done.
             tasks[processors[p_idx]].append(new_task)
             reduction_uid, p_idx = reduction_uid+1, (p_idx+1) % NUM_PROCESSORS # advance indices, now that we are committing.
-            print(f'Better solution found with {len(speculative_inputs)} reduction operations -- expected kernel time: {-round(current_cost, 2)} us.')
+            # print(f'Better solution found with {len(speculative_inputs)} reduction operations -- expected kernel time: {-round(current_cost, 2)} us.')
         else:
             break
 
-    print(f"Optimal kernel time: {-round(current_cost, 2)} us with {len(available_inputs)} reduction operations.")
+    # print(f"Optimal kernel time: {-round(current_cost, 2)} us with {len(available_inputs)} reduction operations.")
 
     # Next, we need to clone this schedule for all of the other tokens.
     base_reduction_tasks = sorted([t for tasks in tasks.values() for t in tasks], key=lambda x: x.next_input_time, reverse=True)
@@ -216,7 +220,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     for p in processors:
         for task in tasks[p]:
             task.start = task.next_input_time + REDUCTION_PRODUCER_LATENCY - REDUCTION_STARTUP_TIME
-            print(task.uid, task.name, task.processor, task.dependencies, task.start, task.finish)
+            # print(task.uid, task.name, task.processor, task.dependencies, task.start, task.finish)
             
     # Alright, now that the work has been allocated, we can go through and actually create the tasks.
     current_pos = 0
@@ -234,7 +238,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             args={"start": current_pos, "end": min(current_pos+v[2]*32, seq_length), "length": seq_length, "write_scratch": True}
         ))
         current_pos += v[2]*32
-        print(f'Processor {p}\'s partials run {v[2]} steps from seq {tasks[p][-1].args["start"]}-{tasks[p][-1].args["end"]}, with expected start time {round(tasks[p][-1].start, 2)} and finish time {round(tasks[p][-1].finish, 2)}.')
+        # print(f'Processor {p}\'s partials run {v[2]} steps from seq {tasks[p][-1].args["start"]}-{tasks[p][-1].args["end"]}, with expected start time {round(tasks[p][-1].start, 2)} and finish time {round(tasks[p][-1].finish, 2)}.')
 
     for p, p_tasks in tasks.items():
         earliest_start = p_tasks[-1].start
