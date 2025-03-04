@@ -85,6 +85,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             name=f"Partial_B={batch_id}_Tok={tok_ids}_ALL",
             task_type="partial",
             dependencies=[],
+            processor=processors[0],
             start=-duration,
             finish=0,
             args={"start": 0, "end": seq_length, "length": seq_length, "write_scratch": False}
