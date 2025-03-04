@@ -18,7 +18,7 @@ from timings import save_gantt_chart
 def main(length: int = 65536):
     D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
-    B, NEW_TOKENS, H = 1, 4, 16  # single token (naive single partial op)
+    B, NEW_TOKENS, H = 1, 1, 16  # single token (naive single partial op)
     MAX_LENGTH = 65536
     LENGTH = length               # sequence length
     NUM_PAGES = 1000             # number of pages in cache
@@ -51,7 +51,7 @@ def main(length: int = 65536):
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks, partial_uid, reduction_uid = [], 0, len(num_processors)
     for batch_id, (seq_l, start_p, num_p) in enumerate(zip(seq_lengths, start_processors, num_processors)):
-        new_tasks, partial_uid, reduction_uid = backward_schedule(list(range(start_p, start_p+num_p)), batch_id, seq_l, [0, 1, 2, 3], partial_uid, reduction_uid)
+        new_tasks, partial_uid, reduction_uid = backward_schedule(list(range(start_p, start_p+num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid)
         scheduled_tasks.extend(new_tasks)
     # scheduled_tasks, _ = backward_schedule(list(range(NUM_PROCESSORS)), 0, LENGTH, [0, 1, 2, 3], 0)
     # tasks = sample_schedule_generator(new_tokens=NEW_TOKENS, lengths=[LENGTH], chunkings=[512])
