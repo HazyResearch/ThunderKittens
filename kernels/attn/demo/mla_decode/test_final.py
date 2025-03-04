@@ -58,43 +58,89 @@ def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int)
     return scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 
-def initialize_data(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int, NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor):
+def initialize_data(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int,
+                    NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor):
     total = LENGTH
     latent = torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10
     expanded = latent.expand(total, H, D_QK)
     
-    # padded_key and padded_value are allocated for the entire sequence length
-    padded_key = torch.zeros((B, LENGTH, H, D_QK), dtype=torch.bfloat16).cuda()
-    padded_value = torch.zeros((B, LENGTH, H, D_VO), dtype=torch.bfloat16).cuda()
+    # Create sequence indices for mapping latent data to cache
     seq_ids, pos_ids = (
         torch.arange(LENGTH, device='cuda')[None, :].expand(B, -1)
         .lt(torch.tensor([LENGTH], device='cuda').view(-1, 1))
         .nonzero(as_tuple=True)
     )
-
-    # Fill cache using the page table
+    
+    # Fill cache using the page table mapping
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     entry_ids = table_tensor[seq_ids, pos_ids.floor_divide(PAGE_SIZE)]
     column_ids = pos_ids.fmod(PAGE_SIZE)
-    cache[entry_ids, column_ids] = latent  # / math.sqrt(D_QK)
+    cache[entry_ids, column_ids] = latent  # Write latent into cache
 
-    # Create query and output tensor
+    # For the reference (SDPA) kernel, we derive padded_key and padded_value
+    padded_key = cache[entry_ids, column_ids].expand(B, LENGTH, H, D_QK)
+    padded_value = cache[entry_ids, column_ids].expand(B, LENGTH, H, D_QK)[..., :D_VO]
+    
+    # Create query and output tensor (common to both TK and SDPA)
     query = torch.randn((B, 1, H, D_QK), dtype=torch.bfloat16).cuda() / math.sqrt(D_QK)
     O = torch.zeros((B, 1, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
+    
     return cache, latent, expanded, padded_key, padded_value, seq_ids, pos_ids, query, O
 
 
 def prepare_query_cache(query: torch.Tensor, cache: torch.Tensor, D_QRot: int, NUM_PAGES: int, PAGE_SIZE: int):
     B, NEW_TOKENS, H, D_QK = query.shape
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
+    
     query_rot = query[..., -D_QRot:].contiguous()
-    query_v = query[..., :-D_QRot].contiguous()
+    query_v   = query[..., :-D_QRot].contiguous()
+    
     K_cache = cache_view[..., -D_QRot:].contiguous()
     V_cache = cache_view[..., :-D_QRot].contiguous()
+    
     return query_rot, query_v, K_cache, V_cache
 
 
-def launch_kernel(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, flag, Timings):
+def initialize_data_and_views(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int,
+                              NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor,
+                              D_QRot: int):
+    """
+    (A) Initialize the latent data, cache, padded keys/values, query, and output tensor.
+    (B) Derive the query and cache views used by the TK kernel.
+    
+    dict containing:
+      - 'cache', 'latent', 'expanded', 'padded_key', 'padded_value',
+      - 'seq_ids', 'pos_ids', 'query', 'O',
+      - 'query_rot', 'query_v', 'K_cache', 'V_cache'
+    """
+    
+    # only initialize data
+    cache, latent, expanded, padded_key, padded_value, seq_ids, pos_ids, query, O = initialize_data(
+        B, LENGTH, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor
+    )
+    
+    # create the query and cache views (no initialization)
+    query_rot, query_v, K_cache, V_cache = prepare_query_cache(query, cache, D_QRot, NUM_PAGES, PAGE_SIZE)
+    
+    return {
+        'cache': cache,
+        'latent': latent,
+        'expanded': expanded,
+        'padded_key': padded_key,
+        'padded_value': padded_value,
+        'seq_ids': seq_ids,
+        'pos_ids': pos_ids,
+        'query': query,
+        'O': O,
+        'query_rot': query_rot,
+        'query_v': query_v,
+        'K_cache': K_cache,
+        'V_cache': V_cache
+    }
+
+
+def launch_kernel(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache,
+                  Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, flag, Timings):
     print("Launching MLA decode kernel...")
     mla_decode_module.mla_decode(
         Instructions, query_rot, query_v, K_cache, V_cache,
@@ -105,7 +151,9 @@ def launch_kernel(mla_decode_module, Instructions, query_rot, query_v, K_cache, 
     print("Kernel execution finished.")
 
 
-def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings, num_warmup=4, num_iters=1000):
+def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache,
+           Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
+           num_warmup=4, num_iters=1000):
     for i in range(num_warmup):
         mla_decode_module.mla_decode(
             Instructions, query_rot, query_v, K_cache, V_cache,
@@ -116,7 +164,7 @@ def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache
         torch.cuda.synchronize()
         
     start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    end_event   = torch.cuda.Event(enable_timing=True)
     print(f"\nTiming kernel over {num_iters} iterations...")
     start_event.record()
     for i in range(num_iters):
@@ -150,8 +198,6 @@ def test_correctness(mla_decode_module, Instructions, query_rot, query_v, K_cach
 
     from torch.nn.functional import scaled_dot_product_attention as sdpa
 
-    padded_key[seq_ids, pos_ids] = expanded  # / math.sqrt(D_QK)
-    padded_value[seq_ids, pos_ids] = expanded[..., :D_VO]  # / math.sqrt(D_QK)
     ref = sdpa(
         query=query.transpose(1, 2).float(),
         key=padded_key.transpose(1, 2).float(),
@@ -190,7 +236,6 @@ def finalize(Timings, Instructions):
 
 
 def main(length: int = 65536):
-    
     D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
     B, NEW_TOKENS, H = 1, 1, 16  # single token (naive single partial op)
@@ -204,32 +249,43 @@ def main(length: int = 65536):
     table_tensor, lengths, pt_seq_ids, pt_pos_ids = create_page_table(B, LENGTH, PAGE_SIZE, MAX_LENGTH, NUM_PAGES)
     Table = table_tensor 
 
-    # Processor scheduling (using a fixed list for demonstration)
+    # Processor scheduling
     seq_lengths = sorted([4671, 1750, 1701, 45096] * 2)
     scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = schedule_tasks(seq_lengths, NUM_PROCESSORS, NEW_TOKENS)
 
-    # initialization
-    cache, latent, expanded, padded_key, padded_value, seq_ids, pos_ids, query, O = initialize_data(
-        B, LENGTH, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor
-    )
+    # initialization:
+    data = initialize_data_and_views(B, LENGTH, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor, D_QRot)
+    
+    query        = data['query']
+    O            = data['O']
+    padded_key   = data['padded_key']
+    padded_value = data['padded_value']
+    query_rot    = data['query_rot']
+    query_v      = data['query_v']
+    K_cache      = data['K_cache']
+    V_cache      = data['V_cache']
+    cache        = data['cache']
+    seq_ids      = data['seq_ids']
+    pos_ids      = data['pos_ids']
+    expanded     = data['expanded']
+    
     softmax_scale = 1.0 / math.sqrt(D_QK)
 
-    # query and cache view
-    query_rot, query_v, K_cache, V_cache = prepare_query_cache(query, cache, D_QRot, NUM_PAGES, PAGE_SIZE)
-
     # TK kernel
-    launch_kernel(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
+    launch_kernel(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
+                  Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
     O1 = O.clone()
 
     # timing
     num_warmup = 4
     num_iters = 1000
-    timing(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings, num_warmup, num_iters)
+    timing(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
+           Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings, num_warmup, num_iters)
 
-    # reference implementation (scaled dot-product attention)
+    # SDPA ref
     test_correctness(
-        mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, Table,
-        O, O1, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
+        mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, 
+        Table, O, O1, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
         query, padded_key, padded_value, seq_ids, pos_ids, expanded, D_VO, D_QK, LENGTH, num_iters
     )
 
