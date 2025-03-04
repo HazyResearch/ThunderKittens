@@ -71,7 +71,6 @@ def main(seq_lengths: List[int]):
 
     # Create a latent tensor for each batch and fill the cache using the corresponding page table.
     latent_list = []
-    breakpoint()
     for b in range(B):
         l = seq_lengths[b]
         latent = (torch.randn((l, 1, D_QK), dtype=torch.bfloat16, device='cuda') * 10)
@@ -84,18 +83,6 @@ def main(seq_lengths: List[int]):
         pages = table_tensor[b, page_indices]
         # Note: assign the latent (squeezing out the singleton dimension) so that shape matches.
         cache[0, pages, col_indices] = latent[:, 0, :]
-
-    breakpoint()
-
-    # --- Prepare reference tensors for SDPA ---
-    padded_key = torch.zeros((B, max_length, H, D_QK), dtype=torch.bfloat16).cuda()
-    padded_value = torch.zeros((B, max_length, H, D_VO), dtype=torch.bfloat16).cuda()
-
-    for b in range(B):
-        l = seq_lengths[b]
-        expanded = latent_list[b].expand(l, H, D_QK)
-        padded_key[b, :l] = expanded
-        padded_value[b, :l] = expanded[..., :D_VO]
 
     # --- Query and output tensor ---
     query = (torch.randn((B, NEW_TOKENS, H, D_QK), dtype=torch.bfloat16).cuda() /
@@ -110,7 +97,6 @@ def main(seq_lengths: List[int]):
     K_cache = cache_view[..., -D_QRot:].contiguous()
     V_cache = cache_view[..., :-D_QRot].contiguous()
 
-    breakpoint()
     print("Launching MLA decode kernel...")
     mla_decode.mla_decode(Instructions, query_rot, query_v,
                           K_cache, V_cache,
@@ -158,6 +144,16 @@ def main(seq_lengths: List[int]):
     mask = (torch.arange(max_length, dtype=torch.int32, device='cuda')[None, None, None, :]
             .expand(B, H, NEW_TOKENS, -1)
             .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1)))
+
+        # --- Prepare reference tensors for SDPA ---
+    padded_key = torch.zeros((B, max_length, H, D_QK), dtype=torch.bfloat16).cuda()
+    padded_value = torch.zeros((B, max_length, H, D_VO), dtype=torch.bfloat16).cuda()
+
+    for b in range(B):
+        l = seq_lengths[b]
+        expanded = latent_list[b].expand(l, H, D_QK)
+        padded_key[b, :l] = expanded
+        padded_value[b, :l] = expanded[..., :D_VO]
 
     from torch.nn.functional import scaled_dot_product_attention as sdpa
     ref = sdpa(
