@@ -187,8 +187,8 @@ def main(seq_lengths: List[int]):
     print("Initial Avg absolute diff by batch:", [torch.abs(O1[b] - ref[b]).mean().item() for b in range(B)])
 
     diffs_tensor = torch.tensor(diffs, device='cuda') # (10k, 2, B)
-    print("Max diff by batch across iterations:", [torch.max(diffs_tensor[i, 0, b]).item() for b in range(B)])
-    print("Avg diff by batch across iterations:", [torch.mean(diffs_tensor[i, 1, b]).item() for b in range(B)])
+    print("Max diff by batch across iterations:", [torch.max(diffs_tensor[:, 0, b]).item() for b in range(B)])
+    print("Avg diff by batch across iterations:", [torch.mean(diffs_tensor[:, 1, b]).item() for b in range(B)])
 
     save_gantt_chart(Timings, Instructions)
 
