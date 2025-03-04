@@ -352,7 +352,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
             dispatch_consumer<config, ops...>::run(opcode, globals, ps);
             if(threadIdx.x < 64) {
                 if(ps.timings[threadIdx.x] != 0) {
-                    globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, (int)(threadIdx.x)}] = (int)(ps.timings[threadIdx.x] - kernel_start);
+                    globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, threadIdx.x}] = (int)(ps.timings[threadIdx.x] - kernel_start);
                     ps.timings[threadIdx.x] = 0;
                 }
             }
@@ -375,7 +375,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
             ps.timings = &timings[ps.task_iter%2][0];
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
-            if(opcode == 0) return; // Stop Op
+            if(opcode == 0) break; // Stop Op
             dispatch_producer<config, ops...>::run(opcode, globals, ps);
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }

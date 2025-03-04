@@ -1,11 +1,8 @@
-import torch
-import numpy as np
 import math
 import heapq
-import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
-import matplotlib.pyplot as plt
+from mla_decode import __get_quality__
 
 # Timing constants (in microseconds)
 PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
@@ -38,11 +35,6 @@ class Task:
         return self.uid < other.uid # just need a way to break ties.
 
 # Our goal is going to be to synthesize a reduction tree from the end, until we've covered all available processors with partial's that have to meet some end time.
-
-def calculate_partial_task_duration(seq_length: int) -> float:
-    steps = (seq_length + 31) // 32
-    return PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
-
 def get_quality(input_heap, num_processors: int, num_tokens: int, seq_length: int) -> float:
     num_partial_steps = (seq_length + 31) // 32
     if(len(input_heap)*num_tokens > num_processors): # This particular scheduler is just not set up to deal with these situations.
@@ -84,7 +76,8 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     
     NUM_PROCESSORS = len(processors)
     if NUM_PROCESSORS == 1:
-        duration = calculate_partial_task_duration(seq_length)
+        steps = (seq_length + 31) // 32
+        duration = PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
         return [Task(
             uid=partial_uid,
             batch_id=batch_id,
@@ -119,7 +112,8 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     reduction_uid, p_idx = reduction_uid+1, (p_idx+1) % NUM_PROCESSORS
 
 
-    current_cost = get_quality(available_inputs, num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
+    # current_cost = get_quality(available_inputs, num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
+    current_cost = __get_quality__([-x[0] for x in available_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
     print(f"Single reduction timing: {-current_cost} us")
 
     while True:
@@ -140,7 +134,8 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         new_task.next_input_time = new_task.finish - (REDUCTION_WRITEOUT_TIME + REDUCTION_PRODUCER_LATENCY + SYNCHRONIZATION_COST)
         heapq.heappush(speculative_inputs, (-new_task.next_input_time, new_task)) # None because it's speculative, anyways.
         heapq.heappush(speculative_inputs, (-((-neg_latest_time) - REDUCTION_COST_PER_STEP), parent_task)) # None because it's speculative, anyways.
-        spec_cost = get_quality(speculative_inputs, num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
+        spec_cost = __get_quality__([-x[0] for x in speculative_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
+        print('Speculative cost: ', spec_cost)
         if spec_cost > current_cost:
             available_inputs = speculative_inputs # Commit to this new solution.
             parent_task.dependencies = [new_task.uid] + parent_task.dependencies # Add to the start of the dependencies of the parent task.
@@ -239,6 +234,12 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         ))
         current_pos += v[2]*32
         print(f'Processor {p}\'s partials run {v[2]} steps from seq {tasks[p][-1].args["start"]}-{tasks[p][-1].args["end"]}, with expected start time {round(tasks[p][-1].start, 2)} and finish time {round(tasks[p][-1].finish, 2)}.')
+
+    for p, p_tasks in tasks.items():
+        earliest_start = p_tasks[-1].start
+        for t in p_tasks:
+            t.start -= earliest_start
+            t.finish -= earliest_start
 
     return [t for tasks in tasks.values() for t in tasks], partial_uid, reduction_uid
 

@@ -2,10 +2,6 @@
 #include "prototype.cuh"
 #include "pyutils/pyutils.cuh"
 
-#include <vector>
-#include <algorithm>
-#include <string>
-
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
@@ -97,7 +93,7 @@ struct partial_template {
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
-            if(args.iter == 1) group<12>::sync(10); // wait for the consumer to finish its setup, before we do the second load.
+            if(args.iter == 1) group<12>::sync(11); // wait for the consumer to finish its setup, before we do the second load.
             if(warpgroup::warpid() == 0) {
                 int pos = args.common.start_pos + NUM_ROWS*args.iter;
                 int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
@@ -125,7 +121,8 @@ struct partial_template {
             neg_infty(args.state.max_vec);
             zero(args.state.o);
             load_async_wait();
-            group<12>::sync(10); // this <12> will allow us to prevent the second producer load from happening before this point.
+            barrier<12> producer_barrier(11);
+            arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
@@ -236,7 +233,7 @@ struct partial_template {
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
-            else if(group<8> ::laneid() == 32) args.timings[63] = clock64();
+            else if(group<8>::laneid() == 32) args.timings[63] = clock64();
         }
     };
 };
@@ -349,6 +346,7 @@ struct reduction_template {
                 if(group<8>::warpid() == 0) tma::store_async(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
             }
             tma::store_async_wait();
+            if(warpid() == 0) invalidate_semaphore(args.scratch.producer_block);
             group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
             if(args.common.dst.batch_idx < 0) {
@@ -362,9 +360,91 @@ struct reduction_template {
     };
 };
 
+#include <vector>
+#include <queue>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+
+// Timing constants (in microseconds)
+constexpr float PARTIAL_STARTUP_TIME = 3.0f;         // Startup time for partial operations
+constexpr float PARTIAL_WRITEOUT_TIME = 4.5f;        // Writeout time for partial operations
+constexpr float PARTIAL_COST_PER_STEP = 1.49f;       // Cost per step (per 32 tokens) for partial operations
+constexpr float PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME; // Total overhead for a partial operation.
+
+constexpr float REDUCTION_STARTUP_TIME = 2.0f;       // Startup time for reduction operations
+constexpr float REDUCTION_WRITEOUT_TIME = 1.0f;      // Writeout time for reduction operations
+constexpr float REDUCTION_PRODUCER_LATENCY = 1.0f;   // Latency between a producer load and when the consumer can access it.
+constexpr float REDUCTION_COST_PER_STEP = 0.4f;      // Cost per reduction step
+
+constexpr float SYNCHRONIZATION_COST = 0.5f;         // Synchronization cost between dependent operations
+
+float get_quality(const std::vector<float>& next_times_input, int num_processors, int num_tokens, int seq_length) {
+    int num_partial_steps = (seq_length + 31) / 32;
+    
+    if (next_times_input.size() * num_tokens > num_processors) {
+        // This particular scheduler is just not set up to deal with these situations.
+        return -999999999.0f;
+    }
+    
+    // Copy the input times so we can modify them
+    std::vector<float> next_times = next_times_input;
+    std::sort(next_times.begin(), next_times.end(), std::greater<float>());
+
+    std::vector<float> partial_times;
+    for (int i = 0; i < num_processors; i++) {
+        next_times[i%next_times.size()] -= REDUCTION_COST_PER_STEP;
+        partial_times.push_back(next_times[i%next_times.size()]);
+    }
+
+    // We also have to account for the fact that some of these partials are going to be forced to start earlier than the coscheduled reduction.
+    // The number of these is equal to the number of reduction ops * the number of tokens, since those are each handled independently.
+    std::sort(partial_times.begin(), partial_times.end()); // Thankfully we can pick the worst ones to be forced to start earlier.
+    
+    for (size_t j = 0; j < next_times.size(); j++) {
+        float actual_start_time = next_times[j] + REDUCTION_PRODUCER_LATENCY - REDUCTION_STARTUP_TIME; // When does this instruction actually start?
+        for (int k = 0; k < num_tokens; k++) {
+            if (num_tokens * j + k < partial_times.size()) {
+                partial_times[num_tokens * j + k] = actual_start_time;
+            }
+        }
+    }
+    
+    // Now that we know when the partials are going to start, we can start to assign the steps of the work.
+    std::sort(partial_times.begin(), partial_times.end(), std::greater<float>()); // Largest to smallest.
+    
+    float min_value = partial_times.back();
+    for(int i = 0; i < partial_times.size(); i++) {
+        if(num_partial_steps > 0) {
+            int num_steps_alloc = std::min(num_partial_steps, (int)(round((partial_times[i]-min_value) / PARTIAL_COST_PER_STEP)));
+            num_partial_steps -= num_steps_alloc;
+            partial_times[i] -= num_steps_alloc * PARTIAL_COST_PER_STEP;
+            if(num_steps_alloc > 0) partial_times[i] -= PARTIAL_OVERHEAD;
+        }
+    }
+
+    int full_passes = num_partial_steps / partial_times.size();
+    int remainder = num_partial_steps - (full_passes * partial_times.size());
+
+    std::sort(partial_times.begin(), partial_times.end(), std::greater<float>());
+    min_value = 9999999999.0f;
+    for(int i = 0; i < remainder; i++){
+        float f = partial_times[i] - PARTIAL_COST_PER_STEP * (full_passes+1);
+        if(f < min_value) min_value = f;
+    }
+    for(int i = remainder; i < partial_times.size(); i++) {
+        float f = partial_times[i] - PARTIAL_COST_PER_STEP * full_passes;
+        if(f < min_value) min_value = f;
+    }
+
+    return min_value;
+}
+
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
+    kittens::py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
         &config::globals::instructions,
         &config::globals::Q,
         &config::globals::QV,
@@ -379,4 +459,10 @@ PYBIND11_MODULE(mla_decode, m) {
         &config::globals::tic,
         &config::globals::timings
     );
+    m.def("__get_quality__", &get_quality, 
+          "An internal utility function for generating efficient schedules.",
+          pybind11::arg("next_times"), 
+          pybind11::arg("num_processors"), 
+          pybind11::arg("num_tokens"), 
+          pybind11::arg("seq_length"));
 }
