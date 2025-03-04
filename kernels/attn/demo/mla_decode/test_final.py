@@ -48,6 +48,9 @@ def create_page_table(B: int, seq_lengths: List[int], PAGE_SIZE: int, MAX_LENGTH
 def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int):
     # Processor assignment heuristic
     num_processors = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
+    while sum(num_processors) < NUM_PROCESSORS:
+        min_idx = num_processors.index(min(num_processors))
+        num_processors[min_idx] += 1
     while min(num_processors) < 4:
         max_idx = num_processors.index(max(num_processors))
         min_idx = num_processors.index(min(num_processors))
@@ -56,7 +59,7 @@ def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int)
 
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
-    partial_uid, reduction_uid = 0, len(num_processors)
+    partial_uid, reduction_uid = 0, NUM_PROCESSORS
     for batch_id, (seq_l, start_p, num_p) in enumerate(zip(seq_lengths, start_processors, num_processors)):
         new_tasks, partial_uid, reduction_uid = backward_schedule(
             list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid
@@ -78,7 +81,7 @@ def initialize_data(B: int, seq_lengths: List[int], D_QK: int, D_VO: int, H: int
     Instead of a uniform LENGTH, we use the maximum of seq_lengths for allocation,
     while using each sequence’s true length for indexing.
     """
-    total = max(seq_lengths)
+    total = sum(seq_lengths)
     latent = torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10
     expanded = latent.expand(total, H, D_QK)
     
@@ -273,6 +276,7 @@ def main(seq_lengths_input=None):
         seq_lengths = [seq_lengths_input]
     else:
         seq_lengths = seq_lengths_input
+    seq_lengths.sort()
 
     B = len(seq_lengths)
     max_length = max(seq_lengths)
@@ -331,6 +335,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         try:
             seq_lengths = [int(x) for x in sys.argv[1].split(',')]
+            print(seq_lengths)
         except Exception:
             seq_lengths = int(sys.argv[1])
     else:
