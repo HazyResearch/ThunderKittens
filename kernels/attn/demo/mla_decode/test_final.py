@@ -17,19 +17,32 @@ from scheduler import (
 from timings import save_gantt_chart
 
 
-def create_page_table(B: int, LENGTH: int, PAGE_SIZE: int, MAX_LENGTH: int, NUM_PAGES: int):
-    T = MAX_LENGTH // PAGE_SIZE
+def create_page_table(B: int, seq_lengths: List[int], PAGE_SIZE: int, MAX_LENGTH: int, NUM_PAGES: int):
+    """
+    Create a page table for each sequence.
+    MAX_LENGTH is the maximum allowed sequence length.
+    Each batch element i has length seq_lengths[i].
+    """
+    
+    max_length = max(seq_lengths)
+    T = MAX_LENGTH // PAGE_SIZE  
     table_tensor = torch.zeros(B, T, dtype=torch.int32).cuda()
-    lengths = torch.full((B,), LENGTH, dtype=torch.int32, device='cuda')
-    sizes = (lengths + (PAGE_SIZE - 1)) // PAGE_SIZE
+    lengths_tensor = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
+    sizes = (lengths_tensor + (PAGE_SIZE - 1)) // PAGE_SIZE
+
+    # For each batch element, only fill in the first sizes[i] pages.
+    for i in range(B):
+        num_pages_needed = int(sizes[i].item())
+        randperm = torch.randperm(NUM_PAGES, device='cuda')[:num_pages_needed].sort().values.int()
+        table_tensor[i, :num_pages_needed] = randperm
+
+    # indices corresponding to valid pages for each sequence
     sequence_ids, pos_ids = (
         torch.arange(T, dtype=torch.int32, device='cuda')[None, :].expand(B, -1)
         .lt(sizes.view(-1, 1))
         .nonzero(as_tuple=True)
     )
-    randperm = torch.randperm(NUM_PAGES, device='cuda')[: (LENGTH + PAGE_SIZE - 1) // PAGE_SIZE].sort().values.int()
-    table_tensor[sequence_ids, pos_ids] = randperm
-    return table_tensor, lengths, sequence_ids, pos_ids
+    return table_tensor, lengths_tensor, sequence_ids, pos_ids
 
 
 def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int):
@@ -58,30 +71,36 @@ def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int)
     return scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 
-def initialize_data(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int,
+def initialize_data(B: int, seq_lengths: List[int], D_QK: int, D_VO: int, H: int,
                     NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor):
-    total = LENGTH
+    """
+    Initialize latent data and cache.
+    Instead of a uniform LENGTH, we use the maximum of seq_lengths for allocation,
+    while using each sequence’s true length for indexing.
+    """
+    total = max(seq_lengths)
     latent = torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10
     expanded = latent.expand(total, H, D_QK)
     
-    # Create sequence indices for mapping latent data to cache
+    # Create per-batch sequence indices (each row valid only up to its own length)
+    lengths_tensor = torch.tensor(seq_lengths, device='cuda').view(-1, 1)
     seq_ids, pos_ids = (
-        torch.arange(LENGTH, device='cuda')[None, :].expand(B, -1)
-        .lt(torch.tensor([LENGTH], device='cuda').view(-1, 1))
+        torch.arange(total, device='cuda')[None, :].expand(B, -1)
+        .lt(lengths_tensor)
         .nonzero(as_tuple=True)
     )
     
-    # Fill cache using the page table mapping
+    # Fill cache using the page table mapping.
     cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
     entry_ids = table_tensor[seq_ids, pos_ids.floor_divide(PAGE_SIZE)]
     column_ids = pos_ids.fmod(PAGE_SIZE)
     cache[entry_ids, column_ids] = latent  # Write latent into cache
 
-    # For the reference (SDPA) kernel, we derive padded_key and padded_value
-    padded_key = cache[entry_ids, column_ids].expand(B, LENGTH, H, D_QK)
-    padded_value = cache[entry_ids, column_ids].expand(B, LENGTH, H, D_QK)[..., :D_VO]
+    # For the reference (SDPA) kernel
+    padded_key   = cache[entry_ids, column_ids].expand(B, total, H, D_QK)
+    padded_value = cache[entry_ids, column_ids].expand(B, total, H, D_QK)[..., :D_VO]
     
-    # Create query and output tensor (common to both TK and SDPA)
+    # Create query and output tensor (common to both TK and SDPA).
     query = torch.randn((B, 1, H, D_QK), dtype=torch.bfloat16).cuda() / math.sqrt(D_QK)
     O = torch.zeros((B, 1, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
     
@@ -89,8 +108,8 @@ def initialize_data(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int,
 
 
 def prepare_query_cache(query: torch.Tensor, cache: torch.Tensor, D_QRot: int, NUM_PAGES: int, PAGE_SIZE: int):
-    B, NEW_TOKENS, H, D_QK = query.shape
-    cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_QK)
+    B, NEW_TOKENS, H, D_Qk = query.shape
+    cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_Qk)
     
     query_rot = query[..., -D_QRot:].contiguous()
     query_v   = query[..., :-D_QRot].contiguous()
@@ -101,25 +120,22 @@ def prepare_query_cache(query: torch.Tensor, cache: torch.Tensor, D_QRot: int, N
     return query_rot, query_v, K_cache, V_cache
 
 
-def initialize_data_and_views(B: int, LENGTH: int, D_QK: int, D_VO: int, H: int,
+def initialize_data_and_views(B: int, seq_lengths: List[int], D_QK: int, D_VO: int, H: int,
                               NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor,
                               D_QRot: int):
     """
     (A) Initialize the latent data, cache, padded keys/values, query, and output tensor.
-    (B) Derive the query and cache views used by the TK kernel.
+    (B) Create the query and cache views used by the TK kernel.
     
-    dict containing:
+    Returns a dictionary containing:
       - 'cache', 'latent', 'expanded', 'padded_key', 'padded_value',
       - 'seq_ids', 'pos_ids', 'query', 'O',
       - 'query_rot', 'query_v', 'K_cache', 'V_cache'
     """
-    
-    # only initialize data
     cache, latent, expanded, padded_key, padded_value, seq_ids, pos_ids, query, O = initialize_data(
-        B, LENGTH, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor
+        B, seq_lengths, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor
     )
     
-    # create the query and cache views (no initialization)
     query_rot, query_v, K_cache, V_cache = prepare_query_cache(query, cache, D_QRot, NUM_PAGES, PAGE_SIZE)
     
     return {
@@ -160,7 +176,7 @@ def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache
             Table, O, O_scratch, Lvec_scratch, Semaphore,
             softmax_scale, i % 2, Timings
         )
-        print(f'ran warmup kernel #{i}')
+        print(f'Ran warmup kernel #{i}')
         torch.cuda.synchronize()
         
     start_event = torch.cuda.Event(enable_timing=True)
@@ -186,10 +202,14 @@ def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache
 def test_correctness(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache, Table,
                      O, O1, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
                      query, padded_key, padded_value, seq_ids, pos_ids, expanded,
-                     D_VO: int, D_QK: int, LENGTH: int, num_iters: int):
+                     D_VO: int, D_QK: int, seq_lengths: List[int], num_iters: int):
+    """
+    Instead of a uniform LENGTH, use the per-sequence lengths.
+    Compute the maximum length among sequences for building the attention mask.
+    """
     B, NEW_TOKENS, H, _ = query.shape
-    lengths = torch.full((B,), LENGTH, dtype=torch.int32, device='cuda')
-    maximum = LENGTH
+    lengths = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
+    maximum = max(seq_lengths)
     bounds = (torch.arange(NEW_TOKENS, dtype=torch.int32, device='cuda')[None, :] +
               lengths[:, None] - NEW_TOKENS)
     mask = (torch.arange(maximum, dtype=torch.int32, device='cuda')[None, None, None, :]
@@ -235,26 +255,39 @@ def finalize(Timings, Instructions):
     breakpoint()
 
 
-def main(length: int = 65536):
+def main(seq_lengths_input=None):
+    """
+    If a single integer is provided, we treat it as a uniform sequence length.
+    Otherwise, seq_lengths_input should be a list of integers.
+    """
     D_QK, D_VO, D_QRot = 576, 512, 64
     PAGE_SIZE = 256
-    B, NEW_TOKENS, H = 1, 1, 16  # single token (naive single partial op)
-    MAX_LENGTH = 65536
-    LENGTH = length               # sequence length
-    NUM_PAGES = 1000              # number of pages in cache
-    NUM_PROCESSORS = 132          # number of processors
+    NEW_TOKENS, H = 1, 16  # single token (naive single partial op)
+    MAX_LENGTH = 65536     # maximum allowed sequence length (cache capacity)
+    NUM_PAGES = 1000       # number of pages in cache
+    NUM_PROCESSORS = 132   # number of processors
+
+    if seq_lengths_input is None:
+        seq_lengths = [65536]
+    elif isinstance(seq_lengths_input, int):
+        seq_lengths = [seq_lengths_input]
+    else:
+        seq_lengths = seq_lengths_input
+
+    B = len(seq_lengths)
+    max_length = max(seq_lengths)
 
     torch.manual_seed(0)
 
-    table_tensor, lengths, pt_seq_ids, pt_pos_ids = create_page_table(B, LENGTH, PAGE_SIZE, MAX_LENGTH, NUM_PAGES)
+    # page table
+    table_tensor, lengths_tensor, pt_seq_ids, pt_pos_ids = create_page_table(B, seq_lengths, PAGE_SIZE, MAX_LENGTH, NUM_PAGES)
     Table = table_tensor 
 
     # Processor scheduling
-    seq_lengths = sorted([4671, 1750, 1701, 45096] * 2)
     scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = schedule_tasks(seq_lengths, NUM_PROCESSORS, NEW_TOKENS)
 
-    # initialization:
-    data = initialize_data_and_views(B, LENGTH, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor, D_QRot)
+    # initialization
+    data = initialize_data_and_views(B, seq_lengths, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor, D_QRot)
     
     query        = data['query']
     O            = data['O']
@@ -270,23 +303,23 @@ def main(length: int = 65536):
     expanded     = data['expanded']
     
     softmax_scale = 1.0 / math.sqrt(D_QK)
-
-    # TK kernel
+    
+    # tk kernel
     launch_kernel(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
                   Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
     O1 = O.clone()
-
-    # timing
+    
+    # time
     num_warmup = 4
     num_iters = 1000
     timing(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
            Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings, num_warmup, num_iters)
 
-    # SDPA ref
+    # SDPA reference
     test_correctness(
         mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, 
         Table, O, O1, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
-        query, padded_key, padded_value, seq_ids, pos_ids, expanded, D_VO, D_QK, LENGTH, num_iters
+        query, padded_key, padded_value, seq_ids, pos_ids, expanded, D_VO, D_QK, seq_lengths, num_iters
     )
 
     finalize(Timings, Instructions)
@@ -294,5 +327,13 @@ def main(length: int = 65536):
 
 if __name__ == '__main__':
     import sys
-    length = int(sys.argv[1]) if len(sys.argv) > 1 else 65536
-    main(length)
+    
+    if len(sys.argv) > 1:
+        try:
+            seq_lengths = [int(x) for x in sys.argv[1].split(',')]
+        except Exception:
+            seq_lengths = int(sys.argv[1])
+    else:
+        seq_lengths = None
+        
+    main(seq_lengths)
