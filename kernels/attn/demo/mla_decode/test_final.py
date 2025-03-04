@@ -157,9 +157,9 @@ def main(seq_lengths: List[int]):
 
     from torch.nn.functional import scaled_dot_product_attention as sdpa
     ref = sdpa(
-        query=query.transpose(1, 2).float(),
-        key=padded_key.transpose(1, 2).float(),
-        value=padded_value.transpose(1, 2).float(),
+        query=query.transpose(1, 2),
+        key=padded_key.transpose(1, 2),
+        value=padded_value.transpose(1, 2),
         attn_mask=mask,
         dropout_p=0.0,
         is_causal=False,
@@ -174,17 +174,21 @@ def main(seq_lengths: List[int]):
                               K_cache, V_cache,
                               Table, O, O_scratch, Lvec_scratch, Semaphore,
                               softmax_scale, i % 2, Timings)
-        max_diff = torch.abs(O - ref).max()
-        mean_diff = torch.abs(O - ref).mean()
-        diffs.append((max_diff.item(), mean_diff.item()))
+        max_diff_by_batch = [torch.abs(O[b] - ref[b]).max() for b in range(B)]
+        mean_diff_by_batch = [torch.abs(O[b] - ref[b]).mean() for b in range(B)]
+        diffs.append((max_diff_by_batch, mean_diff_by_batch))
 
-    print("ref mean:", torch.mean(ref.abs()))
-    print("Kernel output mean:", torch.mean(O.abs()))
-    print("Max absolute diff:", torch.max(torch.abs(O - ref)))
-    print("Avg absolute diff:", torch.mean(torch.abs(O - ref)))
-    print("Initial kernel output mean:", torch.mean(O1.abs()))
-    print("Initial Max absolute diff:", torch.max(torch.abs(O1 - ref)))
-    print("Initial Avg absolute diff:", torch.mean(torch.abs(O1 - ref)))
+    print("ref mean by batch:", [torch.mean(ref[b].abs()).item() for b in range(B)])
+    print("Kernel output mean by batch:", [torch.mean(O[b].abs()).item() for b in range(B)])
+    print("Max absolute diff by batch:", [torch.abs(O[b] - ref[b]).max().item() for b in range(B)])
+    print("Avg absolute diff by batch:", [torch.abs(O[b] - ref[b]).mean().item() for b in range(B)])
+    print("Initial kernel output mean by batch:", [torch.mean(O1[b].abs()).item() for b in range(B)])
+    print("Initial Max absolute diff by batch:", [torch.abs(O1[b] - ref[b]).max().item() for b in range(B)])
+    print("Initial Avg absolute diff by batch:", [torch.abs(O1[b] - ref[b]).mean().item() for b in range(B)])
+
+    diffs_tensor = torch.tensor(diffs, device='cuda') # (10k, 2, B)
+    print("Max diff by batch across iterations:", [torch.max(diffs_tensor[i, 0, b]).item() for b in range(B)])
+    print("Avg diff by batch across iterations:", [torch.mean(diffs_tensor[i, 1, b]).item() for b in range(B)])
 
     save_gantt_chart(Timings, Instructions)
 
