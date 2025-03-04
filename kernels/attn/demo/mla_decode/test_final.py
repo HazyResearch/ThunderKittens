@@ -23,20 +23,19 @@ def create_page_table(B: int, seq_lengths: List[int], PAGE_SIZE: int, MAX_LENGTH
     MAX_LENGTH is the maximum allowed sequence length.
     Each batch element i has length seq_lengths[i].
     """
-    
-    max_length = max(seq_lengths)
+    # T is the number of pages available per sequence (based on MAX_LENGTH)
     T = MAX_LENGTH // PAGE_SIZE  
     table_tensor = torch.zeros(B, T, dtype=torch.int32).cuda()
     lengths_tensor = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
     sizes = (lengths_tensor + (PAGE_SIZE - 1)) // PAGE_SIZE
 
-    # For each batch element, only fill in the first sizes[i] pages.
+    # For each batch element, fill only the first sizes[i] pages.
     for i in range(B):
         num_pages_needed = int(sizes[i].item())
         randperm = torch.randperm(NUM_PAGES, device='cuda')[:num_pages_needed].sort().values.int()
         table_tensor[i, :num_pages_needed] = randperm
 
-    # indices corresponding to valid pages for each sequence
+    # Compute valid page indices for each sequence.
     sequence_ids, pos_ids = (
         torch.arange(T, dtype=torch.int32, device='cuda')[None, :].expand(B, -1)
         .lt(sizes.view(-1, 1))
@@ -46,7 +45,7 @@ def create_page_table(B: int, seq_lengths: List[int], PAGE_SIZE: int, MAX_LENGTH
 
 
 def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int):
-    # Processor assignment heuristic
+    # Processor assignment heuristic: assign processors proportionally to sequence lengths.
     num_processors = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
     while sum(num_processors) < NUM_PROCESSORS:
         min_idx = num_processors.index(min(num_processors))
@@ -77,41 +76,61 @@ def schedule_tasks(seq_lengths: List[int], NUM_PROCESSORS: int, NEW_TOKENS: int)
 def initialize_data(B: int, seq_lengths: List[int], D_QK: int, D_VO: int, H: int,
                     NUM_PAGES: int, PAGE_SIZE: int, table_tensor: torch.Tensor):
     """
-    Initialize latent data and cache.
-    Instead of a uniform LENGTH, we use the maximum of seq_lengths for allocation,
-    while using each sequence’s true length for indexing.
+    Initialize latent data and cache per sequence.
+    Instead of allocating one global tensor using L = max(seq_lengths) and expanding it,
+    we allocate per batch element and then pad.
     """
-    total = sum(seq_lengths)
-    latent = torch.randn((total, 1, D_QK), dtype=torch.bfloat16).cuda() * 10
-    expanded = latent.expand(total, H, D_QK)
+    device = torch.device('cuda')
+    L_max = max(seq_lengths)
     
-    # Create per-batch sequence indices (each row valid only up to its own length)
-    lengths_tensor = torch.tensor(seq_lengths, device='cuda').view(-1, 1)
+    # Create latent data for each batch element
+    latent_list = []
+    for i, L in enumerate(seq_lengths):
+        latent_i = torch.randn((L, 1, D_QK), dtype=torch.bfloat16, device=device) * 10
+        latent_list.append(latent_i)
+        
+    # Pad the per-element latent data into a global tensor of shape (B, L_max, 1, D_QK)
+    latent = torch.zeros((B, L_max, 1, D_QK), dtype=torch.bfloat16, device=device)
+    for i, L in enumerate(seq_lengths):
+        latent[i, :L, 0, :] = latent_list[i][:, 0, :]
+        
+    # Create padded key and value tensors by expanding each per–sequence latent along the head dimension.
+    padded_key = torch.zeros((B, L_max, H, D_QK), dtype=torch.bfloat16, device=device)
+    padded_value = torch.zeros((B, L_max, H, D_VO), dtype=torch.bfloat16, device=device)
+    for i, L in enumerate(seq_lengths):
+        # Expand latent_i from shape (L, 1, D_QK) to (L, H, D_QK)
+        expanded_i = latent_list[i].expand(L, H, D_QK)
+        padded_key[i, :L, :, :] = expanded_i
+        padded_value[i, :L, :, :] = expanded_i[..., :D_VO]
+        
+    # Create valid token indices per batch element.
+    lengths_tensor = torch.tensor(seq_lengths, device=device).view(-1, 1)
     seq_ids, pos_ids = (
-        torch.arange(total, device='cuda')[None, :].expand(B, -1)
+        torch.arange(L_max, device=device)[None, :].expand(B, -1)
         .lt(lengths_tensor)
         .nonzero(as_tuple=True)
     )
     
-    # Fill cache using the page table mapping.
-    cache = torch.zeros((NUM_PAGES, PAGE_SIZE, 1, D_QK), dtype=torch.bfloat16).cuda()
-    entry_ids = table_tensor[seq_ids, pos_ids.floor_divide(PAGE_SIZE)]
-    column_ids = pos_ids.fmod(PAGE_SIZE)
-    cache[entry_ids, column_ids] = latent  # Write latent into cache
-
-    # For the reference (SDPA) kernel
-    padded_key   = cache[entry_ids, column_ids].expand(B, total, H, D_QK)
-    padded_value = cache[entry_ids, column_ids].expand(B, total, H, D_QK)[..., :D_VO]
+    # Allocate cache with shape (B, NUM_PAGES, PAGE_SIZE, D_QK)
+    cache = torch.zeros((B, NUM_PAGES, PAGE_SIZE, D_QK), dtype=torch.bfloat16, device=device)
+    # For each valid token, compute its page and column indices.
+    page_ids = table_tensor[seq_ids, (pos_ids // PAGE_SIZE)]
+    col_ids = pos_ids % PAGE_SIZE
+    cache[seq_ids, page_ids, col_ids, :] = latent[seq_ids, pos_ids, 0, :]
     
     # Create query and output tensor (common to both TK and SDPA).
-    query = torch.randn((B, 1, H, D_QK), dtype=torch.bfloat16).cuda() / math.sqrt(D_QK)
-    O = torch.zeros((B, 1, H, D_VO), dtype=torch.bfloat16).cuda().contiguous()
+    query = torch.randn((B, 1, H, D_QK), dtype=torch.bfloat16, device=device) / math.sqrt(D_QK)
+    O = torch.zeros((B, 1, H, D_VO), dtype=torch.bfloat16, device=device).contiguous()
+    
+    # Also, for convenience, define an "expanded" tensor that is the same as padded_key.
+    expanded = padded_key.clone()
     
     return cache, latent, expanded, padded_key, padded_value, seq_ids, pos_ids, query, O
 
 
 def prepare_query_cache(query: torch.Tensor, cache: torch.Tensor, D_QRot: int, NUM_PAGES: int, PAGE_SIZE: int):
     B, NEW_TOKENS, H, D_Qk = query.shape
+    # Cache has shape (B, NUM_PAGES, PAGE_SIZE, D_Qk)
     cache_view = cache.view(B, NUM_PAGES, PAGE_SIZE, D_Qk)
     
     query_rot = query[..., -D_QRot:].contiguous()
@@ -158,27 +177,54 @@ def initialize_data_and_views(B: int, seq_lengths: List[int], D_QK: int, D_VO: i
     }
 
 
+# --- The following functions call the MLA decode kernel.
+# Since the original harness assumed a batch size of 1, here we loop over the batch dimension.
 def launch_kernel(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache,
                   Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, flag, Timings):
     print("Launching MLA decode kernel...")
-    mla_decode_module.mla_decode(
-        Instructions, query_rot, query_v, K_cache, V_cache,
-        Table, O, O_scratch, Lvec_scratch, Semaphore,
-        softmax_scale, flag, Timings
-    )
-    torch.cuda.synchronize()
+    B = query_rot.shape[0]
+    for b in range(B):
+        mla_decode_module.mla_decode(
+            Instructions,
+            query_rot[b:b+1],
+            query_v[b:b+1],
+            K_cache[b:b+1],
+            V_cache[b:b+1],
+            Table[b:b+1],
+            O[b:b+1],
+            O_scratch,
+            Lvec_scratch,
+            Semaphore,
+            softmax_scale,
+            flag,
+            Timings
+        )
+        torch.cuda.synchronize()
     print("Kernel execution finished.")
 
 
 def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache,
            Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
            num_warmup=4, num_iters=1000):
+    B = query_rot.shape[0]
+    # Warmup iterations.
     for i in range(num_warmup):
-        mla_decode_module.mla_decode(
-            Instructions, query_rot, query_v, K_cache, V_cache,
-            Table, O, O_scratch, Lvec_scratch, Semaphore,
-            softmax_scale, i % 2, Timings
-        )
+        for b in range(B):
+            mla_decode_module.mla_decode(
+                Instructions,
+                query_rot[b:b+1],
+                query_v[b:b+1],
+                K_cache[b:b+1],
+                V_cache[b:b+1],
+                Table[b:b+1],
+                O[b:b+1],
+                O_scratch,
+                Lvec_scratch,
+                Semaphore,
+                softmax_scale,
+                i % 2,
+                Timings
+            )
         print(f'Ran warmup kernel #{i}')
         torch.cuda.synchronize()
         
@@ -187,18 +233,29 @@ def timing(mla_decode_module, Instructions, query_rot, query_v, K_cache, V_cache
     print(f"\nTiming kernel over {num_iters} iterations...")
     start_event.record()
     for i in range(num_iters):
-        mla_decode_module.mla_decode(
-            Instructions, query_rot, query_v, K_cache, V_cache,
-            Table, O, O_scratch, Lvec_scratch, Semaphore,
-            softmax_scale, i % 2, Timings
-        )
+        for b in range(B):
+            mla_decode_module.mla_decode(
+                Instructions,
+                query_rot[b:b+1],
+                query_v[b:b+1],
+                K_cache[b:b+1],
+                V_cache[b:b+1],
+                Table[b:b+1],
+                O[b:b+1],
+                O_scratch,
+                Lvec_scratch,
+                Semaphore,
+                softmax_scale,
+                i % 2,
+                Timings
+            )
     torch.cuda.synchronize()
     end_event.record()
     torch.cuda.synchronize()
     elapsed_time = start_event.elapsed_time(end_event)
-    avg_time = elapsed_time / num_iters
-    print(f"Average kernel execution time: {avg_time * 1000:.3f} us")
-    print(f"Total time for {num_iters} iterations: {elapsed_time * 1000:.3f} us\n")
+    avg_time = elapsed_time / (num_iters * B)
+    print(f"Average kernel execution time: {avg_time * 1000:.3f} us (per batch call)")
+    print(f"Total time for {num_iters} iterations (over all batches): {elapsed_time * 1000:.3f} us\n")
     return avg_time
 
 
@@ -207,15 +264,14 @@ def test_correctness(mla_decode_module, Instructions, query_rot, query_v, K_cach
                      query, padded_key, padded_value, seq_ids, pos_ids, expanded,
                      D_VO: int, D_QK: int, seq_lengths: List[int], num_iters: int):
     """
-    Instead of a uniform LENGTH, use the per-sequence lengths.
-    Compute the maximum length among sequences for building the attention mask.
+    Use the per-sequence lengths to build the attention mask and check correctness.
     """
     B, NEW_TOKENS, H, _ = query.shape
     lengths = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
-    maximum = max(seq_lengths)
+    L = max(seq_lengths)
     bounds = (torch.arange(NEW_TOKENS, dtype=torch.int32, device='cuda')[None, :] +
               lengths[:, None] - NEW_TOKENS)
-    mask = (torch.arange(maximum, dtype=torch.int32, device='cuda')[None, None, None, :]
+    mask = (torch.arange(L, dtype=torch.int32, device='cuda')[None, None, None, :]
             .expand(B, H, NEW_TOKENS, -1)
             .le(bounds[:, None, :, None].expand(B, H, NEW_TOKENS, 1)))
 
@@ -233,24 +289,32 @@ def test_correctness(mla_decode_module, Instructions, query_rot, query_v, K_cach
     ).transpose(1, 2)
 
     print("Testing correctness...")
-    diffs = []
-    for i in range(num_iters * 10):
-        mla_decode_module.mla_decode(
-            Instructions, query_rot, query_v, K_cache, V_cache,
-            Table, O, O_scratch, Lvec_scratch, Semaphore,
-            softmax_scale, i % 2, Timings
-        )
-        max_diff = torch.abs(O - ref).max()
-        mean_diff = torch.abs(O - ref).mean()
-        diffs.append((max_diff, mean_diff))
-
-    print("ref mean:", torch.mean(ref.abs()))
-    print("Kernel output mean:", torch.mean(O.abs()))
-    print("Max absolute diff:", torch.max(torch.abs(O - ref)))
-    print("Avg absolute diff:", torch.mean(torch.abs(O - ref)))
-    print("Initial kernel output mean:", torch.mean(O1.abs()))
-    print("Initial Max absolute diff:", torch.max(torch.abs(O1 - ref)))
-    print("Initial Avg absolute diff:", torch.mean(torch.abs(O1 - ref)))
+    # Run several iterations per batch element.
+    for b in range(B):
+        for i in range(num_iters * 10):
+            mla_decode_module.mla_decode(
+                Instructions,
+                query_rot[b:b+1],
+                query_v[b:b+1],
+                K_cache[b:b+1],
+                V_cache[b:b+1],
+                Table[b:b+1],
+                O[b:b+1],
+                O_scratch,
+                Lvec_scratch,
+                Semaphore,
+                softmax_scale,
+                i % 2,
+                Timings
+            )
+        print(f"Batch {b}:")
+        print("ref mean:", torch.mean(ref[b].abs()))
+        print("Kernel output mean:", torch.mean(O[b].abs()))
+        print("Max absolute diff:", torch.max(torch.abs(O[b] - ref[b])))
+        print("Avg absolute diff:", torch.mean(torch.abs(O[b] - ref[b])))
+        print("Initial kernel output mean:", torch.mean(O1[b].abs()))
+        print("Initial Max absolute diff:", torch.max(torch.abs(O1[b] - ref[b])))
+        print("Initial Avg absolute diff:", torch.mean(torch.abs(O1[b] - ref[b])))
 
 
 def finalize(Timings, Instructions):
@@ -276,22 +340,27 @@ def main(seq_lengths_input=None):
         seq_lengths = [seq_lengths_input]
     else:
         seq_lengths = seq_lengths_input
-    seq_lengths.sort()
-
+    # Preserve the order of sequence lengths.
     B = len(seq_lengths)
-    max_length = max(seq_lengths)
+    _ = max(seq_lengths)  # maximum sequence length (used inside initialize_data)
 
     torch.manual_seed(0)
 
-    # page table
-    table_tensor, lengths_tensor, pt_seq_ids, pt_pos_ids = create_page_table(B, seq_lengths, PAGE_SIZE, MAX_LENGTH, NUM_PAGES)
+    # Create page table using per-sequence lengths.
+    table_tensor, lengths_tensor, pt_seq_ids, pt_pos_ids = create_page_table(
+        B, seq_lengths, PAGE_SIZE, MAX_LENGTH, NUM_PAGES
+    )
     Table = table_tensor 
 
-    # Processor scheduling
-    scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = schedule_tasks(seq_lengths, NUM_PROCESSORS, NEW_TOKENS)
+    # Processor scheduling based on provided seq_lengths.
+    scheduled_tasks, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = schedule_tasks(
+        seq_lengths, NUM_PROCESSORS, NEW_TOKENS
+    )
 
-    # initialization
-    data = initialize_data_and_views(B, seq_lengths, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor, D_QRot)
+    # Data initialization (per-batch, padded to max(seq_lengths)).
+    data = initialize_data_and_views(
+        B, seq_lengths, D_QK, D_VO, H, NUM_PAGES, PAGE_SIZE, table_tensor, D_QRot
+    )
     
     query        = data['query']
     O            = data['O']
@@ -308,18 +377,18 @@ def main(seq_lengths_input=None):
     
     softmax_scale = 1.0 / math.sqrt(D_QK)
     
-    # tk kernel
+    # Launch kernel (TK)
     launch_kernel(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
                   Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
     O1 = O.clone()
     
-    # time
+    # timing
     num_warmup = 4
     num_iters = 1000
     timing(mla_decode, Instructions, query_rot, query_v, K_cache, V_cache,
            Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings, num_warmup, num_iters)
 
-    # SDPA reference
+    # SDPA reference correctness
     test_correctness(
         mla_decode, Instructions, query_rot, query_v, K_cache, V_cache, 
         Table, O, O1, O_scratch, Lvec_scratch, Semaphore, softmax_scale, Timings,
@@ -331,7 +400,6 @@ def main(seq_lengths_input=None):
 
 if __name__ == '__main__':
     import sys
-    
     if len(sys.argv) > 1:
         try:
             seq_lengths = [int(x) for x in sys.argv[1].split(',')]
@@ -340,5 +408,4 @@ if __name__ == '__main__':
             seq_lengths = int(sys.argv[1])
     else:
         seq_lengths = None
-        
     main(seq_lengths)
