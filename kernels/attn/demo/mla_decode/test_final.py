@@ -67,17 +67,15 @@ def main(seq_lengths: List[int]):
     Table = table_tensor
 
     # --- Cache and latent tensor initialization ---
-    # Allocate a per-batch cache: shape (B, NUM_PAGES, PAGE_SIZE, D_QK)
-    cache = torch.zeros((B, NUM_PAGES, PAGE_SIZE, D_QK), dtype=torch.bfloat16).cuda()
+    cache = torch.zeros((1, NUM_PAGES, PAGE_SIZE, D_QK), dtype=torch.bfloat16).cuda()
 
     # Create a latent tensor for each batch and fill the cache using the corresponding page table.
     latent_list = []
+    breakpoint()
     for b in range(B):
         l = seq_lengths[b]
         latent = (torch.randn((l, 1, D_QK), dtype=torch.bfloat16, device='cuda') * 10)
         latent_list.append(latent)
-        # For later reference, we need the expanded version.
-        expanded = latent.expand(l, H, D_QK)
         # Compute per-token indices for this batch.
         positions = torch.arange(l, dtype=torch.int32, device='cuda')
         page_indices = positions // PAGE_SIZE
@@ -85,7 +83,9 @@ def main(seq_lengths: List[int]):
         # Lookup the random page for each token from the table.
         pages = table_tensor[b, page_indices]
         # Note: assign the latent (squeezing out the singleton dimension) so that shape matches.
-        cache[b, pages, col_indices] = latent[:, 0, :]
+        cache[0, pages, col_indices] = latent[:, 0, :]
+
+    breakpoint()
 
     # --- Prepare reference tensors for SDPA ---
     padded_key = torch.zeros((B, max_length, H, D_QK), dtype=torch.bfloat16).cuda()
@@ -110,6 +110,7 @@ def main(seq_lengths: List[int]):
     K_cache = cache_view[..., -D_QRot:].contiguous()
     V_cache = cache_view[..., :-D_QRot].contiguous()
 
+    breakpoint()
     print("Launching MLA decode kernel...")
     mla_decode.mla_decode(Instructions, query_rot, query_v,
                           K_cache, V_cache,
