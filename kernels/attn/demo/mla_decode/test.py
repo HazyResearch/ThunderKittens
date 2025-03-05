@@ -25,53 +25,6 @@ MAX_NUM_PAGES = 65536 // PAGE_SIZE
 
 ENABLE_TIMINGS = True
 
-from graphviz import Digraph
-def visualize_dependency_graph(tasks):
-    """
-    Generate a Graphviz Digraph for the dependency graph of tasks.
-    
-    Each node is labeled with the task's name, uid, processor, start, and finish times.
-    An edge is drawn from each dependency task to the dependent task.
-    
-    Additionally, all tasks with task_type 'partial' are forced to appear on the bottom row.
-    """
-    # Map uid to task for dependency verification.
-    uid_to_task = {task.uid: task for task in tasks}
-    
-    dot = Digraph(comment="Task Dependency Graph")
-    
-    # Create nodes for each task.
-    for task in tasks:
-        label = (
-            f"{task.name}\n"
-            f"UID: {task.uid}\n"
-            f"Type: {task.task_type}\n"
-            f"Proc: {task.processor}\n"
-            f"start: {round(task.start, 2) if task.start is not None else 'None'}\n"
-            f"finish: {round(task.finish, 2) if task.finish is not None else 'None'}"
-        )
-        dot.node(str(task.uid), label)
-    
-    # Create edges for each dependency.
-    for task in tasks:
-        for dep_uid in task.dependencies:
-            # Only draw an edge if the dependency exists.
-            if dep_uid in uid_to_task:
-                dot.edge(str(dep_uid), str(task.uid))
-            else:
-                # Flag missing dependencies.
-                dot.edge(str(dep_uid), str(task.uid), label="missing")
-    
-    # Force all partial operations to be rendered on the bottom row.
-    partial_op_ids = [str(task.uid) for task in tasks if task.task_type == "partial"]
-    if partial_op_ids:
-        with dot.subgraph() as s:
-            s.attr(rank='sink')
-            for uid in partial_op_ids:
-                s.node(uid)
-    
-    return dot
-
 def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 
     B = len(seq_lengths)
@@ -88,6 +41,7 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 
 def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
+    t0 = time.time()
     processor_assignments = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
     while sum(processor_assignments) < NUM_PROCESSORS:
         min_idx = processor_assignments.index(max(processor_assignments))
@@ -115,48 +69,31 @@ def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
             list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid
         )
         scheduled_tasks.extend(new_tasks)
-    print('scheduled_tasks', len(scheduled_tasks))
-    visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
-
-    for task in scheduled_tasks:
-        print(task, len(task.dependencies))
+    t1 = time.time()
+    print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
     )
+    # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
     if tic is None:
         Semaphore.zero_()
         tic = 1
-    OldO, NewO = torch.zeros_like(QV), torch.zeros_like(QV)
+    O = torch.zeros_like(QV)
     Q_all = torch.concat([QV, QRot], dim=-1).contiguous()
     KV_all = torch.cat([V_cache, K_cache], dim=-1).contiguous()
     softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
-    if Timings is not None:
-        OldTimings, NewTimings = Timings.clone(), Timings.clone()
-    else:
-        OldTimings, NewTimings = None, None
     torch.cuda.synchronize()
     if Timings is not None:
-        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, NewO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, NewTimings)
-        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, NewO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, NewTimings)
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, Timings)
     else:
-        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, NewO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic)
-        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, NewO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic)
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
     torch.cuda.synchronize()
-    Semaphore.zero_()
-    tic = 1
-    torch.cuda.synchronize()
-    if Timings is not None:
-        mla_decode.mla_decode_old(Instructions, Q_all, KV_all, Table, OldO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, OldTimings)
-        mla_decode.mla_decode_old(Instructions, Q_all, KV_all, Table, OldO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, OldTimings)
-    else:
-        mla_decode.mla_decode_old(Instructions, Q_all, KV_all, Table, OldO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic)
-        mla_decode.mla_decode_old(Instructions, Q_all, KV_all, Table, OldO, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
-    torch.cuda.synchronize()
-    print('NewO-OldO', NewO-OldO)
-    return OldO, NewO, OldTimings, NewTimings
+    return O, Timings
 
 def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=1000):
     Semaphore.zero_()
@@ -198,19 +135,16 @@ def main():
     QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
     ref = run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table)
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, NEW_TOKENS)
-    OldO, NewO, OldTimings, NewTimings = run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+    O, Timings = run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print("ref mean:", torch.mean(ref.abs()))
-    print("Kernel output mean [New, Old]:", torch.mean(NewO.abs()), torch.mean(OldO.abs()))
-    print("Max absolute diff [New, Old]:", torch.max(torch.abs(NewO - ref)), torch.max(torch.abs(OldO - ref)))
-    print("Avg absolute diff [New, Old]:", torch.mean(torch.abs(NewO - ref)), torch.mean(torch.abs(OldO - ref)))
+    print("Kernel output mean", torch.mean(O.abs()))
+    print("Max absolute diff", torch.max(torch.abs(O - ref)))
+    print("Avg absolute diff", torch.mean(torch.abs(O - ref)))
 
     time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
-    breakpoint()
-    # save_gantt_chart(OldTimings, Instructions, name='old')
-    save_gantt_chart(NewTimings, Instructions, name='new')
-    # breakpoint()
+    save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
     main()

@@ -170,49 +170,49 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
 
 def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1, enable_timings: bool = False):
     OP_PARTIAL, OP_REDUCTION = 1, 2
+    partial_padding = [0]*23
 
     def make_partial_arg(task: Task) -> List[int]:
-        return [OP_PARTIAL,
+        return torch.tensor([OP_PARTIAL,
                 task.uid,  # uid
                 -task.uid-1 if task.args["write_scratch"] else task.batch_id,  # destination (negative means write scratch)
                 min(task.tok_ids),  # start token
                 task.batch_id,
                 min(task.tok_ids),  # duplicate start token
-                task.args["start"], task.args["end"], task.args["length"]] + [0]*23
+                task.args["start"], task.args["end"], task.args["length"]] + partial_padding, device='cuda', dtype=torch.int32)
 
     def make_merge_arg(task: Task) -> List[int]:
         assert(len(task.dependencies) <= 11+16)
-        args_list = [OP_REDUCTION,
-                     task.uid,  # uid
-                     len(task.dependencies)-1,  # number of dependencies minus one
-                     -task.uid-1 if task.args["write_scratch"] else task.batch_id,
-                     task.tok_ids[0]] + task.dependencies
-        return args_list + [0]*(32 - len(args_list))
+        return torch.tensor([OP_REDUCTION,
+                            task.uid,  # uid
+                            len(task.dependencies)-1,  # number of dependencies minus one
+                            -task.uid-1 if task.args["write_scratch"] else task.batch_id,
+                            task.tok_ids[0]] + task.dependencies + [0]*(32 - 5 - len(task.dependencies)), device='cuda', dtype=torch.int32)
 
     num_instructions = max(t.uid for t in tasks) + 1
     processor_tasks = [[] for _ in range(num_processors)]
+    print(f'Number of instructions: {len(tasks)}')
     for task in tasks:
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
     # print('Final finish time:', max(t.finish for t in tasks))
-    # print('Max number of dependencies:', max(len(t.dependencies) for t in tasks))
+    # print('Max number of dependencies:', max(len(t.dependencies) for t in tasks)
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
-    Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
-    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')
-    L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32, device='cpu')
-    Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cpu')
-    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cpu') if enable_timings else None
+    Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cuda')
+    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cuda')
+    L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32, device='cuda')
+    Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cuda')
+    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
+    torch.cuda.synchronize()
     for pid in range(num_processors):
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
-                Instructions[pid, tid, :] = torch.tensor(make_partial_arg(task), dtype=torch.int32, device='cpu')
+                partial_arg = make_partial_arg(task)
+                Instructions[pid, tid] = partial_arg
             elif task.task_type == "reduction":
-                Instructions[pid, tid, :] = torch.tensor(make_merge_arg(task), dtype=torch.int32, device='cpu')
-    if torch.cuda.is_available():
-        return (Instructions.cuda(), O_scratch.cuda(),
-                L_scratch.cuda(), Semaphore.cuda(),
-                Timings.cuda() if enable_timings else Timings)
+                merge_arg = make_merge_arg(task)
+                Instructions[pid, tid] = merge_arg
     return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
 def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:
