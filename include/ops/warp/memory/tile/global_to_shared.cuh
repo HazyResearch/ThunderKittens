@@ -128,7 +128,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
  *
  * @note This function expects 16-byte alignments. Otherwise, behavior is undefined.
  */
-template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS, bool should_commit_group=true>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
     using T = typename ST::dtype;
     const int row_stride = src.template stride<axis>();
@@ -172,11 +172,47 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
             }
         }
     }
-    asm volatile("cp.async.commit_group;\n" ::: "memory");
+    if constexpr (should_commit_group) {
+        asm volatile("cp.async.commit_group;\n" ::: "memory");
+    }
 }
+
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
     load_async<2, false, ST, GL, COORD, WARP_THREADS>(dst, src, idx);
+}
+
+/**
+ * @brief Asynchronously loads a tile from global to shared memory. Additionally, each thread will
+ * signal the semaphore as it completes its load. For example, if you invoke warpgroup::load_async
+ * with a semaphore, when all threads are completed, the sempahore's completed arrivals count
+ * will be 128.
+ * 
+ * Example Usage;
+ *     semaphore bar;
+ *     init_semaphore(bar, 64, 0); // 64 threads (or 2 warps) will be issuing async loads
+ *     group<2>::load_async(dst, src, idx, bar); // issue async loads from 2 warps
+ *     wait(bar, 0);
+ *
+ * @tparam ST The type of the shared tile.
+ * @param[out] dst The destination shared memory tile.
+ * @param[in] src The source global memory array.
+ * @param[in] idx The coordinate of the tile in the global memory array.
+ * @param[in] bar The semaphore to signal.
+ */
+template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore &bar) {
+    load_async<axis, assume_aligned, ST, GL, COORD, N_THREADS, false>(dst, src, idx);
+    asm volatile(
+        "cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];\n" 
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&bar)))
+        : "memory"
+    );
+}
+
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore &bar) {
+    load_async<2, false, ST, GL, COORD, WARP_THREADS>(dst, src, idx, bar);
 }
 
 }
