@@ -77,7 +77,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         unif.timings = ps.timings;
 #endif
         Op::common_setup(unif);
-        if(num_iters <= 0) return; // no work to do
+        if(num_iters < 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
         int output_ring = 0; // tracking which output block is being written
         int load_iter, store_iter = 0;
@@ -134,7 +134,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         unif.timings = ps.timings;
 #endif
         Op::common_setup(unif);
-        if(num_iters <= 0) return; // no work to do
+        if(num_iters < 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
         int load_iter;
         Op::producer::setup({p_state, unif});
@@ -201,7 +201,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         unif.timings = ps.timings;
 #endif
         Op::common_setup(unif);
-        if(num_iters <= 0) return; // no work to do
+        if(num_iters < 0) return; // no work to do
         int input_ring  = 0; // tracking which input block is being loaded
         int output_ring = 0; // tracking which output block is being written
         Op::consumer::setup({c_state, unif});
@@ -252,7 +252,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         unif.timings = ps.timings;
 #endif
         Op::common_setup(unif);
-        if(num_iters <= 0) return; // no work to do
+        if(num_iters < 0) return; // no work to do
         int input_ring = 0; // tracking which input block is being loaded
         Op::consumer::setup({c_state, unif});
 #ifdef CONSUMER_UNROLL
