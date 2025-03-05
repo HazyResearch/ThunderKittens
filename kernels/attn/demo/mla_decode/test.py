@@ -19,19 +19,19 @@ torch.manual_seed(0)
 D_Main, D_Rot = 512, 64
 PAGE_SIZE = 256
 H = 16                  # H heads
-NUM_PAGES = 1000        # number of pages in cache
+NUM_PAGES = 10000        # number of pages in cache
 NUM_PROCESSORS = 132    # number of processors
 MAX_NUM_PAGES = 65536 // PAGE_SIZE
 
 ENABLE_TIMINGS = True
 
-def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
+def init_arguments(seq_lengths: List[int], new_tokens: int):
 
     B = len(seq_lengths)
 
     # Need to initialize QRot, QV, K_cache, V_cache, Lengths, Table    
-    QRot    = torch.randn(B, NEW_TOKENS, H, D_Rot, dtype=torch.bfloat16, device='cuda')
-    QV      = torch.randn(B, NEW_TOKENS, H, D_Main, dtype=torch.bfloat16, device='cuda')
+    QRot    = torch.randn(B, new_tokens, H, D_Rot, dtype=torch.bfloat16, device='cuda')
+    QV      = torch.randn(B, new_tokens, H, D_Main, dtype=torch.bfloat16, device='cuda')
     K_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D_Rot, dtype=torch.bfloat16, device='cuda')
     V_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D_Main, dtype=torch.bfloat16, device='cuda')
     Lengths = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
@@ -39,17 +39,18 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 
     return QRot, QV, K_cache, V_cache, Lengths, Table
 
-def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
+def create_thundermla_arguments(seq_lengths, new_tokens):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
     t0 = time.time()
-    processor_assignments = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
+    processor_assignments = [max(math.floor(s / sum(seq_lengths) * NUM_PROCESSORS), 1) for s in seq_lengths]
     while sum(processor_assignments) < NUM_PROCESSORS:
         min_idx = processor_assignments.index(max(processor_assignments))
         processor_assignments[min_idx] += 1
-    processor_assignments = sorted([(estimate_schedule_length(p, NEW_TOKENS, s), p, s, i) for i, (p, s) in enumerate(zip(processor_assignments, seq_lengths))])
+    processor_assignments = sorted([(estimate_schedule_length(p, new_tokens, s), p, s, i) for i, (p, s) in enumerate(zip(processor_assignments, seq_lengths))])
     while len(seq_lengths) > 1:
         best, worst = processor_assignments[0], processor_assignments[-1]
-        new_t0, new_tn1 = estimate_schedule_length(best[1]-1, NEW_TOKENS, best[2]), estimate_schedule_length(worst[1]+1, NEW_TOKENS, worst[2])
+        if best[1]-1 == 0: break
+        new_t0, new_tn1 = estimate_schedule_length(best[1]-1, new_tokens, best[2]), estimate_schedule_length(worst[1]+1, new_tokens, worst[2])
         new_time = max(new_t0, new_tn1)
         if new_time < worst[0]:
             processor_assignments[0] = (new_t0, best[1]-1, best[2], best[-1])
@@ -66,13 +67,13 @@ def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
     partial_uid, reduction_uid = 0, NUM_PROCESSORS
     for batch_id, (seq_l, start_p, num_p) in enumerate(zip(seq_lengths, start_processors, num_processors)):
         new_tasks, partial_uid, reduction_uid = backward_schedule(
-            list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid
+            list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(new_tokens)), partial_uid, reduction_uid
         )
         scheduled_tasks.extend(new_tasks)
     t1 = time.time()
     print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
-        scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
+        scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
     )
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
@@ -95,13 +96,18 @@ def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_s
     torch.cuda.synchronize()
     return O, Timings
 
-def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=1000):
+def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
     Semaphore.zero_()
     O = torch.zeros_like(QV)
     softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    # execute once to warm up
+    if Timings is not None:
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
+    else:
+        mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
     torch.cuda.synchronize()
     t0 = time.time()
-    for it in range(1,ITERS+1):
+    for it in range(ITERS):
         if Timings is not None:
             mla_decode.mla_decode(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, Timings)
         else:
@@ -129,12 +135,12 @@ def run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table):
         ).transpose(1, 2)
     return O
 
-def main():
-    seq_lengths=sorted([4641,45118,1730,1696])
-    NEW_TOKENS = 4
-    QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
+def main(seq_lengths, new_tokens):
+    print(f' ----------- starting seq_lengths: {seq_lengths} -----------')
+    seq_lengths = sorted(seq_lengths)
+    QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, new_tokens)
     ref = run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table)
-    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, NEW_TOKENS)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, new_tokens)
     O, Timings = run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean", torch.mean(O.abs()))
@@ -144,7 +150,11 @@ def main():
     time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
-    save_gantt_chart(Timings, Instructions, name='new')
+    # save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
-    main()
+    main([4641,45118,1730,1696], 4)
+    main([65536], 1)
+    main([512]*64, 2)
+    main([4096]*132, 4)
+    main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4)
