@@ -168,7 +168,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
         raise ValueError("Cycle detected in task dependencies!")
     return tasks
 
-def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1):
+def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1, enable_timings: bool = False):
     OP_PARTIAL, OP_REDUCTION = 1, 2
 
     def make_partial_arg(task: Task) -> List[int]:
@@ -202,7 +202,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
     O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')
     L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32, device='cpu')
     Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cpu')
-    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cpu')
+    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cpu') if enable_timings else None
     for pid in range(num_processors):
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
@@ -212,7 +212,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
     if torch.cuda.is_available():
         return (Instructions.cuda(), O_scratch.cuda(),
                 L_scratch.cuda(), Semaphore.cuda(),
-                Timings.cuda())
+                Timings.cuda() if enable_timings else Timings)
     return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
 def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:

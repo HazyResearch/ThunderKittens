@@ -34,6 +34,9 @@ __device__ static inline int groupid() { return threadIdx.x / GROUP_THREADS; }
 __device__ static inline void sync(int id) {
     asm volatile("bar.sync %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
 }
+__device__ static inline void arrive(int id) {
+    asm volatile("bar.arrive %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
+}
 
 #include "memory/memory.cuh"
 #include "shared/shared.cuh"

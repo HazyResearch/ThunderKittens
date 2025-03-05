@@ -19,7 +19,7 @@ Timing meanings, all relative to start of kernel, and measured in cycles.
 63 -- end of consumer finish write (and instruction), relative to start of kernel.
 """
 
-def save_gantt_chart(Timings, Instructions, verbose=False):
+def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
     # Convert cycles to microseconds (1.8 GHz = 1800 MHz = 1.8 cycles/ns = 0.0018 cycles/us)
     timings_us = Timings.float() / 1800
 
@@ -106,7 +106,10 @@ def save_gantt_chart(Timings, Instructions, verbose=False):
     ax.legend(handles=all_legend_elements, loc='center left', bbox_to_anchor=(1, 0.5))
 
     plt.tight_layout()
-    plt.savefig(f'instruction_timeline_{int(time.time())}.png', dpi=200)
+    if name is not None:
+        plt.savefig(f'timeline_{name}_{int(time.time())}.png', dpi=200)
+    else:
+        plt.savefig(f'timeline_{int(time.time())}.png', dpi=200)
 
     if verbose:
         # Print timing statistics
