@@ -128,7 +128,8 @@ struct partial_template {
             auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
             load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             zero(args.state.norm_vec);
-            neg_infty(args.state.max_vec);
+            if(args.num_iters > 0) neg_infty(args.state.max_vec);
+            else { one(args.state.max_vec); mul(args.state.max_vec, args.state.max_vec, -999999.f); }
             zero(args.state.o);
             load_async_wait();
 #ifdef KITTENS_TIMINGS
@@ -137,9 +138,8 @@ struct partial_template {
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
             // 1.44269504089f is from exp2
-            if(args.iter == 0) {
-                barrier<12> producer_barrier(11);
-                arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
+            if(args.iter == 0 && args.num_iters > 1) {
+                group<12>::arrive(11); // this <12> will allow us to prevent the second producer load from happening before this point.
             }
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
 #ifdef KITTENS_TIMINGS
@@ -226,7 +226,7 @@ struct partial_template {
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
-                tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                tma::store_async<axis::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             else { // write out directly to O scratch, without going through smem
                 if(warpgroup::groupid() == 0) {
@@ -242,7 +242,7 @@ struct partial_template {
                 tma::store_async<axis::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             if(group<8>::warpid() == 0) tma::store_async_wait(); // not just read wait
-            // asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
+            asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
                 if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth()) {

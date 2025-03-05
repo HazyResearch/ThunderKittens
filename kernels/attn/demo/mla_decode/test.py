@@ -11,6 +11,7 @@ from scheduler_v2 import backward_schedule
 from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule
 from timings import save_gantt_chart
 from graphviz import Digraph
+from scheduler_regression import estimate_schedule_length
 
 
 torch.manual_seed(0)
@@ -87,16 +88,24 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 
 def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
-    num_processors = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
-    while sum(num_processors) < NUM_PROCESSORS:
-        min_idx = num_processors.index(min(num_processors))
-        num_processors[min_idx] += 1
-    while min(num_processors) < 4:
-        max_idx = num_processors.index(max(num_processors))
-        min_idx = num_processors.index(min(num_processors))
-        num_processors[max_idx] -= 1
-        num_processors[min_idx] += 1
-    # num_processors = [2]
+    processor_assignments = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
+    while sum(processor_assignments) < NUM_PROCESSORS:
+        min_idx = processor_assignments.index(max(processor_assignments))
+        processor_assignments[min_idx] += 1
+    processor_assignments = sorted([(estimate_schedule_length(p, NEW_TOKENS, s), p, s, i) for i, (p, s) in enumerate(zip(processor_assignments, seq_lengths))])
+    while len(seq_lengths) > 1:
+        best, worst = processor_assignments[0], processor_assignments[-1]
+        new_t0, new_tn1 = estimate_schedule_length(best[1]-1, NEW_TOKENS, best[2]), estimate_schedule_length(worst[1]+1, NEW_TOKENS, worst[2])
+        new_time = max(new_t0, new_tn1)
+        if new_time < worst[0]:
+            processor_assignments[0] = (new_t0, best[1]-1, best[2], best[-1])
+            processor_assignments[-1] = (new_tn1, worst[1]+1, worst[2], worst[-1])
+            processor_assignments = sorted(processor_assignments)
+        else:
+            break
+    num_processors = [None for _ in seq_lengths]
+    for _, p, s, i in processor_assignments:
+        num_processors[i] = min(p, s//128)
     # Create schedule
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
@@ -106,21 +115,14 @@ def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
             list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid
         )
         scheduled_tasks.extend(new_tasks)
+    print('scheduled_tasks', len(scheduled_tasks))
     visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
-    # from pprint import pprint
-    # Generate the dependency graph.
-    # dot = visualize_dependency_graph(scheduled_tasks)
-    # Render the graph to a file and open it.
-    # This will create a file "dependency_graph.png" in the current directory.
-    # dot.render('dependency_graph', format='png')
 
     for task in scheduled_tasks:
         print(task, len(task.dependencies))
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
     )
-    print('Finished generating schedule + arguments')
-    print(Instructions.shape, O_scratch.shape, Lvec_scratch.shape, Semaphore.shape, Timings.shape)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
@@ -191,8 +193,6 @@ def run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table):
     return O
 
 def main():
-    # seq_lengths=sorted([32768*2])
-    # seq_lengths=sorted([1696])
     seq_lengths=sorted([4641,45118,1730,1696])
     NEW_TOKENS = 4
     QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)

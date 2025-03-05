@@ -10,7 +10,7 @@ PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
 PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
-REDUCTION_STARTUP_TIME = 3.0       # Startup time for reduction operations
+REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
 # REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
 REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
 REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
