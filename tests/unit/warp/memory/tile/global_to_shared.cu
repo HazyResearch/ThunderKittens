@@ -98,7 +98,7 @@ struct st_load_store {
     }
 };
 
-template<typename T>
+template<typename T, bool should_use_semaphore = false>
 struct st_load_store_async {
     using dtype = T;
     template<int H, int W, int NW, typename axis> using valid = std::bool_constant<
@@ -107,13 +107,22 @@ struct st_load_store_async {
         && ( ( !std::is_same_v<kittens::fp8e4m3, T> && !std::is_same_v<kittens::fp8e5m2, T> ) || W%2 == 0 )
         #endif
     >;
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "shared_loadstore_async_gmem=bf16" :
-                                                      std::is_same_v<T, kittens::half> ? "shared_loadstore_async_gmem=half" :
-                                                      #ifdef KITTENS_HOPPER
-                                                      std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_async_gmem=fp8e4m3":
-                                                      std::is_same_v<T, kittens::fp8e5m2> ? "shared_loadstore_async_gmem=fp8e5m2":
-                                                      #endif
-                                                                                         "shared_loadstore_async_gmem=float";
+    static inline const std::string test_identifier = 
+        should_use_semaphore ?
+            (std::is_same_v<T, kittens::bf16> ? "shared_loadstore_async_semaphore_gmem=bf16" :
+             std::is_same_v<T, kittens::half> ? "shared_loadstore_async_semaphore_gmem=half" :
+             #ifdef KITTENS_HOPPER
+             std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_async_semaphore_gmem=fp8e4m3" :
+             std::is_same_v<T, kittens::fp8e5m2> ? "shared_loadstore_async_semaphore_gmem=fp8e5m2" :
+             #endif
+             "shared_loadstore_async_semaphore_gmem=float") :
+            (std::is_same_v<T, kittens::bf16> ? "shared_loadstore_async_gmem=bf16" :
+             std::is_same_v<T, kittens::half> ? "shared_loadstore_async_gmem=half" :
+             #ifdef KITTENS_HOPPER
+             std::is_same_v<T, kittens::fp8e4m3> ? "shared_loadstore_async_gmem=fp8e4m3" :
+             std::is_same_v<T, kittens::fp8e5m2> ? "shared_loadstore_async_gmem=fp8e5m2" :
+             #endif
+            "shared_loadstore_async_gmem=float");
     template<int H, int W, int NW, kittens::ducks::gl::all GL, typename axis> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
 
         o_ref = i_ref; // overwrite the whole thing
@@ -126,16 +135,36 @@ struct st_load_store_async {
         int num_batches = axis::value==0?((int)input.batch/shared_tile.rows):(int)input.batch;
         int num_depths = axis::value==1?((int)input.depth/shared_tile.rows):(int)input.depth;
         int num_rows = axis::value==2?((int)input.rows/shared_tile.rows):(int)input.rows;
+
+
+
+        __shared__ kittens::semaphore bar;
+        int tic = 0;
+        if constexpr (should_use_semaphore) {
+            if (threadIdx.x == 0) {
+                kittens::init_semaphore(bar, NW*32, 0);
+            }
+            __syncthreads();
+        }
+
         for(int i = 0; i < num_batches; i++)
             for(int j = 0; j < num_depths; j++)
                 for(int k = 0; k < num_rows; k++)
-                    for(int l = 0; l < (input.cols/shared_tile.cols); l++) {
-            kittens::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l});
-            kittens::load_async_wait();
+                    for(int l = 0; l < (input.cols/shared_tile.cols); l++, tic ^= 1) {
+                if constexpr (should_use_semaphore) {
+                    kittens::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l}, bar);
+                    kittens::wait(bar, tic);
+                } else {
+                    kittens::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l});
+                    kittens::load_async_wait();
+                }
             kittens::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
         }
     }
 };
+
+template<typename T>
+using st_load_store_async_semaphore = st_load_store_async<T, true>;
 
 using I0_t = std::integral_constant<int, 0>;
 using I1_t = std::integral_constant<int, 1>;
@@ -152,5 +181,8 @@ void warp::memory::tile::global_to_shared::tests(test_data &results) {
     g2s_sweep_gmem_type_2d_warp<st_load_store_async, SIZE, SIZE, I2_t>::run(results);
     g2s_sweep_gmem_type_2d_warp<st_load_store_async, SIZE, SIZE, I1_t>::run(results);
     g2s_sweep_gmem_type_2d_warp<st_load_store_async, SIZE, SIZE, I0_t>::run(results);
+    g2s_sweep_gmem_type_2d_warp<st_load_store_async_semaphore, SIZE, SIZE, I2_t>::run(results);
+    g2s_sweep_gmem_type_2d_warp<st_load_store_async_semaphore, SIZE, SIZE, I1_t>::run(results);
+    g2s_sweep_gmem_type_2d_warp<st_load_store_async_semaphore, SIZE, SIZE, I0_t>::run(results);
 }
 #endif
