@@ -174,7 +174,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
         raise ValueError("Cycle detected in task dependencies!")
     return tasks
 
-def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1):
+def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1, enable_timings: bool = False):
     OP_PARTIAL, OP_REDUCTION = 1, 2
 
     def make_partial_arg(task: Task) -> List[int]:
@@ -203,10 +203,10 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         processor_tasks[pid].sort(key=lambda t: t.start)
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
-    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')
+    O_scratch = torch.zeros((num_instructions, new_tokens, 16, 128), dtype=torch.float32, device='cpu')
     L_scratch = torch.zeros((num_instructions, new_tokens, 16), dtype=torch.float32, device='cpu')
     Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cpu')
-    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cpu')
+    Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
     for pid in range(num_processors):
         for tid, task in enumerate(processor_tasks[pid]):
             if task.task_type == "partial":
