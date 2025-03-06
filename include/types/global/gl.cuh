@@ -15,6 +15,15 @@
 
 namespace kittens {
 
+/* ----------   Global layout axes  ---------- */
+
+enum axis {
+    BATCH = 0,
+    DEPTH = 1,
+    ROW = 2,
+    COL = 3
+};
+
 /* ----------   Associative dictionary for global layouts  ---------- */
 
 #ifdef KITTENS_HOPPER

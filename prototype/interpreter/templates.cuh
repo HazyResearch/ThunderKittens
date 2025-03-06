@@ -13,7 +13,9 @@ struct persistent_state {
     kittens::semaphore *inputs_arrived, *outputs_arrived, *inputs_finished, *outputs_finished, *finish_finished;
     int *instruction;
     uint32_t semaphore_bitfield;
+#ifdef KITTENS_TIMINGS
     uint64_t *timings;
+#endif
 };
 
 // All template functions take these args
@@ -25,30 +27,34 @@ template<kittens_layout T> struct uniform_args {
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
     int *instruction;
+#ifdef KITTENS_TIMINGS
     uint64_t *timings;
+#endif
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
         int & _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch,
-        int * _instruction,
-        uint64_t * _timings
+        int * _instruction
     ) : common(_common),
         task_iter(_task_iter),
         num_iters(_num_iters),
         globals(_globals),
         scratch(_scratch),
-        instruction(_instruction),
-        timings(_timings) {}
+        instruction(_instruction)
+    {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
         task_iter(_args.task_iter),
         num_iters(_args.num_iters),
         globals(_args.globals),
         scratch(_args.scratch),
-        instruction(_args.instruction),
-        timings(_args.timings) {}
+        instruction(_args.instruction)
+#ifdef KITTENS_TIMINGS
+        , timings(_args.timings)
+#endif
+    {}
 };
 
 // Setup args are the same as uniform args

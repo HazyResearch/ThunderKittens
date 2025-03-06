@@ -1,3 +1,5 @@
+#define KITTENS_TIMINGS
+
 #include "kittens.cuh"
 #include "prototype.cuh"
 #include "pyutils/pyutils.cuh"
@@ -42,7 +44,9 @@ struct config {
         semaphore_global semaphore;
         const float Softmax_scale;
         int tic;
+#ifdef KITTENS_TIMINGS
         gl<int, 1, -1, -1, 64> timings;
+#endif
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
@@ -78,7 +82,9 @@ struct partial_template {
     static constexpr int opcode = 1;
     static constexpr int INPUT_PIPE_STAGES = 3;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
+#ifdef KITTENS_TIMINGS
         if(group<12>::laneid() == 0) args.timings[0] = clock64();
+#endif
         args.common.uid         =  args.instruction[1];
         args.common.dst         = {args.instruction[2],
                                    args.instruction[3]};
@@ -100,35 +106,43 @@ struct partial_template {
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
-                // tma::expect(args.inputs_arrived, args.input.vcache);
-                // cache shape is 1, # pages, page size, QK_D
-                tma::load_async(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
-                tma::load_async(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                tma::load_async<axis::ROW, cache_policy::EVICT_FIRST>(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                tma::load_async<axis::ROW, cache_policy::EVICT_FIRST>(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
+#ifdef KITTENS_TIMINGS
             else if(warpgroup::laneid() == 32 && args.iter < 24) args.timings[32+args.iter] = clock64();
+#endif
             warpgroup::sync(5);
         }
     };
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
+#endif
             auto qrot_st = subtile_inplace<16, QKRot_D/2>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
             load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
             load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             zero(args.state.norm_vec);
-            neg_infty(args.state.max_vec);
+            if(args.num_iters > 0) neg_infty(args.state.max_vec);
+            else { one(args.state.max_vec); mul(args.state.max_vec, args.state.max_vec, -999999.f); }
             zero(args.state.o);
             load_async_wait();
-            barrier<12> producer_barrier(11);
-            arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
+#endif
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
             // 1.44269504089f is from exp2
+            if(args.iter == 0 && args.num_iters > 1) {
+                group<12>::arrive(11); // this <12> will allow us to prevent the second producer load from happening before this point.
+            }
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0 && args.iter < 24) args.timings[8+args.iter] = clock64();
+#endif
 
             col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, kcache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
@@ -197,7 +211,9 @@ struct partial_template {
             copy(local_norm_vec, args.state.norm_vec);
             copy(local_max_vec, args.state.max_vec);
 
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[62] = clock64(); // Start of store out.
+#endif
 
             if (warpgroup::groupid() == 0) warpgroup::store(args.scratch.norm_vec, local_norm_vec);
             group<8>::sync(10);
@@ -208,7 +224,7 @@ struct partial_template {
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
-                tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                tma::store_async<axis::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             else { // write out directly to O scratch, without going through smem
                 if(warpgroup::groupid() == 0) {
@@ -217,23 +233,31 @@ struct partial_template {
                     add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
                     store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
                     __syncwarp();
-                    tma::store_async(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0});
+                    tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0});
                 }
-
                 store(args.finish.o[warpgroup::warpid()][warpgroup::groupid()], args.state.o);
                 __syncwarp();
-                tma::store_async(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                tma::store_async<axis::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
-            tma::store_async_wait(); // not just read wait
+            if(group<8>::warpid() == 0) tma::store_async_wait(); // not just read wait
+            asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
                 if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth()) {
                     // Todo: this can probably replaced by a st.async, which may prevent an expensive wait on the final finish barrier.
                     args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
+                    // For blackwell
+                    // asm volatile(
+                    //     "st.async.global.b32 [%0], %1;\n"
+                    // ::  "l"(&args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}]), "r"(args.globals.tic)
+                    // :   "memory"
+                    // );
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
+#ifdef KITTENS_TIMINGS
             else if(group<8>::laneid() == 32) args.timings[63] = clock64();
+#endif
         }
     };
 };
@@ -258,32 +282,35 @@ struct reduction_template {
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
+#ifdef KITTENS_TIMINGS
         if(group<12>::laneid() == 0) args.timings[0] = clock64();
+#endif
         args.common.uid     =  args.instruction[1];
         args.num_iters      =  args.instruction[2];
         args.common.dst     = {args.instruction[3],
                                args.instruction[4]};
         args.common.src_uid =  args.instruction[5];
-        if(warpid() == 0) init_semaphore(args.scratch.producer_block, 0, 1);
-        group<12>::sync(11);
+        group<12>::sync(7);
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
+            // if(args.iter == 1) group<12>::sync(8);
             if(warpgroup::warpid() == args.iter%4) {
                 // spinloop until we're ready
                 int load_uid = args.instruction[6+args.iter];
                 if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] != args.globals.tic) {}
                 __syncwarp();
-                if(args.iter > 0) wait(args.scratch.producer_block, 0);
+#ifdef KITTENS_TIMINGS
                 if(laneid() == 0 && args.iter < 24) args.timings[32+args.iter] = clock64();
+#endif
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
                 #pragma unroll
                 for(int i = 0; i < 8; i++) {
-                    tma::load_async(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, 0, i}, args.inputs_arrived);
+                    tma::load_async<axis::ROW, cache_policy::EVICT_FIRST>(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, 0, i}, args.inputs_arrived);
                 }
-                tma::load_async(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                tma::load_async<cache_policy::EVICT_FIRST>(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
@@ -295,7 +322,9 @@ struct reduction_template {
                 while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] != args.globals.tic) {} // note volatile, L1 is not guaranteed to be coherent.
             }
             group<8>::sync(11); // all warps must sync here.
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
+#endif
             load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
             if(warpid() == 0) {
                 load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0});
@@ -304,12 +333,16 @@ struct reduction_template {
             __syncwarp();
             load(args.state.o, args.scratch.o[group<8>::warpid()]);
             group<8>::sync(11); // we use this to also stall the producer until the consumer is ready.
-            if(group<8>::laneid() == 0) arrive(args.scratch.producer_block);
+            // group<12>::sync(9);
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
+#endif
             load(args.state.lvec, args.scratch.lvec);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0 && args.iter < 24) args.timings[8+args.iter] = clock64();
+#endif
             col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
             rt_fl<16, QVO_D / 8> o;
             load(o, args.input.o[group<8>::warpid()]);
@@ -331,22 +364,23 @@ struct reduction_template {
             add(args.state.lvec, sum_lvec, max_lvec);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
+#ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[62] = clock64();
+#endif
             if(args.common.dst.batch_idx >= 0) {
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
-                tma::store_async(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
+                tma::store_async<axis::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
             }
             else {
                 store(args.scratch.o[group<8>::warpid()], args.state.o);
                 if(group<8>::warpid() == 0) store(args.scratch.lvec, args.state.lvec);
                 __syncwarp();
-                tma::store_async(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0, group<8>::warpid()});
-                if(group<8>::warpid() == 0) tma::store_async(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
+                tma::store_async<axis::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0, group<8>::warpid()});
+                if(group<8>::warpid() == 0) tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
             }
             tma::store_async_wait();
-            if(warpid() == 0) invalidate_semaphore(args.scratch.producer_block);
             group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
             if(args.common.dst.batch_idx < 0) {
@@ -355,7 +389,9 @@ struct reduction_template {
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
+#ifdef KITTENS_TIMINGS
             else if(group<8>::laneid() == 32) args.timings[63] = clock64();
+#endif
         }
     };
 };
@@ -375,16 +411,16 @@ constexpr float PARTIAL_COST_PER_STEP = 1.49f;       // Cost per step (per 32 to
 constexpr float PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME; // Total overhead for a partial operation.
 
 constexpr float REDUCTION_STARTUP_TIME = 2.0f;       // Startup time for reduction operations
-constexpr float REDUCTION_WRITEOUT_TIME = 1.0f;      // Writeout time for reduction operations
+// constexpr float REDUCTION_WRITEOUT_TIME = 1.0f;   // Writeout time for reduction operations, not used so commented to disable warnings.
 constexpr float REDUCTION_PRODUCER_LATENCY = 1.0f;   // Latency between a producer load and when the consumer can access it.
 constexpr float REDUCTION_COST_PER_STEP = 0.4f;      // Cost per reduction step
 
-constexpr float SYNCHRONIZATION_COST = 0.5f;         // Synchronization cost between dependent operations
+// constexpr float SYNCHRONIZATION_COST = 0.5f;      // Synchronization cost between dependent operations, not used so commented to disable warnings.
 
 float get_quality(const std::vector<float>& next_times_input, int num_processors, int num_tokens, int seq_length) {
     int num_partial_steps = (seq_length + 31) / 32;
-    
-    if (next_times_input.size() * num_tokens > num_processors) {
+
+    if (next_times_input.size() > num_processors) {
         // This particular scheduler is just not set up to deal with these situations.
         return -999999999.0f;
     }
@@ -456,13 +492,16 @@ PYBIND11_MODULE(mla_decode, m) {
         &config::globals::Lvec_scratch,
         &config::globals::semaphore,
         &config::globals::Softmax_scale,
-        &config::globals::tic,
-        &config::globals::timings
+        &config::globals::tic
+#ifdef KITTENS_TIMINGS
+        , &config::globals::timings
+#endif
     );
     m.def("__get_quality__", &get_quality, 
-          "An internal utility function for generating efficient schedules.",
-          pybind11::arg("next_times"), 
-          pybind11::arg("num_processors"), 
-          pybind11::arg("num_tokens"), 
-          pybind11::arg("seq_length"));
+        "An internal utility function for generating efficient schedules.",
+        pybind11::arg("next_times"), 
+        pybind11::arg("num_processors"), 
+        pybind11::arg("num_tokens"), 
+        pybind11::arg("seq_length")
+    );
 }

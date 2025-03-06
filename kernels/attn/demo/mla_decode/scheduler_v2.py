@@ -10,14 +10,11 @@ PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
 PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
-REDUCTION_STARTUP_TIME = 10.0       # Startup time for reduction operations
+REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
+# REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
 REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
 REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
 REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
-# REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
-# REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
-# REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
-# REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
 
 SYNCHRONIZATION_COST = 0.5         # Synchronization cost between dependent operations
 
@@ -37,43 +34,6 @@ class Task:
     args: dict = field(default_factory=dict)
     def __lt__(self, other):
         return self.uid < other.uid # just need a way to break ties.
-
-# Our goal is going to be to synthesize a reduction tree from the end, until we've covered all available processors with partial's that have to meet some end time.
-def get_quality(input_heap, num_processors: int, num_tokens: int, seq_length: int) -> float:
-    num_partial_steps = (seq_length + 31) // 32
-    if(len(input_heap)*num_tokens > num_processors): # This particular scheduler is just not set up to deal with these situations.
-        return -999999999
-    # We care about the average start time once all processors are filled with Partial tasks.
-    next_times = [-x[0] for x in input_heap]
-    next_times.sort(reverse=True)
-    full_passes, remainder = divmod(num_processors, len(next_times)) # How many total we'll run through?
-    partial_times = []
-    for i in range(full_passes):
-        for j in range(len(next_times)):
-            next_times[j] -= REDUCTION_COST_PER_STEP
-            partial_times.append(next_times[j])
-    for j in range(remainder):
-        next_times[j] -= REDUCTION_COST_PER_STEP
-        partial_times.append(next_times[j])
-    # We also have to account for the fact that some of these partials are going to be forced to start earlier than the coscheduled reduction.
-    # The number of these is equal to the number of reduction ops * the number of tokens, since those are each handled independently.
-    partial_times.sort() # Thankfully we can pick the worst ones to be forced to start earlier.
-    for j in range(len(next_times)):
-        actual_start_time = next_times[j] + REDUCTION_PRODUCER_LATENCY - REDUCTION_STARTUP_TIME # When does this instruction actually start?
-        for k in range(num_tokens):
-            partial_times[num_tokens*j + k] = actual_start_time
-    # Now that we know when the partials are going to start, we can start to assign the steps of the work.
-    partial_times.sort() # Smallest to largest.
-    
-    active_partial_heap = [-(partial_times.pop() - PARTIAL_OVERHEAD)] # need a max-heap, so negate the times.
-    while num_partial_steps > 0:
-        neg_latest_time = heapq.heappop(active_partial_heap) # Get the next partial to schedule.
-        heapq.heappush(active_partial_heap, -((-neg_latest_time) - PARTIAL_COST_PER_STEP))
-        num_partial_steps -= 1
-        # Peek and see if we need to add another from the list of all processors.
-        if len(partial_times) > 0 and active_partial_heap[0] > -((-partial_times[-1]) - PARTIAL_OVERHEAD):
-            heapq.heappush(active_partial_heap, -(partial_times.pop() - PARTIAL_OVERHEAD))
-    return min([-x for x in active_partial_heap])
 
 def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int):
     assert (len(tok_ids) > 0 and len(tok_ids) <= 4), "If num_tokens is > 4, please generate two separate schedules for each group of 4 tokens."
@@ -116,10 +76,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     heapq.heapify(available_inputs)
     reduction_uid, p_idx = reduction_uid+1, (p_idx+1) % NUM_PROCESSORS
 
-
-    # current_cost = get_quality(available_inputs, num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
     current_cost = __get_quality__([-x[0] for x in available_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
-    # print(f"Single reduction timing: {-current_cost} us")
 
     while True:
         # Let's see what would happen if we added a new reduction task.
@@ -140,7 +97,6 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         heapq.heappush(speculative_inputs, (-new_task.next_input_time, new_task)) # None because it's speculative, anyways.
         heapq.heappush(speculative_inputs, (-((-neg_latest_time) - REDUCTION_COST_PER_STEP), parent_task)) # None because it's speculative, anyways.
         spec_cost = __get_quality__([-x[0] for x in speculative_inputs], num_processors=NUM_PROCESSORS, num_tokens=len(tok_ids), seq_length=seq_length)
-        # print('Speculative cost: ', spec_cost)
         if spec_cost > current_cost:
             available_inputs = speculative_inputs # Commit to this new solution.
             parent_task.dependencies = [new_task.uid] + parent_task.dependencies # Add to the start of the dependencies of the parent task.
@@ -149,17 +105,14 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             # Actually add the task. But in the meantime, we'll just pretend it's been done.
             tasks[processors[p_idx]].append(new_task)
             reduction_uid, p_idx = reduction_uid+1, (p_idx+1) % NUM_PROCESSORS # advance indices, now that we are committing.
-            # print(f'Better solution found with {len(speculative_inputs)} reduction operations -- expected kernel time: {-round(current_cost, 2)} us.')
         else:
             break
-
-    # print(f"Optimal kernel time: {-round(current_cost, 2)} us with {len(available_inputs)} reduction operations.")
 
     # Next, we need to clone this schedule for all of the other tokens.
     base_reduction_tasks = sorted([t for tasks in tasks.values() for t in tasks], key=lambda x: x.next_input_time, reverse=True)
     task_groups = {t.uid: [t] for t in base_reduction_tasks}
     for i in range(1, len(tok_ids)):
-        for task in base_reduction_tasks:
+        for task in sorted(base_reduction_tasks, key=lambda x: x.uid):
             new_task = Task(
                 uid=reduction_uid,
                 batch_id=batch_id,
@@ -175,7 +128,8 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             tasks[processors[p_idx]].append(new_task)
             reduction_uid, p_idx = reduction_uid+1, (p_idx+1) % NUM_PROCESSORS
             task_groups[task.uid].append(new_task)
-            
+
+
     # Next we're going to do the round robin, like in get schedule, to assign tasks to processors.
     partial_info = {p: {} for p in processors} # will contain num steps, and the uid of the partial task.
     full_passes, remainder = divmod(NUM_PROCESSORS, len(base_reduction_tasks)) # How many total we'll run through?
@@ -220,7 +174,6 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     for p in processors:
         for task in tasks[p]:
             task.start = task.next_input_time + REDUCTION_PRODUCER_LATENCY - REDUCTION_STARTUP_TIME
-            # print(task.uid, task.name, task.processor, task.dependencies, task.start, task.finish)
             
     # Alright, now that the work has been allocated, we can go through and actually create the tasks.
     current_pos = 0
@@ -238,15 +191,21 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             args={"start": current_pos, "end": min(current_pos+v[2]*32, seq_length), "length": seq_length, "write_scratch": True}
         ))
         current_pos += v[2]*32
-        # print(f'Processor {p}\'s partials run {v[2]} steps from seq {tasks[p][-1].args["start"]}-{tasks[p][-1].args["end"]}, with expected start time {round(tasks[p][-1].start, 2)} and finish time {round(tasks[p][-1].finish, 2)}.')
 
     for p, p_tasks in tasks.items():
         earliest_start = p_tasks[-1].start
-        for t in p_tasks:
+        num_reductions = 0
+        for i, t in enumerate(p_tasks):
             t.start -= earliest_start
             t.finish -= earliest_start
+            if t.task_type == "reduction":
+                if num_reductions > 0:
+                    t.start += p_tasks[i-1].finish - p_tasks[i-1].start
+                    t.finish += p_tasks[i-1].finish - p_tasks[i-1].start
+                num_reductions += 1
 
-    return [t for tasks in tasks.values() for t in tasks], partial_uid, reduction_uid
+    schedule = [t for tasks in tasks.values() for t in tasks]
+    return schedule, partial_uid, reduction_uid
 
 
 if __name__ == "__main__":
