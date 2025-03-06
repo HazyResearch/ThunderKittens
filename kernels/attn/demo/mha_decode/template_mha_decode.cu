@@ -30,7 +30,7 @@ using o_global            = kittens::gl<bf16,  -1, -1, -1, DIM, tma::descriptor<
 
 // using o_scratch_global    = kittens::gl<float, -1, -1, 16, DIM, st_fl<16, QVO_D/8>, st_fl<16,256>>; // For partial O's
 // using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16,  sv_fl<16>>; // For partial O's
-using o_scratch_global    = kittens::gl<bf16, -1, -1, -1, DIM, tma::descriptor<st_fl<16,128>, 1>, tma::descriptor<st_fl<16,32>, 1>>; // For partial O's SCRATCH_DIM * NEWTOKENS * H * DIM
+using o_scratch_global    = kittens::gl<float, -1, -1, -1, DIM, tma::descriptor<st_fl<16,128>, 1>, tma::descriptor<st_fl<16,32>, 1>>; // For partial O's SCRATCH_DIM * NEWTOKENS * H * DIM
 using lvec_scratch_global = kittens::gl<float, 1, -1, -1, -1,  sv_fl<16>>;     // For partial O's SCRATCH_DIM * NEWTOKENS * H
 
 using semaphore_global    = kittens::gl<int,    1,  1, -1, -1>;             // 1 * 1 * uid * NEWTOKENS
