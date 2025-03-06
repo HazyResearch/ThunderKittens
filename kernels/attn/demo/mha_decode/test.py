@@ -68,12 +68,12 @@ def create_thundermha_arguments(seq_lengths, NEW_TOKENS):
     print('Finished generating schedule + arguments')
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
-def run_thundermha(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
+def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
     if tic is None:
         Semaphore.zero_()
         tic = 1
-    O = torch.zeros_like(QV)
-    softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    O = torch.zeros_like(Q)
+    softmax_scale = 1.0 / math.sqrt(HEAD_DIM)
     
     mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, tic, Timings)
     # mla_decode.mla_decode(Instructions,QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
