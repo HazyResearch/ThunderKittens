@@ -35,8 +35,9 @@ class Task:
     def __lt__(self, other):
         return self.uid < other.uid # just need a way to break ties.
 
-def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int):
-    assert (len(tok_ids) > 0 and len(tok_ids) <= 4), "If num_tokens is > 4, please generate two separate schedules for each group of 4 tokens."
+def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int, q_heads: int = 16):
+    max_tokens = 4
+    assert (len(tok_ids) > 0 and len(tok_ids) <= max_tokens), f"If num_tokens is > {max_tokens}, please generate two separate schedules for each group of {max_tokens} tokens."
     
     NUM_PROCESSORS = len(processors)
     if NUM_PROCESSORS == 1:
@@ -209,5 +210,5 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
 
 
 if __name__ == "__main__":
-    backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3])
+    backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3], 16)
     # backward_schedule(list(range(112)), 0, 45096, [0, 1, 2, 3])

@@ -25,10 +25,14 @@ using o_tile              = st_bf<64, QVO_D>;
 using o_tile_fl           = st_fl<16, QVO_D>;
 using o_global            = kittens::gl<bf16, -1, -1, -1, QVO_D, st_bf<16, QVO_Dd2>, st_bf<16, QVO_D/8>>; // B * NEWTOKENS * H * D_VO
 
-using o_scratch_global    = kittens::gl<float, -1, -1, 16, QVO_D, st_fl<16, QVO_D/8>, st_fl<16,256>>; // For partial O's
-using lvec_scratch_global = kittens::gl<float,  1, -1, -1, 16, sv_fl<16>>; // For partial O's
+template<int Q_HEADS=16>
+using o_scratch_global    = kittens::gl<float, -1, -1, Q_HEADS, QVO_D, st_fl<16, QVO_D/8>, st_fl<16,256>>; // For partial O's
+
+template<int Q_HEADS=16>
+using lvec_scratch_global = kittens::gl<float,  1, -1, -1, Q_HEADS, sv_fl<16>>; // For partial O's
 using semaphore_global    = kittens::gl<int,    1,  1,  -1, -1>;            // 1 * 1 * uid * NEWTOKENS
 
+template<int Q_HEADS=16>
 struct config {
     struct globals {
         using instructions_global = instructions_global;
@@ -39,8 +43,8 @@ struct config {
         vcache_global V_cache;
         table_global Table;
         o_global O;
-        o_scratch_global O_scratch;
-        lvec_scratch_global Lvec_scratch;
+        o_scratch_global<Q_HEADS> O_scratch;
+        lvec_scratch_global<Q_HEADS> Lvec_scratch;
         semaphore_global semaphore;
         const float Softmax_scale;
         int tic;
@@ -57,8 +61,9 @@ struct location {
     int batch_idx; // batch_idx >=0, otherwise it's the negative index, minus one, into scratch
     int seq_idx;
 };
+template<int Q_HEADS=16>
 struct partial_layout {
-    using globals = config::globals;
+    using globals = config<Q_HEADS>::globals;
     struct input_block { kcache_tile kcache; vcache_tile vcache; };
     struct scratch_block { qrot_tile qrot; qvo_tile qvo; st_bf<64, kcache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
     struct finish_block { st_fl<16, QVO_Dd2> o[4][2]; sv_fl<16> lvec[4]; };
@@ -76,9 +81,10 @@ struct partial_layout {
         rt_fl<16, QVO_Dd2> o;
     };
 };
+template<int Q_HEADS=16>
 struct partial_template {
-    using config = config;
-    using layout = partial_layout;
+    using config = config<Q_HEADS>;
+    using layout = partial_layout<Q_HEADS>;
     static constexpr int opcode = 1;
     static constexpr int INPUT_PIPE_STAGES = 3;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -95,6 +101,7 @@ struct partial_template {
         args.common.length      =  args.instruction[8];
         args.num_iters          = (args.common.end_pos - args.common.start_pos + NUM_ROWS - 1) / NUM_ROWS;
         args.common.length    -= (args.globals.Q.depth() - (args.common.q_seq_idx + warpgroup::warpid()) - 1); // adjust for the causal mask
+        
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
@@ -261,8 +268,10 @@ struct partial_template {
         }
     };
 };
+
+template<int Q_HEADS=16>
 struct reduction_layout {
-    using globals = config::globals;
+    using globals = config<Q_HEADS>::globals;
     struct input_block   { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
     struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; semaphore producer_block; }; // used both for setup load and finish store
     struct common_state {
@@ -276,9 +285,11 @@ struct reduction_layout {
         col_vec<rt_fl<16, kcache_tile::rows>> lvec;
     };
 };
+
+template<int Q_HEADS=16>
 struct reduction_template {
-    using config = config;
-    using layout = reduction_layout;
+    using config = config<Q_HEADS>;
+    using layout = reduction_layout<Q_HEADS>;
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -480,21 +491,38 @@ float get_quality(const std::vector<float>& next_times_input, int num_processors
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    kittens::py::bind_kernel<interpreter::kernel<config, partial_template, reduction_template>>(m, "mla_decode",
-        &config::globals::instructions,
-        &config::globals::Q,
-        &config::globals::QV,
-        &config::globals::K_cache,
-        &config::globals::V_cache,
-        &config::globals::Table,
-        &config::globals::O,
-        &config::globals::O_scratch,
-        &config::globals::Lvec_scratch,
-        &config::globals::semaphore,
-        &config::globals::Softmax_scale,
-        &config::globals::tic
+    kittens::py::bind_kernel<interpreter::kernel<config<16>, partial_template<16>, reduction_template<16>>>(m, "mla_decode",
+        &config<16>::globals::instructions,
+        &config<16>::globals::Q,
+        &config<16>::globals::QV,
+        &config<16>::globals::K_cache,
+        &config<16>::globals::V_cache,
+        &config<16>::globals::Table,
+        &config<16>::globals::O,
+        &config<16>::globals::O_scratch,
+        &config<16>::globals::Lvec_scratch,
+        &config<16>::globals::semaphore,
+        &config<16>::globals::Softmax_scale,
+        &config<16>::globals::tic
 #ifdef KITTENS_TIMINGS
-        , &config::globals::timings
+        , &config<16>::globals::timings
+#endif
+    );
+    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "mla_decode_8_heads",
+        &config<8>::globals::instructions,
+        &config<8>::globals::Q,
+        &config<8>::globals::QV,
+        &config<8>::globals::K_cache,
+        &config<8>::globals::V_cache,
+        &config<8>::globals::Table,
+        &config<8>::globals::O,
+        &config<8>::globals::O_scratch,
+        &config<8>::globals::Lvec_scratch,
+        &config<8>::globals::semaphore,
+        &config<8>::globals::Softmax_scale,
+        &config<8>::globals::tic
+#ifdef KITTENS_TIMINGS
+        , &config<8>::globals::timings
 #endif
     );
     m.def("__get_quality__", &get_quality, 
