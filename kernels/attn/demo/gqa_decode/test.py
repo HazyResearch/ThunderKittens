@@ -1,4 +1,4 @@
-import mla_decode
+import gqa_decode
 import torch
 import numpy as np
 import math
@@ -16,7 +16,7 @@ from scheduler_regression import estimate_schedule_length
 
 torch.manual_seed(0)
 
-D_Main, D_Rot = 512, 64
+D = 128
 PAGE_SIZE = 256
 # H = 16                  # set by q_heads
 NUM_PAGES = 10000        # number of pages in cache
@@ -30,16 +30,15 @@ def init_arguments(seq_lengths: List[int], new_tokens: int, q_heads: int=16):
     B = len(seq_lengths)
 
     # Need to initialize QRot, QV, K_cache, V_cache, Lengths, Table    
-    QRot    = torch.randn(B, new_tokens, q_heads, D_Rot, dtype=torch.bfloat16, device='cuda')
-    QV      = torch.randn(B, new_tokens, q_heads, D_Main, dtype=torch.bfloat16, device='cuda')
-    K_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D_Rot, dtype=torch.bfloat16, device='cuda')
-    V_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D_Main, dtype=torch.bfloat16, device='cuda')
+    Q       = torch.randn(B, new_tokens, q_heads, D, dtype=torch.bfloat16, device='cuda')
+    K_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D, dtype=torch.bfloat16, device='cuda')
+    V_cache = torch.randn(NUM_PAGES, PAGE_SIZE, D, dtype=torch.bfloat16, device='cuda')
     Lengths = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
     Table = torch.randint(0, NUM_PAGES, (B, MAX_NUM_PAGES), dtype=torch.int32, device='cuda')
 
-    return QRot, QV, K_cache, V_cache, Lengths, Table
+    return Q, K_cache, V_cache, Lengths, Table
 
-def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
+def create_thundergqa_arguments(seq_lengths, new_tokens, q_heads = 16):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
     t0 = time.time()
     processor_assignments = [max(math.floor(s / sum(seq_lengths) * NUM_PROCESSORS), 1) for s in seq_lengths]
@@ -79,55 +78,52 @@ def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
-def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
-    q_heads = QRot.shape[2]
+def run_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
+    q_heads = Q.shape[2]
     if tic is None:
         Semaphore.zero_()
         tic = 1
-    O = torch.zeros_like(QV)
-    Q_all = torch.concat([QV, QRot], dim=-1).contiguous()
-    KV_all = torch.cat([V_cache, K_cache], dim=-1).contiguous()
-    softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    O = torch.zeros_like(Q)
+    softmax_scale = 1.0 / math.sqrt(D)
     torch.cuda.synchronize()
-    mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
+    gqa_decode_fn = gqa_decode.gqa_decode_8_heads if q_heads == 8 else None
     if Timings is not None:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, Timings)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, Timings)
     else:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic)
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
     torch.cuda.synchronize()
     return O, Timings
 
-def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
-    q_heads = QRot.shape[2]
+def profile_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
+    q_heads = Q.shape[2]
     Semaphore.zero_()
-    O = torch.zeros_like(QV)
-    softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    O = torch.zeros_like(Q)
+    softmax_scale = 1.0 / math.sqrt(D)
     # execute once to warm up
-    mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
+    gqa_decode_fn = gqa_decode.gqa_decode_8_heads if q_heads == 8 else None
     if Timings is not None:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
     else:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
+        gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
     torch.cuda.synchronize()
     t0 = time.time()
     for it in range(ITERS):
         if Timings is not None:
-            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, Timings)
+            gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, Timings)
         else:
-            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2)
+            gqa_decode_fn(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2)
     torch.cuda.synchronize()
     t1 = time.time()
     return (t1-t0) / ITERS
 
-def run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table):
-    Q = torch.concat([QRot, QV], dim=-1)
+def run_gqa_torch(Q, K_cache, V_cache, Lengths, Table):
     q_heads = Q.shape[2]
-    full_K = torch.cat([K_cache, V_cache], dim=-1)[Table].reshape(Q.shape[0], -1, Q.shape[-1])
-    full_V = V_cache[Table].reshape(Q.shape[0], -1, QV.shape[-1])
-    softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
-    O = torch.zeros_like(QV)
+    full_K = K_cache[Table].reshape(Q.shape[0], -1, Q.shape[-1])
+    full_V = V_cache[Table].reshape(Q.shape[0], -1, Q.shape[-1])
+    softmax_scale = 1.0 / math.sqrt(D)
+    O = torch.zeros_like(Q)
     for b, l in enumerate(Lengths):
         # assert Q.shape[1] == 1, "Q must have shape (B, 1, H, D) for the time being."
         mask = torch.ones(Q.shape[1], l, dtype=torch.bool).tril(diagonal=l-Q.shape[1]).to(Q.device)
@@ -144,29 +140,23 @@ def run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table):
 def main(seq_lengths, new_tokens, q_heads=16):
     print(f' ----------- starting seq_lengths: {seq_lengths} new_tokens: {new_tokens} q_heads: {q_heads} -----------')
     seq_lengths = sorted(seq_lengths)
-    QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, new_tokens, q_heads)
-    ref = run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table)
-    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, new_tokens, q_heads)
-    O, Timings = run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+    Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, new_tokens, q_heads)
+    ref = run_gqa_torch(Q, K_cache, V_cache, Lengths, Table)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundergqa_arguments(seq_lengths, new_tokens, q_heads)
+    O, Timings = run_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean", torch.mean(O.abs()))
     print("Max absolute diff", torch.max(torch.abs(O - ref)))
     print("Avg absolute diff", torch.mean(torch.abs(O - ref)))
 
-    time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+    time_per_iter = profile_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
     # save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
-    main([4641,45118,1730,1696], 4, 16)
-    main([65536], 1, 16)
-    main([512]*64, 2, 16)
-    main([4096]*132, 4, 16)
-    main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 16)
-
     main([4641,45118,1730,1696], 4, 8)
     main([65536], 1, 8)
+    main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)
     main([512]*64, 2, 8)
     main([4096]*132, 4, 8)
-    main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)

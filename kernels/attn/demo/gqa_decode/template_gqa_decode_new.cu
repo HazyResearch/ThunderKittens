@@ -8,25 +8,23 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256;
-using qrot_tile           = st_bf<64, QKRot_D>;
-using qvo_tile            = st_bf<64, QVO_D>;
-using q_global            = kittens::gl<bf16, -1, -1, -1, QKRot_D, qrot_tile>; // B * R * H * D_QKRot_D
-using qv_global           = kittens::gl<bf16, -1, -1, -1, QVO_D, qvo_tile>; // B * R * H * D_QVO_D
-using kcache_tile         = st_bf<NUM_ROWS, QKRot_D>;
-using vcache_tile         = st_bf<NUM_ROWS, QVO_D>; // we need the v_tile for later
-using vcache_tile2        = st_bf<NUM_ROWS, QVO_Dd2>; // we need the v_tile for later
-using kcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKRot_D, kcache_tile>; // 1 * #page * pagesize * QKRot_D
-using vcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QVO_D, vcache_tile>; // 1 * #page * pagesize * QVO_D
+static constexpr int QKVO_D = 128, QKVO_Dd2 = QKVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256;
+using q_tile           = st_bf<64, QKVO_D>;
+using q_global            = kittens::gl<bf16, -1, -1, -1, QKVO_D, q_tile>; // B * R * H * D_QKVO_D
+using kcache_tile         = st_bf<NUM_ROWS, QKVO_D>;
+using vcache_tile         = st_bf<NUM_ROWS, QKVO_D>; // we need the v_tile for later
+using vcache_tile2        = st_bf<NUM_ROWS, QKVO_Dd2>; // we need the v_tile for later
+using kcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKVO_D, kcache_tile>; // 1 * #page * pagesize * QKVO_D
+using vcache_global       = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKVO_D, vcache_tile>; // 1 * #page * pagesize * QKVO_D
 using ops_global          = kittens::gl<bf16, 1, -1, -1, 8>;
 using instructions_global = kittens::gl<int, 1, -1, -1, 32>;
 using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
-using o_tile              = st_bf<64, QVO_D>;
-using o_tile_fl           = st_fl<16, QVO_D>;
-using o_global            = kittens::gl<bf16, -1, -1, -1, QVO_D, st_bf<16, QVO_Dd2>, st_bf<16, QVO_D/8>>; // B * NEWTOKENS * H * D_VO
+using o_tile              = st_bf<64, QKVO_D>;
+using o_tile_fl           = st_fl<16, QKVO_D>;
+using o_global            = kittens::gl<bf16, -1, -1, -1, QKVO_D, st_bf<16, QKVO_Dd2>, st_bf<16, QKVO_D/8>>; // B * NEWTOKENS * H * D_VO
 
 template<int Q_HEADS=16>
-using o_scratch_global    = kittens::gl<float, -1, -1, Q_HEADS, QVO_D, st_fl<16, QVO_D/8>, st_fl<16,256>>; // For partial O's
+using o_scratch_global    = kittens::gl<float, -1, -1, Q_HEADS, QKVO_D, st_fl<16, QKVO_D/8>, st_fl<16,QKVO_Dd2>>; // For partial O's
 
 template<int Q_HEADS=16>
 using lvec_scratch_global = kittens::gl<float,  1, -1, -1, Q_HEADS, sv_fl<16>>; // For partial O's
@@ -38,7 +36,6 @@ struct config {
         using instructions_global = instructions_global;
         instructions_global instructions;
         q_global Q;
-        qv_global QV;
         kcache_global K_cache;
         vcache_global V_cache;
         table_global Table;
@@ -65,8 +62,8 @@ template<int Q_HEADS=16>
 struct partial_layout {
     using globals = config<Q_HEADS>::globals;
     struct input_block { kcache_tile kcache; vcache_tile vcache; };
-    struct scratch_block { qrot_tile qrot; qvo_tile qvo; st_bf<64, kcache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
-    struct finish_block { st_fl<16, QVO_Dd2> o[4][2]; sv_fl<16> lvec[4]; };
+    struct scratch_block { q_tile q; st_bf<64, kcache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
+    struct finish_block { st_fl<16, QKVO_Dd2> o[4][2]; sv_fl<16> lvec[4]; };
     struct common_state {
         int uid;
         location dst;
@@ -78,7 +75,7 @@ struct partial_layout {
     };
     struct consumer_state {
         col_vec<rt_fl<16, kcache_tile::rows>> max_vec, norm_vec;
-        rt_fl<16, QVO_Dd2> o;
+        rt_fl<16, QKVO_Dd2> o;
     };
 };
 template<int Q_HEADS=16>
@@ -128,15 +125,22 @@ struct partial_template {
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
 #endif
-            auto qrot_st = subtile_inplace<16, QKRot_D/2>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
-            load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
-            load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            auto q_st = subtile_inplace<16, QKVO_D/2>(args.scratch.q, {warpgroup::warpid(), warpgroup::groupid()});
+            load_async(q_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             zero(args.state.norm_vec);
             if(args.num_iters > 0) neg_infty(args.state.max_vec);
             else { one(args.state.max_vec); mul(args.state.max_vec, args.state.max_vec, -999999.f); }
             zero(args.state.o);
             load_async_wait();
+            if (warpgroup::laneid() == 0) {
+                // print out every 8 rows of args.scratch.q
+                for (int j = 0; j < 8; j++) {
+                    for (int i = 0; i < 8; i++) {
+                        printf("%f ", __bfloat162float(args.scratch.q[{j * 8, i}]));
+                    }
+                    printf("\n");
+                }
+            }
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
 #endif
@@ -159,8 +163,7 @@ struct partial_template {
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
                 rt_fl<16, kcache_tile::rows> att_block_fp32;
-                warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
-                warpgroup::mma_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
+                warpgroup::mm_ABt(att_block_fp32, args.scratch.q, args.input.kcache);
 
                 copy(local_max_vec,  args.state.max_vec);
                 copy(local_norm_vec, args.state.norm_vec);
@@ -228,7 +231,7 @@ struct partial_template {
             div_row(args.state.o, args.state.o, local_norm_vec);
 
             if(args.common.dst.batch_idx >= 0) { // batch is meaningful
-                auto &o_smem = reinterpret_cast<st_bf<16, QVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
+                auto &o_smem = reinterpret_cast<st_bf<16, QKVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
                 tma::store_async<axis::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
@@ -272,8 +275,8 @@ struct partial_template {
 template<int Q_HEADS=16>
 struct reduction_layout {
     using globals = config<Q_HEADS>::globals;
-    struct input_block   { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
-    struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; semaphore producer_block; }; // used both for setup load and finish store
+    struct input_block   { st_fl<16, QKVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
+    struct scratch_block { st_fl<16, QKVO_D/8> o[8]; sv_fl<16> lvec; semaphore producer_block; }; // used both for setup load and finish store
     struct common_state {
         int uid;
         // int num_iters; // same as the number of active load_uid's, marked here for instruction clarity but we just use args.num_iters instead.
@@ -281,7 +284,7 @@ struct reduction_layout {
         int src_uid;
     };
     struct consumer_state {
-        rt_fl<16, QVO_D/8> o;
+        rt_fl<16, QKVO_D/8> o;
         col_vec<rt_fl<16, kcache_tile::rows>> lvec;
     };
 };
@@ -355,7 +358,7 @@ struct reduction_template {
             if(group<8>::laneid() == 0 && args.iter < 24) args.timings[8+args.iter] = clock64();
 #endif
             col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
-            rt_fl<16, QVO_D / 8> o;
+            rt_fl<16, QKVO_D / 8> o;
             load(o, args.input.o[group<8>::warpid()]);
             load(lvec, args.input.lvec);
             __syncwarp();
@@ -379,7 +382,7 @@ struct reduction_template {
             if(group<8>::laneid() == 0) args.timings[62] = clock64();
 #endif
             if(args.common.dst.batch_idx >= 0) {
-                auto &o_smem = reinterpret_cast<st_bf<16, QVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
+                auto &o_smem = reinterpret_cast<st_bf<16, QKVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
                 store(o_smem, args.state.o);
                 __syncwarp();
                 tma::store_async<axis::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
@@ -489,29 +492,11 @@ float get_quality(const std::vector<float>& next_times_input, int num_processors
     return min_value;
 }
 
-PYBIND11_MODULE(mla_decode, m) {
-    m.doc() = "mla_decode python module";
-    kittens::py::bind_kernel<interpreter::kernel<config<16>, partial_template<16>, reduction_template<16>>>(m, "mla_decode",
-        &config<16>::globals::instructions,
-        &config<16>::globals::Q,
-        &config<16>::globals::QV,
-        &config<16>::globals::K_cache,
-        &config<16>::globals::V_cache,
-        &config<16>::globals::Table,
-        &config<16>::globals::O,
-        &config<16>::globals::O_scratch,
-        &config<16>::globals::Lvec_scratch,
-        &config<16>::globals::semaphore,
-        &config<16>::globals::Softmax_scale,
-        &config<16>::globals::tic
-#ifdef KITTENS_TIMINGS
-        , &config<16>::globals::timings
-#endif
-    );
-    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "mla_decode_8_heads",
+PYBIND11_MODULE(gqa_decode, m) {
+    m.doc() = "gqa_decode python module";
+    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "gqa_decode_8_heads",
         &config<8>::globals::instructions,
         &config<8>::globals::Q,
-        &config<8>::globals::QV,
         &config<8>::globals::K_cache,
         &config<8>::globals::V_cache,
         &config<8>::globals::Table,

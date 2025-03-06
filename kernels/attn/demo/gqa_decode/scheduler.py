@@ -200,7 +200,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
     # print('Max number of dependencies:', max(len(t.dependencies) for t in tasks)
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cuda')
-    O_scratch = torch.zeros((num_instructions, new_tokens, q_heads, 512), dtype=torch.float32, device='cuda')
+    O_scratch = torch.zeros((num_instructions, new_tokens, q_heads, 128), dtype=torch.float32, device='cuda')
     L_scratch = torch.zeros((num_instructions, new_tokens, q_heads), dtype=torch.float32, device='cuda')
     Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cuda')
     Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
