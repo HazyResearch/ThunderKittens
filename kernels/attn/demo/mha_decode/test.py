@@ -10,13 +10,13 @@ import matplotlib.pyplot as plt
 from scheduler_v2 import backward_schedule
 from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule
 from timings import save_gantt_chart
-
+from pprint import pprint
 torch.manual_seed(0)
 
 # D_Main, D_Rot = 512, 64
 HEAD_DIM = 128
 PAGE_SIZE = 256
-H = 1                  # H heads
+H = 2                   # H heads
 NUM_PAGES = 1000        # number of pages in cache
 NUM_PROCESSORS = 132    # number of processors
 MAX_NUM_PAGES = 65536 // PAGE_SIZE
@@ -47,16 +47,21 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
     t0 = time.time()
-    chunking = max(32, (round(1.1*sum(seq_lengths)*num_heads//NUM_PROCESSORS)//32)*32)
+    # chunking = 128
+    chunking = max(32, (round(1.05*sum(seq_lengths)*num_heads//NUM_PROCESSORS)//32)*32)
     print(f'Chunking: {chunking}')
     tasks = sample_schedule_generator(new_tokens=new_tokens, num_heads=num_heads, lengths=seq_lengths, chunkings=chunking)
     scheduled_tasks = priority_schedule_tasks(tasks, NUM_PROCESSORS)
-    visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     t1 = time.time()
+    from pprint import pprint
+    pprint(scheduled_tasks)
     print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
+    visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
-        scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
+        scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, num_heads=num_heads, enable_timings=ENABLE_TIMINGS
     )
+    pprint('Instructions:')
+    pprint(Instructions[:6].tolist())
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
@@ -84,12 +89,12 @@ def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
         Q_b = Q[b:b+1].transpose(1, 2)
         K_b = full_K[b, :l].unsqueeze(0).transpose(1, 2)
         V_b = full_V[b, :l].unsqueeze(0).transpose(1, 2)
-        
+        mask = torch.ones(Q.shape[1], l, dtype=torch.bool).tril(diagonal=l-Q.shape[1]).to(Q.device)
         O_b = torch.nn.functional.scaled_dot_product_attention(
             Q_b,
             K_b, 
             V_b, 
-            attn_mask=None, 
+            attn_mask=mask, 
             dropout_p=0.0, 
             is_causal=False, 
             scale=softmax_scale
@@ -117,10 +122,10 @@ def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
 
 def main():
     # seq_lengths=sorted([32768*2])
-    seq_lengths=sorted([32])
+    seq_lengths=sorted([65536])
     # seq_lengths=sorted([4641,45118,1730,1696])
     
-    NEW_TOKENS = 1
+    NEW_TOKENS = 16
     Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
     ref = run_mha_torch(Q, K_cache, V_cache, Lengths, Table)
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(seq_lengths, NEW_TOKENS, H)

@@ -9,7 +9,7 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
 static constexpr int DIM       = 128; 
-static constexpr int NUM_ROWS  = 64; 
+static constexpr int NUM_ROWS  = 32; 
 static constexpr int PAGE_SIZE = 256; 
 
 using q_tile   = st_bf<64, DIM>; 
@@ -17,8 +17,8 @@ using q_global = kittens::gl<bf16, -1, -1, -1, DIM, tma::descriptor<q_tile, 1>>;
 
 using kcache_tile = st_bf<NUM_ROWS, DIM>; 
 using vcache_tile = st_bf<NUM_ROWS, DIM>; 
-using kcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<kcache_tile, 1>>; // #page * pagesize * H * DIM
-using vcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<vcache_tile, 1>>; // #page * pagesize * H * DIM
+using kcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<kcache_tile, axis::DEPTH>>; // #page * pagesize * H * DIM
+using vcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<vcache_tile, axis::DEPTH>>; // #page * pagesize * H * DIM
 
 using instructions_global = kittens::gl<int,  1, -1, -1, 32>;
 using table_global        = kittens::gl<int,  1,  1, -1, -1>; // B * (max # pages)
@@ -26,12 +26,12 @@ using table_global        = kittens::gl<int,  1,  1, -1, -1>; // B * (max # page
 using o_tile              = st_bf<16, DIM>;
 using o_tile_fl           = st_fl<16, DIM>;
 
-using o_global            = kittens::gl<bf16,  -1, -1, -1, DIM, tma::descriptor<o_tile, 1>, tma::descriptor<st_bf<16,32>, 1>>; // B * R * H * DIM
+using o_global            = kittens::gl<bf16,  -1, -1, -1, DIM, tma::descriptor<o_tile, axis::DEPTH>, tma::descriptor<st_bf<16,32>, axis::DEPTH>>; // B * R * H * DIM
 
-using o_scratch_global    = kittens::gl<float, -1, -1, -1, DIM, tma::descriptor<st_fl<16,128>, 1>, tma::descriptor<st_fl<16,32>, 1>>; // For partial O's SCRATCH_DIM * NEWTOKENS * H * DIM
-using lvec_scratch_global = kittens::gl<float, 1, -1, -1, -1,  sv_fl<16>>;     // For partial O's SCRATCH_DIM * NEWTOKENS * H
+using o_scratch_global    = kittens::gl<float, -1, -1, -1, DIM, tma::descriptor<st_fl<16,128>, axis::ROW>, tma::descriptor<st_fl<16,32>, axis::ROW>>; // For partial O's SCRATCH_DIM * H * NEWTOKENS * DIM
+using lvec_scratch_global = kittens::gl<float, 1, -1, -1, -1,  sv_fl<16>>;     // For partial O's SCRATCH_DIM * H * NEWTOKENS
 
-using semaphore_global    = kittens::gl<int,    1,  1, -1, -1>;             // 1 * 1 * uid * NEWTOKENS
+using semaphore_global    = kittens::gl<int,    1, - 1, -1, -1>;             // 1 * uid * H * NEWTOKENS
 
 struct config {
     struct globals {
@@ -66,7 +66,7 @@ struct location {
 struct partial_layout {
     using globals = config::globals;
     struct input_block { kcache_tile kcache; vcache_tile vcache; };
-    struct scratch_block { q_tile q; st_bf<64, kcache_tile::rows> att_block; sv_fl<64> max_vec, norm_vec; };
+    struct scratch_block { q_tile q; sv_fl<64> max_vec, norm_vec; };
     struct finish_block { st_fl<16, DIM> o[4]; sv_fl<16> lvec[4]; };
     struct common_state {
         int uid;
@@ -100,12 +100,11 @@ struct partial_template {
         args.common.length      =  args.instruction[8];
         args.common.head        =  args.instruction[9];
         args.num_iters          = (args.common.end_pos - args.common.start_pos + NUM_ROWS - 1) / NUM_ROWS;
-        args.common.length    -= (args.globals.Q.depth() - (args.common.q_seq_idx + warpgroup::warpid()) - 1); // adjust for the causal mask
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
-            if(args.iter == 1) group<12>::sync(11); // wait for the consumer to finish its setup, before we do the second load.
+            // if(args.iter == 1) group<12>::sync(11); // wait for the consumer to finish its setup, before we do the second load.
             if(warpgroup::warpid() == 0) {
                 int pos = args.common.start_pos + NUM_ROWS*args.iter;
                 int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
@@ -114,6 +113,10 @@ struct partial_template {
                 tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
                 // tma::expect(args.inputs_arrived, args.input.vcache);
                 // cache shape is #page * pagesize * H * DIM
+                // if(laneid() == 0) {
+                //     printf("Loading kcache from page %d, within_page_idx %d, head %d, iter %d\n", next_page_id, within_page_idx, args.common.head, args.iter);
+                // }
+                __syncwarp();
                 tma::load_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.input.kcache, args.globals.K_cache, {next_page_id, within_page_idx, args.common.head, 0}, args.inputs_arrived);
                 tma::load_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.input.vcache, args.globals.V_cache, {next_page_id, within_page_idx, args.common.head, 0}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
@@ -130,14 +133,19 @@ struct partial_template {
             // load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             // auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
             // load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            group<8>::load_async<1, false>(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx, args.common.head, 0});
+            // if(group<8>::laneid() == 0) {
+            //     printf("Loading q from batch %d, seq %d, head %d, iter %d\n", args.common.q_batch_idx, args.common.q_seq_idx, args.common.head, 0);
+            // }
+            group<8>::sync(10);
+            group<8>::load_async<1, false>(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx/4, args.common.head, 0});
             
             zero(args.state.norm_vec);
             neg_infty(args.state.max_vec);
             zero(args.state.o);
             load_async_wait();
-            barrier<12> producer_barrier(11);
-            arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
+            group<8>::sync(10);
+            // barrier<12> producer_barrier(11);
+            // arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
@@ -147,8 +155,6 @@ struct partial_template {
 
             col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, kcache_tile::rows>> max_vec_last_scaled, max_vec_scaled;
-
-            kittens::barrier<8> cons_barrier(10);
 
             if(warpgroup::groupid() == 0) {
                 // A = Q @ K.T
@@ -163,10 +169,30 @@ struct partial_template {
                 mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
                 warpgroup::mma_async_wait();
+                // if(warpgroup::laneid() == 0) {
+                //     printf("att_block_fp32.height: %d, att_block_fp32.width: %d; %f %f %f %f\n", att_block_fp32.height, att_block_fp32.width,
+                //         att_block_fp32.tiles[0][0].data[0].x, att_block_fp32.tiles[0][0].data[1].x, att_block_fp32.tiles[0][0].data[2].x, att_block_fp32.tiles[0][0].data[3].x);
+                // }
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
-                    const int length = args.common.length - args.common.start_pos - args.iter*NUM_ROWS;
-                    right_fill(att_block_fp32, att_block_fp32, length, -9999999999.f);
+                    #pragma unroll
+                    for(int i = 0; i < att_block_fp32.height; i++) {
+                        #pragma unroll
+                        for(int j = 0; j < att_block_fp32.width; j++) {
+                            #pragma unroll
+                            for (int k = 0; k < att_block_fp32.packed_per_tile; k++) {
+                                int row_idx = (i * att_block_fp32.tile_size_row) + (laneid() / 4) + (k%2)*8 + att_block_fp32.rows*warpgroup::warpid();
+                                int row_length = args.common.length - (args.globals.Q.depth() - row_idx - 1);
+                                int last_valid_pos = row_length - args.common.start_pos - args.iter*NUM_ROWS;
+                                const int col_idx_x = (j * att_block_fp32.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                                const int col_idx_y = (j * att_block_fp32.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                                if (col_idx_x >= last_valid_pos) { att_block_fp32.tiles[i][j].data[k].x = -9999999999.f; }
+                                else                             { att_block_fp32.tiles[i][j].data[k].x = att_block_fp32.tiles[i][j].data[k].x; }
+                                if (col_idx_y >= last_valid_pos) { att_block_fp32.tiles[i][j].data[k].y = -9999999999.f; }
+                                else                             { att_block_fp32.tiles[i][j].data[k].y = att_block_fp32.tiles[i][j].data[k].y; }
+                            }
+                        }
+                    }
                 }
 
                 row_max(local_max_vec, att_block_fp32, local_max_vec);
@@ -179,28 +205,23 @@ struct partial_template {
                 
                 sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
                 exp2(max_vec_last_scaled, max_vec_last_scaled);
-                // warpgroup::store(args.scratch.max_vec, max_vec_last_scaled);
                 
                 mul(local_norm_vec, local_norm_vec, max_vec_last_scaled);
                 row_sum(local_norm_vec, att_block_fp32, local_norm_vec);
-                // warpgroup::store(args.scratch.att_block, att_block_fp32);
-                // arrive(cons_barrier);
 
                 mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
 
-                warpgroup::mma_AB(args.state.o, args.scratch.att_block, args.input.vcache);
+                rt_bf<16, kcache_tile::rows> att_block_bf16;
+                copy(att_block_bf16, att_block_fp32);
+                warpgroup::mma_AB(args.state.o, att_block_bf16, args.input.vcache);
 
                 copy(args.state.max_vec, local_max_vec);
                 copy(args.state.norm_vec, local_norm_vec);
 
                 warpgroup::mma_async_wait();
-
-                arrive_and_wait(cons_barrier);
-                if(warpgroup::groupid() == 0) { arrive(args.inputs_finished, WARPGROUP_WARPS*2); }
+                if(warpgroup::laneid() == 0) { arrive(args.inputs_finished, WARPGROUP_WARPS*2); }
             }
-            else {
-                arrive_and_wait(cons_barrier);
-            }
+            group<8>::sync(10);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
             if(args.iter >= args.num_iters-2) internal_compute<true>(args);
@@ -219,6 +240,10 @@ struct partial_template {
             // if (warpgroup::groupid() == 1) warpgroup::load(local_norm_vec, args.scratch.norm_vec);
             if(warpgroup::groupid() == 0) {
                 div_row(args.state.o, args.state.o, local_norm_vec);
+                // if(warpgroup::laneid() == 0) {
+                //     printf("Storing o from batch %d, seq %d, head %d, iter %d\n", args.common.dst.batch_idx, args.common.dst.seq_idx, args.common.head, 0);
+                //     printf("values in o: %f, %f, %f, %f\n", args.state.o.tiles[0][0].data[0].x, args.state.o.tiles[0][0].data[1].x, args.state.o.tiles[0][0].data[2].x, args.state.o.tiles[0][0].data[3].x);
+                // }
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                     auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpgroup::warpid()]);
                     store(o_smem, args.state.o);
@@ -226,28 +251,24 @@ struct partial_template {
                     tma::store_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), args.common.head, 0});
                 }
                 else { // write out directly to O scratch, without going through smem
-                    if(warpgroup::groupid() == 0) {
-                        mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
-                        log2(local_norm_vec, local_norm_vec);
-                        add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
-                        store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
-                        __syncwarp();
-                        tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), args.common.head, 0});
-                    }
-
+                    mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
+                    log2(local_norm_vec, local_norm_vec);
+                    add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
+                    store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
                     store(args.finish.o[warpgroup::warpid()], args.state.o);
                     __syncwarp();
-                    tma::store_async<axis::DEPTH, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), args.common.head, 0});
+                    tma::store_async<axis::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx+warpgroup::warpid(), 0});
+                    tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx+warpgroup::warpid()});
                 }
                 tma::store_async_wait(); // not just read wait
-                group<8>::sync(10);
+                warpgroup::sync(9);
                 if(args.common.dst.batch_idx < 0) {
                     if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth()) {
                         // Todo: this can probably replaced by a st.async, which may prevent an expensive wait on the final finish barrier.
-                        args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
+                        args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
                     }
                 }
-                if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
+                if(warpgroup::laneid() == 0) arrive(args.finish_finished, 2*WARPGROUP_WARPS); // done!
                 else if(group<8>::laneid() == 32) args.timings[63] = clock64();
             }
         }
@@ -282,8 +303,6 @@ struct reduction_template {
                                args.instruction[4]};
         args.common.head    =  args.instruction[5];
         args.common.src_uid =  args.instruction[6];
-        if(warpid() == 0) init_semaphore(args.scratch.producer_block, 0, 1);
-        group<12>::sync(11);
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
@@ -291,17 +310,16 @@ struct reduction_template {
             if(warpgroup::warpid() == args.iter%4) {
                 // spinloop until we're ready
                 int load_uid = args.instruction[7+args.iter];
-                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.dst.seq_idx}] != args.globals.tic) {}
+                if(laneid() == 0) while(*(volatile int*)&args.globals.semaphore[{load_uid, args.common.head, args.common.dst.seq_idx}] != args.globals.tic) {}
                 __syncwarp();
-                if(args.iter > 0) wait(args.scratch.producer_block, 0);
                 if(laneid() == 0 && args.iter < 24) args.timings[32+args.iter] = clock64();
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
                 #pragma unroll
-                for(int i = 0; i < 8; i++) {
-                    tma::load_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, args.common.head, i}, args.inputs_arrived);
+                for(int i = 0; i < 4; i++) {
+                    tma::load_async<axis::ROW, cache_policy::EVICT_FIRST>(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.head, args.common.dst.seq_idx, i}, args.inputs_arrived);
                 }
-                tma::load_async<cache_policy::EVICT_FIRST>(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, args.common.head}, args.inputs_arrived);
+                tma::load_async<cache_policy::EVICT_FIRST>(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.head, args.common.dst.seq_idx}, args.inputs_arrived);
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
             }
         }
@@ -310,21 +328,22 @@ struct reduction_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             // If we are doing a reduction, we need to spinloop until we have confirmation that all the partial results have been written out.
             if(threadIdx.x == 0) { // easier to have a single thread spin
-                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.dst.seq_idx}] != args.globals.tic) {} // note volatile, L1 is not guaranteed to be coherent.
+                while(*(volatile int*)&args.globals.semaphore[{args.common.src_uid, args.common.head, args.common.dst.seq_idx}] != args.globals.tic) {} // note volatile, L1 is not guaranteed to be coherent.
             }
-            group<8>::sync(11); // all warps must sync here.
+            group<8>::sync(8); // all warps must sync here.
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
-            load_async<1, false>(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, args.common.head, group<8>::warpid()});
-            if(warpid() == 0) {
-                load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, args.common.head});
+            if(warpgroup::groupid() == 0) {
+                load_async<axis::ROW, false>(args.scratch.o[warpgroup::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.head, args.common.dst.seq_idx, warpgroup::warpid()});
+                if(warpid() == 0) {
+                    load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.head, args.common.dst.seq_idx});
+                }
+                load_async_wait();
+                __syncwarp();
+                load(args.state.o, args.scratch.o[warpgroup::warpid()]);
+                warpgroup::sync(8);
+                if(group<8>::laneid() == 0) args.timings[2] = clock64();
+                load(args.state.lvec, args.scratch.lvec);
             }
-            load_async_wait();
-            __syncwarp();
-            load(args.state.o, args.scratch.o[group<8>::warpid()]);
-            group<8>::sync(11); // we use this to also stall the producer until the consumer is ready.
-            if(group<8>::laneid() == 0) arrive(args.scratch.producer_block);
-            if(group<8>::laneid() == 0) args.timings[2] = clock64();
-            load(args.state.lvec, args.scratch.lvec);
         }
 
         __device__ static inline void compute(consumer_compute_args<layout> args) {
@@ -332,7 +351,7 @@ struct reduction_template {
             if(warpgroup::groupid() == 0) {
                 col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
                 rt_fl<16, 32> o;
-                load(o, args.input.o[group<8>::warpid()]);
+                load(o, args.input.o[warpgroup::warpid()]);
                 load(lvec, args.input.lvec);
                 __syncwarp();
                 if(laneid() == 0) arrive(args.inputs_finished, 2); // done!
@@ -350,30 +369,32 @@ struct reduction_template {
                 log2(sum_lvec, sum_lvec);
                 add(args.state.lvec, sum_lvec, max_lvec);
             }
+            group<8>::sync(10);
         }
 
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             if(group<8>::laneid() == 0) args.timings[62] = clock64();
-            if(args.common.dst.batch_idx >= 0) {
-                auto &o_smem = reinterpret_cast<st_bf<16, 32>&>(args.scratch.o[group<8>::warpid()]);
-                store(o_smem, args.state.o);
-                __syncwarp();
-                tma::store_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, args.common.head, group<8>::warpid()});
-            }
-            else {
-                store(args.scratch.o[group<8>::warpid()], args.state.o);
-                if(group<8>::warpid() == 0) store(args.scratch.lvec, args.state.lvec);
-                __syncwarp();
-                tma::store_async<axis::DEPTH, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, args.common.head, group<8>::warpid()});
-                if(group<8>::warpid() == 0) tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
-            }
-            tma::store_async_wait();
-            if(warpid() == 0) invalidate_semaphore(args.scratch.producer_block);
-            group<8>::sync(11);
-            // Increment the semaphore for the next stage, if this is not the last one.
-            if(args.common.dst.batch_idx < 0) {
-                if(group<8>::laneid() == 0) {
-                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = args.globals.tic;
+            if(warpgroup::groupid() == 0) {
+                if(args.common.dst.batch_idx >= 0) {
+                    auto &o_smem = reinterpret_cast<st_bf<16, 32>&>(args.scratch.o[warpgroup::warpid()]);
+                    store(o_smem, args.state.o);
+                    __syncwarp();
+                    tma::store_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, args.common.head, warpgroup::warpid()});
+                }
+                else {
+                    store(args.scratch.o[warpgroup::warpid()], args.state.o);
+                    if(warpgroup::warpid() == 0) store(args.scratch.lvec, args.state.lvec);
+                    __syncwarp();
+                    tma::store_async<axis::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.scratch.o[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx, warpgroup::warpid()});
+                    if(warpgroup::warpid() == 0) tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx});
+                }
+                tma::store_async_wait();
+                warpgroup::sync(11);
+                // Increment the semaphore for the next stage, if this is not the last one.
+                if(args.common.dst.batch_idx < 0) {
+                    if(warpgroup::laneid() == 0) {
+                        args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.head, args.common.dst.seq_idx}] = args.globals.tic;
+                    }
                 }
             }
             if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
