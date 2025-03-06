@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+from tqdm import trange
 
 """
 Timing meanings, all relative to start of kernel, and measured in cycles.
@@ -55,10 +56,10 @@ def save_gantt_chart(Timings, Instructions, verbose=False):
     })
 
     # Create Gantt chart
-    fig, ax = plt.subplots(figsize=(15, 8), dpi=200)
+    fig, ax = plt.subplots(figsize=(15, 8), dpi=150)
     
     # For each processor
-    for proc in range(Timings.shape[0]):
+    for proc in trange(Timings.shape[0]):
         for instr in range(Timings.shape[1]):
             # Only process if there's valid timing data
             if Timings[proc, instr, 0].item() > 0:

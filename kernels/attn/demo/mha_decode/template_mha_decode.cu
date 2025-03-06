@@ -104,18 +104,13 @@ struct partial_template {
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
-            // if(args.iter == 1) group<12>::sync(11); // wait for the consumer to finish its setup, before we do the second load.
             if(warpgroup::warpid() == 0) {
                 int pos = args.common.start_pos + NUM_ROWS*args.iter;
                 int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
                 // next page we need to load?
                 tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
-                // tma::expect(args.inputs_arrived, args.input.vcache);
                 // cache shape is #page * pagesize * H * DIM
-                // if(laneid() == 0) {
-                //     printf("Loading kcache from page %d, within_page_idx %d, head %d, iter %d\n", next_page_id, within_page_idx, args.common.head, args.iter);
-                // }
                 __syncwarp();
                 tma::load_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.input.kcache, args.globals.K_cache, {next_page_id, within_page_idx, args.common.head, 0}, args.inputs_arrived);
                 tma::load_async<axis::DEPTH, cache_policy::EVICT_FIRST>(args.input.vcache, args.globals.V_cache, {next_page_id, within_page_idx, args.common.head, 0}, args.inputs_arrived);
@@ -128,14 +123,7 @@ struct partial_template {
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
-            
-            // auto qrot_st = subtile_inplace<16, QKRot_D/2>(args.scratch.qrot, {warpgroup::warpid(), warpgroup::groupid()});
-            // load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            // auto qvo_st = subtile_inplace<16, QVO_Dd2>(args.scratch.qvo, {warpgroup::warpid(), warpgroup::groupid()});
-            // load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            // if(group<8>::laneid() == 0) {
-            //     printf("Loading q from batch %d, seq %d, head %d, iter %d\n", args.common.q_batch_idx, args.common.q_seq_idx, args.common.head, 0);
-            // }
+
             group<8>::sync(10);
             group<8>::load_async<1, false>(args.scratch.q, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx/4, args.common.head, 0});
             
@@ -144,8 +132,6 @@ struct partial_template {
             zero(args.state.o);
             load_async_wait();
             group<8>::sync(10);
-            // barrier<12> producer_barrier(11);
-            // arrive(producer_barrier); // this <12> will allow us to prevent the second producer load from happening before this point.
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
         }
         template<bool do_right_fill> __device__ static inline void internal_compute(consumer_compute_args<layout> args) {
@@ -234,16 +220,8 @@ struct partial_template {
             copy(local_max_vec,  args.state.max_vec);
 
             if(group<8>::laneid() == 0) args.timings[62] = clock64(); // Start of store out.
-
-            // if (warpgroup::groupid() == 0) warpgroup::store(args.scratch.norm_vec, local_norm_vec);
-            // group<8>::sync(10);
-            // if (warpgroup::groupid() == 1) warpgroup::load(local_norm_vec, args.scratch.norm_vec);
             if(warpgroup::groupid() == 0) {
                 div_row(args.state.o, args.state.o, local_norm_vec);
-                // if(warpgroup::laneid() == 0) {
-                //     printf("Storing o from batch %d, seq %d, head %d, iter %d\n", args.common.dst.batch_idx, args.common.dst.seq_idx, args.common.head, 0);
-                //     printf("values in o: %f, %f, %f, %f\n", args.state.o.tiles[0][0].data[0].x, args.state.o.tiles[0][0].data[1].x, args.state.o.tiles[0][0].data[2].x, args.state.o.tiles[0][0].data[3].x);
-                // }
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                     auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpgroup::warpid()]);
                     store(o_smem, args.state.o);
