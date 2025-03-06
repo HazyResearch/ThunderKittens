@@ -5,16 +5,16 @@ from typing import List, Tuple, Dict
 from gqa_decode import __get_quality__
 
 # Timing constants (in microseconds)
-PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
-PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
-PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
+PARTIAL_STARTUP_TIME = 2.5         # Startup time for partial operations
+PARTIAL_WRITEOUT_TIME = 1.2        # Writeout time for partial operations
+PARTIAL_COST_PER_STEP = 0.6        # Cost per step (per 32 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
-REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
+REDUCTION_STARTUP_TIME = 1.0       # Startup time for reduction operations
 # REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
 REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
 REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
-REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
+REDUCTION_COST_PER_STEP = 0.3      # Cost per reduction step
 
 SYNCHRONIZATION_COST = 0.5         # Synchronization cost between dependent operations
 

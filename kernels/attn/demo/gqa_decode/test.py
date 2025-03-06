@@ -75,7 +75,7 @@ def create_thundergqa_arguments(seq_lengths, new_tokens, q_heads = 16):
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS, q_heads=q_heads
     )
-    visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
+    # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
@@ -152,11 +152,11 @@ def main(seq_lengths, new_tokens, q_heads=16):
     time_per_iter = profile_thundergqa(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
-    save_gantt_chart(Timings, Instructions, name='new')
+    # save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
     main([4641,45118,1730,1696], 4, 8)
-    # main([65536], 1, 8)
-    # main([512]*64, 2, 8)
-    # main([4096]*132, 4, 8)
-    # main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)
+    main([65536], 1, 8)
+    main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)
+    main([512]*64, 2, 8)
+    main([4096]*132, 4, 8)

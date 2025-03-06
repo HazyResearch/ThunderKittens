@@ -412,15 +412,15 @@ struct reduction_template {
 #include <pybind11/stl.h>
 
 // Timing constants (in microseconds)
-constexpr float PARTIAL_STARTUP_TIME = 3.0f;         // Startup time for partial operations
-constexpr float PARTIAL_WRITEOUT_TIME = 4.5f;        // Writeout time for partial operations
-constexpr float PARTIAL_COST_PER_STEP = 1.49f;       // Cost per step (per 32 tokens) for partial operations
+constexpr float PARTIAL_STARTUP_TIME = 2.5f;         // Startup time for partial operations
+constexpr float PARTIAL_WRITEOUT_TIME = 1.2f;        // Writeout time for partial operations
+constexpr float PARTIAL_COST_PER_STEP = 0.6f;       // Cost per step (per 32 tokens) for partial operations
 constexpr float PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME; // Total overhead for a partial operation.
 
-constexpr float REDUCTION_STARTUP_TIME = 2.0f;       // Startup time for reduction operations
+constexpr float REDUCTION_STARTUP_TIME = 1.0f;       // Startup time for reduction operations
 // constexpr float REDUCTION_WRITEOUT_TIME = 1.0f;   // Writeout time for reduction operations, not used so commented to disable warnings.
 constexpr float REDUCTION_PRODUCER_LATENCY = 1.0f;   // Latency between a producer load and when the consumer can access it.
-constexpr float REDUCTION_COST_PER_STEP = 0.4f;      // Cost per reduction step
+constexpr float REDUCTION_COST_PER_STEP = 0.3f;      // Cost per reduction step
 
 // constexpr float SYNCHRONIZATION_COST = 0.5f;      // Synchronization cost between dependent operations, not used so commented to disable warnings.
 

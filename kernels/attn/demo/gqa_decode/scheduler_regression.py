@@ -68,13 +68,25 @@ def train_model():
 
 def estimate_schedule_length(num_processors, num_tokens, seq_length):
     features = np.array(make_features(num_processors, num_tokens, seq_length))
-    weights = np.array([ 8.46746941e-02,  1.68300124e+00, -5.12640395e-01,  4.99387510e-01,
-                        -6.28183426e-01,  6.33647090e-01, -8.18835727e-04, -2.80419818e+00,
-                        -7.89583783e-01, -1.46136190e+00, -6.85688746e-02, -7.99856622e-03,
-                        -1.51483520e-01,  7.94864055e-02,  1.08745108e+00, -7.59371060e-04 ])
-    return np.dot(features, weights) + 23.88058885760671
+    '''
+    New weights:
+    [ 4.97914138e-02  9.29448092e-01 -3.51468087e-01 -2.31820822e-01
+    1.06434683e+00 -4.86645153e-01  6.60918369e-03  1.95820124e-01
+    -4.08974241e-01  2.33074643e-01 -3.36065280e-02 -5.76578103e-01
+    -1.02089992e-01  5.69392561e-02  5.97032686e-01 -6.27142372e-04]
+
+    bias 13.468265882691298
+    '''
+    weights = np.array([ 4.97914138e-02, 9.29448092e-01, -3.51468087e-01, -2.31820822e-01,
+                        1.06434683e+00, -4.86645153e-01, 6.60918369e-03, 1.95820124e-01,
+                        -4.08974241e-01, 2.33074643e-01, -3.36065280e-02, -5.76578103e-01,
+                        -1.02089992e-01, 5.69392561e-02, 5.97032686e-01, -6.27142372e-04 ])
+    return np.dot(features, weights) + 13.468265882691298
 
 if __name__ == "__main__":
     
     for num_processors, num_tokens, seq_length, schedule_length in tqdm(list(generate_random_workloads(100))):
         print(estimate_schedule_length(num_processors, num_tokens, seq_length), schedule_length)
+
+    # coefs, intercept = train_model()
+    # print(coefs, intercept)
