@@ -122,6 +122,132 @@ struct test_mma_AtBt {
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
     template<int H, int W, typename K> using make_c_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*W>;
 };
+struct test_mma_AB_half {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_AB_half";
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += __half2float(__float2half(i_ref[i*16*K + k])) * 
+                          __half2float(__float2half(i_ref[(256*H*K) + k*16*W + j]));
+                }
+                o_ref[i*16*W + j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
+        constexpr int K = _K::value;
+        kittens::rt_hf<16*H, 16*K> a;
+        kittens::rt_hf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<16*H, 16*W> c;
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
+        kittens::zero(c);
+        kittens::mma_AB(c, a, b, c);
+        kittens::store(c_output, c, {});
+    }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<half, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<half, 1, 1, 16*K::value, 16*W>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<float, 1, 1, 16*H, 16*W>;
+};
+struct test_mma_ABt_half {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_ABt_half";
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += __half2float(__float2half(i_ref[i*K*16+k])) * 
+                          __half2float(__float2half(i_ref[256*K*H + j*K*16+k]));
+                }
+                o_ref[i*W*16+j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
+        constexpr int K = _K::value;
+        kittens::rt_hf<16*H, 16*K> a;
+        kittens::rt_hf<16*W, 16*K> b;
+        kittens::rt_fl<16*H, 16*W> c;
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
+        kittens::zero(c);
+        kittens::mma_ABt(c, a, b, c);
+        kittens::store(c_output, c, {});
+    }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<half, 1, 1, 16*H, 16*K::value>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<half, 1, 1, 16*W, 16*K::value>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<float, 1, 1, 16*H, 16*W>;
+};
+
+struct test_mma_AtB_half {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_AtB_half";
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += __half2float(__float2half(i_ref[i + k*16*H])) * 
+                          __half2float(__float2half(i_ref[(256*H*K) + k*16*W + j]));
+                }
+                o_ref[i*16*W + j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
+        constexpr int K = _K::value;
+        kittens::rt_hf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_hf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
+        kittens::rt_fl<16*H, 16*W> c;
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
+        kittens::zero(c);
+        kittens::mma_AtB(c, a, b, c);
+        kittens::store(c_output, c, {});
+    }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<half, 1, 1, 16*K::value, 16*H>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<half, 1, 1, 16*K::value, 16*W>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<float, 1, 1, 16*H, 16*W>;
+};
+
+struct test_mma_AtBt_half {
+    template<int H, int W, int NW, typename K> using valid = std::bool_constant<NW == 1 && (2*W*H+W*K::value+H*K::value)<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_mma_AtBt_half";
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        constexpr int K = _K::value;
+        for(int i = 0; i < H*16; i++) {
+            for(int j = 0; j < W*16; j++) {
+                float sum = 0;
+                for(int k = 0; k < K*16; k++) {
+                    sum += __half2float(__float2half(i_ref[i+k*H*16])) * 
+                          __half2float(__float2half(i_ref[256*K*H + j*K*16+k]));
+                }
+                o_ref[i*W*16+j] = sum;
+            }
+        }
+    }
+    template<int H, int W, int NW, gl_t GTL_A, gl_t GTL_B, gl_t GTL_C, typename _K> __device__ static void device_func(const GTL_A &a_input, const GTL_B &b_input, const GTL_C &c_output) {
+        constexpr int K = _K::value;
+        kittens::rt_hf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
+        kittens::rt_hf<16*W, 16*K> b;
+        kittens::rt_fl<16*H, 16*W> c;
+        kittens::load(a, a_input, {});
+        kittens::load(b, b_input, {});
+        kittens::zero(c);
+        kittens::mma_AtBt(c, a, b, c);
+        kittens::store(c_output, c, {});
+    }
+    template<int H, int W, typename K> using make_a_layout = typename kittens::gl<half, 1, 1, 16*K::value, 16*H>;
+    template<int H, int W, typename K> using make_b_layout = typename kittens::gl<half, 1, 1, 16*W, 16*K::value>;
+    template<int H, int W, typename K> using make_c_layout = typename kittens::gl<float, 1, 1, 16*H, 16*W>;
+};
 
 #ifdef KITTENS_HOPPER
 struct test_mma_ABt_fp8 {
