@@ -35,30 +35,20 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
 
     return QRot, QV, K_cache, V_cache, Lengths, Table
 
-def create_thundermla_arguments(seq_lengths, NEW_TOKENS):
+def create_thundermla_arguments(seq_lengths, new_tokens, num_heads):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
-    num_processors = [math.floor(s / sum(seq_lengths) * NUM_PROCESSORS) for s in seq_lengths]
-    while sum(num_processors) < NUM_PROCESSORS:
-        min_idx = num_processors.index(min(num_processors))
-        num_processors[min_idx] += 1
-    # while min(num_processors) < 4:
-    #     max_idx = num_processors.index(max(num_processors))
-    #     min_idx = num_processors.index(min(num_processors))
-    #     num_processors[max_idx] -= 1
-    #     num_processors[min_idx] += 1
-    # Create schedule
-    start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
-    scheduled_tasks = []
-    partial_uid, reduction_uid = 0, NUM_PROCESSORS
-    for batch_id, (seq_l, start_p, num_p) in enumerate(zip(seq_lengths, start_processors, num_processors)):
-        new_tasks, partial_uid, reduction_uid = backward_schedule(
-            list(range(start_p, start_p + num_p)), batch_id, seq_l, list(range(NEW_TOKENS)), partial_uid, reduction_uid
-        )
-        scheduled_tasks.extend(new_tasks)
+    t0 = time.time()
+    chunking = (round(1.1*sum(seq_lengths)*num_heads//num_processors)//32)*32
+    print(f'Chunking: {chunking}')
+    tasks = sample_schedule_generator(new_tokens=new_tokens, num_heads=num_heads, lengths=seq_lengths, chunkings=chunking)
+    schedule = priority_schedule_tasks(tasks, num_processors)
+    visualize_schedule(schedule, num_processors)
+    t1 = time.time()
+    print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
-        scheduled_tasks, NEW_TOKENS, num_processors=NUM_PROCESSORS
+        scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS
     )
-    print('Finished generating schedule + arguments')
+    # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):

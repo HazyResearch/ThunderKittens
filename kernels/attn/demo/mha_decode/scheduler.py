@@ -19,6 +19,7 @@ b2 = 8
 class Task:
     uid: int
     batch_id: int              # Which sequence this task belongs to.
+    head_id: int               # Which head this task belongs to.
     tok_ids: List[int]         # Query indices
     name: str
     task_type: str             # "partial" or "reduction"
@@ -28,8 +29,9 @@ class Task:
     finish: float = None
     processor: int = None
     args: dict = field(default_factory=dict)
+
 def generate_sequence_tasks(batch_id: int, length: int, chunking,
-                            m1: float, b1: float, b2: float,
+                            m1: float, b1: float, b2: float, num_heads: int = 16,
                             starting_id: int = 0, new_tokens: int = 1) -> Tuple[List[Task], int]:
     """
     Generates tasks for one sequence.
@@ -39,68 +41,72 @@ def generate_sequence_tasks(batch_id: int, length: int, chunking,
     PARTIAL cost = m1 * (chunk length) + b1.
     MERGE cost = b2.
     
-    Each task is annotated with batch_id.
+    Each task is annotated with batch_id and head_id.
     Returns a list of tasks for this sequence and the next available task uid.
     """
+    new_tokens = (new_tokens+15)//16
     tasks = []
-    partial_tasks = [[] for _ in range((new_tokens+3)//4)]
     # Create PARTIAL tasks (with no dependencies)
     if type(chunking) == int:
         chunking = [(min(chunking, length - i)) for i in range(0, length, chunking)]
-    position = 0
-    for chunk_length in chunking:
-        end_pos = min(position + chunk_length, length)
-        chunk_length = end_pos - position
-        duration = m1 * (((chunk_length+31)//32)*32) + b1
-        for n in range((new_tokens+3)//4):
-            tok_ids = list(range(4*n, min(4*n+4, new_tokens)))
-            task = Task(
-                uid=starting_id,
-                batch_id=batch_id,
-                name=f"Seq{batch_id}_Partial_{position}-{end_pos}_tok{tok_ids[0]}-{tok_ids[-1]}",
-                task_type="partial",
-                duration=duration,
-                dependencies=[],
-                tok_ids=tok_ids,
-                args={"start": position,
-                      "end": end_pos,
-                      "write_scratch": (chunk_length != length),
-                      "length": length}
-            )
-            tasks.append(task)
-            partial_tasks[n].append(task)
-            starting_id += 1
-        position += chunk_length
-    for new_token in range(new_tokens):
-        TREE_BASE = 16
-        n_idx = new_token // 4
-        merge_tasks = []
-        for i in range(0, len(partial_tasks[n_idx])-1, TREE_BASE):
-            dep = [partial_tasks[n_idx][j].uid for j in range(i, min(i+TREE_BASE, len(partial_tasks[n_idx])))]
-            if i+TREE_BASE+1 == len(partial_tasks[n_idx]):
-                dep.append(partial_tasks[n_idx][i+TREE_BASE].uid)
-            merge_tasks.append(Task(
-                uid=starting_id,
-                batch_id=batch_id,
-                name=f"Seq{batch_id}_Merge_{i//2}_tok{new_token}",
-                task_type="reduction",
-                duration=b2 + m2*(len(dep)-1),
-                dependencies=dep,
-                tok_ids=[new_token],
-                args={"write_scratch": (i != 0)}
-            ))
-            starting_id += 1
-        tasks.extend(merge_tasks)
-        while len(merge_tasks) > 0:
-            next_merge_tasks = []
-            for i in range(0, len(merge_tasks)-1, TREE_BASE):
-                new_dep = [merge_tasks[j].uid for j in range(i+1, min(i+TREE_BASE, len(merge_tasks)))]
-                if i+TREE_BASE+1 == len(merge_tasks):
-                    new_dep.append(merge_tasks[i+TREE_BASE].uid)
-                merge_tasks[i].dependencies.extend(new_dep)
-                merge_tasks[i].duration = b2 + m2*(len(merge_tasks[i].dependencies)-1)
-                next_merge_tasks.append(merge_tasks[i])
-            merge_tasks = next_merge_tasks
+    for h in range(num_heads):
+        position = 0
+        partial_tasks = [[] for _ in range((new_tokens+3)//4)]
+        for chunk_length in chunking:
+            end_pos = min(position + chunk_length, length)
+            chunk_length = end_pos - position
+            duration = m1 * (((chunk_length+31)//32)*32) + b1
+            for n in range((new_tokens+3)//4):
+                tok_ids = list(range(4*n, min(4*n+4, new_tokens)))
+                task = Task(
+                    uid=starting_id,
+                    batch_id=batch_id,
+                    head_id=h,
+                    name=f"Seq{batch_id}H{h}_Partial_{position}-{end_pos}_tok{tok_ids[0]}-{tok_ids[-1]}",
+                    task_type="partial",
+                    duration=duration,
+                    dependencies=[],
+                    tok_ids=tok_ids,
+                    args={"start": position,
+                        "end": end_pos,
+                        "write_scratch": (chunk_length != length),
+                        "length": length}
+                )
+                tasks.append(task)
+                partial_tasks[n].append(task)
+                starting_id += 1
+            position += chunk_length
+        for new_token in range(new_tokens):
+            TREE_BASE = 16
+            n_idx = new_token // 4
+            merge_tasks = []
+            for i in range(0, len(partial_tasks[n_idx])-1, TREE_BASE):
+                dep = [partial_tasks[n_idx][j].uid for j in range(i, min(i+TREE_BASE, len(partial_tasks[n_idx])))]
+                if i+TREE_BASE+1 == len(partial_tasks[n_idx]):
+                    dep.append(partial_tasks[n_idx][i+TREE_BASE].uid)
+                merge_tasks.append(Task(
+                    uid=starting_id,
+                    batch_id=batch_id,
+                    head_id=h,
+                    name=f"Seq{batch_id}H{h}_Merge_{i//2}_tok{new_token}",
+                    task_type="reduction",
+                    duration=b2 + m2*(len(dep)-1),
+                    dependencies=dep,
+                    tok_ids=[new_token],
+                    args={"write_scratch": (i != 0)}
+                ))
+                starting_id += 1
+            tasks.extend(merge_tasks)
+            while len(merge_tasks) > 0:
+                next_merge_tasks = []
+                for i in range(0, len(merge_tasks)-1, TREE_BASE):
+                    new_dep = [merge_tasks[j].uid for j in range(i+1, min(i+TREE_BASE, len(merge_tasks)))]
+                    if i+TREE_BASE+1 == len(merge_tasks):
+                        new_dep.append(merge_tasks[i+TREE_BASE].uid)
+                    merge_tasks[i].dependencies.extend(new_dep)
+                    merge_tasks[i].duration = b2 + m2*(len(merge_tasks[i].dependencies)-1)
+                    next_merge_tasks.append(merge_tasks[i])
+                merge_tasks = next_merge_tasks
     return tasks, starting_id
     
 def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task]:
@@ -163,7 +169,7 @@ def priority_schedule_tasks(tasks: List[Task], num_processors: int) -> List[Task
             if in_degree[dep_id] == 0:
                 ready.append(tasks_by_id[dep_id])
         iters += 1
-        print('Num processed: ', iters)
+        # print('Num processed: ', iters)
     if any(in_degree[t.uid] != 0 for t in tasks):
         raise ValueError("Cycle detected in task dependencies!")
     return tasks
@@ -178,7 +184,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 min(task.tok_ids),  # start token
                 task.batch_id,
                 min(task.tok_ids),  # duplicate start token
-                task.args["start"], task.args["end"], task.args["length"]] + [0]*23
+                task.args["start"], task.args["end"], task.args["length"], task.head_id] + [0]*22
 
     def make_merge_arg(task: Task) -> List[int]:
         assert(len(task.dependencies) <= 11+16)
@@ -186,7 +192,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                      task.uid,  # uid
                      len(task.dependencies)-1,  # number of dependencies minus one
                      -task.uid-1 if task.args["write_scratch"] else task.batch_id,
-                     task.tok_ids[0]] + task.dependencies
+                     task.tok_ids[0], task.head_id] + task.dependencies
         return args_list + [0]*(32 - len(args_list))
 
     num_instructions = max(t.uid for t in tasks) + 1
@@ -195,8 +201,6 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
         processor_tasks[task.processor].append(task)
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
-    # print('Final finish time:', max(t.finish for t in tasks))
-    # print('Max number of dependencies:', max(len(t.dependencies) for t in tasks))
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
     O_scratch = torch.zeros((num_instructions, new_tokens, 16, 512), dtype=torch.float32, device='cpu')
@@ -215,7 +219,7 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 Timings.cuda())
     return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
-def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:
+def sample_schedule_generator( new_tokens: int = 1, num_heads: int = 16, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:
     """
     For demonstration, we schedule one sequence (batch 0) with a specified length.
     Using new_tokens=1 yields one partial task (and no merge tasks).
@@ -223,6 +227,8 @@ def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, c
     """
     if chunkings is None:
         chunkings = [256 if length < 8192 else 512 for length in lengths]
+    if type(chunkings) == int:
+        chunkings = [chunkings] * len(lengths)
     tasks = []
     next_task_id = 0
     # One sequence: (batch_id, length, chunk_pages)
@@ -232,6 +238,7 @@ def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, c
     for batch_id, seq_length, chunking in sequences:
         seq_tasks, next_task_id = generate_sequence_tasks(
             new_tokens=new_tokens,
+            num_heads=num_heads,
             batch_id=batch_id,
             length=seq_length,
             chunking=chunking,
@@ -240,9 +247,6 @@ def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, c
         )
         tasks.extend(seq_tasks)
     return tasks
-
-
-
 
 def visualize_schedule(tasks: List[Task], num_processors: int):
     """
@@ -277,3 +281,13 @@ def visualize_schedule(tasks: List[Task], num_processors: int):
     ax.set_title("Gantt Chart of Scheduled Tasks (Priority Scheduler)")
     plt.tight_layout()
     plt.savefig(f"gantt_{int(time.time())}.png")
+
+if __name__ == "__main__":
+    seq_lengths = [16384]
+    new_tokens, num_heads = 64, 16
+    num_processors = 132
+    chunking = (round(1.1*sum(seq_lengths)*num_heads//num_processors)//32)*32
+    print(f'Chunking: {chunking}')
+    tasks = sample_schedule_generator(new_tokens=new_tokens, num_heads=num_heads, lengths=seq_lengths, chunkings=chunking)
+    schedule = priority_schedule_tasks(tasks, num_processors)
+    visualize_schedule(schedule, num_processors)

@@ -2,7 +2,7 @@ import math
 import heapq
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
-from mla_decode import __get_quality__
+from mha_decode import __get_quality__
 
 # Timing constants (in microseconds)
 PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
@@ -14,10 +14,6 @@ REDUCTION_STARTUP_TIME = 10.0       # Startup time for reduction operations
 REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
 REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
 REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
-# REDUCTION_STARTUP_TIME = 2.0       # Startup time for reduction operations
-# REDUCTION_WRITEOUT_TIME = 1.0      # Writeout time for reduction operations
-# REDUCTION_PRODUCER_LATENCY = 1.0   # Latency between a producer load and when the consumer can access it.
-# REDUCTION_COST_PER_STEP = 0.4      # Cost per reduction step
 
 SYNCHRONIZATION_COST = 0.5         # Synchronization cost between dependent operations
 
@@ -26,6 +22,7 @@ SYNCHRONIZATION_COST = 0.5         # Synchronization cost between dependent oper
 class Task:
     uid: int
     batch_id: int              # Which sequence this task belongs to.
+    head_id: int               # Which head this task belongs to.
     tok_ids: List[int]         # Query indices
     name: str
     task_type: str             # "partial" or "reduction"
@@ -75,8 +72,9 @@ def get_quality(input_heap, num_processors: int, num_tokens: int, seq_length: in
             heapq.heappush(active_partial_heap, -(partial_times.pop() - PARTIAL_OVERHEAD))
     return min([-x for x in active_partial_heap])
 
-def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int):
-    assert (len(tok_ids) > 0 and len(tok_ids) <= 4), "If num_tokens is > 4, please generate two separate schedules for each group of 4 tokens."
+def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int):
+    assert (len(tok_ids) > 0 and len(tok_ids) <= 64), "If num_tokens is > 64, please generate two separate schedules for each group of 64 tokens."
+    tok_ids = [x//16 for x in tok_ids[::16]] # Grab every 16th
     
     NUM_PROCESSORS = len(processors)
     if NUM_PROCESSORS == 1:
@@ -85,8 +83,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         return [Task(
             uid=partial_uid,
             batch_id=batch_id,
+            head_id=head_id,
             tok_ids=tok_ids,
-            name=f"Partial_B={batch_id}_Tok={tok_ids}_ALL",
+            name=f"Partial_B={batch_id}_H={head_id}_Tok={tok_ids}_ALL",
             task_type="partial",
             dependencies=[],
             processor=processors[0],
@@ -103,8 +102,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     tasks[processors[p_idx]].append(Task(
         uid=reduction_uid,
         batch_id=batch_id,
+        head_id=head_id,
         tok_ids=[tok_ids[0]],
-        name=f'reduction_{reduction_uid}',
+        name=f'reduction_{reduction_uid}_B={batch_id}_H={head_id}_Tok={tok_ids[0]}',
         task_type="reduction",
         dependencies=[],
         processor=processors[p_idx],
@@ -128,8 +128,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         new_task = Task( # What would this task actually look like?
             uid=reduction_uid,
             batch_id=batch_id,
+            head_id=head_id,
             tok_ids=[tok_ids[0]],
-            name=f'reduction_{reduction_uid}',
+            name=f'reduction_{reduction_uid}_B={batch_id}_H={head_id}_Tok={tok_ids[0]}',
             task_type="reduction",
             dependencies=[],
             processor=processors[p_idx],
@@ -163,8 +164,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             new_task = Task(
                 uid=reduction_uid,
                 batch_id=batch_id,
+                head_id=head_id,
                 tok_ids=[tok_ids[i]],
-                name=f'reduction_{reduction_uid}',
+                name=f'reduction_{reduction_uid}_B={batch_id}_H={head_id}_Tok={tok_ids[i]}',
                 task_type="reduction",
                 finish=task.finish,
                 next_input_time=task.next_input_time,
@@ -228,8 +230,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
         tasks[p].append(Task(
             uid=v[1],
             batch_id=batch_id,
+            head_id=head_id,
             tok_ids=tok_ids, # all of them
-            name=f'Partial_{v[1]}',
+            name=f'Partial_{v[1]}_B={batch_id}_H={head_id}_Tok={tok_ids}',
             task_type="partial",
             dependencies=[],
             start=v[0]-PARTIAL_OVERHEAD,
@@ -250,5 +253,6 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
 
 
 if __name__ == "__main__":
-    backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3])
+    from pprint import pprint
+    pprint(backward_schedule(list(range(4)), 0, 0, 1024, [0, 1, 2, 3], 0, 132))
     # backward_schedule(list(range(112)), 0, 45096, [0, 1, 2, 3])
