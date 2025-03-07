@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 def get_length(seq_length, num_processors, num_tokens):
-    schedule, partial_uid, reduction_uid = backward_schedule(list(range(num_processors)), 0, seq_length, list(range(num_tokens)), 0, num_processors)
+    schedule, partial_uid, reduction_uid = backward_schedule(list(range(num_processors)), 0, 0, seq_length, list(range(num_tokens)), 0, num_processors)
     return max([t.finish for t in schedule])
 
 def generate_random_workloads(num_workloads: int):
@@ -68,13 +68,13 @@ def train_model():
 
 def estimate_schedule_length(num_processors, num_tokens, seq_length):
     features = np.array(make_features(num_processors, num_tokens, seq_length))
-    weights = np.array([ 8.46746941e-02,  1.68300124e+00, -5.12640395e-01,  4.99387510e-01,
-                        -6.28183426e-01,  6.33647090e-01, -8.18835727e-04, -2.80419818e+00,
-                        -7.89583783e-01, -1.46136190e+00, -6.85688746e-02, -7.99856622e-03,
-                        -1.51483520e-01,  7.94864055e-02,  1.08745108e+00, -7.59371060e-04 ])
-    return np.dot(features, weights) + 23.88058885760671
+    weights = np.array([ 1.20145760e-01,  1.27054908e+00, -5.64941734e-01,  7.50666217e-01,
+                         2.40146361e-01, -4.32048670e-01,  3.19555352e-04, -1.58367637e+00,
+                        -2.12294674e+00, -7.64923803e-01, -2.76500076e-02, -1.92595614e-01,
+                        -1.59383582e-01,  8.84227991e-02,  1.15894047e+00, -8.87289736e-04 ])
+    return np.dot(features, weights) + 33.70417609039685
 
 if __name__ == "__main__":
-    
+    print(train_model())
     for num_processors, num_tokens, seq_length, schedule_length in tqdm(list(generate_random_workloads(100))):
         print(estimate_schedule_length(num_processors, num_tokens, seq_length), schedule_length)

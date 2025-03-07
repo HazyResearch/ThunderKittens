@@ -96,7 +96,7 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, num_heads=num_heads, enable_timings=ENABLE_TIMINGS
     )
-    # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
+    # Optionally visualize schedule: visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
@@ -136,10 +136,12 @@ def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
     return O
 
 def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
+    # Reset semaphore and output tensor
     Semaphore.zero_()
     O = torch.zeros_like(Q)
     softmax_scale = 1.0 / math.sqrt(HEAD_DIM)
- 
+    
+    # Warm-up call
     mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
     torch.cuda.synchronize()
     t0 = time.time()
@@ -150,37 +152,21 @@ def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scra
     return (t1 - t0) / ITERS
 
 def main():
-    num_cases = 10              # Number of random test cases
-    iterations_per_case = 1000  # Number of kernel iterations per test case
+    workload_seq_lengths = sorted([1243, 16439, 3553, 4096])
+    workload_new_tokens  = 16
+    print(f"Profiling workload: seq_lengths = {workload_seq_lengths[0]} x {len(workload_seq_lengths)} sequences, NEW_TOKENS = {workload_new_tokens}")
     
-    for case in range(num_cases):
-        num_sequences = random.randint(1, 5)
-        seq_lengths   = sorted([random.randint(1, 50000) for _ in range(num_sequences)])
-        NEW_TOKENS    = random.randint(1, 32)
-        print(f"\nTest case {case+1}/{num_cases}: seq_lengths = {seq_lengths}, NEW_TOKENS = {NEW_TOKENS}")
-        
-        Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
-        ref = run_mha_torch(Q, K_cache, V_cache, Lengths, Table)
-        Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(seq_lengths, NEW_TOKENS, H)
-        
-        diffs = []
-        for i in range(iterations_per_case):
-            O_kernel = run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
-            max_diff = torch.max(torch.abs(O_kernel - ref)).item()
-            avg_diff = torch.mean(torch.abs(O_kernel - ref)).item()
-            diffs.append(max_diff)
-            if i % 100 == 0:
-                print(f"Iteration {i}: max diff = {max_diff:.6f}, avg diff = {avg_diff:.6f}")
-            if max_diff > 1e-3:
-                print(f"Warning: Significant difference at iteration {i} (max diff = {max_diff})")
-        print(f"Test case {case+1} summary: max diff over {iterations_per_case} iterations = {max(diffs):.6f}")
-        
-        avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100)
-        print(f"Test case {case+1} profiling: Average time per iteration (us): {avg_time*1000000:.3f}")
-        
-        # save_gantt_chart(Timings, Instructions)
-        
-    print("All test cases completed successfully.")
+    Q, K_cache, V_cache, Lengths, Table = init_arguments(workload_seq_lengths, workload_new_tokens)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(workload_seq_lengths, workload_new_tokens, H)
+    
+    iterations = 1000
+    avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=iterations)
+    print(f"Profiling: Average time per iteration = {avg_time*1000000:.3f} µs over {iterations} iterations")
+    
+    # Optionally, you can also save the Gantt chart for the schedule.
+    # save_gantt_chart(Timings, Instructions)
+    
+    print("Profiling complete.")
 
 if __name__ == "__main__":
     main()

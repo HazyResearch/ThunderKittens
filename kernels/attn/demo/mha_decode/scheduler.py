@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 
-m1 = 0.0465
-b1 = 10
-m2 = 0.366
-b2 = 8
+m1 = 5/8/32
+b1 = 4
+m2 = 5*4/42
+b2 = 2.5
 
 # ----------------------------------------------------------------------
 # Scheduling code (task generation, scheduling, and argument creation)
