@@ -23,9 +23,7 @@ PAGE_SIZE = 256
 H = 16                # H heads
 NUM_PAGES      = 1000 # number of pages in cache
 NUM_PROCESSORS = 132  # number of processors
-
 MAX_NUM_PAGES = 65536 // PAGE_SIZE
-
 ENABLE_TIMINGS = True
 
 def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
@@ -50,7 +48,6 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     
     # Adjust so that the sum equals NUM_PROCESSORS
     while sum(processor_assignments) < NUM_PROCESSORS:
-        # Increase the processor count for the head with the maximum processors
         min_idx = processor_assignments.index(max(processor_assignments))
         processor_assignments[min_idx] += 1
     while sum(processor_assignments) > NUM_PROCESSORS:
@@ -79,16 +76,16 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
             break
 
     # Determine number of processors per (seq, head) for scheduling
-    num_processors = [None for _ in seq_head_lengths]
+    num_processors_list = [None for _ in seq_head_lengths]
     for _, p, (s, h, b), i in processor_assignments:
         print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
-        num_processors[i] = min(p, s//128)
+        num_processors_list[i] = min(p, s//128)
     
     # Create schedule using backward_schedule for each (seq, head)
-    start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
+    start_processors = [sum(num_processors_list[:i]) for i in range(len(num_processors_list))]
     scheduled_tasks = []
     partial_uid, reduction_uid = 0, NUM_PROCESSORS
-    for (seq_l, h, b), start_p, num_p in zip(seq_head_lengths, start_processors, num_processors):
+    for (seq_l, h, b), start_p, num_p in zip(seq_head_lengths, start_processors, num_processors_list):
         new_tasks, partial_uid, reduction_uid = backward_schedule(
             list(range(start_p, start_p + num_p)), b, h, seq_l, list(range(new_tokens)), partial_uid, reduction_uid
         )
@@ -99,7 +96,6 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, num_heads=num_heads, enable_timings=ENABLE_TIMINGS
     )
-    # Uncomment below to visualize the schedule if needed
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
@@ -139,6 +135,25 @@ def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
         O[b:b+1] = O_b.transpose(1, 2)    
     return O
 
+def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
+    """
+    Run a warm-up and then profile the kernel over ITERS iterations,
+    returning the average time per iteration.
+    """
+    # Reset semaphore and output tensor
+    Semaphore.zero_()
+    O = torch.zeros_like(Q)
+    softmax_scale = 1.0 / math.sqrt(HEAD_DIM)
+    # Warm-up
+    mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
+    torch.cuda.synchronize()
+    t0 = time.time()
+    for it in range(ITERS):
+        mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it % 2, Timings)
+    torch.cuda.synchronize()
+    t1 = time.time()
+    return (t1 - t0) / ITERS
+
 def main():
     num_cases = 5               # Number of random test cases
     iterations_per_case = 1000  # Number of kernel iterations per test case
@@ -156,16 +171,17 @@ def main():
         diffs = []
         for i in range(iterations_per_case):
             O_kernel = run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
-            
             max_diff = torch.max(torch.abs(O_kernel - ref)).item()
             avg_diff = torch.mean(torch.abs(O_kernel - ref)).item()
             diffs.append(max_diff)
             if i % 100 == 0:
                 print(f"Iteration {i}: max diff = {max_diff:.6f}, avg diff = {avg_diff:.6f}")
-            
             if max_diff > 1e-3:
                 print(f"Warning: Significant difference at iteration {i} (max diff = {max_diff})")
         print(f"Test case {case+1} summary: max diff over {iterations_per_case} iterations = {max(diffs):.6f}")
+        
+        avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100)
+        print(f"Test case {case+1} profiling: Average time per iteration (us): {avg_time*1000000:.3f}")
         
         # save_gantt_chart(Timings, Instructions)
         
