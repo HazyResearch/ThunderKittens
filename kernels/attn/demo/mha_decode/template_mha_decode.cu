@@ -15,8 +15,8 @@ static constexpr int PAGE_SIZE = 256;
 using q_tile   = st_bf<64, DIM>; 
 using q_global = kittens::gl<bf16, -1, -1, -1, DIM, tma::descriptor<q_tile, 1>>; // B * R * H * DIM
 
-using kcache_tile = st_bf<NUM_ROWS, DIM>; 
-using vcache_tile = st_bf<NUM_ROWS, DIM>; 
+using kcache_tile   = st_bf<NUM_ROWS, DIM>; 
+using vcache_tile   = st_bf<NUM_ROWS, DIM>; 
 using kcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<kcache_tile, axis::DEPTH>>; // #page * pagesize * H * DIM
 using vcache_global = kittens::gl<bf16, -1, PAGE_SIZE, -1, DIM, tma::descriptor<vcache_tile, axis::DEPTH>>; // #page * pagesize * H * DIM
 
@@ -27,11 +27,9 @@ using o_tile              = st_bf<16, DIM>;
 using o_tile_fl           = st_fl<16, DIM>;
 
 using o_global            = kittens::gl<bf16,  -1, -1, -1, DIM, tma::descriptor<o_tile, axis::DEPTH>, tma::descriptor<st_bf<16,32>, axis::DEPTH>>; // B * R * H * DIM
-
 using o_scratch_global    = kittens::gl<float, -1, -1, -1, DIM, tma::descriptor<st_fl<16,128>, axis::ROW>, tma::descriptor<st_fl<16,32>, axis::ROW>>; // For partial O's SCRATCH_DIM * H * NEWTOKENS * DIM
-using lvec_scratch_global = kittens::gl<float, 1, -1, -1, -1,  sv_fl<16>>;     // For partial O's SCRATCH_DIM * H * NEWTOKENS
-
-using semaphore_global    = kittens::gl<int,    1, - 1, -1, -1>;             // 1 * uid * H * NEWTOKENS
+using lvec_scratch_global = kittens::gl<float,  1, -1, -1, -1,  sv_fl<16>>;  // For partial O's SCRATCH_DIM * H * NEWTOKENS
+using semaphore_global    = kittens::gl<int,    1, -1, -1, -1>;             // 1 * uid * H * NEWTOKENS
 
 struct config {
     struct globals {
@@ -69,14 +67,14 @@ struct partial_layout {
     struct scratch_block { q_tile q; sv_fl<64> max_vec, norm_vec; };
     struct finish_block { st_fl<16, DIM> o[4]; sv_fl<16> lvec[4]; };
     struct common_state {
-        int uid;
+        int      uid;
         location dst;
-        int q_batch_idx;
-        int q_seq_idx; 
-        int start_pos; // MUST BE A MULTIPLE OF PAGE_SIZE
-        int end_pos;   // One past the last position to load
-        int length;    // the length of the overall sequence in question
-        int head; 
+        int      q_batch_idx;
+        int      q_seq_idx; 
+        int      start_pos; // MUST BE A MULTIPLE OF PAGE_SIZE
+        int      end_pos;   // One past the last position to load
+        int      length;    // the length of the overall sequence in question
+        int      head; 
     };
     struct consumer_state {
         col_vec<rt_fl<16, kcache_tile::rows>> max_vec, norm_vec;

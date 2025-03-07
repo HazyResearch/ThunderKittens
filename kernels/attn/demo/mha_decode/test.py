@@ -4,6 +4,7 @@ import numpy as np
 import math
 import heapq
 import time
+import random
 
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
@@ -28,72 +29,62 @@ MAX_NUM_PAGES = 65536 // PAGE_SIZE
 ENABLE_TIMINGS = True
 
 def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
-
     B = len(seq_lengths)
-
-    # Need to initialize Q, K_cache, V_cache, Lengths, Table
-    Q       = torch.randn(B,        NEW_TOKENS, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
+    # Initialize Q, K_cache, V_cache, Lengths, Table
+    Q       = torch.randn(B, NEW_TOKENS, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
     K_cache = torch.randn(NUM_PAGES, PAGE_SIZE, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
     V_cache = torch.randn(NUM_PAGES, PAGE_SIZE, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
     
     Lengths = torch.tensor(seq_lengths, dtype=torch.int32, device='cuda')
     Table   = torch.randint(0, NUM_PAGES, (B, MAX_NUM_PAGES), dtype=torch.int32, device='cuda')
-    
     return Q, K_cache, V_cache, Lengths, Table
 
 def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
-    
     seq_head_lengths = sorted([(s, h, b) for b, s in enumerate(seq_lengths) for h in range(num_heads)])
-    print(len(seq_head_lengths))
+    print("Number of (seq, head) pairs:", len(seq_head_lengths))
     t0 = time.time()
-    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * NUM_PROCESSORS), 1) for s in seq_lengths for _ in range(num_heads)]
     
+    # Initially assign processors per (seq, head)
+    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * NUM_PROCESSORS), 1)
+                             for s in seq_lengths for _ in range(num_heads)]
+    
+    # Adjust so that the sum equals NUM_PROCESSORS
     while sum(processor_assignments) < NUM_PROCESSORS:
+        # Increase the processor count for the head with the maximum processors
         min_idx = processor_assignments.index(max(processor_assignments))
         processor_assignments[min_idx] += 1
-    processor_assignments = sorted([(estimate_schedule_length(p, new_tokens, shb[0]), p, shb, i) for i, (p, shb) in enumerate(zip(processor_assignments, seq_head_lengths))])
-    
-    total = sum(p for (_, p, _, _) in processor_assignments)
-    if total > NUM_PROCESSORS:
-        new_processor_assignments = []
-    for (sched, p, shb, i) in processor_assignments:
-        new_p = max(1, math.floor(p * NUM_PROCESSORS / total))
-        new_processor_assignments.append((sched, new_p, shb, i))
-    processor_assignments = new_processor_assignments
-    
-    # adjust
-    while sum(p for (_, p, _, _) in processor_assignments) < NUM_PROCESSORS:
-        # increase the smallest assignment
-        idx = min(range(len(processor_assignments)), key=lambda j: processor_assignments[j][1])
-        sched, p, shb, i = processor_assignments[idx]
-        processor_assignments[idx] = (sched, p + 1, shb, i)
-    while sum(p for (_, p, _, _) in processor_assignments) > NUM_PROCESSORS:
-        # decrease the largest assignment
-        idx = max(range(len(processor_assignments)), key=lambda j: processor_assignments[j][1])
-        sched, p, shb, i = processor_assignments[idx]
-        if p > 1:
-            processor_assignments[idx] = (sched, p - 1, shb, i)
+    while sum(processor_assignments) > NUM_PROCESSORS:
+        min_idx = processor_assignments.index(max(processor_assignments))
+        processor_assignments[min_idx] -= 1
+
+    # Convert to tuple: (estimated schedule length, processor count, (seq_length, head, batch), index)
+    processor_assignments = sorted([
+        (estimate_schedule_length(p, new_tokens, shb[0]), p, shb, i)
+        for i, (p, shb) in enumerate(zip(processor_assignments, seq_head_lengths))
+    ])
+
+    # Balance processor assignments further using the schedule-length estimator
+    while len(seq_head_lengths) > 1:
+        best, worst = processor_assignments[0], processor_assignments[-1]
+        if best[1]-1 == 0:
+            break
+        new_t0 = estimate_schedule_length(best[1]-1, new_tokens, best[2][0])
+        new_tn1 = estimate_schedule_length(worst[1]+1, new_tokens, worst[2][0])
+        new_time = max(new_t0, new_tn1)
+        if new_time < worst[0]:
+            processor_assignments[0]  = (new_t0, best[1]-1, best[2], best[-1])
+            processor_assignments[-1] = (new_tn1, worst[1]+1, worst[2], worst[-1])
+            processor_assignments = sorted(processor_assignments)
         else:
             break
 
-    while len(seq_head_lengths) > 1:
-        best, worst = processor_assignments[0], processor_assignments[-1]
-        if best[1]-1 == 0: break
-        new_t0, new_tn1 = estimate_schedule_length(best[1]-1, new_tokens, best[2][0]), estimate_schedule_length(worst[1]+1, new_tokens, worst[2][0])
-        new_time = max(new_t0, new_tn1)
-        if new_time < worst[0]:
-            processor_assignments[0]  = (new_t0,   best[1]-1, best[2],  best[-1])
-            processor_assignments[-1] = (new_tn1, worst[1]+1, worst[2], worst[-1])
-            processor_assignments     = sorted(processor_assignments)
-        else:
-            break
-    
+    # Determine number of processors per (seq, head) for scheduling
     num_processors = [None for _ in seq_head_lengths]
     for _, p, (s, h, b), i in processor_assignments:
-        print(p, s//128)
+        print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
         num_processors[i] = min(p, s//128)
     
-    # create schedule
+    # Create schedule using backward_schedule for each (seq, head)
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
     partial_uid, reduction_uid = 0, NUM_PROCESSORS
@@ -103,11 +94,12 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
         )
         scheduled_tasks.extend(new_tasks)
     t1 = time.time()
-    print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
+    print(f"Time taken to create schedule: {(t1-t0)*1000:.3f} ms")
+    
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, num_heads=num_heads, enable_timings=ENABLE_TIMINGS
     )
-    
+    # Uncomment below to visualize the schedule if needed
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
@@ -121,7 +113,6 @@ def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch,
     torch.cuda.synchronize()
     mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
     torch.cuda.synchronize()
-    
     return O
 
 def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
@@ -149,23 +140,36 @@ def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
     return O
 
 def main():
-    seq_lengths=sorted([48000, 457, 2048, 8549, 2000])
+    num_cases = 5               # Number of random test cases
+    iterations_per_case = 1000  # Number of kernel iterations per test case
     
-    NEW_TOKENS = 16
-    Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
-    ref = run_mha_torch(Q, K_cache, V_cache, Lengths, Table)
-    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(seq_lengths, NEW_TOKENS, H)
-    O = run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
-    
-    print('O', O)
-    print('Ref', ref)
-    for b in range(len(seq_lengths)):
-        print("ref mean:", torch.mean(ref[b].abs()))
-        print("Kernel output mean:", torch.mean(O[b].abs()))
-        print("Max absolute diff:", torch.max(torch.abs(O[b] - ref[b])))
-        print("Avg absolute diff:", torch.mean(torch.abs(O[b] - ref[b])))
-    save_gantt_chart(Timings, Instructions)
-    breakpoint()
+    for case in range(num_cases):
+        num_sequences = random.randint(1, 5)
+        seq_lengths   = sorted([random.randint(1, 50000) for _ in range(num_sequences)])
+        NEW_TOKENS    = random.randint(1, 32)
+        print(f"\nTest case {case+1}/{num_cases}: seq_lengths = {seq_lengths}, NEW_TOKENS = {NEW_TOKENS}")
+        
+        Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, NEW_TOKENS)
+        ref = run_mha_torch(Q, K_cache, V_cache, Lengths, Table)
+        Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(seq_lengths, NEW_TOKENS, H)
+        
+        diffs = []
+        for i in range(iterations_per_case):
+            O_kernel = run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+            
+            max_diff = torch.max(torch.abs(O_kernel - ref)).item()
+            avg_diff = torch.mean(torch.abs(O_kernel - ref)).item()
+            diffs.append(max_diff)
+            if i % 100 == 0:
+                print(f"Iteration {i}: max diff = {max_diff:.6f}, avg diff = {avg_diff:.6f}")
+            
+            if max_diff > 1e-3:
+                print(f"Warning: Significant difference at iteration {i} (max diff = {max_diff})")
+        print(f"Test case {case+1} summary: max diff over {iterations_per_case} iterations = {max(diffs):.6f}")
+        
+        # save_gantt_chart(Timings, Instructions)
+        
+    print("All test cases completed successfully.")
 
 if __name__ == "__main__":
     main()

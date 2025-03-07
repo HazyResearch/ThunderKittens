@@ -202,9 +202,13 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
     for pid in range(num_processors):
         processor_tasks[pid].sort(key=lambda t: t.start)
     max_num_processor_instructions = max(len(ptasks) for ptasks in processor_tasks)
+    
+    # smallest multiple of 16 that is >= new_tokens
+    new_tokens_mul = ((new_tokens+15)//16)*16
+    
     Instructions = torch.zeros((num_processors, max_num_processor_instructions, 32), dtype=torch.int32, device='cpu')
     O_scratch = torch.zeros((num_instructions, num_heads, new_tokens, 128), dtype=torch.float32, device='cpu')
-    L_scratch = torch.zeros((num_instructions, num_heads, new_tokens), dtype=torch.float32, device='cpu')
+    L_scratch = torch.zeros((num_instructions, num_heads, new_tokens_mul), dtype=torch.float32, device='cpu')
     Semaphore = torch.zeros((num_instructions, num_heads, new_tokens), dtype=torch.int32, device='cpu')
     Timings = torch.zeros((num_processors, max_num_processor_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
     for pid in range(num_processors):
