@@ -18,17 +18,18 @@ from scheduler_regression import estimate_schedule_length
 
 torch.manual_seed(0)
 
+# Configuration parameters
 HEAD_DIM  = 128
 PAGE_SIZE = 256
-H = 16                # H heads
-NUM_PAGES      = 1000 # number of pages in cache
-NUM_PROCESSORS = 132  # number of processors
+H = 16                # Number of heads
+NUM_PAGES      = 1000 # Number of pages in cache
+NUM_PROCESSORS = 132  # Number of processors
 MAX_NUM_PAGES = 65536 // PAGE_SIZE
 ENABLE_TIMINGS = True
 
 def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
+    """Initialize Q, K_cache, V_cache, Lengths and Table."""
     B = len(seq_lengths)
-    # Initialize Q, K_cache, V_cache, Lengths, Table
     Q       = torch.randn(B, NEW_TOKENS, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
     K_cache = torch.randn(NUM_PAGES, PAGE_SIZE, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
     V_cache = torch.randn(NUM_PAGES, PAGE_SIZE, H, HEAD_DIM, dtype=torch.bfloat16, device='cuda')
@@ -38,13 +39,16 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
     return Q, K_cache, V_cache, Lengths, Table
 
 def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
+    """Creates a schedule and associated arguments for the thunder mha decode."""
     seq_head_lengths = sorted([(s, h, b) for b, s in enumerate(seq_lengths) for h in range(num_heads)])
     print("Number of (seq, head) pairs:", len(seq_head_lengths))
     t0 = time.time()
     
     # Initially assign processors per (seq, head)
-    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * NUM_PROCESSORS), 1)
-                             for s in seq_lengths for _ in range(num_heads)]
+    processor_assignments = [
+        max(math.floor(s / (sum(seq_lengths)*num_heads) * NUM_PROCESSORS), 1)
+        for s in seq_lengths for _ in range(num_heads)
+    ]
     
     # Adjust so that the sum equals NUM_PROCESSORS
     while sum(processor_assignments) < NUM_PROCESSORS:
@@ -96,10 +100,12 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, num_heads=num_heads, enable_timings=ENABLE_TIMINGS
     )
-    # Optionally visualize schedule: visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
+    # Optionally, visualize the schedule:
+    # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
 def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
+    """Runs a single call to the thunder mha decode."""
     if tic is None:
         Semaphore.zero_()
         tic = 1
@@ -111,32 +117,8 @@ def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch,
     torch.cuda.synchronize()
     return O
 
-def run_mha_torch(Q, K_cache, V_cache, Lengths, Table):
-    B, q_tokens, H, head_dim = Q.shape
-    full_K = K_cache[Table].reshape(B, -1, H, head_dim)
-    full_V = V_cache[Table].reshape(B, -1, H, head_dim)
-    softmax_scale = 1.0 / math.sqrt(head_dim)
-    O = torch.zeros_like(Q)
-    for b in range(B):
-        l = Lengths[b].item() 
-        Q_b = Q[b:b+1].transpose(1, 2)
-        K_b = full_K[b, :l].unsqueeze(0).transpose(1, 2)
-        V_b = full_V[b, :l].unsqueeze(0).transpose(1, 2)
-        mask = torch.ones(Q.shape[1], l, dtype=torch.bool).tril(diagonal=l-Q.shape[1]).to(Q.device)
-        O_b = torch.nn.functional.scaled_dot_product_attention(
-            Q_b,
-            K_b, 
-            V_b, 
-            attn_mask=mask, 
-            dropout_p=0.0, 
-            is_causal=False, 
-            scale=softmax_scale
-        )
-        O[b:b+1] = O_b.transpose(1, 2)    
-    return O
-
-def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
-    # Reset semaphore and output tensor
+def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=10):
+    """Profiles the thunder mha decode kernel over a number of iterations."""
     Semaphore.zero_()
     O = torch.zeros_like(Q)
     softmax_scale = 1.0 / math.sqrt(HEAD_DIM)
@@ -151,22 +133,31 @@ def profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scra
     t1 = time.time()
     return (t1 - t0) / ITERS
 
-def main():
-    workload_seq_lengths = sorted([1243, 16439, 3553, 4096])
-    workload_new_tokens  = 16
-    print(f"Profiling workload: seq_lengths = {workload_seq_lengths[0]} x {len(workload_seq_lengths)} sequences, NEW_TOKENS = {workload_new_tokens}")
+def run_benchmark_tk(seq_lengths: List[int], new_tokens: int, iterations: int = 10):
+    """
+    Runs a benchmark on tk mha decoding with the provided sequence lengths (for the cache) and new_tokens (query length).
+    This mirrors the flash-attn benchmark configuration.
+    """
+    print(f"\n----------- starting seq_lengths: {seq_lengths} new_tokens: {new_tokens} -----------")
+    torch.manual_seed(0)
     
-    Q, K_cache, V_cache, Lengths, Table = init_arguments(workload_seq_lengths, workload_new_tokens)
-    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(workload_seq_lengths, workload_new_tokens, H)
+    # Initialize arguments
+    Q, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, new_tokens)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermha_arguments(seq_lengths, new_tokens, H)
     
-    iterations = 1000
+    # Profile the thunder mha decode kernel
     avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=iterations)
-    print(f"Profiling: Average time per iteration = {avg_time*1000000:.3f} µs over {iterations} iterations")
+    print(f"Profiling: Average time per iteration = {avg_time*1e6:.1f} µs over {iterations} iterations")
     
-    # Optionally, you can also save the Gantt chart for the schedule.
-    # save_gantt_chart(Timings, Instructions)
-    
-    print("Profiling complete.")
+    # Compute memory I/O and FLOPS (using similar estimates as in flash-attn)
+    total_length = sum(seq_lengths)
+    # Memory I/O in bytes: for each token in the cache, H heads, each with key and value (each HEAD_DIM elements) at 2 bytes per element.
+    mem_io = total_length * H * (HEAD_DIM + HEAD_DIM) * 2
+    # FLOPS: for each query token and each cached token, H heads, (HEAD_DIM + 2*HEAD_DIM) operations per element, times 2 (fused multiply-add)
+    flops = new_tokens * total_length * H * (HEAD_DIM + 2*HEAD_DIM) * 2
+    print(f"Time: {avg_time*1e6:.1f} µs, {(mem_io/1e9) / avg_time:.0f} GB/s, {(flops/1e12) / avg_time:.0f} TFLOPS/s")
 
 if __name__ == "__main__":
-    main()
+    # Run benchmarks with the same configurations as the flash-attn benchmark:
+    run_benchmark_tk([4641, 45118, 1730, 1696], 4)
+    run_benchmark_tk([65536], 1)
