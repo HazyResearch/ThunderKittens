@@ -18,7 +18,7 @@ dtype = torch.bfloat16
 seqlen = 64 * 1024
 nheads = 16
 nheads_kv = 16
-headdim = 128
+headdim   = 128
 headdim_v = 128
 has_qv = False
 
@@ -42,7 +42,7 @@ def run_benchmark(seqlens, seqlen_q, num_splits=0):
 
     # num_splits = 32
     # num_splits = 0
-    q = torch.randn(batch_size, seqlen_q, nheads, headdim, dtype=dtype, device=device)
+    q       = torch.randn(batch_size, seqlen_q, nheads, headdim, dtype=dtype, device=device)
     v_cache = torch.randn(batch_size, seqlen, nheads_kv, headdim_v, dtype=dtype, device=device)
     k_cache = torch.randn(batch_size, seqlen, nheads_kv, headdim, dtype=dtype, device=device)
     if page_size is not None:
@@ -59,13 +59,20 @@ def run_benchmark(seqlens, seqlen_q, num_splits=0):
     t0 = do_bench(fn, warmup=1, rep=10)
 
     mem_io = cache_seqlens.sum().item() * nheads_kv * (headdim + headdim_v) * 2
-    flops = seqlen_q * cache_seqlens.float().sum().item() * nheads * (headdim + headdim_v * 2) * 2
+    flops  = seqlen_q * cache_seqlens.float().sum().item() * nheads * (headdim + headdim_v * 2) * 2
     print(f"Time: {t0 * 1e3:.1f} us, {mem_io * 1e-9 / (t0 * 1e-3):.0f} GB/s, {flops * 1e-12 / (t0 * 1e-3):.0f} TFLOPS/s")
 
 
 if __name__ == "__main__":
-    run_benchmark([4641,45118,1730,1696], 4)
+    # run_benchmark([4641, 45118, 1730, 1696], 4)
+    # run_benchmark([4641, 45118, 1730, 1696], 2)
+    # run_benchmark([4641, 45118, 1730, 1696], 1)
     run_benchmark([65536], 1)
+    run_benchmark([65536], 2)
+    run_benchmark([65536], 4)
+    run_benchmark([2048, 2048, 2048, 2048], 1)
+    run_benchmark([2048, 2048, 2048, 2048], 2)
+    run_benchmark([2048, 2048, 2048, 2048], 4)
     # run_benchmark([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4)
     # run_benchmark([512]*64, 2)
     # run_benchmark([4096]*132, 4)

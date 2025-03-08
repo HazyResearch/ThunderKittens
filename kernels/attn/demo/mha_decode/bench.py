@@ -82,11 +82,12 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     # Determine number of processors per (seq, head) for scheduling
     num_processors_list = [None for _ in seq_head_lengths]
     for _, p, (s, h, b), i in processor_assignments:
-        print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
-        num_processors_list[i] = min(p, s//128)
+        # print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
+        num_processors_list[i] = max(min(p, s//128), 1)
     
     # Create schedule using backward_schedule for each (seq, head)
     start_processors = [sum(num_processors_list[:i]) for i in range(len(num_processors_list))]
+    print(start_processors, num_processors_list)
     scheduled_tasks = []
     partial_uid, reduction_uid = 0, NUM_PROCESSORS
     for (seq_l, h, b), start_p, num_p in zip(seq_head_lengths, start_processors, num_processors_list):
@@ -149,6 +150,8 @@ def run_benchmark_tk(seq_lengths: List[int], new_tokens: int, iterations: int = 
     avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=iterations)
     print(f"Profiling: Average time per iteration = {avg_time*1e6:.1f} µs over {iterations} iterations")
     
+    # save_gantt_chart(Timings, Instructions)
+    
     # Compute memory I/O and FLOPS (using similar estimates as in flash-attn)
     total_length = sum(seq_lengths)
     # Memory I/O in bytes: for each token in the cache, H heads, each with key and value (each HEAD_DIM elements) at 2 bytes per element.
@@ -159,5 +162,12 @@ def run_benchmark_tk(seq_lengths: List[int], new_tokens: int, iterations: int = 
 
 if __name__ == "__main__":
     # Run benchmarks with the same configurations as the flash-attn benchmark:
-    run_benchmark_tk([4641, 45118, 1730, 1696], 4)
+    # run_benchmark_tk([4641, 45118, 1730, 1696], 4)
+    # run_benchmark_tk([4641, 45118, 1730, 1696], 2)
+    # run_benchmark_tk([4641, 45118, 1730, 1696], 1)
     run_benchmark_tk([65536], 1)
+    run_benchmark_tk([65536], 2)
+    run_benchmark_tk([65536], 4)
+    run_benchmark_tk([2048, 2048, 2048, 2048], 1)
+    run_benchmark_tk([2048, 2048, 2048, 2048], 2)
+    run_benchmark_tk([2048, 2048, 2048, 2048], 4)
