@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
+from scheduler_regression import estimate_schedule_length
 
 m1 = 5/8/32
 b1 = 4
@@ -223,11 +224,62 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 Timings.cuda())
     return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
-def sample_schedule_generator( new_tokens: int = 1, num_heads: int = 16, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:
+def assign_num_processors(seq_lengths: List[int], num_heads: int, new_tokens: int, num_processors: int):
+    seq_head_lengths = sorted([(s, h, b) for b, s in enumerate(seq_lengths) for h in range(num_heads)])
+    print("Number of (seq, head) pairs:", len(seq_head_lengths))
+
+    imbalance_level = seq_head_lengths[-1][0] / seq_head_lengths[0][0]
+    print(f"Imbalance level: {imbalance_level}")
+    total_batch = len(seq_head_lengths) # B*H, since these are done independently here.
+    print(f"Total batch: {total_batch}")
+    waves = max(math.ceil(total_batch * imbalance_level / num_processors / 4), 1) # 4 is a heuristic.
+    print(f"Waves: {waves}")
+    TOTAL_SM_SLOTS = num_processors * waves
+    
+    # Initially assign processors per (seq, head)
+    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * TOTAL_SM_SLOTS), 1)
+                             for s, _1, _2 in seq_head_lengths]
+
+    # Adjust so that the sum equals TOTAL_SM_SLOTS
+    while sum(processor_assignments) < TOTAL_SM_SLOTS:
+        min_idx = processor_assignments.index(max(processor_assignments))
+        processor_assignments[min_idx] += 1
+    while sum(processor_assignments) > TOTAL_SM_SLOTS:
+        min_idx = processor_assignments.index(max(processor_assignments))
+        processor_assignments[min_idx] -= 1
+
+    # Convert to tuple: (estimated schedule length, processor count, (seq_length, head, batch), index)
+    processor_assignments = sorted([
+        (estimate_schedule_length(p, new_tokens, shb[0]), p, shb, i)
+        for i, (p, shb) in enumerate(zip(processor_assignments, seq_head_lengths))
+    ])
+
+    # Balance processor assignments further using the schedule-length estimator, if a single wave.
+    while (waves == 1) and len(seq_head_lengths) > 1:
+        best, worst = processor_assignments[0], processor_assignments[-1]
+        if best[1]-1 == 0:
+            break
+        new_t0 = estimate_schedule_length(best[1]-1, new_tokens, best[2][0])
+        new_tn1 = estimate_schedule_length(worst[1]+1, new_tokens, worst[2][0])
+        new_time = max(new_t0, new_tn1)
+        if new_time < worst[0]:
+            processor_assignments[0]  = (new_t0, best[1]-1, best[2], best[-1])
+            processor_assignments[-1] = (new_tn1, worst[1]+1, worst[2], worst[-1])
+            processor_assignments = sorted(processor_assignments)
+        else:
+            break
+
+    # Determine number of processors per (seq, head) for scheduling
+    num_processors_list = [None for _ in seq_head_lengths]
+    for _, p, (s, h, b), i in processor_assignments:
+        print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
+        num_processors_list[i] = max(1, min(p, s//128))
+    return seq_head_lengths, num_processors_list
+
+def sample_schedule_generator(new_tokens: int = 1, num_heads: int = 16, lengths: List[int] = None, chunkings = None, num_processors: int = 132) -> List[Task]:
     """
     For demonstration, we schedule one sequence (batch 0) with a specified length.
     Using new_tokens=1 yields one partial task (and no merge tasks).
-    The page table is passed in dynamically (if not provided, a default is used).
     """
     if chunkings is None:
         chunkings = [256 if length < 8192 else 512 for length in lengths]
@@ -250,7 +302,8 @@ def sample_schedule_generator( new_tokens: int = 1, num_heads: int = 16, lengths
             starting_id=next_task_id
         )
         tasks.extend(seq_tasks)
-    return tasks
+    scheduled_tasks = priority_schedule_tasks(tasks, num_processors)
+    return scheduled_tasks
 
 def visualize_schedule(tasks: List[Task], num_processors: int):
     """

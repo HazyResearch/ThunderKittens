@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict
 
 import matplotlib.pyplot as plt
 from scheduler_v2 import backward_schedule
-from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule
+from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule, assign_num_processors
 from timings import save_gantt_chart
 from pprint import pprint
 from scheduler_regression import estimate_schedule_length
@@ -39,73 +39,27 @@ def init_arguments(seq_lengths: List[int], NEW_TOKENS: int):
     return Q, K_cache, V_cache, Lengths, Table
 
 def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
-    seq_head_lengths = sorted([(s, h, b) for b, s in enumerate(seq_lengths) for h in range(num_heads)])
-    print("Number of (seq, head) pairs:", len(seq_head_lengths))
+
+    
     t0 = time.time()
-
-    imbalance_level = seq_head_lengths[-1][0] / seq_head_lengths[0][0]
-    print(f"Imbalance level: {imbalance_level}")
-    total_batch = len(seq_head_lengths) # B*H, since these are done independently here.
-    print(f"Total batch: {total_batch}")
-    waves = max(math.ceil(total_batch * imbalance_level / NUM_PROCESSORS / 4), 1) # 4 is a heuristic.
-    print(f"Waves: {waves}")
-    TOTAL_SM_SLOTS = NUM_PROCESSORS * waves
-    
-    # Initially assign processors per (seq, head)
-    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * TOTAL_SM_SLOTS), 1)
-                             for s, _1, _2 in seq_head_lengths]
-
-    # Adjust so that the sum equals TOTAL_SM_SLOTS
-    while sum(processor_assignments) < TOTAL_SM_SLOTS:
-        min_idx = processor_assignments.index(max(processor_assignments))
-        processor_assignments[min_idx] += 1
-    while sum(processor_assignments) > TOTAL_SM_SLOTS:
-        min_idx = processor_assignments.index(max(processor_assignments))
-        processor_assignments[min_idx] -= 1
-
-    # Convert to tuple: (estimated schedule length, processor count, (seq_length, head, batch), index)
-    processor_assignments = sorted([
-        (estimate_schedule_length(p, new_tokens, shb[0]), p, shb, i)
-        for i, (p, shb) in enumerate(zip(processor_assignments, seq_head_lengths))
-    ])
-
-    # Balance processor assignments further using the schedule-length estimator, if a single wave.
-    while (waves == 1) and len(seq_head_lengths) > 1:
-        best, worst = processor_assignments[0], processor_assignments[-1]
-        if best[1]-1 == 0:
-            break
-        new_t0 = estimate_schedule_length(best[1]-1, new_tokens, best[2][0])
-        new_tn1 = estimate_schedule_length(worst[1]+1, new_tokens, worst[2][0])
-        new_time = max(new_t0, new_tn1)
-        if new_time < worst[0]:
-            processor_assignments[0]  = (new_t0, best[1]-1, best[2], best[-1])
-            processor_assignments[-1] = (new_tn1, worst[1]+1, worst[2], worst[-1])
-            processor_assignments = sorted(processor_assignments)
-        else:
-            break
-
-    # Determine number of processors per (seq, head) for scheduling
-    num_processors_list = [None for _ in seq_head_lengths]
-    for _, p, (s, h, b), i in processor_assignments:
-        print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
-        num_processors_list[i] = max(1, min(p, s//128))
-
+    # seq_head_lengths, num_processors_list = assign_num_processors(seq_lengths, num_heads, new_tokens, NUM_PROCESSORS)
     # Create a heap of processor times.
-    processor_times = [(0, p) for p in range(NUM_PROCESSORS)]
-    partial_uid, reduction_uid = 0, TOTAL_SM_SLOTS
-    scheduled_tasks = []
-    for (seq_l, h, b), num_p in zip(seq_head_lengths, num_processors_list):
-        # Get num_p processor lowest processor times
-        times, processors = tuple(list(x) for x in zip(*processor_times[-num_p:]))
-        times = {p: t for p, t in zip(processors, times)}
-        # Generate the new backwards schedule
-        new_tasks, partial_uid, reduction_uid, times = backward_schedule(
-            processors, b, h, seq_l, list(range(new_tokens)), partial_uid, reduction_uid, times
-        )
-        scheduled_tasks.extend(new_tasks)
-        processor_times[-num_p:] = [(times[p], p) for p in processors]
-        processor_times.sort(reverse=True)
-    
+    # processor_times = [(0, p) for p in range(NUM_PROCESSORS)]
+    # partial_uid, reduction_uid = 0, sum(num_processors_list)
+    # scheduled_tasks = []
+    # for (seq_l, h, b), num_p in zip(seq_head_lengths, num_processors_list):
+    #     # Get num_p processor lowest processor times
+    #     times, processors = tuple(list(x) for x in zip(*processor_times[-num_p:]))
+    #     times = {p: t for p, t in zip(processors, times)}
+    #     # Generate the new backwards schedule
+    #     new_tasks, partial_uid, reduction_uid, times = backward_schedule(
+    #         processors, b, h, seq_l, list(range(new_tokens)), partial_uid, reduction_uid, times
+    #     )
+    #     scheduled_tasks.extend(new_tasks)
+    #     processor_times[-num_p:] = [(times[p], p) for p in processors]
+    #     processor_times.sort(reverse=True)
+    chunkings = [768 if length < 8192 else 3072 for length in seq_lengths]
+    scheduled_tasks = sample_schedule_generator(new_tokens, num_heads, seq_lengths, chunkings=chunkings, num_processors=NUM_PROCESSORS)
     t1 = time.time()
     print(f"Time taken to create schedule: {(t1-t0)*1000:.3f} ms")
     
