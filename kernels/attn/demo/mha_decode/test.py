@@ -41,16 +41,24 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     seq_head_lengths = sorted([(s, h, b) for b, s in enumerate(seq_lengths) for h in range(num_heads)])
     print("Number of (seq, head) pairs:", len(seq_head_lengths))
     t0 = time.time()
+
+    imbalance_level = seq_head_lengths[-1][0] / seq_head_lengths[0][0]
+    print(f"Imbalance level: {imbalance_level}")
+    total_batch = len(seq_head_lengths) # B*H, since these are done independently here.
+    print(f"Total batch: {total_batch}")
+    waves = max(math.ceil(total_batch * imbalance_level / NUM_PROCESSORS / 4), 1) # 4 is a heuristic.
+    print(f"Waves: {waves}")
+    TOTAL_SM_SLOTS = NUM_PROCESSORS * waves
     
     # Initially assign processors per (seq, head)
-    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * NUM_PROCESSORS), 1)
-                             for s in seq_lengths for _ in range(num_heads)]
-    
-    # Adjust so that the sum equals NUM_PROCESSORS
-    while sum(processor_assignments) < NUM_PROCESSORS:
+    processor_assignments = [max(math.floor(s / (sum(seq_lengths)*num_heads) * TOTAL_SM_SLOTS), 1)
+                             for s, _1, _2 in seq_head_lengths]
+
+    # Adjust so that the sum equals TOTAL_SM_SLOTS
+    while sum(processor_assignments) < TOTAL_SM_SLOTS:
         min_idx = processor_assignments.index(max(processor_assignments))
         processor_assignments[min_idx] += 1
-    while sum(processor_assignments) > NUM_PROCESSORS:
+    while sum(processor_assignments) > TOTAL_SM_SLOTS:
         min_idx = processor_assignments.index(max(processor_assignments))
         processor_assignments[min_idx] -= 1
 
@@ -60,8 +68,8 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
         for i, (p, shb) in enumerate(zip(processor_assignments, seq_head_lengths))
     ])
 
-    # Balance processor assignments further using the schedule-length estimator
-    while len(seq_head_lengths) > 1:
+    # Balance processor assignments further using the schedule-length estimator, if a single wave.
+    while (waves == 1) and len(seq_head_lengths) > 1:
         best, worst = processor_assignments[0], processor_assignments[-1]
         if best[1]-1 == 0:
             break
@@ -79,17 +87,24 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     num_processors_list = [None for _ in seq_head_lengths]
     for _, p, (s, h, b), i in processor_assignments:
         print(f"Processor assignment for (seq_length={s}, head={h}, batch={b}): {p} (s//128 = {s//128})")
-        num_processors_list[i] = min(p, s//128)
-    
-    # Create schedule using backward_schedule for each (seq, head)
-    start_processors = [sum(num_processors_list[:i]) for i in range(len(num_processors_list))]
+        num_processors_list[i] = max(1, min(p, s//128))
+
+    # Create a heap of processor times.
+    processor_times = [(0, p) for p in range(NUM_PROCESSORS)]
+    partial_uid, reduction_uid = 0, TOTAL_SM_SLOTS
     scheduled_tasks = []
-    partial_uid, reduction_uid = 0, NUM_PROCESSORS
-    for (seq_l, h, b), start_p, num_p in zip(seq_head_lengths, start_processors, num_processors_list):
-        new_tasks, partial_uid, reduction_uid = backward_schedule(
-            list(range(start_p, start_p + num_p)), b, h, seq_l, list(range(new_tokens)), partial_uid, reduction_uid
+    for (seq_l, h, b), num_p in zip(seq_head_lengths, num_processors_list):
+        # Get num_p processor lowest processor times
+        times, processors = tuple(list(x) for x in zip(*processor_times[-num_p:]))
+        times = {p: t for p, t in zip(processors, times)}
+        # Generate the new backwards schedule
+        new_tasks, partial_uid, reduction_uid, times = backward_schedule(
+            processors, b, h, seq_l, list(range(new_tokens)), partial_uid, reduction_uid, times
         )
         scheduled_tasks.extend(new_tasks)
+        processor_times[-num_p:] = [(times[p], p) for p in processors]
+        processor_times.sort(reverse=True)
+    
     t1 = time.time()
     print(f"Time taken to create schedule: {(t1-t0)*1000:.3f} ms")
     
@@ -98,6 +113,19 @@ def create_thundermha_arguments(seq_lengths, new_tokens, num_heads):
     )
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
+
+def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
+    """Runs a single call to the thunder mha decode."""
+    if tic is None:
+        Semaphore.zero_()
+        tic = 1
+    O = torch.zeros_like(Q)
+    softmax_scale = 1.0 / math.sqrt(HEAD_DIM)
+    
+    torch.cuda.synchronize()
+    mha_decode.mha_decode(Instructions, Q, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
+    torch.cuda.synchronize()
+    return O
 
 def run_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
     if tic is None:

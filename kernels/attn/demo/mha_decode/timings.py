@@ -74,14 +74,14 @@ def save_gantt_chart(Timings, Instructions, verbose=False):
                            alpha=0.7)
                     
                     # Add markers for timing events
-                    for event_id, event_props in timing_events.items():
-                        if Timings[proc, instr, event_id].item() > 0:
-                            event_time = timings_us[proc, instr, event_id].item()
-                            ax.scatter(event_time, proc, 
-                                      marker=event_props['marker'], 
-                                      color=event_props['color'], 
-                                      s=event_props['size'],
-                                      zorder=5)  # Ensure markers are on top
+                    # for event_id, event_props in timing_events.items():
+                    #     if Timings[proc, instr, event_id].item() > 0:
+                    #         event_time = timings_us[proc, instr, event_id].item()
+                    #         ax.scatter(event_time, proc, 
+                    #                   marker=event_props['marker'], 
+                    #                   color=event_props['color'], 
+                    #                   s=event_props['size'],
+                    #                   zorder=5)  # Ensure markers are on top
 
     # Customize the chart
     ax.set_xlabel('Time (microseconds)')

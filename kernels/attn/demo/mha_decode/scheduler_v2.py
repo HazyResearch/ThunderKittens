@@ -72,7 +72,7 @@ def get_quality(input_heap, num_processors: int, num_tokens: int, seq_length: in
             heapq.heappush(active_partial_heap, -(partial_times.pop() - PARTIAL_OVERHEAD))
     return min([-x for x in active_partial_heap])
 
-def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int):
+def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int, processor_start_times = None):
     assert (len(tok_ids) > 0 and len(tok_ids) <= 64), "If num_tokens is > 64, please generate two separate schedules for each group of 64 tokens."
     tok_ids = [x//16 for x in tok_ids[::16]] # Grab every 16th
     
@@ -80,7 +80,9 @@ def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_le
     if NUM_PROCESSORS == 1:
         steps = (seq_length + 31) // 32
         duration = PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
-        return [Task(
+        if processor_start_times is not None:
+            processor_start_times[processors[0]] += duration
+        tasks = [Task(
             uid=partial_uid,
             batch_id=batch_id,
             head_id=head_id,
@@ -92,7 +94,11 @@ def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_le
             start=-duration,
             finish=0,
             args={"start": 0, "end": seq_length, "length": seq_length, "write_scratch": False}
-        )], partial_uid+1, reduction_uid
+        )]
+        if processor_start_times is not None:
+            return tasks, partial_uid+1, reduction_uid, processor_start_times
+        else:
+            return tasks, partial_uid+1, reduction_uid
 
     p_idx = 0 # active processor index
 
@@ -245,11 +251,20 @@ def backward_schedule(processors: List[int], batch_id: int, head_id: int, seq_le
 
     for p, p_tasks in tasks.items():
         earliest_start = p_tasks[-1].start
+        latest_finish = -999999
+        if processor_start_times is not None:
+            earliest_start -= processor_start_times[p]
         for t in p_tasks:
             t.start -= earliest_start
             t.finish -= earliest_start
+            latest_finish = max(latest_finish, t.finish)
+        if processor_start_times is not None:
+            processor_start_times[p] = latest_finish
 
-    return [t for tasks in tasks.values() for t in tasks], partial_uid, reduction_uid
+    if processor_start_times is not None:
+        return [t for tasks in tasks.values() for t in tasks], partial_uid, reduction_uid, processor_start_times
+    else:
+        return [t for tasks in tasks.values() for t in tasks], partial_uid, reduction_uid
 
 
 if __name__ == "__main__":
