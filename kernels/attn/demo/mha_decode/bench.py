@@ -114,24 +114,21 @@ def run_benchmark_tk(seq_lengths: List[int], new_tokens: int, iterations: int = 
     avg_time = profile_thundermha(Q, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=iterations)
     print(f"Profiling: Average time per iteration = {avg_time*1e6:.1f} µs over {iterations} iterations")
     
-    save_gantt_chart(Timings, Instructions)
+    # save_gantt_chart(Timings, Instructions)
     
     # Compute memory I/O and FLOPS (using similar estimates as in flash-attn)
     total_length = sum(seq_lengths)
     # Memory I/O in bytes: for each token in the cache, H heads, each with key and value (each HEAD_DIM elements) at 2 bytes per element.
     mem_io = total_length * H * (HEAD_DIM + HEAD_DIM) * 2
-    # FLOPS: for each query token and each cached token, H heads, (HEAD_DIM + 2*HEAD_DIM) operations per element, times 2 (fused multiply-add)
+    
     flops = new_tokens * total_length * H * (HEAD_DIM + 2*HEAD_DIM) * 2
     print(f"Time: {avg_time*1e6:.1f} µs, {(mem_io/1e9) / avg_time:.0f} GB/s, {(flops/1e12) / avg_time:.0f} TFLOPS/s")
 
 if __name__ == "__main__":
     # Run benchmarks with the same configurations as the flash-attn benchmark:
-    run_benchmark_tk([4641, 45118, 1730, 1696], 4)
-    # run_benchmark_tk([4641, 45118, 1730, 1696], 2)
-    # run_benchmark_tk([4641, 45118, 1730, 1696], 1)
-    # run_benchmark_tk([65536], 1)
-    # run_benchmark_tk([65536], 2)
-    # run_benchmark_tk([65536], 4)
-    # run_benchmark_tk([2048, 2048, 2048, 2048], 1)
-    # run_benchmark_tk([2048, 2048, 2048, 2048], 2)
-    # run_benchmark_tk([2048, 2048, 2048, 2048], 4)
+    run_benchmark_tk([4641, 45118, 65536, 256], 4)
+    run_benchmark_tk([4641, 45118, 65536, 256], 2)
+    run_benchmark_tk([4641, 45118, 65536, 256], 1)
+    run_benchmark_tk([256, 512, 1024, 512, 256], 1)
+    run_benchmark_tk([4000, 4000, 4000, 4000, 200], 1)
+    run_benchmark_tk([100, 100, 100, 100, 16000], 1)
