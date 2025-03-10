@@ -21,6 +21,9 @@ template<typename T> concept kittens_layout = requires {
     typename T::globals;
     typename T::input_block;
 };
+template<typename T> concept store_kittens_layout = kittens_layout<T> && requires {
+    typename T::output_block;
+};
 
 // Now we need to be able to put together a complete pc layout from a (possibly partially specialized) pc layout.
 namespace detail {
@@ -51,6 +54,8 @@ FLAG_GETTER(OUTPUT_PIPE_STAGES, 1)
 FLAG_GETTER(CONSUMER_BARRIER_ARRIVALS, NUM_CONSUMER_WARPS_v<T>)
 // How many arrivals to initialize for each producer semaphore.
 FLAG_GETTER(PRODUCER_BARRIER_ARRIVALS, NUM_PRODUCER_WARPS_v<T>)
+// How many threadblocks to launch, per cluster.
+FLAG_GETTER(CLUSTER_BLOCKS, 1)
 // Some handy constants
 template<typename T> constexpr int NUM_WARPS_v = NUM_CONSUMER_WARPS_v<T> + NUM_PRODUCER_WARPS_v<T>;
 template<typename T> constexpr int NUM_THREADS_v = NUM_WARPS_v<T> * 32;
