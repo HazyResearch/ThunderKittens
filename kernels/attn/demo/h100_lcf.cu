@@ -51,38 +51,35 @@ template<int D> struct attn_fwd_template {
             if((args.common.seq*NUM_WORKERS + warpgroup::groupid())*layout::qo_tile::rows < args.globals.Q.rows) // out of bounds?
                 warpgroup::load(args.scratch.q[warpgroup::groupid()], args.globals.Q,
                                 {args.common.batch, args.common.head, args.common.seq*NUM_WORKERS+warpgroup::groupid(), 0});
-            zero(args.state.o_reg);
-            zero(args.state.norm_vec);
-            neg_infty(args.state.max_vec);
+            args.state.o_reg = 0.f;
+            args.state.norm_vec = 0.f;
+            args.state.max_vec = base_types::constants<float>::neg_infty();
             warpgroup::sync(warpgroup::groupid());
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
             constexpr float TEMPERATURE_SCALE = (D == 128) ? 0.08838834764f*1.44269504089f : 0.125f*1.44269504089f;
             // A = Q @ K.T
-            warpgroup::mm_ABt(args.state.att_block, args.scratch.q[warpgroup::groupid()], args.input.k);
-            mul(args.state.max_vec_last_scaled, args.state.max_vec, TEMPERATURE_SCALE);
+            warpgroup::mm<transpose::N, transpose::T>(args.state.att_block, args.scratch.q[warpgroup::groupid()], args.input.k);
+            args.state.max_vec_last_scaled = args.state.max_vec * TEMPERATURE_SCALE;
             warpgroup::mma_async_wait();
             // softmax
             right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
-            row_max(args.state.max_vec, args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
-            mul(args.state.max_vec_scaled, args.state.max_vec, TEMPERATURE_SCALE);
-            mul(args.state.att_block, args.state.att_block, TEMPERATURE_SCALE);
-            sub_row(args.state.att_block, args.state.att_block, args.state.max_vec_scaled);
-            exp2(args.state.att_block, args.state.att_block);
-            sub(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled, args.state.max_vec_scaled);
-            exp2(args.state.max_vec_last_scaled, args.state.max_vec_last_scaled);
-            mul(args.state.norm_vec, args.state.norm_vec, args.state.max_vec_last_scaled);
-            row_sum(args.state.norm_vec, args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
-            mul_row(args.state.o_reg, args.state.o_reg, args.state.max_vec_last_scaled); // normalize o_reg before mma
-            copy(args.state.att_block_mma, args.state.att_block); // convert to bf16 for mma
+            args.state.max_vec = max<axis::COL>(args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
+            args.state.max_vec_scaled = args.state.max_vec * TEMPERATURE_SCALE;
+            args.state.att_block = exp2((args.state.att_block*TEMPERATURE_SCALE) - args.state.max_vec_scaled);
+            args.state.max_vec_last_scaled = exp2(args.state.max_vec_last_scaled - args.state.max_vec_scaled);
+            args.state.norm_vec *= args.state.max_vec_last_scaled;
+            args.state.norm_vec = sum<axis::COL>(args.state.att_block, args.state.norm_vec); // accumulate onto the norm_vec
+            args.state.o_reg *= args.state.max_vec_last_scaled; // normalize o_reg before mma
+            args.state.att_block_mma = args.state.att_block; // convert to bf16 for mma
             // O += A @ V
-            warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v);
+            warpgroup::mma<transpose::N, transpose::N>(args.state.o_reg, args.state.att_block_mma, args.input.v);
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             if((args.common.seq*NUM_WORKERS+warpgroup::groupid())*64 < args.globals.Q.rows) { // out of bounds?
-                div_row(args.state.o_reg, args.state.o_reg, args.state.norm_vec);
+                args.state.o_reg /= args.state.norm_vec;
                 auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
                 warpgroup::store(o_smem, args.state.o_reg);
                 warpgroup::sync(warpgroup::groupid());

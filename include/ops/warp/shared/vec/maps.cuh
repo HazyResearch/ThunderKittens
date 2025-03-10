@@ -132,6 +132,12 @@ template<ducks::sv::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     unary_op<base_ops::exp, T>(dst, src);
 }
+template<ducks::sv::all T>
+__device__ static inline T exp(const T &src) {
+    T dst;
+    exp(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the exponential function element-wise to a shared vector, in base 2.
  *
@@ -142,6 +148,12 @@ __device__ static inline void exp(T &dst, const T &src) {
 template<ducks::sv::all T>
 __device__ static inline void exp2(T &dst, const T &src) {
     unary_op<base_ops::exp2, T>(dst, src);
+}
+template<ducks::sv::all T>
+__device__ static inline T exp2(const T &src) {
+    T dst;
+    exp2(dst, src);
+    return dst;
 }
 /**
  * @brief Applies the natural logarithm function element-wise to a shared vector.
@@ -154,6 +166,12 @@ template<ducks::sv::all T>
 __device__ static inline void log(T &dst, const T &src) {
     unary_op<base_ops::log, T>(dst, src);
 }
+template<ducks::sv::all T>
+__device__ static inline T log(const T &src) {
+    T dst;
+    log(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the logarithm base 2 function element-wise to a shared vector.
  *
@@ -164,6 +182,12 @@ __device__ static inline void log(T &dst, const T &src) {
 template<ducks::sv::all T>
 __device__ static inline void log2(T &dst, const T &src) {
     unary_op<base_ops::log2, T>(dst, src);
+}
+template<ducks::sv::all T>
+__device__ static inline T log2(const T &src) {
+    T dst;
+    log2(dst, src);
+    return dst;
 }
 /**
  * @brief Applies the absolute value function element-wise to a shared vector.
@@ -176,6 +200,12 @@ template<ducks::sv::all T>
 __device__ static inline void abs(T &dst, const T &src) {
     unary_op<base_ops::abs, T>(dst, src);
 }
+template<ducks::sv::all T>
+__device__ static inline T abs(const T &src) {
+    T dst;
+    abs(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the rectified linear unit (ReLU) function element-wise to a shared vector.
  *
@@ -186,6 +216,12 @@ __device__ static inline void abs(T &dst, const T &src) {
 template<ducks::sv::all T>
 __device__ static inline void relu(T &dst, const T &src) {
     unary_op<base_ops::relu, T>(dst, src);
+}
+template<ducks::sv::all T>
+__device__ static inline T relu(const T &src) {
+    T dst;
+    relu(dst, src);
+    return dst;
 }
 
 // ---- binary ops ----
@@ -203,6 +239,12 @@ template<ducks::sv::all T, typename U>
 __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::max, T>(dst, lhs, rhs);
 }
+template<ducks::sv::all T, typename U>
+__device__ static inline T max(const T &lhs, const U &rhs) {
+    T dst;
+    max(dst, lhs, rhs);
+    return dst;
+}
 /**
  * @brief Computes the element-wise minimum of two shared vectors.
  *
@@ -215,6 +257,12 @@ __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
 template<ducks::sv::all T, typename U>
 __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::min, T>(dst, lhs, rhs);
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline T min(const T &lhs, const U &rhs) {
+    T dst;
+    min(dst, lhs, rhs);
+    return dst;
 }
 /**
  * @brief Computes the element-wise sum of two shared vectors.
@@ -229,6 +277,16 @@ template<ducks::sv::all T, typename U>
 __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::sum, T>(dst, lhs, rhs);
 }
+template<ducks::sv::all T, typename U>
+__device__ static inline T operator+(const T &lhs, const U &rhs) {
+    T dst;
+    add(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline void operator+=(T &lhs, const U &rhs) {
+    add(lhs, lhs, rhs);
+}
 /**
  * @brief Computes the element-wise difference of two shared vectors.
  *
@@ -241,6 +299,16 @@ __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
 template<ducks::sv::all T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::sub, T>(dst, lhs, rhs);
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline T operator-(const T &lhs, const U &rhs) {
+    T dst;
+    sub(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline void operator-=(T &lhs, const U &rhs) {
+    sub(lhs, lhs, rhs);
 }
 /**
  * @brief Computes the element-wise product of two shared vectors.
@@ -255,6 +323,16 @@ template<ducks::sv::all T, typename U>
 __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::mul, T>(dst, lhs, rhs);
 }
+template<ducks::sv::all T, typename U>
+__device__ static inline T operator*(const T &lhs, const U &rhs) {
+    T dst;
+    mul(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline void operator*=(T &lhs, const U &rhs) {
+    mul(lhs, lhs, rhs);
+}
 /**
  * @brief Computes the element-wise division of two shared vectors.
  *
@@ -267,6 +345,16 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
 template<ducks::sv::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_op<base_ops::div, T>(dst, lhs, rhs);
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline T operator/(const T &lhs, const U &rhs) {
+    T dst;
+    div(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::sv::all T, typename U>
+__device__ static inline void operator/=(T &lhs, const U &rhs) {
+    div(lhs, lhs, rhs);
 }
 
 }
