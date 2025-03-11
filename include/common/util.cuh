@@ -66,13 +66,13 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 constexpr int MAX_SHARED_MEMORY = 100000;
 #endif
 
-enum transpose {
-    N = 0, // not transposed
-    T = 1  // transposed
+struct transpose {
+    static constexpr int N = 0; // not transposed
+    static constexpr int T = 1; // transposed
 };
-enum axis {
-    ROW = 0, // row axis of a tile
-    COL = 1  // column axis of a tile
+struct axis {
+    static constexpr int ROW = 0; // row axis of a tile
+    static constexpr int COL = 1; // column axis of a tile
 };
 
 /* ----------  TYPE HELPERS  ---------- */

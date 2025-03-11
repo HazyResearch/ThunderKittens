@@ -17,11 +17,11 @@ namespace kittens {
 
 /* ----------   Global layout axes  ---------- */
 
-enum axis {
-    BATCH = 0,
-    DEPTH = 1,
-    ROW = 2,
-    COL = 3
+struct dim {
+    static constexpr int BATCH = 0;
+    static constexpr int DEPTH = 1;
+    static constexpr int ROW   = 2;
+    static constexpr int COL   = 3;
 };
 
 /* ----------   Associative dictionary for global layouts  ---------- */
