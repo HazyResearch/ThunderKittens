@@ -26,11 +26,11 @@ template<int D> struct attn_fwd_template {
     using layout = attn_fwd_layout<D, NUM_WORKERS>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         int task_id = gridDim.x*args.task_iter + blockIdx.x;
-        int seq_q = (args.globals.Q.rows + NUM_WORKERS*layout::qo_tile::rows - 1)/(NUM_WORKERS*layout::qo_tile::rows);
-        args.common.batch = task_id / (seq_q*args.globals.K.depth); task_id -= args.common.batch * seq_q * args.globals.K.depth;
+        int seq_q = (args.globals.Q.rows() + NUM_WORKERS*layout::qo_tile::rows - 1)/(NUM_WORKERS*layout::qo_tile::rows);
+        args.common.batch = task_id / (seq_q*args.globals.K.depth()); task_id -= args.common.batch * seq_q * args.globals.K.depth();
         args.common.head  = task_id / seq_q;                        task_id -= args.common.head  * seq_q;
         args.common.seq   = task_id;
-        args.num_iters = args.common.batch < args.globals.Q.batch ? (args.globals.K.rows + layout::kv_tile::rows - 1)/(layout::kv_tile::rows) : -1;
+        args.num_iters = args.common.batch < args.globals.Q.batch() ? (args.globals.K.rows() + layout::kv_tile::rows - 1)/(layout::kv_tile::rows) : -1;
     }
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {
@@ -48,7 +48,7 @@ template<int D> struct attn_fwd_template {
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<NUM_WORKERS>();
-            if((args.common.seq*NUM_WORKERS + warpgroup::groupid())*layout::qo_tile::rows < args.globals.Q.rows) // out of bounds?
+            if((args.common.seq*NUM_WORKERS + warpgroup::groupid())*layout::qo_tile::rows < args.globals.Q.rows()) // out of bounds?
                 warpgroup::load(args.scratch.q[warpgroup::groupid()], args.globals.Q,
                                 {args.common.batch, args.common.head, args.common.seq*NUM_WORKERS+warpgroup::groupid(), 0});
             args.state.o_reg = 0.f;
@@ -63,7 +63,7 @@ template<int D> struct attn_fwd_template {
             args.state.max_vec_last_scaled = args.state.max_vec * TEMPERATURE_SCALE;
             warpgroup::mma_async_wait();
             // softmax
-            right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
+            right_fill(args.state.att_block, args.state.att_block, args.globals.K.rows() - args.iter*layout::kv_tile::rows, base_types::constants<float>::neg_infty());
             args.state.max_vec = max<axis::COL>(args.state.att_block, args.state.max_vec); // accumulate onto the max_vec
             args.state.max_vec_scaled = args.state.max_vec * TEMPERATURE_SCALE;
             args.state.att_block = exp2((args.state.att_block*TEMPERATURE_SCALE) - args.state.max_vec_scaled);
@@ -78,7 +78,7 @@ template<int D> struct attn_fwd_template {
             if(laneid() == 0) arrive(args.inputs_finished); // done!
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
-            if((args.common.seq*NUM_WORKERS+warpgroup::groupid())*64 < args.globals.Q.rows) { // out of bounds?
+            if((args.common.seq*NUM_WORKERS+warpgroup::groupid())*64 < args.globals.Q.rows()) { // out of bounds?
                 args.state.o_reg /= args.state.norm_vec;
                 auto &o_smem = reinterpret_cast<typename layout::qo_tile&>(args.scratch.q[warpgroup::groupid()]);
                 warpgroup::store(o_smem, args.state.o_reg);
