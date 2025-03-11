@@ -41,38 +41,37 @@ struct pgl {
     GL &operator[](int idx) { return tensors[idx]; } 
 
     /*
-
         Expected construction flow:
 
-            using  base_tile        =  st_bf<64, 64>;
-            using  global_layout    =  gl<bf16, 1, 1, -1, -1, base_tile>;
-            using  pglobal_layout   =  pgl<gl<bf16, 1, 1, -1, -1, base_tile>, true>;
+        using  base_tile       =  st_bf<64, 64>;
+        using  global_layout    =  gl<bf16, 1, 1, -1, -1, base_tile>;
+        using  pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1, base_tile>, true>;
 
-            <A, B allocations>
+        struct globals { 
+            global_layout  A, B; 
+            pglobal_layout C; 
+        };
 
-            __nv_bfloat16 *d_Cs[NUM_DEVS];
-            for (int i = 0; i < NUM_DEVS; i++) {
-                cudaSetDevice(i);
-                cudaMalloc(&d_Cs[i], M * N * sizeof(__nv_bfloat16));
-            }
+        (Allocation of A and B global layouts...)
 
-            struct globals { 
-                global_layout  A, B; 
-                pglobal_layout C; 
-            };
+        bf16 **d_Cs = new bf16*[NUM_DEVICES];
+        CUmemGenericAllocationHandle *d_C_handles = new CUmemGenericAllocationHandle[NUM_DEVICES];
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+            cudaSetDevice(dev_idx);
+            pglCudaMalloc(dev_idx, &d_Cs[dev_idx], &d_C_handles[dev_idx], size);
+        }
 
-            int device_ids[NUM_DEVS] = {0, 1, 2, 3};
-            pglobal_layout Cpg{device_ids, d_Cs, nullptr, nullptr, M, N};
+        int device_ids[NUM_DEVICES];
+        for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
+        pglobal_layout Cpg{device_ids, d_Cs, nullptr, nullptr, M, N};
 
-            globals G{Ag, Bg, Cpg};
-            some_kernel<<< ... >>>(G);
+        globals G{Ag, Bg, Cpg};
+        some_kernel<<< ... >>>(G);
 
-            
-
-            normal_op(Cpg[i], ...);
-            reduce_op(Cpg, ...);
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+            pglCudaFree(dev_idx, d_Cs[dev_idx], d_C_handles[dev_idx], size);
+        }
     */
-
     __host__ inline pgl(int *_device_ids, // an array of NUM_DEVS device IDs
                         int _num_devices,  // number of devices
                         T **_data,        // an array of NUM_DEVS pointers
