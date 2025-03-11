@@ -164,7 +164,7 @@ static constexpr std::array<int, sizeof...(GPUS)> gpu_ids{GPUS...};
  * @param sync_id Identifier for this synchronization point
  * @param device_id Current device ID
  */
-__device__ static inline void sync(hood<GANG_SIZE> gn, int sync_id, int device_id) {
+__device__ static inline void sync(hood<GANG_SIZE> hood, int sync_id, int device_id) {
     if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0 ||
         blockIdx.x != 0 || blockIdx.y != 0 || blockIdx.z != 0) {
         return;
