@@ -55,10 +55,10 @@ struct mamba2_fwd_template {
 		// args.common.head = blockIdx.x*NUM_CONSUMER_WARPS/4; // stride 2 on heads
 		// args.num_iters = args.task_iter == 0 ? args.globals.K.rows/layout::k_tile::rows : -1;
         int task_id = args.task_iter * gridDim.x + blockIdx.x;
-		args.common.batch = task_id / (args.globals.V.depth/(NUM_CONSUMER_WARPS/4)); // batch = id / heads.
-		task_id -= args.common.batch*(args.globals.V.depth/(NUM_CONSUMER_WARPS/4));
+		args.common.batch = task_id / (args.globals.V.depth()/(NUM_CONSUMER_WARPS/4)); // batch = id / heads.
+		task_id -= args.common.batch*(args.globals.V.depth()/(NUM_CONSUMER_WARPS/4));
 		args.common.head = task_id*2; // stride 2 on heads
-		args.num_iters = args.common.batch < args.globals.Q.batch ? args.globals.K.rows/layout::k_tile::rows : -1;
+		args.num_iters = args.common.batch < args.globals.Q.batch() ? args.globals.K.rows()/layout::k_tile::rows : -1;
     }
 	struct producer {
 		__device__ static void setup(producer_setup_args<layout> args) {
