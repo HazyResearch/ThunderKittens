@@ -122,7 +122,7 @@ void cleanup() {
         cuMemAddressFree(uc_ptrs_[i], mc_granularity_);
         cuMemRelease(uc_handles_[i]);
     }
-    cuMulticastDestroy(mc_handle_);
+    cuMemRelease(mc_handle_);
 }
 
 public:
@@ -167,9 +167,9 @@ __device__ static inline void sync(hood<GANG_SIZE> hood, int sync_id, int device
     constexpr bool is_gang_member = ((GPUS == device_id) || ...);
     if (!is_gang_member) return;
 
-    size_t gang_addr = gn.get_address(sync_id);
-    unsigned int *mc_addr = reinterpret_cast<unsigned int*>(gn.mc_ptrs[device_id]) + gang_addr;
-    unsigned int *uc_addr = reinterpret_cast<unsigned int*>(gn.uc_ptrs[device_id]) + gang_addr;
+    size_t gang_addr = hood.get_address(sync_id);
+    unsigned int *mc_addr = reinterpret_cast<unsigned int*>(hood.mc_ptrs[device_id]) + gang_addr;
+    unsigned int *uc_addr = reinterpret_cast<unsigned int*>(hood.uc_ptrs[device_id]) + gang_addr;
 
     #if __CUDA_ARCH__ >= 900
         // Increment arrival counter with release semantics

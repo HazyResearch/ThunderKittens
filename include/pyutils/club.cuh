@@ -10,7 +10,7 @@
     Example usage
 
     // Construction
-    KittensGang gang(device_ids, NUM_DEVICES);
+    KittensClub gang(device_ids, NUM_DEVICES);
 
     // Dispatch work to all threads (no need to set device)
     gang.execute([&](int dev_idx) {
@@ -22,10 +22,10 @@
         }
     });
 */
-class KittensGang {
+class KittensClub {
 public:
-    KittensGang(const int *device_ids, const int num_devices);
-    ~KittensGang();
+    KittensClub(const int *device_ids, const int num_devices);
+    ~KittensClub();
 
     // Dispatches `task` to all threads, and waits for all threads to finish (using cv)
     void execute(std::function<void(int)> task);
@@ -51,14 +51,14 @@ private:
     std::condition_variable cond_task_done;
 };
     
-KittensGang::KittensGang(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
+KittensClub::KittensClub(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
     for (size_t i = 0; i < num_devices; ++i) {
         task_available.push_back(false);
         workers.emplace_back([this, i, device_ids] { worker(i, device_ids[i]); });
     }
 }
     
-KittensGang::~KittensGang() {
+KittensClub::~KittensClub() {
     {
         std::lock_guard<std::mutex> lock(mutex);
         stop = true;
@@ -69,7 +69,7 @@ KittensGang::~KittensGang() {
     }
 }
     
-void KittensGang::execute(std::function<void(int)> task) {
+void KittensClub::execute(std::function<void(int)> task) {
     {
         std::lock_guard<std::mutex> lock(mutex);
         current_task = task;
@@ -84,7 +84,7 @@ void KittensGang::execute(std::function<void(int)> task) {
     }
 }
 
-void KittensGang::worker(int worker_id, int device_id) {
+void KittensClub::worker(int worker_id, int device_id) {
     cudaSetDevice(device_id); // done once and never again! This saves a LOT of time
     while (true) {
         std::function<void(int)> task;

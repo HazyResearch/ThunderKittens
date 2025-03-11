@@ -75,7 +75,7 @@ int main() {
     pglobal_layout dev_mat_pgl{device_ids, NUM_DEVICES, dev_mats, nullptr, nullptr, N, N};
 
     // Perform the reduction
-    KittensGang gang(device_ids, NUM_DEVICES);
+    KittensClub club(device_ids, NUM_DEVICES);
 
     int nelem_per_dev = nelem / NUM_DEVICES;
     constexpr int nelem_per_block = 256 * ITER_PER_THREAD * (MAX_VEC_SIZE / sizeof(__nv_bfloat16));
@@ -83,7 +83,7 @@ int main() {
     dim3 grid((nelem_per_dev + nelem_per_block - 1) / nelem_per_block);
     dim3 block(256);
 
-    gang.execute([&](int worker_id) {
+    club.execute([&](int worker_id) {
         all_reduce_bf16<<<grid, block>>>(dev_mat_pgl.raw_multi_ptr[worker_id] + nelem_per_dev * worker_id, nelem_per_dev);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     });
