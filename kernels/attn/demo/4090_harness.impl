@@ -2,12 +2,6 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 8;
-constexpr int ATTN_H = 8;
-constexpr int ATTN_N = 1020;
-constexpr int ATTN_D = 64; // hardcoded into this kernel
-constexpr int ITER   = 10;
-
 #define BLOCK_SIZE (32*NUM_WORKERS)
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -129,7 +123,6 @@ int main(int argc, char **argv) {
     }
 
     bool good = true;
-    float total_diff = 0;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");

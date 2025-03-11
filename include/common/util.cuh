@@ -66,6 +66,15 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 constexpr int MAX_SHARED_MEMORY = 100000;
 #endif
 
+struct transpose {
+    static constexpr int N = 0; // not transposed
+    static constexpr int T = 1; // transposed
+};
+struct axis {
+    static constexpr int ROW = 0; // row axis of a tile
+    static constexpr int COL = 1; // column axis of a tile
+};
+
 /* ----------  TYPE HELPERS  ---------- */
 
 /**

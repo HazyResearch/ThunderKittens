@@ -452,4 +452,110 @@ __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
 }
 
+// templated versions of each
+
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void max(RV &dst, const T &src, const RV &src_accum) {
+    if constexpr (ax == axis::COL) row_max(dst, src, src_accum);
+    else col_max(dst, src, src_accum);
 }
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline auto max(const T &src, const RV &src_accum) {
+    RV dst;
+    if constexpr (ax == axis::COL) row_max(dst, src, src_accum);
+    else col_max(dst, src, src_accum);
+    return dst;
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void max(RV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_max(dst, src);
+    else col_max(dst, src);
+}
+template<int ax, ducks::rt::all T>
+__device__ static inline auto max(const T &src) {
+    using RV = std::conditional_t<ax==axis::COL, typename T::col_vec, typename T::row_vec>;
+    RV dst;
+    if constexpr (ax == axis::COL) row_max(dst, src);
+    else col_max(dst, src);
+    return dst;
+}
+
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void min(RV &dst, const T &src, const RV &src_accum) {
+    if constexpr (ax == axis::COL) row_min(dst, src, src_accum);
+    else col_min(dst, src, src_accum);
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline auto min(const T &src, const RV &src_accum) {
+    RV dst;
+    if constexpr (ax == axis::COL) row_min(dst, src, src_accum);
+    else col_min(dst, src, src_accum);
+    return dst;
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void min(RV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_min(dst, src);
+    else col_min(dst, src);
+}
+template<int ax, ducks::rt::all T>
+__device__ static inline auto min(const T &src) {
+    using RV = std::conditional_t<ax==axis::COL, typename T::col_vec, typename T::row_vec>;
+    RV dst;
+    if constexpr (ax == axis::COL) row_min(dst, src);
+    else col_min(dst, src);
+    return dst;
+}
+
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void sum(RV &dst, const T &src, const RV &src_accum) {
+    if constexpr (ax == axis::COL) row_sum(dst, src, src_accum);
+    else col_sum(dst, src, src_accum);
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline auto sum(const T &src, const RV &src_accum) {
+    RV dst;
+    if constexpr (ax == axis::COL) row_sum(dst, src, src_accum);
+    else col_sum(dst, src, src_accum);
+    return dst;
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void sum(RV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_sum(dst, src);
+    else col_sum(dst, src);
+}
+template<int ax, ducks::rt::all T>
+__device__ static inline auto sum(const T &src) {
+    using RV = std::conditional_t<ax==axis::COL, typename T::col_vec, typename T::row_vec>;
+    RV dst;
+    if constexpr (ax == axis::COL) row_sum(dst, src);
+    else col_sum(dst, src);
+    return dst;
+}
+
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void prod(RV &dst, const T &src, const RV &src_accum) {
+    if constexpr (ax == axis::COL) row_prod(dst, src, src_accum);
+    else col_prod(dst, src, src_accum);
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline auto prod(const T &src, const RV &src_accum) {
+    RV dst;
+    if constexpr (ax == axis::COL) row_prod(dst, src, src_accum);
+    else col_prod(dst, src, src_accum);
+    return dst;
+}
+template<int ax, ducks::rv::all RV, ducks::rt::all T>
+__device__ static inline void prod(RV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_prod(dst, src);
+    else col_prod(dst, src);
+}
+template<int ax, ducks::rt::all T>
+__device__ static inline auto prod(const T &src) {
+    using RV = std::conditional_t<ax==axis::COL, typename T::col_vec, typename T::row_vec>;
+    RV dst;
+    if constexpr (ax == axis::COL) row_prod(dst, src);
+    else col_prod(dst, src);
+    return dst;
+}
+
+} // namespace kittens

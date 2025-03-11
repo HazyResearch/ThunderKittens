@@ -422,6 +422,13 @@ template<ducks::rt::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     unary_map<base_ops::exp, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T exp(const T &src) {
+    T dst;
+    exp(dst, src);
+    return dst;
+}
+
 /**
  * @brief Applies the exponential function to each element of a tile, in base 2.
  *
@@ -433,6 +440,13 @@ template<ducks::rt::all T>
 __device__ static inline void exp2(T &dst, const T &src) {
     unary_map<base_ops::exp2, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T exp2(const T &src) {
+    T dst;
+    exp2(dst, src);
+    return dst;
+}
+
 /**
  * @brief Applies the natural logarithm function to each element of a tile.
  *
@@ -444,6 +458,13 @@ template<ducks::rt::all T>
 __device__ static inline void log(T &dst, const T &src) {
     unary_map<base_ops::log, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T log(const T &src) {
+    T dst;
+    log(dst, src);
+    return dst;
+}
+
 /**
  * @brief Applies the logarithm base 2 function to each element of a tile.
  *
@@ -455,6 +476,13 @@ template<ducks::rt::all T>
 __device__ static inline void log2(T &dst, const T &src) {
     unary_map<base_ops::log2, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T log2(const T &src) {
+    T dst;
+    log2(dst, src);
+    return dst;
+}
+
 /**
  * @brief Applies the absolute value function to each element of a tile.
  *
@@ -466,6 +494,13 @@ template<ducks::rt::all T>
 __device__ static inline void abs(T &dst, const T &src) {
     unary_map<base_ops::abs, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T abs(const T &src) {
+    T dst;
+    abs(dst, src);
+    return dst;
+}
+
 /**
  * @brief Applies the rectified linear unit (ReLU) function to each element of a tile.
  *
@@ -477,6 +512,13 @@ template<ducks::rt::all T>
 __device__ static inline void relu(T &dst, const T &src) {
     unary_map<base_ops::relu, T>(dst, src);
 }
+template<ducks::rt::all T>
+__device__ static inline T relu(const T &src) {
+    T dst;
+    relu(dst, src);
+    return dst;
+}
+
 /**
  * @brief Copies the elements from one tile to another.
  *
@@ -503,6 +545,13 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::max, T>(dst, lhs, rhs);
 }
+template<ducks::rt::all T, typename U>
+__device__ static inline T max(const T &lhs, const U &rhs) {
+    T dst;
+    max(dst, lhs, rhs);
+    return dst;
+}
+
 /**
  * @brief Applies the min operation element-wise between two tiles or a tile and a scalar.
  *
@@ -516,6 +565,13 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::min, T>(dst, lhs, rhs);
 }
+template<ducks::rt::all T, typename U>
+__device__ static inline T min(const T &lhs, const U &rhs) {
+    T dst;
+    min(dst, lhs, rhs);
+    return dst;
+}
+
 /**
  * @brief Adds two tiles element-wise or adds a scalar to each element of a tile.
  *
@@ -529,6 +585,17 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sum, T>(dst, lhs, rhs);
 }
+template<ducks::rt::all T, typename U>
+__device__ static inline T operator+(const T &lhs, const U &rhs) {
+    T dst;
+    add(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::rt::all T, typename U>
+__device__ static inline void operator+=(T &lhs, const U &rhs) {
+    add(lhs, lhs, rhs);
+}
+
 /**
  * @brief Subtracts two tiles element-wise or subtracts a scalar from each element of a tile.
  *
@@ -542,6 +609,17 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sub, T>(dst, lhs, rhs);
 }
+template<ducks::rt::all T, typename U>
+__device__ static inline T operator-(const T &lhs, const U &rhs) {
+    T dst;
+    sub(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::rt::all T, typename U>
+__device__ static inline void operator-=(T &lhs, const U &rhs) {
+    sub(lhs, lhs, rhs);
+}
+
 /**
  * @brief Multiplies two tiles element-wise or multiplies each element of a tile by a scalar.
  *
@@ -555,6 +633,17 @@ template<ducks::rt::all T, typename U>
 __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::mul, T>(dst, lhs, rhs);
 }
+template<ducks::rt::all T, typename U>
+__device__ static inline T operator*(const T &lhs, const U &rhs) {
+    T dst;
+    mul(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::rt::all T, typename U>
+__device__ static inline void operator*=(T &lhs, const U &rhs) {
+    mul(lhs, lhs, rhs);
+}
+
 /**
  * @brief Divides two tiles element-wise or divides each element of a tile by a scalar.
  *
@@ -567,6 +656,16 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
 template<ducks::rt::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::div, T>(dst, lhs, rhs);
+}
+template<ducks::rt::all T, typename U>
+__device__ static inline T operator/(const T &lhs, const U &rhs) {
+    T dst;
+    div(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::rt::all T, typename U>
+__device__ static inline void operator/=(T &lhs, const U &rhs) {
+    div(lhs, lhs, rhs);
 }
 
 /**
@@ -582,6 +681,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void add_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sum, T, V>(dst, src, row_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator+(const T &src, const V &row_values) {
+    T dst;
+    add_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator+(const T &src, const V &row_values) {
+    T dst;
+    add_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator+=(T &lhs, const V &row_values) {
+    add_row(lhs, lhs, row_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator+=(T &lhs, const V &row_values) {
+    add_row(lhs, lhs, row_values);
+}
+
 /**
  * @brief Subtracts row values from each row of a tile.
  *
@@ -595,6 +715,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void sub_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::sub, T, V>(dst, src, row_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator-(const T &src, const V &row_values) {
+    T dst;
+    sub_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator-(const T &src, const V &row_values) {
+    T dst;
+    sub_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator-=(T &lhs, const V &row_values) {
+    sub_row(lhs, lhs, row_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator-=(T &lhs, const V &row_values) {
+    sub_row(lhs, lhs, row_values);
+}
+
 /**
  * @brief Multiplies each row of a tile by row values.
  *
@@ -608,6 +749,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void mul_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::mul, T, V>(dst, src, row_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator*(const T &src, const V &row_values) {
+    T dst;
+    mul_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator*(const T &src, const V &row_values) {
+    T dst;
+    mul_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator*=(T &lhs, const V &row_values) {
+    mul_row(lhs, lhs, row_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator*=(T &lhs, const V &row_values) {
+    mul_row(lhs, lhs, row_values);
+}
+
 /**
  * @brief Divides each row of a tile by row values.
  *
@@ -621,6 +783,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void div_row(T &dst, const T &src, const V &row_values) {
     row_map<base_ops::div, T, V>(dst, src, row_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator/(const T &src, const V &row_values) {
+    T dst;
+    div_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator/(const T &src, const V &row_values) {
+    T dst;
+    div_row(dst, src, row_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator/=(T &lhs, const V &row_values) {
+    div_row(lhs, lhs, row_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator/=(T &lhs, const V &row_values) {
+    div_row(lhs, lhs, row_values);
+}
+
 /**
  * @brief Broadcast a vector into into a tile's rows.
  *
@@ -632,6 +815,12 @@ __device__ static inline void div_row(T &dst, const T &src, const V &row_values)
 template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void broadcast_row(T &dst, const V &row_values) {
     row_map<base_ops::copy2, T, V>(dst, dst, row_values);
+}
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline T broadcast_row(const V &row_values) {
+    T dst;
+    broadcast_row(dst, row_values);
+    return dst;
 }
 
 
@@ -649,6 +838,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void add_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sum, T, V>(dst, src, col_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator+(const T &src, const V &col_values) {
+    T dst;
+    add_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator+(const T &src, const V &col_values) {
+    T dst;
+    add_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator+=(T &lhs, const V &col_values) {
+    add_col(lhs, lhs, col_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator+=(T &lhs, const V &col_values) {
+    add_col(lhs, lhs, col_values);
+}
+
 /**
  * @brief Subtracts column values from each column of a tile.
  *
@@ -662,6 +872,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void sub_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::sub, T, V>(dst, src, col_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator-(const T &src, const V &col_values) {
+    T dst;
+    sub_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator-(const T &src, const V &col_values) {
+    T dst;
+    sub_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator-=(T &lhs, const V &col_values) {
+    sub_col(lhs, lhs, col_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator-=(T &lhs, const V &col_values) {
+    sub_col(lhs, lhs, col_values);
+}
+
 /**
  * @brief Multiplies each column of a tile by column values.
  *
@@ -675,6 +906,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void mul_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::mul, T, V>(dst, src, col_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator*(const T &src, const V &col_values) {
+    T dst;
+    mul_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator*(const T &src, const V &col_values) {
+    T dst;
+    mul_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator*=(T &lhs, const V &col_values) {
+    mul_col(lhs, lhs, col_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator*=(T &lhs, const V &col_values) {
+    mul_col(lhs, lhs, col_values);
+}
+
 /**
  * @brief Divides each column of a tile by column values.
  *
@@ -688,6 +940,27 @@ template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void div_col(T &dst, const T &src, const V &col_values) {
     col_map<base_ops::div, T, V>(dst, src, col_values);
 }
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline T operator/(const T &src, const V &col_values) {
+    T dst;
+    div_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline T operator/(const T &src, const V &col_values) {
+    T dst;
+    div_col(dst, src, col_values);
+    return dst;
+}
+template<ducks::rt::row_layout T, ducks::rv::align_layout V>
+__device__ static inline void operator/=(T &lhs, const V &col_values) {
+    div_col(lhs, lhs, col_values);
+}
+template<ducks::rt::col_layout T, ducks::rv::ortho_layout V>
+__device__ static inline void operator/=(T &lhs, const V &col_values) {
+    div_col(lhs, lhs, col_values);
+}
+
 /**
  * @brief Broadcast a vector into into a tile's columns.
  *
@@ -699,6 +972,12 @@ __device__ static inline void div_col(T &dst, const T &src, const V &col_values)
 template<ducks::rt::all T, ducks::rv::all V>
 __device__ static inline void broadcast_col(T &dst, const V &col_values) {
     col_map<base_ops::copy2, T, V>(dst, dst, col_values);
+}
+template<ducks::rt::all T, ducks::rv::all V>
+__device__ static inline T broadcast_col(const V &col_values) {
+    T dst;
+    broadcast_col(dst, col_values);
+    return dst;
 }
 
 }
