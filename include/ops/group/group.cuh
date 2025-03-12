@@ -62,6 +62,12 @@ template<int NCWG> __device__ static inline void consumer_registers() { increase
 
 };
 
+namespace everyone {
+__device__ static inline void sync(int id) {
+    asm volatile("bar.sync %0;\n" :: "r"(id));
+}
+};
+
 using warpgroup = group<4>; // special scope commonly used by SM_90 and later.
 
 }

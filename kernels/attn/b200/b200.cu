@@ -142,12 +142,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
     st_bf<128,128> (&att_smem)[NUM_CONSUMERS] = al.allocate<st_bf<128,128>, NUM_CONSUMERS>();
 
-    auto all_tt = allocate_tensor_memory<1, 2>();
+    auto tm_alloc = allocate_tensor_memory<1, 2>();
     using att_tm_fl_t = tt<float, K::qo_height, K::kv_height>;
     using att_tm_bf_t = tt<bf16,  K::qo_height, K::kv_height>;
     using o_tm_fl_t   = tt<float, K::qo_height, K::tile_width>;
-    att_tm_fl_t att_tm    = all_tt.allocate<att_tm_fl_t>(consumerid*K::kv_height);
-    o_tm_fl_t   o_tm      = all_tt.allocate<o_tm_fl_t>  ((NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
+    att_tm_fl_t att_tm    = tm_alloc.allocate<att_tm_fl_t>(consumerid*K::kv_height);
+    o_tm_fl_t   o_tm      = tm_alloc.allocate<o_tm_fl_t>  ((NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
     att_tm_bf_t att_bf_tm = reinterpret_cast<att_tm_bf_t&>(att_tm);
 
     __shared__ kittens::semaphore q_smem_arrived[NUM_CONSUMERS],
@@ -182,7 +182,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int3 batchheadrow = get_task_idx(g, task_iter);
-                if(batchheadrow.x == -1) return;
+                if(batchheadrow.x == -1) break;
                 for(int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(k_smem_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                     #pragma unroll
@@ -202,7 +202,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int3 batchheadrow = get_task_idx(g, task_iter);
-                if(batchheadrow.x == -1) return;
+                if(batchheadrow.x == -1) break;
                 for(int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(v_smem_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                     #pragma unroll
@@ -221,7 +221,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int3 batchheadrow = get_task_idx(g, task_iter);
-                if(batchheadrow.x == -1) return;
+                if(batchheadrow.x == -1) break;
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     kittens::wait(k_smem_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                     tma::cluster::expect(k_smem_arrived[input_ring], 0, k_smem[input_ring]);
@@ -237,7 +237,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int3 batchheadrow = get_task_idx(g, task_iter);
-                if(batchheadrow.x == -1)  return;
+                if(batchheadrow.x == -1) break;
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     kittens::wait(v_smem_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                     tma::cluster::expect(v_smem_arrived[input_ring], 0, v_smem[input_ring]);
@@ -262,7 +262,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         for(int task_iter = 0; true; task_iter++) {
             int3 batchheadrow = get_task_idx(g, task_iter);
-            if(batchheadrow.x == -1) return;
+            if(batchheadrow.x == -1) break;
             // Load Q matrices
             if(consumer::warpid() == 0) {
                 tma::cluster::expect(q_smem_arrived[consumerid], 0, q_smem[consumerid]);
@@ -324,6 +324,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::sync(consumerid);
         }
     }
+    tma::cluster::sync();
+    tm_alloc.cleanup();
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -636,7 +638,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
 //     attn_tile (&ds_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>();
 
-//     auto all_tt = allocate_tt<1, 2>();
+//     auto tm_alloc = allocate_tt<1, 2>();
 
 //     using qg_tm_tile = tt<float, 64, G::tile_width>; 
 //     using kg_tm_tile = tt<float, 64, G::tile_width>; 
@@ -651,12 +653,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 //     const int qo_blocks   = N / (G::tile_h_qo);
 //     const int kv_head_idx = (blockIdx.y) / hr; 
 
-//     qg_tm_tile qg_tm = all_tt.subtile<qg_tm_tile>(0, 0);
-//     kg_tm_tile kg_tm = all_tt.subtile<kg_tm_tile>(0, G::tile_width + static_cast<int>(warpgroupid*G::tile_width));           
-//     vg_tm_tile vg_tm = all_tt.subtile<vg_tm_tile>(0, G::tile_width + (2*G::tile_width) + static_cast<int>(warpgroupid*G::tile_width));
+//     qg_tm_tile qg_tm = tm_alloc.subtile<qg_tm_tile>(0, 0);
+//     kg_tm_tile kg_tm = tm_alloc.subtile<kg_tm_tile>(0, G::tile_width + static_cast<int>(warpgroupid*G::tile_width));           
+//     vg_tm_tile vg_tm = tm_alloc.subtile<vg_tm_tile>(0, G::tile_width + (2*G::tile_width) + static_cast<int>(warpgroupid*G::tile_width));
 
-//     s_tm_tile       s_tm = all_tt.subtile<s_tm_tile>(16, 0);
-//     p_tm_tile       p_tm = all_tt.subtile<p_tm_tile>(16, 64);
+//     s_tm_tile       s_tm = tm_alloc.subtile<s_tm_tile>(16, 0);
+//     p_tm_tile       p_tm = tm_alloc.subtile<p_tm_tile>(16, 64);
 //     p_tm_bf_tile p_tm_bf = reinterpret_cast<p_tm_bf_tile&>(p_tm);
 
 //     __shared__ kittens::semaphore kv_b, q_b[2], o_b[2], vec_b[2];

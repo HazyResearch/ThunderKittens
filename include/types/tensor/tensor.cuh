@@ -33,9 +33,10 @@ template<typename T> concept all = requires {
 } // namespace tensor_allocator
 } // namespace ducks
 
-template<int _cols> struct tensor_allocator {
+template<int _cols, int _ncta> struct tensor_allocator {
     using identifier = ducks::tensor_allocator::identifier;
     static constexpr int cols = _cols;
+    static constexpr int ncta = _ncta;
     uint32_t addr;
     template<ducks::tt::all TT, int col_offset> __device__ inline void check_bounds() {
         static_assert(col_offset >= 0 && col_offset + TT::cols <= cols, "Tile allocation extends out of bounds of the tensor allocator!");
@@ -64,6 +65,22 @@ template<int _cols> struct tensor_allocator {
 #endif
         return TT(get_addr(0, col_offset));
     }
+    __device__ inline void cleanup() { // Note that this must be called after all threads are done with that tensor memory -- likely after a syncthreads / cluster::sync()!
+        if constexpr (ncta == 1) {
+            if(warpid() == 0) {
+                asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32  %0, %1;\n"
+                ::  "r"(addr), "n"(cols)
+                );
+            }
+        }
+        else {
+            if(warpid() == 0) {
+                asm volatile("tcgen05.dealloc.cta_group::2.sync.aligned.b32  %0, %1;\n"
+                ::  "r"(addr), "n"(cols)
+                );
+            }
+        }
+    }
 };
 template<int nblocks> constexpr int num_tensor_memory_cols = ((512/nblocks) / 32) * 32;
 template<int nblocks=1, int ncta=1> __device__ auto allocate_tensor_memory() {
@@ -91,7 +108,7 @@ template<int nblocks=1, int ncta=1> __device__ auto allocate_tensor_memory() {
     asm volatile("tcgen05.fence::before_thread_sync;\n");
     asm volatile("bar.sync 0;\n");
     asm volatile("tcgen05.fence::after_thread_sync;\n");
-    return tensor_allocator<cols>(addr);
+    return tensor_allocator<cols, ncta>(addr);
 };
 
 } // namespace kittens
