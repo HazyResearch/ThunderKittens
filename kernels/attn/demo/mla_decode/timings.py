@@ -19,7 +19,7 @@ Timing meanings, all relative to start of kernel, and measured in cycles.
 63 -- end of consumer finish write (and instruction), relative to start of kernel.
 """
 
-def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
+def save_gantt_chart(Timings, Instructions, save_all=False, name=None, verbose=False):
     # Convert cycles to microseconds (1.8 GHz = 1800 MHz = 1.8 cycles/ns = 0.0018 cycles/us)
     timings_us = Timings.float() / 1800
 
@@ -73,14 +73,15 @@ def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
                            alpha=0.7)
                     
                     # Add markers for timing events
-                    for event_id, event_props in timing_events.items():
-                        if Timings[proc, instr, event_id].item() > 0:
-                            event_time = timings_us[proc, instr, event_id].item()
-                            ax.scatter(event_time, proc, 
-                                      marker=event_props['marker'], 
-                                      color=event_props['color'], 
-                                      s=event_props['size'],
-                                      zorder=5)  # Ensure markers are on top
+                    if save_all:
+                        for event_id, event_props in timing_events.items():
+                            if Timings[proc, instr, event_id].item() > 0:
+                                event_time = timings_us[proc, instr, event_id].item()
+                                ax.scatter(event_time, proc, 
+                                        marker=event_props['marker'], 
+                                        color=event_props['color'], 
+                                        s=event_props['size'],
+                                        zorder=5)  # Ensure markers are on top
 
     # Customize the chart
     ax.set_xlabel('Time (microseconds)')
@@ -93,14 +94,17 @@ def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
                           for t in instruction_types if t.item() in [1,2]]
     
     # Add legend for timing event markers
-    marker_legend_elements = [plt.Line2D([0], [0], marker=props['marker'], color='w', 
-                             markerfacecolor=props['color'], markersize=10, 
-                             label=props['label'])
-                             for event_id, props in timing_events.items()
-                             if event_id in [1,2,8,32,62]]
+    if save_all:
+        marker_legend_elements = [plt.Line2D([0], [0], marker=props['marker'], color='w', 
+                                 markerfacecolor=props['color'], markersize=10, 
+                                 label=props['label'])
+                                 for event_id, props in timing_events.items()
+                                 if event_id in [1,2,8,32,62]]
     
-    # Combine legends
-    all_legend_elements = bar_legend_elements + marker_legend_elements
+        # Combine legends
+        all_legend_elements = bar_legend_elements + marker_legend_elements
+    else:
+        all_legend_elements = bar_legend_elements
     
     # Add the legend outside the plot
     ax.legend(handles=all_legend_elements, loc='center left', bbox_to_anchor=(1, 0.5))

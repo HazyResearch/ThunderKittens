@@ -156,7 +156,7 @@ def main(seq_lengths, new_tokens, q_heads=16):
     time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
-    # save_gantt_chart(Timings, Instructions, name='new')
+    save_gantt_chart(Timings, Instructions, save_all=False, name='new')
 
 if __name__ == "__main__":
     main([4641,45118,1730,1696], 4, 16)
