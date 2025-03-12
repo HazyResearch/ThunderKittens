@@ -126,6 +126,13 @@ extern torch::Tensor mamba2(
 );
 #endif
 
+#ifdef TK_COMPILE_FP8_GEMM
+extern torch::Tensor fp8_gemm(
+    const torch::Tensor a,
+    const torch::Tensor b
+);
+#endif
+
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
@@ -167,6 +174,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_MAMBA2
     m.def("mamba2", mamba2, "Mamba2 TK. Takes tensors (q, k, v, a). q, k, v tensors are bf16 and a is float.");
+#endif
+
+#ifdef TK_COMPILE_FP8_GEMM
+    m.def("fp8_gemm", fp8_gemm, "FP8 GEMM TK. Takes tensors (a, b). Both tensors are bf16. Returns (B, H, N, 128) in bf16.");
 #endif
 
 }

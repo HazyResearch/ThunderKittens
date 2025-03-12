@@ -99,6 +99,12 @@ template<ducks::rv::all RV>
 __device__ static inline void max(typename base_types::packing<typename RV::dtype>::unpacked_type &max_val, const RV &src) {
     reduce<base_ops::max, RV, true>(max_val, src, max_val);
 }
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type max(const RV &src) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type max_val;
+    reduce<base_ops::max, RV, true>(max_val, src, max_val);
+    return max_val;
+}
 
 /**
  * @brief Finds the minimum element in a register vector.
@@ -110,6 +116,12 @@ __device__ static inline void max(typename base_types::packing<typename RV::dtyp
 template<ducks::rv::all RV>
 __device__ static inline void min(typename base_types::packing<typename RV::dtype>::unpacked_type &min_val, const RV &src) {
     reduce<base_ops::min, RV, true>(min_val, src, min_val);
+}
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type min(const RV &src) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type min_val;
+    reduce<base_ops::min, RV, true>(min_val, src, min_val);
+    return min_val;
 }
 
 /**
@@ -123,6 +135,12 @@ template<ducks::rv::all RV>
 __device__ static inline void sum(typename base_types::packing<typename RV::dtype>::unpacked_type &sum_val, const RV &src) {
     reduce<base_ops::sum, RV, true>(sum_val, src, sum_val);
 }
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type sum(const RV &src) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type sum_val;
+    reduce<base_ops::sum, RV, true>(sum_val, src, sum_val);
+    return sum_val;
+}
 
 /**
  * @brief Calculates the product of elements in a register vector.
@@ -134,6 +152,12 @@ __device__ static inline void sum(typename base_types::packing<typename RV::dtyp
 template<ducks::rv::all RV>
 __device__ static inline void prod(typename base_types::packing<typename RV::dtype>::unpacked_type &prod_val, const RV &src) {
     reduce<base_ops::mul, RV, true>(prod_val, src, prod_val);
+}
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type prod(const RV &src) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type prod_val;
+    reduce<base_ops::mul, RV, true>(prod_val, src, prod_val);
+    return prod_val;
 }
 
 // Three operand versions.
@@ -150,6 +174,12 @@ template<ducks::rv::all RV>
 __device__ static inline void max(typename base_types::packing<typename RV::dtype>::unpacked_type &max_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
     reduce<base_ops::max, RV, false>(max_val, src, src_accum);
 }
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type max(const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type max_val;
+    reduce<base_ops::max, RV, false>(max_val, src, src_accum);
+    return max_val;
+}
 
 /**
  * @brief Finds the minimum element in a register vector and accumulates it with src_accum.
@@ -162,6 +192,12 @@ __device__ static inline void max(typename base_types::packing<typename RV::dtyp
 template<ducks::rv::all RV>
 __device__ static inline void min(typename base_types::packing<typename RV::dtype>::unpacked_type &min_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
     reduce<base_ops::min, RV, false>(min_val, src, src_accum);
+}
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type min(const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type min_val;
+    reduce<base_ops::min, RV, false>(min_val, src, src_accum);
+    return min_val;
 }
 
 /**
@@ -176,6 +212,12 @@ template<ducks::rv::all RV>
 __device__ static inline void sum(typename base_types::packing<typename RV::dtype>::unpacked_type &sum_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
     reduce<base_ops::sum, RV, false>(sum_val, src, src_accum);
 }
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type sum(const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type sum_val;
+    reduce<base_ops::sum, RV, false>(sum_val, src, src_accum);
+    return sum_val;
+}
 
 /**
  * @brief Calculates the product of elements in a register vector and accumulates it with src_accum.
@@ -188,6 +230,12 @@ __device__ static inline void sum(typename base_types::packing<typename RV::dtyp
 template<ducks::rv::all RV>
 __device__ static inline void prod(typename base_types::packing<typename RV::dtype>::unpacked_type &prod_val, const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
     reduce<base_ops::mul, RV, false>(prod_val, src, src_accum);
+}
+template<ducks::rv::all RV>
+__device__ static inline typename base_types::packing<typename RV::dtype>::unpacked_type prod(const RV &src, const typename base_types::packing<typename RV::dtype>::unpacked_type &src_accum) {
+    typename base_types::packing<typename RV::dtype>::unpacked_type prod_val;
+    reduce<base_ops::mul, RV, false>(prod_val, src, src_accum);
+    return prod_val;
 }
 
 }

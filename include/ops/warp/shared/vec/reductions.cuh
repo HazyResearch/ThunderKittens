@@ -66,6 +66,12 @@ template<ducks::sv::all SV>
 __device__ static inline void max(typename SV::dtype &max_val, const SV &src) {
     reduce<base_ops::max, SV, true>(max_val, src, max_val);
 }
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype max(const SV &src) {
+    typename SV::dtype max_val;
+    reduce<base_ops::max, SV, true>(max_val, src, max_val);
+    return max_val;
+}
 
 /**
  * @brief Finds the minimum element in a shared memory vector.
@@ -77,6 +83,12 @@ __device__ static inline void max(typename SV::dtype &max_val, const SV &src) {
 template<ducks::sv::all SV>
 __device__ static inline void min(typename SV::dtype &min_val, const SV &src) {
     reduce<base_ops::min, SV, true>(min_val, src, min_val);
+}
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype min(const SV &src) {
+    typename SV::dtype min_val;
+    reduce<base_ops::min, SV, true>(min_val, src, min_val);
+    return min_val;
 }
 
 /**
@@ -90,6 +102,12 @@ template<ducks::sv::all SV>
 __device__ static inline void sum(typename SV::dtype &sum_val, const SV &src) {
     reduce<base_ops::sum, SV, true>(sum_val, src, sum_val);
 }
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype sum(const SV &src) {
+    typename SV::dtype sum_val;
+    reduce<base_ops::sum, SV, true>(sum_val, src, sum_val);
+    return sum_val;
+}
 
 /**
  * @brief Calculates the product of elements in a shared memory vector.
@@ -101,6 +119,12 @@ __device__ static inline void sum(typename SV::dtype &sum_val, const SV &src) {
 template<ducks::sv::all SV>
 __device__ static inline void prod(typename SV::dtype &prod_val, const SV &src) {
     reduce<base_ops::mul, SV, true>(prod_val, src, prod_val);
+}
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype prod(const SV &src) {
+    typename SV::dtype prod_val;
+    reduce<base_ops::mul, SV, true>(prod_val, src, prod_val);
+    return prod_val;
 }
 
 // Three operand versions.
@@ -117,6 +141,12 @@ template<ducks::sv::all SV>
 __device__ static inline void max(typename SV::dtype &max_val, const SV &src, const typename SV::dtype &src_accum) {
     reduce<base_ops::max, SV, false>(max_val, src, src_accum);
 }
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype max(const SV &src, const typename SV::dtype &src_accum) {
+    typename SV::dtype max_val;
+    reduce<base_ops::max, SV, false>(max_val, src, src_accum);
+    return max_val;
+}
 
 /**
  * @brief Finds the minimum element in a shared memory vector and accumulates it with src_accum.
@@ -129,6 +159,12 @@ __device__ static inline void max(typename SV::dtype &max_val, const SV &src, co
 template<ducks::sv::all SV>
 __device__ static inline void min(typename SV::dtype &min_val, const SV &src, const typename SV::dtype &src_accum) {
     reduce<base_ops::min, SV, false>(min_val, src, src_accum);
+}
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype min(const SV &src, const typename SV::dtype &src_accum) {
+    typename SV::dtype min_val;
+    reduce<base_ops::min, SV, false>(min_val, src, src_accum);
+    return min_val;
 }
 
 /**
@@ -143,6 +179,12 @@ template<ducks::sv::all SV>
 __device__ static inline void sum(typename SV::dtype &sum_val, const SV &src, const typename SV::dtype &src_accum) {
     reduce<base_ops::sum, SV, false>(sum_val, src, src_accum);
 }
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype sum(const SV &src, const typename SV::dtype &src_accum) {
+    typename SV::dtype sum_val;
+    reduce<base_ops::sum, SV, false>(sum_val, src, src_accum);
+    return sum_val;
+}
 
 /**
  * @brief Calculates the product of elements in a shared memory vector and accumulates it with src_accum.
@@ -156,4 +198,11 @@ template<ducks::sv::all SV>
 __device__ static inline void prod(typename SV::dtype &prod_val, const SV &src, const typename SV::dtype &src_accum) {
     reduce<base_ops::mul, SV, false>(prod_val, src, src_accum);
 }
+template<ducks::sv::all SV>
+__device__ static inline typename SV::dtype prod(const SV &src, const typename SV::dtype &src_accum) {
+    typename SV::dtype prod_val;
+    reduce<base_ops::mul, SV, false>(prod_val, src, src_accum);
+    return prod_val;
 }
+
+} // namespace kittens

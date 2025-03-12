@@ -235,6 +235,18 @@ template<> struct packing<float2> {
     using packed_type = float2;
     static __device__ inline constexpr float2 pack(const float &i) { return float2{i, i}; } // this replication makes code cleaner later.
 };
+template<> struct packing<char> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = char;
+    using packed_type = char2;
+    static __device__ inline constexpr char2 pack(const char &i) { return char2{i, i}; } // this replication makes code cleaner later.
+};
+template<> struct packing<char2> {
+    static __device__ inline constexpr int num() { return 2; }
+    using unpacked_type = char;
+    using packed_type = char2;
+    static __device__ inline constexpr char2 pack(const char &i) { return char2{i, i}; } // this replication makes code cleaner later.
+};
 template<> struct packing<int> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = int;
@@ -246,6 +258,19 @@ template<> struct packing<int2> {
     using unpacked_type = int;
     using packed_type = int2;
     static __device__ inline constexpr int2 pack(const int &i) { return int2{i, i}; } // this replication makes code cleaner later.
+};
+struct uint64_2 { uint64_t x, y; };
+template<> struct packing<uint64_t> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = uint64_t;
+    using packed_type = uint64_2;
+    static __device__ inline constexpr uint64_2 pack(const uint64_t &i) { return uint64_2{i, i}; } // this replication makes code cleaner later.
+};
+template<> struct packing<uint64_2> {
+    static __device__ inline constexpr int num() { return 2; }
+    using unpacked_type = uint64_t;
+    using packed_type = uint64_2;
+    static __device__ inline constexpr uint64_2 pack(const uint64_t &i) { return uint64_2{i, i}; } // this replication makes code cleaner later.
 };
 template<> struct packing<float4> {
     static __device__ inline constexpr int num() { return 4; }

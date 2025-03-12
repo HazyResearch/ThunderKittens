@@ -1129,3 +1129,42 @@ __device__ static inline void mm_AtBt(D &d,
                                 const B &b) {
     mma_AtBt<D, A, B, 1, 0>(d, a, b);
 }
+
+// Some extra wrappers for prettiness
+
+template<int trans_A, int trans_B, typename D, typename A, typename B>
+__device__ static inline void mma(D &d,
+                                  const A &a,
+                                  const B &b) {
+    if constexpr(trans_A == transpose::T) {
+        if constexpr(trans_B == transpose::T) {
+            mma_AtBt(d, a, b);
+        } else {
+            mma_AtB(d, a, b);
+        }
+    } else {
+        if constexpr(trans_B == transpose::T) {
+            mma_ABt(d, a, b);
+        } else {
+            mma_AB(d, a, b);
+        }
+    }
+}
+template<int trans_A, int trans_B, typename D, typename A, typename B>
+__device__ static inline void mm(D &d,
+                                  const A &a,
+                                  const B &b) {
+    if constexpr(trans_A == transpose::T) {
+        if constexpr(trans_B == transpose::T) {
+            mm_AtBt(d, a, b);
+        } else {
+            mm_AtB(d, a, b);
+        }
+    } else {
+        if constexpr(trans_B == transpose::T) {
+            mm_ABt(d, a, b);
+        } else {
+            mm_AB(d, a, b);
+        }
+    }
+}

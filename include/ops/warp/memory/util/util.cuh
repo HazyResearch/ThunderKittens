@@ -171,6 +171,25 @@ template<> struct move<fp8e5m2_4> {
 };
 #endif
 
+/* ----------   Constants for Cache policies  ---------- */
+
+enum cache_policy {
+    NORMAL = 0,
+    EVICT_FIRST = 1,
+    EVICT_LAST = 2
+};
+template<cache_policy policy> __device__ inline uint64_t make_cache_policy() {
+    uint64_t cache_policy_val;
+    constexpr float fraction = 1.0f;
+    static_assert(policy == cache_policy::EVICT_FIRST || policy == cache_policy::EVICT_LAST, "Unexpected cache policy");
+    if constexpr (policy == cache_policy::EVICT_FIRST) {
+        asm volatile("createpolicy.fractional.L2::evict_first.b64 %0, %1;\n" : "=l"(cache_policy_val) : "f"(fraction));
+    }
+    else {
+        asm volatile("createpolicy.fractional.L2::evict_last.b64 %0, %1;\n" : "=l"(cache_policy_val) : "f"(fraction));
+    }
+    return cache_policy_val;
+}
 /* ----------   Generic (non-Hopper specific) semaphore functions  ---------- */
 
 struct semaphore {

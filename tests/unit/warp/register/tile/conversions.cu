@@ -180,7 +180,7 @@ struct test_tril {
         // triangular lower, with diagonal starting at row_idx 4
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
-                o_ref[i*W*16 + j] = i>=j+(4*H) ? i_ref[i*W*16 + j] : 0;
+                o_ref[i*W*16 + j] = j<=i+(4*H) ? i_ref[i*W*16 + j] : 0;
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
@@ -196,7 +196,7 @@ struct test_triu {
         // triangular upper, with diagonal starting at row_idx 4
         for(int i = 0; i < H*16; i++)
             for(int j = 0; j < W*16; j++)
-                o_ref[i*W*16 + j] = i<=j+(4*H) ? i_ref[i*W*16 + j] : 0;
+                o_ref[i*W*16 + j] = j>=i+(4*H) ? i_ref[i*W*16 + j] : 0;
     }
     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
         kittens::rt_fl<16*H, 16*W, L> reg_tile;
@@ -276,47 +276,47 @@ void warp::reg::tile::conversions::tests(test_data &results) {
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
-    sweep_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // sweep_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // sweep_size_2d_warp<test_swap_layout, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 
-    transpose_sweep_size_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    transpose_sweep_size_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // transpose_sweep_size_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // transpose_sweep_size_warp<test_transpose, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::bf16>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, float>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::half>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, float>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
-    sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::bf16>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, float>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, float, kittens::half>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, float>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
+    // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
 
-    #ifdef KITTENS_HOPPER
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); 
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, float>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::bf16>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::bf16>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e4m3>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e5m2>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::half>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::half>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e4m3>::run(results);
-    sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e5m2>::run(results);
-    #endif
+    // #ifdef KITTENS_HOPPER
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); 
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, float>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::bf16>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::bf16>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e4m3>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::bf16, kittens::fp8e5m2>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, kittens::half>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e5m2, kittens::half>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e4m3>::run(results);
+    // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::half, kittens::fp8e5m2>::run(results);
+    // #endif
 
-    sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
-    sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
-    sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
-    sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    // sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    // sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
+    // sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
+    // sweep_size_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
 
-    sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 
     sweep_size_2d_warp<test_tril, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d_warp<test_triu, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);

@@ -138,7 +138,7 @@ def based_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, v
                 elif method_str == "tk":
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y, kv_state = tk.based( q, k, v )
+                    y = tk.based( q, k, v )
                     end_events[i].record()
                     torch.cuda.synchronize()
 

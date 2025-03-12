@@ -657,4 +657,44 @@ __device__ static inline void mma_AtBt(D &d,
     }
 }
 
+template<int trans_A, int trans_B, ducks::rt::all D, ducks::rt::all A, ducks::rt::all B, ducks::rt::all C>
+__device__ static inline void mma(D &d,
+                                  const A &a,
+                                  const B &b,
+                                  const C &c) {
+    if constexpr(trans_A == transpose::T) {
+        if constexpr(trans_B == transpose::T) {
+            mma_AtBt(d, a, b, c);
+        } else {
+            mma_AtB(d, a, b, c);
+        }
+    } else {
+        if constexpr(trans_B == transpose::T) {
+            mma_ABt(d, a, b, c);
+        } else {
+            mma_AB(d, a, b, c);
+        }
+    }
+}
+template<int trans_A, int trans_B, ducks::rt::all A, ducks::rt::all B, ducks::rt::all C>
+__device__ static inline C mma(const A &a,
+                               const B &b,
+                               const C &c) {
+    C d;
+    if constexpr(trans_A == transpose::T) {
+        if constexpr(trans_B == transpose::T) {
+            mma_AtBt(d, a, b, c);
+        } else {
+            mma_AtB(d, a, b, c);
+        }
+    } else {
+        if constexpr(trans_B == transpose::T) {
+            mma_ABt(d, a, b, c);
+        } else {
+            mma_AB(d, a, b, c);
+        }
+    }
+    return d;
+}
+
 }

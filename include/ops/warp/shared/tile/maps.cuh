@@ -182,6 +182,12 @@ template<ducks::st::all T>
 __device__ static inline void exp(T &dst, const T &src) {
     unary_map<base_ops::exp, T>(dst, src);
 }
+template<ducks::st::all T>
+__device__ static inline T exp(const T &src) {
+    T dst;
+    exp(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the exponential function to each element of the source tile and stores the result in the destination tile, in base 2.
  * 
@@ -192,6 +198,12 @@ __device__ static inline void exp(T &dst, const T &src) {
 template<ducks::st::all T>
 __device__ static inline void exp2(T &dst, const T &src) {
     unary_map<base_ops::exp2, T>(dst, src);
+}
+template<ducks::st::all T>
+__device__ static inline T exp2(const T &src) {
+    T dst;
+    exp2(dst, src);
+    return dst;
 }
 /**
  * @brief Applies the natural logarithm function to each element of the source tile and stores the result in the destination tile.
@@ -204,6 +216,12 @@ template<ducks::st::all T>
 __device__ static inline void log(T &dst, const T &src) {
     unary_map<base_ops::log, T>(dst, src);
 }
+template<ducks::st::all T>
+__device__ static inline T log(const T &src) {
+    T dst;
+    log(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the logarithm base 2 function to each element of the source tile and stores the result in the destination tile.
  * 
@@ -214,6 +232,12 @@ __device__ static inline void log(T &dst, const T &src) {
 template<ducks::st::all T>
 __device__ static inline void log2(T &dst, const T &src) {
     unary_map<base_ops::log2, T>(dst, src);
+}
+template<ducks::st::all T>
+__device__ static inline T log2(const T &src) {
+    T dst;
+    log2(dst, src);
+    return dst;
 }
 /**
  * @brief Applies the absolute function to each element of the source tile and stores the result in the destination tile.
@@ -226,6 +250,12 @@ template<ducks::st::all T>
 __device__ static inline void abs(T &dst, const T &src) {
     unary_map<base_ops::abs, T>(dst, src);
 }
+template<ducks::st::all T>
+__device__ static inline T abs(const T &src) {
+    T dst;
+    abs(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the rectified linear unit function to each element of the source tile and stores the result in the destination tile.
  * 
@@ -236,6 +266,12 @@ __device__ static inline void abs(T &dst, const T &src) {
 template<ducks::st::all T>
 __device__ static inline void relu(T &dst, const T &src) {
     unary_map<base_ops::relu, T>(dst, src);
+}
+template<ducks::st::all T>
+__device__ static inline T relu(const T &src) {
+    T dst;
+    relu(dst, src);
+    return dst;
 }
 /**
  * @brief Copies the elements of the source tile to the destination tile.
@@ -264,6 +300,12 @@ template<ducks::st::all T, typename U>
 __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::max, T>(dst, lhs, rhs);
 }
+template<ducks::st::all T, typename U>
+__device__ static inline T max(const T &lhs, const U &rhs) {
+    T dst;
+    max(dst, lhs, rhs);
+    return dst;
+}
 /**
  * @brief Finds the minimum of each pair of corresponding elements in the two source tiles and stores the result in the destination tile.
  * 
@@ -276,6 +318,12 @@ __device__ static inline void max(T &dst, const T &lhs, const U &rhs) {
 template<ducks::st::all T, typename U>
 __device__ static inline void min(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::min, T>(dst, lhs, rhs);
+}
+template<ducks::st::all T, typename U>
+__device__ static inline T min(const T &lhs, const U &rhs) {
+    T dst;
+    min(dst, lhs, rhs);
+    return dst;
 }
 /**
  * @brief Adds each pair of corresponding elements in the two source tiles and stores the result in the destination tile.
@@ -290,6 +338,16 @@ template<ducks::st::all T, typename U>
 __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sum, T>(dst, lhs, rhs);
 }
+template<ducks::st::all T, typename U>
+__device__ static inline T operator+(const T &lhs, const U &rhs) {
+    T dst;
+    add(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::st::all T, typename U>
+__device__ static inline void operator+=(T &lhs, const U &rhs) {
+    add(lhs, lhs, rhs);
+}
 /**
  * @brief Subtracts each pair of corresponding elements in the two source tiles and stores the result in the destination tile.
  * 
@@ -302,6 +360,16 @@ __device__ static inline void add(T &dst, const T &lhs, const U &rhs) {
 template<ducks::st::all T, typename U>
 __device__ static inline void sub(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::sub, T>(dst, lhs, rhs);
+}
+template<ducks::st::all T, typename U>
+__device__ static inline T operator-(const T &lhs, const U &rhs) {
+    T dst;
+    sub(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::st::all T, typename U>
+__device__ static inline void operator-=(T &lhs, const U &rhs) {
+    sub(lhs, lhs, rhs);
 }
 /**
  * @brief Multiplies each pair of corresponding elements in the two source tiles and stores the result in the destination tile.
@@ -316,6 +384,16 @@ template<ducks::st::all T, typename U>
 __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::mul, T>(dst, lhs, rhs);
 }
+template<ducks::st::all T, typename U>
+__device__ static inline T operator*(const T &lhs, const U &rhs) {
+    T dst;
+    mul(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::st::all T, typename U>
+__device__ static inline void operator*=(T &lhs, const U &rhs) {
+    mul(lhs, lhs, rhs);
+}
 /**
  * @brief Divides each pair of corresponding elements in the two source tiles and stores the result in the destination tile.
  * 
@@ -328,6 +406,16 @@ __device__ static inline void mul(T &dst, const T &lhs, const U &rhs) {
 template<ducks::st::all T, typename U>
 __device__ static inline void div(T &dst, const T &lhs, const U &rhs) {
     bin_map<base_ops::div, T>(dst, lhs, rhs);
+}
+template<ducks::st::all T, typename U>
+__device__ static inline T operator/(const T &lhs, const U &rhs) {
+    T dst;
+    div(dst, lhs, rhs);
+    return dst;
+}
+template<ducks::st::all T, typename U>
+__device__ static inline void operator/=(T &lhs, const U &rhs) {
+    div(lhs, lhs, rhs);
 }
 
 // Row and col maps

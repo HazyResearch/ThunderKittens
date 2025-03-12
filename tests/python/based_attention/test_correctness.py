@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
+from functools import partial
 
 try:
     import thunderkittens as tk
@@ -24,7 +25,7 @@ except:
     print("Could not import thunderkittens")
 
 
-from implementations import TaylorExp, TERMS, eps, based_kernel_test, get_based_inputs
+from implementations import TaylorExp, TERMS, eps, based_test, get_based_inputs
 
 
 def __eq(str, x,y, tol=1e-5, debug=False): 
@@ -37,64 +38,6 @@ def __eq(str, x,y, tol=1e-5, debug=False):
         print(f"diff\n{x-y}")
         
     return err <= tol
-
-
-def pytorch_test_v1(dt, Q, K, V, d, verbose=True, **kwargs):
-    # SA: note the torch.float32 conversions are very important 
-
-    b, h, n, D = Q.shape
-    rd = math.sqrt(D) 
-    rrd = math.sqrt(rd) 
-    r2 = math.sqrt(2) 
-
-    print(f"{b=}, {h=}, {n=}, {D=}")
-    def make_causal(X):
-        (b,h,n,m) = X.shape
-        mask= ~(torch.arange(n).view(1,1,n,1) >= torch.arange(n).view(1,1,1,n)).expand(b,h,n,n)
-        X[mask] = 0.
-        return X
-
-    # Overall output
-    O   = torch.einsum("bhnd,bhmd->bhnm", Q.to(torch.float32), K.to(torch.float32))
-    O2  = make_causal(O.to(torch.float32)**2)
-    O1 = make_causal(O)
-    T2  = torch.einsum("bhnm,bhmd->bhnd", O2.to(torch.float32), V.to(torch.float32))
-    T2 = T2/(r2 * r2 * rd * rd)
-    T1 = torch.einsum("bhnm,bhmd->bhnd", O1.to(torch.float32), V.to(torch.float32))  
-    T1 = T1/rd
-    T0  = V.to(torch.float32).cumsum(dim=2)
-
-    # KV states by term (a2)
-    A2 = torch.einsum("bhnd,bhnf,bhne->bhndef",K.to(torch.float32),V.to(torch.float32),K.to(torch.float32)).cumsum(dim=2) / (r2 * rd) 
-    A2 = A2[:, :, -1]
-    A2 = rearrange(A2, 'b h e f d -> b h (e f) d')
-    K2 = torch.einsum("bhnd,bhne->bhnde", K.to(torch.float32), K.to(torch.float32)) / (rd * r2)
-    Q2 = torch.einsum("bhnd,bhne->bhnde", Q.to(torch.float32), Q.to(torch.float32)) / (rd * r2)
-    K2 = rearrange(K2, 'b h n d e  -> b h n ( d e )')
-    Q2 = rearrange(Q2, 'b h n d e  -> b h n ( d e ) ')
-    k_state_a2 = K2.to(torch.float32).cumsum(dim=2)
-    D2 = torch.einsum("bhnd,bhnd->bhn", Q2.to(torch.float32), k_state_a2)
-
-    # KV states by term (a1)
-    A1 = torch.einsum("bhnd,bhne->bhnde",K.to(torch.float32),V.to(torch.float32)).cumsum(dim=2)  / rrd
-    A1 = A1[:, :, -1].transpose(2, 3)
-    k_state_a1 = K.to(torch.float32).cumsum(dim=2)/ (rrd)
-    D1 = torch.einsum("bhnd,bhnd->bhn", Q.to(torch.float32), k_state_a1) / rrd 
-
-    # KV states by term (a0)
-    A0 = V.to(torch.float32).cumsum(dim=2)[:, :, -1]
-    K0 = torch.ones(Q[..., :1].shape).to(Q.device)
-    D0 =  K0.to(torch.float32).cumsum(dim=2).squeeze(-1)
-
-    numerators   = [T0, T1, T2] 
-    denominators = [D0, D1, D2]
-    numerator   = sum([n for i, n in enumerate(numerators)   if i in TERMS]) 
-    denominator = sum([n for i, n in enumerate(denominators) if i in TERMS]) 
-    y = numerator
-
-    kv_state = torch.cat([A0.unsqueeze(-1).transpose(2,3), A1.transpose(2,3), A2], dim=2)
-
-    return y, kv_state
 
 
 def test_correctness(): 
@@ -112,9 +55,12 @@ def test_correctness():
     Q, K, V = get_based_inputs(b, h, n, dv, dt)
 
     # get outputs from different methods
-    pytorch_v1, kv_state_v1  = pytorch_test_v1(dt, Q, K, V, d)
-    outputs, _  = based_kernel_test(dt, b, h, n, dv)
+    pytorch_test = partial(based_test, causal=True, is_forwards=True, method_str="pytorch")
+    tk_test = partial(based_test, causal=True, is_forwards=True, method_str="tk")
+    pytorch_v1, _  = pytorch_test(dt, b, h, n, dv)
+    tk_outputs, _  = tk_test(dt, b, h, n, dv)
     tk_outputs, kv_state_tk = outputs[0], outputs[1]
+
     torch.set_printoptions(sci_mode=False)
 
     # check overall outputs
@@ -149,3 +95,4 @@ def test_correctness():
 
 if __name__ == "__main__":
     test_correctness()
+
