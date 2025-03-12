@@ -29,13 +29,13 @@ constexpr int NUM_WORKERS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
 constexpr int NUM_THREADS = NUM_WORKERS * kittens::WARP_THREADS;
 
 __device__ static inline int get_iters_per_task(const matmul_globals &g) {
-    return g.a.cols / Kb;
+    return g.a.cols() / Kb;
 }
 template<int SUPER_M=8> __device__ static inline int2 get_task_idx(const matmul_globals &g, int task_iter, bool is_consumer) {
     constexpr int CLUSTER_M = 4*Mb, CLUSTER_N = Nb;
     int cluster_x = clusterIdx().x, ctarank = cluster_ctarank();
     int task_id = task_iter * (gridDim.x/2) + cluster_x;
-    int Rblocks = g.d.rows / CLUSTER_M, Cblocks = g.d.cols / CLUSTER_N;
+    int Rblocks = g.d.rows() / CLUSTER_M, Cblocks = g.d.cols() / CLUSTER_N;
     int super_rows = (Rblocks/SUPER_M)*SUPER_M,
         final_rows = Rblocks - super_rows,
         super_repeat = SUPER_M*Cblocks;
@@ -76,7 +76,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     d_tile (&d_smem)                            = al.allocate<d_tile>();
 
     tma::cluster::sync();
-    auto all_tt = allocate_tt<1, 2>();
+    auto t_alloc = allocate_tensor_memory<1, 2>();
     using d_tt_t = tt<float, Mb, Nb>;
 
     __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], outputs_arrived, outputs_finished[NUM_CONSUMERS];
@@ -123,7 +123,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
-            d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroup::warpid()*Nb);
+            d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
@@ -144,7 +144,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     }
     else {
         warpgroup::increase_registers<224>();
-        d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroupid*Nb);
+        d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroupid*Nb);
         for(int task_iter = 0; true; task_iter++) {
             int2 rowcol = get_task_idx(g, task_iter, true);
             if(rowcol.x == -1) return;

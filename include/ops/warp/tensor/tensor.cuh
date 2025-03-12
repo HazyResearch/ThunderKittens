@@ -5,8 +5,4 @@
 
 #pragma once
 
-#ifdef KITTENS_BLACKWELL
-
 #include "mma.cuh"
-
-#endif
