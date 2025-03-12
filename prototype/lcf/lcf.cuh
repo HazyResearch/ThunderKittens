@@ -49,7 +49,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
 
 #ifdef KITTENS_BLACKWELL
     constexpr int NCTA_TENSOR_ALLOC = detail::CLUSTER_BLOCKS_v<lcft> > 1 ? 2 : 1;
-    auto tensor_alloc = allocate_tensor_memory<NUM_BLOCKS_v<lcft>, NCTA_TENSOR_ALLOC>();
+    auto tensor_alloc = allocate_tensor_memory<detail::NUM_BLOCKS_v<lcft>, NCTA_TENSOR_ALLOC>();
 #endif
     
     extern __shared__ int __shm[];

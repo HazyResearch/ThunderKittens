@@ -15,7 +15,7 @@ template<kittens_layout T> struct uniform_args {
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
 #ifdef KITTENS_BLACKWELL
-    kittens::tensor_allocator<512 / NUM_BLOCKS_v<T>> & tt;
+    kittens::tensor_allocator<512 / detail::NUM_BLOCKS_v<T>> & tt;
 #endif
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
@@ -24,7 +24,7 @@ template<kittens_layout T> struct uniform_args {
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch
 #ifdef KITTENS_BLACKWELL
-        , kittens::tensor_allocator<512 / NUM_BLOCKS_v<T>> & _tt
+        , kittens::tensor_allocator<512 / detail::NUM_BLOCKS_v<T>> & _tt
 #endif
     ) : common(_common),
         task_iter(_task_iter),
