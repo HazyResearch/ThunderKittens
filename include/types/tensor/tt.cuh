@@ -7,32 +7,32 @@
 
 #include "../../common/common.cuh"
 
-/* ----------  MAIN TMEM STRUCT  ---------- */
+/* ----------  MAIN tt STRUCT  ---------- */
 
 // these are helper structs for type inference
 namespace kittens {
 namespace ducks {
 /**
- * @namespace tmem
+ * @namespace tt
  * 
  * @brief The namespace where concepts and abstract types for shared tiles live.
  */
-namespace tmem {
+namespace tt {
 /**
  * @brief A dummy type used to identify tensor memory.
  */
 struct identifier {};
 /**
-* @brief Concept for all tmem tiles.
+* @brief Concept for all tt tiles.
 * @tparam T The type to check against the concept requirements.
 *
 * Requires:
-* - T has a nested type identifier that is the same as tmem::identifier.
+* - T has a nested type identifier that is the same as tt::identifier.
 */
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tmem::identifier
-} // namespace tmem
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tt::identifier
+} // namespace tt
 } // namespace ducks
 
 /**
@@ -43,8 +43,8 @@ template<typename T> concept all = requires {
  * @tparam _cols The width of the tile.
  */
 template<typename _T, int _rows, int _cols>
-struct tmem {
-    using identifier = ducks::tmem::identifier; ///< Type identifier for shared memory tile.
+struct tt {
+    using identifier = ducks::tt::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
@@ -56,10 +56,10 @@ struct tmem {
 
     uint32_t addr;
 
-    __device__ inline tmem() : addr(0) {}
-    __device__ inline tmem(uint32_t addr) : addr(addr) {}
+    __device__ inline tt() : addr(0) {}
+    __device__ inline tt(uint32_t addr) : addr(addr) {}
 
-    template<ducks::tmem::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {
+    template<ducks::tt::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {
         return TM(addr + (row_offset << 16) + col_offset/(4/(uint32_t)sizeof(T))); // in units of the tile's data type.
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
@@ -83,10 +83,10 @@ struct tmem {
 
 };
 
-template<int nblocks> constexpr int num_tmem_cols = ((512/nblocks) / 32) * 32;
-template<int nblocks=1, int ncta=1> __device__ auto allocate_tmem() {
+template<int nblocks> constexpr int num_tt_cols = ((512/nblocks) / 32) * 32;
+template<int nblocks=1, int ncta=1> __device__ auto allocate_tt() {
     __shared__ uint32_t addr;
-    constexpr int cols = num_tmem_cols<nblocks>;
+    constexpr int cols = num_tt_cols<nblocks>;
     static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
     if constexpr (ncta == 1) {
         if(warpid() == 0) {
@@ -109,7 +109,7 @@ template<int nblocks=1, int ncta=1> __device__ auto allocate_tmem() {
     asm volatile("tcgen05.fence::before_thread_sync;\n");
     __syncthreads();
     asm volatile("tcgen05.fence::after_thread_sync;\n");
-    return tmem<float, 128, cols>(addr);
+    return tt<float, 128, cols>(addr);
 };
 
 } // namespace kittens

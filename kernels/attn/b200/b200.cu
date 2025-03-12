@@ -142,12 +142,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
     st_bf<128,128> (&att_smem)[NUM_CONSUMERS] = al.allocate<st_bf<128,128>, NUM_CONSUMERS>();
 
-    auto all_tmem = allocate_tmem<1, 2>();
-    using att_tm_fl_t = tmem<float, K::qo_height, K::kv_height>;
-    using att_tm_bf_t = tmem<bf16,  K::qo_height, K::kv_height>;
-    using o_tm_fl_t   = tmem<float, K::qo_height, K::tile_width>;
-    att_tm_fl_t att_tm    = all_tmem.subtile<att_tm_fl_t>(0, consumerid*K::kv_height);
-    o_tm_fl_t   o_tm      = all_tmem.subtile<o_tm_fl_t>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
+    auto all_tt = allocate_tt<1, 2>();
+    using att_tm_fl_t = tt<float, K::qo_height, K::kv_height>;
+    using att_tm_bf_t = tt<bf16,  K::qo_height, K::kv_height>;
+    using o_tm_fl_t   = tt<float, K::qo_height, K::tile_width>;
+    att_tm_fl_t att_tm    = all_tt.subtile<att_tm_fl_t>(0, consumerid*K::kv_height);
+    o_tm_fl_t   o_tm      = all_tt.subtile<o_tm_fl_t>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
     att_tm_bf_t att_bf_tm = reinterpret_cast<att_tm_bf_t&>(att_tm);
 
     __shared__ kittens::semaphore q_smem_arrived[NUM_CONSUMERS],
@@ -504,8 +504,8 @@ compute_bwd_loop(
         rt_fl<16, 64> &s_block_t, rt_fl<16, 64> &dp_block_t, 
         rt_fl<16, 64> &p_block_t, rt_fl<16, 64> &ds_block_t,  
         rt_bf<16, 64> &p_block_t_mma, rt_bf<16, 64> &ds_block_t_mma, 
-        tmem<float, 64, tile_width> &qg_tm, tmem<float, 64, tile_width> &kg_tm, tmem<float, 64, tile_width> &vg_tm, 
-        tmem<float, 64, 64> &s_tm, tmem<float, 64, 64> &p_tm, tmem<bf16, 64, 64> &p_tm_bf, 
+        tt<float, 64, tile_width> &qg_tm, tt<float, 64, tile_width> &kg_tm, tt<float, 64, tile_width> &vg_tm, 
+        tt<float, 64, 64> &s_tm, tt<float, 64, 64> &p_tm, tt<bf16, 64, 64> &p_tm_bf, 
         rt_fl<16, tile_width> &kg_reg, rt_fl<16, tile_width> &vg_reg,
         auto &q_smem, auto &k_smem, auto &v_smem, 
         auto &og_smem, auto &ds_smem, auto &l_smem, auto &d_smem,
@@ -636,27 +636,27 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
     attn_tile (&ds_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>();
 
-    auto all_tmem = allocate_tmem<1, 2>();
+    auto all_tt = allocate_tt<1, 2>();
 
-    using qg_tm_tile = tmem<float, 64, G::tile_width>; 
-    using kg_tm_tile = tmem<float, 64, G::tile_width>; 
-    using vg_tm_tile = tmem<float, 64, G::tile_width>; 
+    using qg_tm_tile = tt<float, 64, G::tile_width>; 
+    using kg_tm_tile = tt<float, 64, G::tile_width>; 
+    using vg_tm_tile = tt<float, 64, G::tile_width>; 
 
-    using s_tm_tile    = tmem<float, 64, 64>; 
-    using p_tm_tile    = tmem<float, 64, 64>;
-    using p_tm_bf_tile = tmem<bf16, 64, 64>;
+    using s_tm_tile    = tt<float, 64, 64>; 
+    using p_tm_tile    = tt<float, 64, 64>;
+    using p_tm_bf_tile = tt<bf16, 64, 64>;
 
     const int warpid      = kittens::warpid();
     const int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
     const int qo_blocks   = N / (G::tile_h_qo);
     const int kv_head_idx = (blockIdx.y) / hr; 
 
-    qg_tm_tile qg_tm = all_tmem.subtile<qg_tm_tile>(0, 0);
-    kg_tm_tile kg_tm = all_tmem.subtile<kg_tm_tile>(0, G::tile_width + static_cast<int>(warpgroupid*G::tile_width));           
-    vg_tm_tile vg_tm = all_tmem.subtile<vg_tm_tile>(0, G::tile_width + (2*G::tile_width) + static_cast<int>(warpgroupid*G::tile_width));
+    qg_tm_tile qg_tm = all_tt.subtile<qg_tm_tile>(0, 0);
+    kg_tm_tile kg_tm = all_tt.subtile<kg_tm_tile>(0, G::tile_width + static_cast<int>(warpgroupid*G::tile_width));           
+    vg_tm_tile vg_tm = all_tt.subtile<vg_tm_tile>(0, G::tile_width + (2*G::tile_width) + static_cast<int>(warpgroupid*G::tile_width));
 
-    s_tm_tile       s_tm = all_tmem.subtile<s_tm_tile>(16, 0);
-    p_tm_tile       p_tm = all_tmem.subtile<p_tm_tile>(16, 64);
+    s_tm_tile       s_tm = all_tt.subtile<s_tm_tile>(16, 0);
+    p_tm_tile       p_tm = all_tt.subtile<p_tm_tile>(16, 64);
     p_tm_bf_tile p_tm_bf = reinterpret_cast<p_tm_bf_tile&>(p_tm);
 
     __shared__ kittens::semaphore kv_b, q_b[2], o_b[2], vec_b[2];

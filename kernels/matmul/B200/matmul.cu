@@ -76,8 +76,8 @@ void matmul(const __grid_constant__ matmul_globals g) {
     d_tile (&d_smem)                            = al.allocate<d_tile>();
 
     tma::cluster::sync();
-    auto all_tmem = allocate_tmem<1, 2>();
-    using d_tmem_t = tmem<float, Mb, Nb>;
+    auto all_tt = allocate_tt<1, 2>();
+    using d_tt_t = tt<float, Mb, Nb>;
 
     __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], outputs_arrived, outputs_finished[NUM_CONSUMERS];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
@@ -123,7 +123,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
-            d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroup::warpid()*Nb);
+            d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
@@ -131,12 +131,12 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
                 tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                 prototype::update_phasebit<0>(bitfield, input_ring);
-                mm2_ABt(d_tmem, a_smem[0][warpgroup::warpid()], b_smem[0], inputs_finished[0]);
+                mm2_ABt(d_tt, a_smem[0][warpgroup::warpid()], b_smem[0], inputs_finished[0]);
                 input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                     prototype::update_phasebit<0>(bitfield, input_ring);
-                    mma2_ABt(d_tmem, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                    mma2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }
@@ -144,7 +144,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     }
     else {
         warpgroup::increase_registers<224>();
-        d_tmem_t d_tmem = all_tmem.subtile<d_tmem_t>(0, warpgroupid*Nb);
+        d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroupid*Nb);
         for(int task_iter = 0; true; task_iter++) {
             int2 rowcol = get_task_idx(g, task_iter, true);
             if(rowcol.x == -1) return;
@@ -153,7 +153,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             if(warpgroupid == 1) group<8>::sync(15);
             #pragma unroll
             for(int i = 0; i < Nb/d_tile::cols; i++) {
-                warpgroup::load_async(d_reg[i], d_tmem.subtile<tmem<float, 128, 64>>(0, 64*i));
+                warpgroup::load_async(d_reg[i], d_tt.subtile<tt<float, 128, 64>>(0, 64*i));
             }
             tm_load_wait();
             warpgroup::sync(warpgroupid);

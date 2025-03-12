@@ -145,7 +145,7 @@ __device__ static inline uint32_t instruction_descriptor() {
 };
 
 template<typename T_AB, int acc, int ncta=1>
-__device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr, uint64_t b_desc, uint32_t idesc) {
+__device__ static inline void tt_st(uint32_t d_tt_addr, uint32_t a_tt_addr, uint64_t b_desc, uint32_t idesc) {
     if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
         // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
         if constexpr (ncta == 1) {
@@ -153,7 +153,7 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::1.kind::f8f6f4 [%0], [%1], %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "r"(a_tt_addr), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
         else {
@@ -161,7 +161,7 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::2.kind::f8f6f4 [%0], [%1], %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "r"(a_tt_addr), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
     } else {
@@ -170,7 +170,7 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::1.kind::f16 [%0], [%1], %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "r"(a_tt_addr), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
         else {
@@ -178,14 +178,14 @@ __device__ static inline void tmem_st(uint32_t d_tmem_addr, uint32_t a_tmem_addr
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::2.kind::f16 [%0], [%1], %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "r"(a_tmem_addr), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "r"(a_tt_addr), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
     }
 }
 
 template<typename T_AB, int acc, int ncta=1>
-__device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint64_t b_desc, uint32_t idesc) {
+__device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_t b_desc, uint32_t idesc) {
     if constexpr (std::is_same_v<T_AB, fp8e4m3> || std::is_same_v<T_AB, fp8e5m2>) {
         // TODO(danfu): is there a better way to do this with string manipulation that the compiler likes?
         if constexpr (ncta == 1) {
@@ -193,7 +193,7 @@ __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint6
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::1.kind::f8f6f4 [%0], %1, %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
         else {
@@ -201,7 +201,7 @@ __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint6
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::2.kind::f8f6f4 [%0], %1, %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
     } else {
@@ -210,7 +210,7 @@ __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint6
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
         else {
@@ -218,7 +218,7 @@ __device__ static inline void st_st(uint32_t d_tmem_addr, uint64_t a_desc, uint6
                 "{.reg .pred p;\n" \
                 "setp.eq.u32 p, 1, %4;\n" \
                 "tcgen05.mma.cta_group::2.kind::f16 [%0], %1, %2, %3, p;}\n"
-            ::  "r"(d_tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
+            ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "n"(acc)
             );
         }
     }
@@ -244,7 +244,7 @@ template<int ncta=1> __device__ static inline void commit(kittens::semaphore &se
 template<typename T_AB> constexpr int reduction_dimension = sizeof(T_AB) == 2 ? 16 : sizeof(T_AB) == 4 ? 8 : 32; // haven't added fp4 yet.
 
 // RS matmul equivalent
-template<int trans_a, int trans_b, ducks::tmem::all D, ducks::tmem::all A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int trans_b, ducks::tt::all D, ducks::tt::all A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
 
     // Do everything here.
@@ -281,7 +281,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     if(laneid() == 0) {
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-        detail::template tmem_st<T_AB, acc, ncta>(
+        detail::template tt_st<T_AB, acc, ncta>(
             d.addr,
             a.template chunk_addr<trans_a>(0),
             b_desc.chunk_descriptor(0),
@@ -289,7 +289,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         );
         #pragma unroll
         for(int i = 1; i < K/red_dim; i++) {
-            detail::template tmem_st<T_AB, 1, ncta>(
+            detail::template tt_st<T_AB, 1, ncta>(
                 d.addr,
                 a.template chunk_addr<trans_a>(i),
                 b_desc.chunk_descriptor(i),
@@ -301,7 +301,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     __syncwarp();
 }
 // SS matmul equivalent
-template<int trans_a, int trans_b, ducks::tmem::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
 
     // Do everything here.
@@ -358,81 +358,81 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     }
     __syncwarp();
 }
-template<int trans_a, int trans_b, ducks::tmem::all D, typename A, ducks::st_descriptor::input B, int acc=1>
+template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, int acc=1>
 __device__ static inline void mma2(D &d, const A &a, const B &b, semaphore &sem) {
     mma<trans_a, trans_b, D, A, B, acc, 2>(d, a, b, sem);
 }
-template<int trans_a, int trans_b, ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm(D &d, const A &a, const B &b, semaphore &sem) {
     mma<trans_a, trans_b, D, A, B, 0>(d, a, b, sem);
 }
-template<int trans_a, int trans_b, ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<trans_a, trans_b, D, A, B, 0>(d, a, b, sem);
 }
 
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AB(D &d, const A &a, const B &b, semaphore &sem) {
     mma<0, 1, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AB(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<0, 1, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_ABt(D &d, const A &a, const B &b, semaphore &sem) {
     mma<0, 0, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_ABt(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<0, 0, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtB(D &d, const A &a, const B &b, semaphore &sem) {
     mma<1, 1, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AtB(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<1, 1, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
     mma<1, 0, D, A, B, 1>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<1, 0, D, A, B, 1>(d, a, b, sem);
 }
 
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AB(D &d, const A &a, const B &b, semaphore &sem) {
     mma<0, 1, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AB(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<0, 1, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_ABt(D &d, const A &a, const B &b, semaphore &sem) {
     mma<0, 0, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_ABt(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<0, 0, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtB(D &d, const A &a, const B &b, semaphore &sem) {
     mma<1, 1, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AtB(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<1, 1, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
     mma<1, 0, D, A, B, 0>(d, a, b, sem);
 }
-template<ducks::tmem::all D, typename A, ducks::st_descriptor::input B>
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
     mma2<1, 0, D, A, B, 0>(d, a, b, sem);
 }

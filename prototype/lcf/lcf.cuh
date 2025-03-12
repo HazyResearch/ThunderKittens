@@ -46,8 +46,8 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     
     using everyone = group<detail::NUM_WARPS_v<lcft>>;
 
-    auto tmem_alloc = allocate_tmem<detail::NUM_BLOCKS_v<lcft>>();
-    auto &all_tmem = reinterpret_cast<tmem<float, 128, 512>&>(tmem_alloc);
+    auto tt_alloc = allocate_tt<detail::NUM_BLOCKS_v<lcft>>();
+    auto &all_tt = reinterpret_cast<tt<float, 128, 512>&>(tt_alloc);
     
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
@@ -114,7 +114,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
-            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tmem};
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tt};
             lcft::common_setup(unif);
             if(num_iters <= 0) return; // no work to do
             int input_ring = 0; // tracking which input block is being loaded
@@ -142,7 +142,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
-            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tmem};
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tt};
             lcft::common_setup(unif);
             if(num_iters <= 0) return; // no work to do
             int input_ring = 0; // tracking which input block is being loaded

@@ -92,17 +92,17 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     l_col_vec (&l_smem)[NUM_CONSUMERS] = al.allocate<l_col_vec, NUM_CONSUMERS>();
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
 
-    // Allocate tmem
-    auto all_tmem = allocate_tmem();
+    // Allocate tt
+    auto all_tt = allocate_tt();
 
-    using att_tm_fl = tmem<float, K::qo_height, K::kv_height>;
-    using att_tm_bf = tmem<bf16,  K::qo_height, K::kv_height>;
-    using o_tm_fl   = tmem<float, K::qo_height, K::tile_width>;
+    using att_tm_fl = tt<float, K::qo_height, K::kv_height>;
+    using att_tm_bf = tt<bf16,  K::qo_height, K::kv_height>;
+    using o_tm_fl   = tt<float, K::qo_height, K::tile_width>;
 
-    att_tm_fl att_tm    = all_tmem.subtile<att_tm_fl>(0, consumerid*K::kv_height);
-    o_tm_fl   o_tm      = all_tmem.subtile<o_tm_fl>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
+    att_tm_fl att_tm    = all_tt.subtile<att_tm_fl>(0, consumerid*K::kv_height);
+    o_tm_fl   o_tm      = all_tt.subtile<o_tm_fl>  (0, (NUM_CONSUMERS*K::kv_height) + consumerid*K::tile_width);
     att_tm_bf att_bf_tm = reinterpret_cast<att_tm_bf&>(att_tm);
-    // att_tm_bf att_bf_tm = all_tmem.subtile<att_tm_bf>(0, (NUM_CONSUMERS*(K::kv_height+K::tile_width)) + consumerid*K::kv_height/2);
+    // att_tm_bf att_bf_tm = all_tt.subtile<att_tm_bf>(0, (NUM_CONSUMERS*(K::kv_height+K::tile_width)) + consumerid*K::kv_height/2);
     
     int kv_blocks   = g.N / (K::kv_height);
     int kv_head_idx = blockIdx.y / g.hr;

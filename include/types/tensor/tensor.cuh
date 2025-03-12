@@ -7,6 +7,6 @@
 
 #ifdef KITTENS_BLACKWELL
 
-#include "tmem.cuh"
+#include "tt.cuh"
 
 #endif
