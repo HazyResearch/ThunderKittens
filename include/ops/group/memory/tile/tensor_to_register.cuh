@@ -5,7 +5,7 @@
 
 template<ducks::rt::all RT, ducks::tt::all TM>
 __device__ static inline void load_async(RT &dst, const TM &src) {
-    static_assert(N_WARPS==2 || N_WARPS%4==0);
+    static_assert(N_WARPS==4 || N_WARPS==8);
     constexpr int warp_rows = TM::rows/N_WARPS;
     static_assert(TM::cols==RT::cols);
     static_assert(warp_rows==RT::rows);
@@ -15,7 +15,7 @@ __device__ static inline void load_async(RT &dst, const TM &src) {
 
 template<ducks::rt::all RT, ducks::tt::all TM>
 __device__ static inline void store_async(TM &dst, const RT &src) {
-    static_assert(N_WARPS==2 || N_WARPS%4==0);
+    static_assert(N_WARPS==4 || N_WARPS==8);
     constexpr int warp_rows = TM::rows/N_WARPS;
     static_assert(TM::cols==RT::cols);
     static_assert(warp_rows==RT::rows);

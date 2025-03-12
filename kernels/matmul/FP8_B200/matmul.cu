@@ -76,7 +76,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     d_tile (&d_smem)                            = al.allocate<d_tile>();
 
     tma::cluster::sync();
-    auto all_tt = allocate_tt<1, 2>();
+    auto t_alloc = allocate_tensor_memory<1, 2>();
     using d_tt_t = tt<float, Mb, Nb>;
 
     __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], outputs_arrived, outputs_finished[NUM_CONSUMERS];
@@ -123,7 +123,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
-            d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroup::warpid()*Nb);
+            d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
@@ -144,7 +144,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     }
     else {
         warpgroup::increase_registers<224>();
-        d_tt_t d_tt = all_tt.subtile<d_tt_t>(0, warpgroupid*Nb);
+        d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroupid*Nb);
         for(int task_iter = 0; true; task_iter++) {
             int2 rowcol = get_task_idx(g, task_iter, true);
             if(rowcol.x == -1) return;

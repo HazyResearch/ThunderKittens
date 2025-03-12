@@ -324,8 +324,8 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     }
 #endif
 #ifdef KITTENS_BLACKWELL
-    auto tt_alloc = allocate_tt<1>(); // NUM_BLOCKS is hardcoded as 1 for the interpreter.
-    auto &all_tt = reinterpret_cast<tt<float, 128, 512>&>(tt_alloc);
+    constexpr int NCTA_TENSOR_ALLOC = detail::CLUSTER_BLOCKS_v<config> > 1 ? 2 : 1;
+    auto tt_alloc = allocate_tensor_memory<1, NCTA_TENSOR_ALLOC>();
 #endif
     __shared__ __align__(16) int instructions[2][globals.instructions.cols()];
     __shared__ kittens::semaphore inputs_arrived[8], inputs_finished[8], outputs_arrived[8], outputs_finished[8], finish_finished, instruction_arrived[2], instruction_finished[2];

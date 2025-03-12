@@ -32,6 +32,8 @@ struct identifier {};
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tt::identifier
+template<typename T> concept half = all<T> && T::rows ==  64;
+template<typename T> concept full = all<T> && T::rows == 128;
 } // namespace tt
 } // namespace ducks
 
@@ -53,14 +55,20 @@ struct tt {
     static constexpr int cols    = _cols;
     static constexpr int height  = rows / kittens::TILE_ROW_DIM<T>;
     static constexpr int width   = cols / kittens::TILE_COL_DIM<T>;
-
+    
     uint32_t addr;
 
     __device__ inline tt() : addr(0) {}
     __device__ inline tt(uint32_t addr) : addr(addr) {}
 
-    template<ducks::tt::all TM> __device__ inline TM subtile(int row_offset, int col_offset) const {
-        return TM(addr + (row_offset << 16) + col_offset/(4/(uint32_t)sizeof(T))); // in units of the tile's data type.
+    template<ducks::tt::all TT>  __device__ inline TT subtile(int row_offset, int col_offset) const {
+#ifndef NDEBUG
+        if(row_offset < 0 || row_offset+TT::rows > rows || col_offset < 0 || col_offset+TT::cols > cols) {
+            printf("Subtile out of bounds! full tile rows: %d, full tile cols: %d, subtile rows: %d, subtile cols: %d, row_offset: %d, col_offset: %d\n", rows, cols, TT::rows, TT::cols, row_offset, col_offset);
+            asm volatile("trap;");
+        }
+#endif
+        return TT(addr + (row_offset<<16) + col_offset/(4/(uint32_t)sizeof(T)));
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
@@ -81,35 +89,6 @@ struct tt {
         }
     } 
 
-};
-
-template<int nblocks> constexpr int num_tt_cols = ((512/nblocks) / 32) * 32;
-template<int nblocks=1, int ncta=1> __device__ auto allocate_tt() {
-    __shared__ uint32_t addr;
-    constexpr int cols = num_tt_cols<nblocks>;
-    static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
-    if constexpr (ncta == 1) {
-        if(warpid() == 0) {
-            asm volatile(
-                "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "l"((uint64_t)&addr), "n"(cols)
-            );
-            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;\n");
-        }
-    }
-    else {
-        if(warpid() == 0) {
-            asm volatile(
-                "tcgen05.alloc.cta_group::2.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "l"((uint64_t)&addr), "n"(cols)
-            );
-            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;\n");
-        }
-    }
-    asm volatile("tcgen05.fence::before_thread_sync;\n");
-    __syncthreads();
-    asm volatile("tcgen05.fence::after_thread_sync;\n");
-    return tt<float, 128, cols>(addr);
 };
 
 } // namespace kittens

@@ -244,8 +244,9 @@ template<int ncta=1> __device__ static inline void commit(kittens::semaphore &se
 template<typename T_AB> constexpr int reduction_dimension = sizeof(T_AB) == 2 ? 16 : sizeof(T_AB) == 4 ? 8 : 32; // haven't added fp4 yet.
 
 // RS matmul equivalent
-template<int trans_a, int trans_b, ducks::tt::all D, ducks::tt::all A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::tt::all A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
+    constexpr int trans_b = 1 - n_trans_b;
 
     // Do everything here.
     constexpr int M = (trans_a ? A::cols : A::rows) * ncta;
@@ -301,8 +302,9 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
     __syncwarp();
 }
 // SS matmul equivalent
-template<int trans_a, int trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
+    constexpr int trans_b = 1 - n_trans_b;
 
     // Do everything here.
     constexpr int M = (trans_a ? A::cols : A::rows) * ncta;
@@ -373,68 +375,68 @@ __device__ static inline void mm2(D &d, const A &a, const B &b, semaphore &sem) 
 
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 1, D, A, B, 1>(d, a, b, sem);
+    mma<transpose::N, transpose::N, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<0, 1, D, A, B, 1>(d, a, b, sem);
+    mma2<transpose::N, transpose::N, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_ABt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 0, D, A, B, 1>(d, a, b, sem);
+    mma<transpose::N, transpose::T, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_ABt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<0, 0, D, A, B, 1>(d, a, b, sem);
+    mma2<transpose::N, transpose::T, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<1, 1, D, A, B, 1>(d, a, b, sem);
+    mma<transpose::T, transpose::N, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AtB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<1, 1, D, A, B, 1>(d, a, b, sem);
+    mma2<transpose::T, transpose::N, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<1, 0, D, A, B, 1>(d, a, b, sem);
+    mma<transpose::T, transpose::T, D, A, B, 1>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma2_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<1, 0, D, A, B, 1>(d, a, b, sem);
+    mma2<transpose::T, transpose::T, D, A, B, 1>(d, a, b, sem);
 }
 
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 1, D, A, B, 0>(d, a, b, sem);
+    mma<transpose::N, transpose::N, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<0, 1, D, A, B, 0>(d, a, b, sem);
+    mma2<transpose::N, transpose::N, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_ABt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<0, 0, D, A, B, 0>(d, a, b, sem);
+    mma<transpose::N, transpose::T, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_ABt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<0, 0, D, A, B, 0>(d, a, b, sem);
+    mma2<transpose::N, transpose::T, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<1, 1, D, A, B, 0>(d, a, b, sem);
+    mma<transpose::T, transpose::N, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AtB(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<1, 1, D, A, B, 0>(d, a, b, sem);
+    mma2<transpose::T, transpose::N, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma<1, 0, D, A, B, 0>(d, a, b, sem);
+    mma<transpose::T, transpose::T, D, A, B, 0>(d, a, b, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b, semaphore &sem) {
-    mma2<1, 0, D, A, B, 0>(d, a, b, sem);
+    mma2<transpose::T, transpose::T, D, A, B, 0>(d, a, b, sem);
 }
 
 
