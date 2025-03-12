@@ -14,27 +14,37 @@ template<kittens_layout T> struct uniform_args {
     int & num_iters; // how many iters are there for this task?
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
-    kittens::tt<float, 128, 512> & tt;
+#ifdef KITTENS_BLACKWELL
+    kittens::tensor_allocator<512 / NUM_BLOCKS_v<T>> & tt;
+#endif
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
         int & _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
-        typename CKL::scratch_block_t& _scratch,
-        kittens::tt<float, 128, 512> & _tt
+        typename CKL::scratch_block_t& _scratch
+#ifdef KITTENS_BLACKWELL
+        , kittens::tensor_allocator<512 / NUM_BLOCKS_v<T>> & _tt
+#endif
     ) : common(_common),
         task_iter(_task_iter),
         num_iters(_num_iters),
         globals(_globals),
-        scratch(_scratch),
-        tt(_tt) {}
+        scratch(_scratch)
+#ifdef KITTENS_BLACKWELL
+        , tt(_tt)
+#endif
+        {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
         task_iter(_args.task_iter),
         num_iters(_args.num_iters),
         globals(_args.globals),
-        scratch(_args.scratch),
-        tt(_args.tt) {}
+        scratch(_args.scratch)
+#ifdef KITTENS_BLACKWELL
+        , tt(_args.tt)
+#endif
+        {}
 };
 
 // Setup args are the same as uniform args

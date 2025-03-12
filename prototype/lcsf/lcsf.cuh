@@ -53,8 +53,10 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
     constexpr int NUM_PRODUCER_WARPS = detail::NUM_PRODUCER_WARPS_v<lcsft>;
     using everyone = group<detail::NUM_WARPS_v<lcsft>>;
 
-    auto tt_alloc = allocate_tt<detail::NUM_BLOCKS_v<lcsft>>();
-    auto &all_tt = reinterpret_cast<tt<float, 128, 512>&>(tt_alloc);
+#ifdef KITTENS_BLACKWELL
+    constexpr int NCTA_TENSOR_ALLOC = detail::CLUSTER_BLOCKS_v<lcsft> > 1 ? 2 : 1;
+    auto tensor_alloc = allocate_tensor_memory<NUM_BLOCKS_v<lcsft>, NCTA_TENSOR_ALLOC>();
+#endif
     
     extern __shared__ int __shm[];
     shared_allocator alloc(&__shm[0]); // allocate shared memory
@@ -133,7 +135,11 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
-            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tt};
+#ifdef KITTENS_BLACKWELL
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, tensor_alloc};
+#else
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
+#endif
             lcsft::common_setup(unif);
             if(num_iters <= 0) {
                 __syncthreads();
@@ -180,7 +186,11 @@ void kernel(const __grid_constant__ typename lcsft::layout::globals globals) {
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = 0;
-            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, all_tt};
+#ifdef KITTENS_BLACKWELL
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem, tensor_alloc};
+#else
+            common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
+#endif
             lcsft::common_setup(unif);
             if(num_iters <= 0) {
                 __syncthreads();
