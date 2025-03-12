@@ -88,6 +88,7 @@ def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_s
     Q_all = torch.concat([QV, QRot], dim=-1).contiguous()
     KV_all = torch.cat([V_cache, K_cache], dim=-1).contiguous()
     softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    stream = torch.cuda.current_stream()
     torch.cuda.synchronize()
     mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
     if Timings is not None:
@@ -104,19 +105,20 @@ def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions,
     Semaphore.zero_()
     O = torch.zeros_like(QV)
     softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    stream = torch.cuda.current_stream()
     # execute once to warm up
     mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
     if Timings is not None:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings)
+        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, Timings, stream=stream)
     else:
-        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
+        mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, stream=stream)
     torch.cuda.synchronize()
     t0 = time.time()
     for it in range(ITERS):
         if Timings is not None:
-            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, Timings)
+            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, Timings, stream=stream)
         else:
-            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2)
+            mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, it%2, stream=stream)
     torch.cuda.synchronize()
     t1 = time.time()
     return (t1-t0) / ITERS

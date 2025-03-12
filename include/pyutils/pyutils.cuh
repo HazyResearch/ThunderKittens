@@ -52,14 +52,20 @@ template<typename> struct trait;
 template<typename MT, typename T> struct trait<MT T::*> { using member_type = MT; using type = T; };
 template<typename> using object = pybind11::object;
 template<auto kernel, typename TGlobal> static void bind_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
-    m.def(name, [](object<decltype(member_ptrs)>... args) {
+    m.def(name, [](object<decltype(member_ptrs)>... args, pybind11::kwargs kwargs) {
         TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...};
+        cudaStream_t raw_stream = nullptr;
+        if (kwargs.contains("stream")) {
+            // Extract stream pointer
+            uintptr_t stream_ptr = kwargs["stream"].attr("cuda_stream").cast<uintptr_t>();
+            raw_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
+        }
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
             int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
-            kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__);
+            kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__, raw_stream>>>(__g__);
         } else {
-            kernel<<<__g__.grid(), __g__.block()>>>(__g__);
+            kernel<<<__g__.grid(), __g__.block(), 0, raw_stream>>>(__g__);
         }
     });
 }
