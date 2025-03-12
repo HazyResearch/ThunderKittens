@@ -8,7 +8,9 @@
 #include "register/register.cuh"
 #include "shared/shared.cuh"
 #include "global/global.cuh"
+#ifdef KITTENS_BLACKWELL
 #include "tensor/tensor.cuh"
+#endif
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 

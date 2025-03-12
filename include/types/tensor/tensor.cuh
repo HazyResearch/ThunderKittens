@@ -5,8 +5,6 @@
 
 #pragma once
 
-#ifdef KITTENS_BLACKWELL
-
 #include "tt.cuh"
 
 // A thin wrapper that allows for certain compile-time checks to be performed when allocating tensor memory.
@@ -97,5 +95,3 @@ template<int nblocks=1, int ncta=1> __device__ auto allocate_tensor_memory() {
 };
 
 } // namespace kittens
-
-#endif
