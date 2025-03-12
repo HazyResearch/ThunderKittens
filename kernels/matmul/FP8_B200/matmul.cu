@@ -29,13 +29,13 @@ constexpr int NUM_WORKERS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
 constexpr int NUM_THREADS = NUM_WORKERS * kittens::WARP_THREADS;
 
 __device__ static inline int get_iters_per_task(const matmul_globals &g) {
-    return g.a.cols / Kb;
+    return g.a.cols() / Kb;
 }
 template<int SUPER_M=8> __device__ static inline int2 get_task_idx(const matmul_globals &g, int task_iter, bool is_consumer) {
     constexpr int CLUSTER_M = 4*Mb, CLUSTER_N = Nb;
     int cluster_x = clusterIdx().x, ctarank = cluster_ctarank();
     int task_id = task_iter * (gridDim.x/2) + cluster_x;
-    int Rblocks = g.d.rows / CLUSTER_M, Cblocks = g.d.cols / CLUSTER_N;
+    int Rblocks = g.d.rows() / CLUSTER_M, Cblocks = g.d.cols() / CLUSTER_N;
     int super_rows = (Rblocks/SUPER_M)*SUPER_M,
         final_rows = Rblocks - super_rows,
         super_repeat = SUPER_M*Cblocks;
