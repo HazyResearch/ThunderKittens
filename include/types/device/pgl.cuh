@@ -12,6 +12,7 @@
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "../global/global.cuh"
+#include "detail/helpers.cuh"
 
 namespace kittens {
 
@@ -30,8 +31,8 @@ struct pgl {
     std::vector<GL> tensors; // an array of global layouts
                               // should conceptually be a single tensor, shared across all devices
 
-    CUmemGenericAllocationHandle multi_handle; // the single multicast handle for collective ops
-    T **raw_multi_ptr;                 // an array of virtual addresses on each machine attached to the multi_handle
+    CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
+    T **raw_multi_ptr;                 // mc_ptr, an array of virtual addresses on each machine attached to the mc_handle
 
     int num_devices; // number of CUDA devices
     int *device_ids; // CUDA device IDs. Corresponds to the order of vector<GL> tensors
@@ -99,7 +100,7 @@ struct pgl {
         if (INIT_P) {
             multicast_init();
         } else {
-            multi_handle = 0;
+            mc_handle = 0;
             for (int i = 0; i < num_devices; i++) raw_multi_ptr = nullptr;
         }
     }
@@ -113,7 +114,7 @@ struct pgl {
         tensors(other.tensors),
         device_ids(new int[other.num_devices]),
         raw_multi_ptr(new T*[other.num_devices]),
-        multi_handle(other.multi_handle)
+        mc_handle(other.mc_handle)
     {
         for (int i = 0; i < num_devices; i++) {
             device_ids[i] = other.device_ids[i];
@@ -122,71 +123,44 @@ struct pgl {
     }
 
     __host__ inline ~pgl() {
-        delete[] device_ids;
-        delete[] raw_multi_ptr;
-
-        if (multi_handle) {
+        if (mc_handle) {
             for (int i = 0; i < num_devices; ++i) {
-                int device_id = device_ids[i];
-                cudaSetDevice(device_id);
-
-                // Always free in this order
+                cudaSetDevice(device_ids[i]);
                 cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], size);
                 cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], size);
-
-                int dev;
-                cuDeviceGet(&dev, device_id);
-                cuMulticastUnbind(multi_handle, dev, 0, size);
+                cuMulticastUnbind(mc_handle, device_ids[i], 0, size);
             }
         }
+
+        delete[] device_ids;
+        delete[] raw_multi_ptr;
     }
     
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
     
         // Create MC handle props (once for all devices)
-        CUmulticastObjectProp mc_prop = {};
-        mc_prop.numDevices = num_devices;
-        mc_prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR; // single node
-        mc_prop.flags = 0; // SBZ
-    
-        // Query for granularities
-        size_t granularity = 0;
-        cuMulticastGetGranularity(&granularity, &mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-        if (size % granularity != 0) {
-            std::cerr << "SKILL ISSUE: pgl size must be a multiple of granularity " << granularity << std::endl;
-            std::exit(EXIT_FAILURE);
-        }
-        mc_prop.size = size;
-    
+        CUmulticastObjectProp mc_prop; 
+        size_t mc_size = detail::init_mc_prop(&mc_prop, num_devices, size);
+        
         // Create MC handle (once for all devices)
-        cuMulticastCreate(&multi_handle, &mc_prop);
+        cuMulticastCreate(&mc_handle, &mc_prop);
     
         // Add devices to MC handle
         for (int i = 0; i < num_devices; ++i) {
             CUdevice dev;
             cuDeviceGet(&dev, device_ids[i]);
-            cuMulticastAddDevice(multi_handle, dev); // must be done before any bindig
+            cuMulticastAddDevice(mc_handle, dev); // must be done before any bindig
         }
 
         // Attach MC handle to physical memory & map to virtual memory on each device
         for (int i = 0; i < num_devices; ++i) {
             cudaSetDevice(device_ids[i]);
-
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            cuMulticastBindAddr(multi_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, size, 0);
-            
-            // Create virtual address for the multicast handle
-            cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], size, granularity, 0, 0);
-            cuMemMap((CUdeviceptr)raw_multi_ptr[i], size, 0, multi_handle, 0);
-
-            // Set access permissions
-            CUmemAccessDesc desc[1];
-            desc[0].flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-            desc[0].location.id = device_ids[i];
-            desc[0].location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-            cuMemSetAccess((CUdeviceptr)raw_multi_ptr[i], size, desc, 1);
+            cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, size, 0);    
         }
+
+        detail::init_vas_for_handle(mc_handle, device_ids, num_devices, raw_multi_ptr, size);
     }
 
     __host__ inline void multicast_check(int device_id) {
@@ -209,11 +183,7 @@ __host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocatio
     cudaSetDevice(device_id);
 
     // Create memory handle prop
-    CUmemAllocationProp mem_prop = {};
-    mem_prop.type = CU_MEM_ALLOCATION_TYPE_PINNED; // use pinned memory
-    mem_prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-    mem_prop.location.id = device_id;
-    mem_prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
 
     // Query for recommended granularity
     size_t mem_granularity;
@@ -231,11 +201,8 @@ __host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocatio
     cuMemMap((CUdeviceptr)*ptr, size, 0, *mem_handle, 0);
 
     // Set access
-    CUmemAccessDesc desc[1];
-    desc[0].flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-    desc[0].location.id = device_id;
-    desc[0].location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    cuMemSetAccess((CUdeviceptr)*ptr, size, desc, 1);
+    CUmemAccessDesc desc = detail::create_mem_desc(device_id);
+    cuMemSetAccess((CUdeviceptr)*ptr, size, &desc, 1);
 }
 
 template <typename T>
