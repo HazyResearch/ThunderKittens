@@ -11,8 +11,7 @@
 #include "cuda.h"
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
-#include "gl.cuh"
-#include "util.cuh"
+#include "../global/global.cuh"
 
 namespace kittens {
 

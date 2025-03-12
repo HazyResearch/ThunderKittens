@@ -7,6 +7,7 @@
 
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
+#include "../register/register.cuh"
 #include "util.cuh"
 #ifdef KITTENS_HOPPER
 #include <utility>
