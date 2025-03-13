@@ -44,12 +44,10 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     );
     constexpr int NUM_CONSUMER_WARPS = detail::NUM_CONSUMER_WARPS_v<lcft>;
     constexpr int NUM_PRODUCER_WARPS = detail::NUM_PRODUCER_WARPS_v<lcft>;
-    
-    using everyone = group<detail::NUM_WARPS_v<lcft>>;
 
 #ifdef KITTENS_BLACKWELL
     constexpr int NCTA_TENSOR_ALLOC = detail::CLUSTER_BLOCKS_v<lcft> > 1 ? 2 : 1;
-    auto tensor_alloc = allocate_tensor_memory<detail::NUM_BLOCKS_v<lcft>, NCTA_TENSOR_ALLOC>();
+    tensor_allocator<detail::NUM_BLOCKS_v<lcft>, NCTA_TENSOR_ALLOC> tensor_alloc{};
 #endif
     
     extern __shared__ int __shm[];
@@ -113,7 +111,9 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             }
             init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // consumer warps must say they are done with the finish block
         }
-        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+        else everyone::sync(15);
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
@@ -123,7 +123,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
 #endif
             lcft::common_setup(unif);
-            if(num_iters <= 0) return; // no work to do
+            if(num_iters < 0) break; // no work to do
             int input_ring = 0; // tracking which input block is being loaded
             int load_iter;
             lcft::producer::setup({p_state, unif});
@@ -145,7 +145,9 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     } // producer warpgroup
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
-        everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+        else everyone::sync(15);
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
             int num_iters = -1;
@@ -155,7 +157,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             common_setup_args<L> unif{common, task_iter, num_iters, globals, *scratch_smem};
 #endif
             lcft::common_setup(unif);
-            if(num_iters <= 0) return; // no work to do
+            if(num_iters < 0) break; // no work to do
             int input_ring = 0; // tracking which input block is being loaded
             lcft::consumer::setup({c_state, unif});
 #ifdef CONSUMER_UNROLL
@@ -172,6 +174,11 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.
         } // task iter loop
     } // consumer warpgroup
+    // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+    if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+#ifdef KITTENS_BLACKWELL
+    else everyone::sync(15);
+#endif
 }
 
 } // namespace lcf
