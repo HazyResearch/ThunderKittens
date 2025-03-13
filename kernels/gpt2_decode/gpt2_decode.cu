@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "pyutils/pyutils.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -7,6 +8,7 @@ using namespace kittens::prototype::interpreter;
 
 static constexpr int BATCH_SIZE = 64;
 static constexpr int DIM = 64;
+static constexpr float EPS = 1e-5;
 using head_vec   = sv_bf<DIM>; 
 using h_global = gl<bf16, 1, 1, BATCH_SIZE, DIM, tma::descriptor<head_vec>>; // B * DIM
 
@@ -24,7 +26,7 @@ struct config {
     };
 };
 
-struct LayerNorm {
+struct layernorm_template {
     using config = config;
     static constexpr int opcode = 1;
 
@@ -75,8 +77,8 @@ struct LayerNorm {
 
             rv_bf<DIM> head;
             kittens::load(head, args.input.heads[kittens::warpid()]);
-            if(laneid() == 0) arrive(args.inputs_finished);
             __syncwarp();
+            if(laneid() == 0) arrive(args.inputs_finished);
 
             // Calculate mean of input vector
             bf16 mean = bf16(kittens::sum(head)) / bf16(DIM);
@@ -85,7 +87,7 @@ struct LayerNorm {
             rv_bf<DIM> temp;
             kittens::sub(temp, head, mean);
             kittens::mul(temp, temp, temp);
-            bf16 rstd = rsqrt(bf16(kittens::sum(temp)) / bf16(DIM));
+            bf16 rstd = rsqrt((bf16(kittens::sum(temp)) / bf16(DIM)) + bf16(EPS));
 
             kittens::sub(temp, head, mean);
             kittens::mul(head, temp, rstd);
@@ -115,40 +117,48 @@ __global__ void print_outputs(bf16 *input, int n){
     printf("\n");
 }
 
-int main() {
-
-    constexpr int NUM_INSTRUCTIONS = 5;
-    int instructions[NUM_INSTRUCTIONS] = {1, 0, 0, 0, 0}; // last 2 should not execute.
-    std::vector<int> instructions_vec(132*NUM_INSTRUCTIONS);
-    for(int i = 0; i < 132*NUM_INSTRUCTIONS; i++) {
-        instructions_vec[i] = instructions[i % NUM_INSTRUCTIONS];
-    }
-    int *instructions_d;
-    cudaMalloc(&instructions_d, sizeof(int) * NUM_INSTRUCTIONS*132);
-    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * NUM_INSTRUCTIONS*132, cudaMemcpyHostToDevice);
-    kittens::gl<int, 1, -1, -1, 4> instructions_gl{instructions_d, nullptr, 132, NUM_INSTRUCTIONS, nullptr};
-
-    bf16 *hidden_d;
-    cudaMalloc(&hidden_d, sizeof(bf16) * BATCH_SIZE * DIM);
-    h_global hidden_gl{hidden_d, nullptr, nullptr, nullptr, nullptr};
-
-    init_inputs<<<BATCH_SIZE, DIM>>>(hidden_d);
-    print_outputs<<<1, 1>>>(hidden_d + 62 * DIM, DIM);
-
-    config::globals G{instructions_gl, hidden_gl};
-    kittens::prototype::interpreter::run<config, LayerNorm>(G);
-
-    print_outputs<<<1, 1>>>(hidden_d + 62 * DIM, DIM);
-
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(err));
-        return 1;
-    }
-    cudaDeviceSynchronize();
-    err = cudaGetLastError(); 
-    if (err != cudaSuccess) {
-        printf("CUDA error after synchronize: %s\n", cudaGetErrorString(err));
-        return 1;
-    }
+PYBIND11_MODULE(gpt2_decode, m) {
+    m.doc() = "gpt2_decode python module";
+    kittens::py::bind_kernel<interpreter::kernel<config, layernorm_template>>(m, "gpt2_decode",
+        &config::globals::instructions,
+        &config::globals::H
+    );
 }
+
+// int main() {
+
+//     constexpr int NUM_INSTRUCTIONS = 5;
+//     int instructions[NUM_INSTRUCTIONS] = {1, 0, 0, 0, 0}; // last 2 should not execute.
+//     std::vector<int> instructions_vec(132*NUM_INSTRUCTIONS);
+//     for(int i = 0; i < 132*NUM_INSTRUCTIONS; i++) {
+//         instructions_vec[i] = instructions[i % NUM_INSTRUCTIONS];
+//     }
+//     int *instructions_d;
+//     cudaMalloc(&instructions_d, sizeof(int) * NUM_INSTRUCTIONS*132);
+//     cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * NUM_INSTRUCTIONS*132, cudaMemcpyHostToDevice);
+//     kittens::gl<int, 1, -1, -1, 4> instructions_gl{instructions_d, nullptr, 132, NUM_INSTRUCTIONS, nullptr};
+
+//     bf16 *hidden_d;
+//     cudaMalloc(&hidden_d, sizeof(bf16) * BATCH_SIZE * DIM);
+//     h_global hidden_gl{hidden_d, nullptr, nullptr, nullptr, nullptr};
+
+//     init_inputs<<<BATCH_SIZE, DIM>>>(hidden_d);
+//     print_outputs<<<1, 1>>>(hidden_d + 62 * DIM, DIM);
+
+//     config::globals G{instructions_gl, hidden_gl};
+//     kittens::prototype::interpreter::run<config, LayerNorm>(G);
+
+//     print_outputs<<<1, 1>>>(hidden_d + 62 * DIM, DIM);
+
+//     cudaError_t err = cudaGetLastError();
+//     if (err != cudaSuccess) {
+//         printf("CUDA error: %s\n", cudaGetErrorString(err));
+//         return 1;
+//     }
+//     cudaDeviceSynchronize();
+//     err = cudaGetLastError(); 
+//     if (err != cudaSuccess) {
+//         printf("CUDA error after synchronize: %s\n", cudaGetErrorString(err));
+//         return 1;
+//     }
+// }
