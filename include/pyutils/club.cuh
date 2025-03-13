@@ -10,10 +10,10 @@
     Example usage
 
     // Construction
-    KittensClub gang(device_ids, NUM_DEVICES);
+    KittensClub club(device_ids, NUM_DEVICES);
 
     // Dispatch work to all threads (no need to set device)
-    gang.execute([&](int dev_idx) {
+    club.execute([&](int dev_idx) {
         int dev;
         CUDACHECK(cudaGetDevice(&dev));
         if (dev != dev_idx) {

@@ -13,10 +13,8 @@ namespace detail {
         // If size is not provided, return the recommended granularity
         size_t mc_size = 0;
         cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-        if (size != -1) {
-            // Round up size to the nearest granularity
-            mc_size = ((size + mc_size - 1) / mc_size) * mc_size;
-        }
+        if (size != -1) mc_size = ((size + mc_size - 1) / mc_size) * mc_size;
+        
         mc_prop->size = mc_size;
         return mc_size;
     }
@@ -53,4 +51,4 @@ namespace detail {
         }
     }
 } // namespace detail
-}
+} // namespace kittens

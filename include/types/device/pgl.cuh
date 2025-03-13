@@ -19,12 +19,20 @@ namespace kittens {
 /* ----------  Parallel global layout descriptor  ---------- */
 // Refers to a single tensor shared across multiple devices
 // Allows for the collective operations
+namespace ducks {
+namespace pgl {
+struct identifier {};
+}
+}
+    
 
 // INIT_P: whether to initialize the multicast handle inside the constructor
 //         if false, the user must manually initialize the multicast handle
 //         in order to use TK collective operations
 template<kittens::ducks::gl::all GL, bool INIT_P = true>
 struct pgl {
+    using identifier = ducks::pgl::identifier;
+    
     using T = GL::dtype;
 
     size_t size; // size of the raw data in bytes (on each device, not aggregate of all devices)
