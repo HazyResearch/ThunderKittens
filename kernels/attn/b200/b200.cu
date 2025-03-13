@@ -142,7 +142,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     auto      (*o_smem)                = reinterpret_cast<o_tile(*)>(&q_smem);
     st_bf<128,128> (&att_smem)[NUM_CONSUMERS] = al.allocate<st_bf<128,128>, NUM_CONSUMERS>();
 
-    auto tm_alloc = allocate_tensor_memory<1, 2>();
+    tensor_allocator<1, 2> tm_alloc{};
     using att_tm_fl_t = tt<float, K::qo_height, K::kv_height>;
     using att_tm_bf_t = tt<bf16,  K::qo_height, K::kv_height>;
     using o_tm_fl_t   = tt<float, K::qo_height, K::tile_width>;
@@ -325,7 +325,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
     }
     tma::cluster::sync();
-    tm_alloc.cleanup();
 }
 
 // ---------------------------------------------------------------------------------------------------

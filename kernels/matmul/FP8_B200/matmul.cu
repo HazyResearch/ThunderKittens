@@ -76,7 +76,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     d_tile (&d_smem)                            = al.allocate<d_tile>();
 
     tma::cluster::sync();
-    auto t_alloc = allocate_tensor_memory<1, 2>();
+    tensor_allocator<1, 2> tm_alloc{};
     using d_tt_t = tt<float, Mb, Nb>;
 
     __shared__ kittens::semaphore inputs_arrived[PIPE_DEPTH], inputs_finished[PIPE_DEPTH], outputs_arrived, outputs_finished[NUM_CONSUMERS];
@@ -108,7 +108,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
                         input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                     }
                     if(laneid() == 0) arrive(outputs_arrived);
-                    return;
+                    break;
                 }
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
@@ -123,11 +123,11 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
-            d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
+            d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
-                if(rowcol.x == -1) return;
+                if(rowcol.x == -1) break;
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
                 tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                 prototype::update_phasebit<0>(bitfield, input_ring);
@@ -144,10 +144,10 @@ void matmul(const __grid_constant__ matmul_globals g) {
     }
     else {
         warpgroup::increase_registers<224>();
-        d_tt_t d_tt = t_alloc.allocate<d_tt_t>(warpgroupid*Nb);
+        d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroupid*Nb);
         for(int task_iter = 0; true; task_iter++) {
             int2 rowcol = get_task_idx(g, task_iter, true);
-            if(rowcol.x == -1) return;
+            if(rowcol.x == -1) break;
             kittens::wait(outputs_arrived, task_iter%2);
             rt_hf<Mb/4, d_tile::cols> d_reg[4];
             if(warpgroupid == 1) group<8>::sync(15);
@@ -176,6 +176,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             group<8>::sync(15); // All consumers sync here.
         }
     }
+    tma::cluster::sync();
 }
 
 
@@ -327,7 +328,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 1.0) { // large because of bf16 vs fp32 numerics
+        if(error > 1.0) { // large because of fp8 vs fp32 numerics
             if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
