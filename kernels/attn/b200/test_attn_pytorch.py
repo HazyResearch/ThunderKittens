@@ -19,9 +19,12 @@ N = 512
 D = 128
 
 print('Starting making tensors')
-q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+v = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 l = torch.zeros((B, H, 1, N), dtype=torch.float, device='cuda')
 o = torch.zeros((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 
@@ -58,7 +61,8 @@ print((o - ref).abs().mean())
 
 print('Starting backward')
 
-o_grad = torch.randn_like(ref)
+# o_grad = torch.randn_like(ref)
+o_grad = torch.ones_like(ref)
 ref.backward(o_grad)
 
 q_grad_ref = q.grad
@@ -97,3 +101,5 @@ def compare_grads(ref_grad, custom_grad, name):
 compare_grads(q_grad_ref, qg, 'Q')
 compare_grads(k_grad_ref, kg, 'K')
 compare_grads(v_grad_ref, vg, 'V')
+
+breakpoint()

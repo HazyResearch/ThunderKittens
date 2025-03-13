@@ -611,8 +611,18 @@ kv_store(auto &kg_smem, auto &kg_reg,
     group<4>::sync(warpgroup::groupid()+4);
 
     if (warpgroup::warpid() == 0) {
+        printf("Saving vg_smem\n");
         coord<vg_tile> tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + warpgroup::groupid(), 0};
         tma::store_add_async(dst.vg, vg_smem[warpgroup::groupid()], tile_idx);
+        if (laneid() == 0) {
+            printf("vg_smem[%d]:\n", warpgroup::groupid());
+            for (int i = 0; i < 4; i++) {
+                for (int j = 0; j < 4; j++) {
+                    printf("%f ", vg_smem[warpgroup::groupid()][{i, j}]);
+                }
+                printf("\n");
+            }
+        }
     }
     tma::store_async_wait(); 
 }
