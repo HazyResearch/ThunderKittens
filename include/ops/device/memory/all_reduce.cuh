@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Functions for reduction operations across a gang
+ * @brief Functions for reduction operations called by a single device
  */
 #pragma once
 
@@ -38,12 +38,19 @@ __device__ static inline void reduce_op(PGL &pgl, int dev_idx) {
     for (int element_ofs = 0; element_ofs < nelem_per_warp; element_ofs += nelem_per_iter) {
         int idx = thread_start_idx + element_ofs;
         if (idx < nelem && idx % elem_per_transfer == 0) {
+            // TODO: check if always forcing into float4 is fine here
             float4 val;
             float4 *ptr = reinterpret_cast<float4 *>(pgl[dev_idx] + idx);
             
             ReduceOp<float4>::op(val, ptr);
             
             if constexpr (StoreResult) {
+                // TODO: need to ensure equivalence of this 
+                // asm volatile(
+                //     "multimem.st.relaxed.sys.global.v4.f32 [%0], {%1, %2, %3, %4};"
+                //     :: "l"(ptr), "f"(val.x), "f"(val.y), "f"(val.z), "f"(val.w)
+                //     : "memory"
+                // );
                 move<float4>::stg(ptr, val);
             }
         }

@@ -186,6 +186,21 @@ struct pgl {
     }
 };
 
+namespace ducks {
+namespace pgl {
+/**
+* @brief Concept for all parallel global layouts.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as ducks::pgl::identifier.
+*/
+template<typename T> concept all = requires {
+    typename T::identifier;
+} && std::is_same_v<typename T::identifier, identifier>;
+}
+}
+
 template <typename T>
 __host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
     cudaSetDevice(device_id);
@@ -221,4 +236,4 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, CUmemGenericAllocationHa
     cuMemRelease(mem_handle);
 }
 
-}
+} // namespace kittens

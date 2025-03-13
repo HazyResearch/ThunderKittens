@@ -7,4 +7,5 @@
 
 #include "warp/warp.cuh"
 #include "group/group.cuh"
+#include "device/device.cuh"
 #include "gang/gang.cuh"
