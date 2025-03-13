@@ -67,17 +67,17 @@ struct flux_matmul_gate_template {
                          INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         if(args.task_iter == 0) {
-            args.num_iters = transpose_lhs ? args.globals.lhs.rows / BLOCK_K : args.globals.lhs.cols / BLOCK_K;
+            args.num_iters = transpose_lhs ? args.globals.lhs.rows() / BLOCK_K : args.globals.lhs.cols() / BLOCK_K;
         }
         else args.num_iters = -1;
     }
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) { // setup and load the first iteration
-            warpgroup::producer_registers(); // decrease registers for the producer warpgroup
+            warpgroup::decrease_registers<32>(); // decrease registers for the producer warpgroup
         }
         __device__ static void load(producer_load_args<layout> args) { // semaphore for the producer to load into
             if(warpgroup::warpid() == 0) {
-                tma::expect_bytes(args.inputs_arrived, sizeof(layout::input_block));
+                tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {
                     if constexpr (transpose_lhs)
                         tma::load_async(args.input.lhs[i], args.globals.lhs, {args.iter, (int)blockIdx.x*NUM_CONSUMER_WARPGROUPS+i}, args.inputs_arrived);
@@ -94,7 +94,7 @@ struct flux_matmul_gate_template {
     };
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
-            warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
+            warpgroup::increase_registers<NUM_CONSUMER_WARPGROUPS==3?152:232>();
             group<NUM_CONSUMER_WARPS>::load(args.scratch.bias, args.globals.bias, {blockIdx.y});
             group<NUM_CONSUMER_WARPS>::load(args.scratch.gate, args.globals.gate, {blockIdx.y});
             group<NUM_CONSUMER_WARPS>::sync(6);
@@ -115,17 +115,16 @@ struct flux_matmul_gate_template {
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             kittens::coord idx = {blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), blockIdx.y};
-            warpgroup::load(args.finish.acc[warpgroup::groupid()], args.globals.y, idx);
+            warpgroup::load_async(args.finish.acc[warpgroup::groupid()], args.globals.y, idx);
             rt_sv_op<base_ops::mul>(args.state.acc, args.scratch.gate); // multiply gate onto acc
-            warpgroup::sync(6); // y now arrived
+            warpgroup::load_async_wait(warpgroup::groupid()); // y now arrived
             wg_rt_sv_op<base_ops::sum>(args.state.acc, args.finish.acc[warpgroup::groupid()]); // add y onto acc
             warpgroup::store(args.finish.acc[warpgroup::groupid()], args.state.acc); // now that we're done with that, store the result into same slot.
-            warpgroup::sync(6);
+            warpgroup::sync(warpgroup::groupid());
             if(warpgroup::warpid() == 0) {
                 tma::store_async(args.globals.acc, args.finish.acc[warpgroup::groupid()], idx);
-                tma::store_async_read_wait();
-                if(laneid() == 0) arrive(args.finish_finished);
             }
+            if(laneid() == 0) arrive(args.finish_finished);
         }
     };
 };
@@ -162,7 +161,7 @@ void cpu_gemm(float* a, float* b, float *bias, float *gate, float *y, float* c, 
 }
 
 template<typename fmt>
-int run_bench(int M, int N, int K) {
+void run_bench(int M, int N, int K) {
 
     using lhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().lhs[0])>::type;
     using rhs_tile   = typename std::remove_reference<decltype(std::declval<typename fmt::layout::input_block>().rhs)>::type;
@@ -223,6 +222,15 @@ int run_bench(int M, int N, int K) {
     bias_global Biasg{d_bias, nullptr, nullptr, nullptr, N};
     bias_global Gateg{d_gate, nullptr, nullptr, nullptr, N};
     globals G{Ag, Bg, Biasg, Gateg, Yg, Cg};
+    
+    // Check for CUDA errors
+    cudaError_t cudaStatus;
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Optionally, you might want to exit the program or handle the error in some way
+        exit(-1);
+    }
 
     std::cout << "Allocated memory" << std::endl;
 
@@ -282,11 +290,11 @@ int run_bench(int M, int N, int K) {
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
     
     // Check for CUDA errors
-    cudaError_t cudaStatus = cudaGetLastError();
+    cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
         // Optionally, you might want to exit the program or handle the error in some way
-        return -1;
+        exit(-1);
     }
 
     // Copy result back to host
@@ -327,8 +335,6 @@ int run_bench(int M, int N, int K) {
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
-
-    return 0;
 }
 
 int main() {
@@ -337,6 +343,8 @@ int main() {
     run_bench<flux_matmul_gate_template<128, 256, 64>>(128*12, 256*11, 8192);
     // run_bench<flux_matmul_gate_template<128, 14*16, 64>>(4096, 4096*7/8, 4096);
     // run_bench<flux_matmul_gate_template<128, 256, 64>>(2048, 2048, 2048*7);
+
+    return 0;
 }
 #endif
 

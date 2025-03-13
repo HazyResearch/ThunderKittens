@@ -65,7 +65,7 @@ struct flux_matmul_gelu_template {
     static constexpr int NUM_CONSUMER_WARPS = BLOCK_M/16, NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS/4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         if(args.task_iter == 0) {
-            args.num_iters = transpose_lhs ? args.globals.lhs.rows / BLOCK_K : args.globals.lhs.cols / BLOCK_K;
+            args.num_iters = transpose_lhs ? args.globals.lhs.rows() / BLOCK_K : args.globals.lhs.cols() / BLOCK_K;
         }
         else args.num_iters = -1;
     }
@@ -94,7 +94,7 @@ struct flux_matmul_gelu_template {
         __device__ static void setup(consumer_setup_args<layout> args) { // setup locals for before the first iteration
             warpgroup::consumer_registers<NUM_CONSUMER_WARPGROUPS>();
             group<NUM_CONSUMER_WARPS>::load(args.scratch.bias, args.globals.bias, {(int)blockIdx.y});
-            group<NUM_CONSUMER_WARPS>::sync();
+            group<NUM_CONSUMER_WARPS>::sync(0);
             init_bias(args.state.acc, args.scratch.bias); // <std::remove_reference_t<decltype(args.scratch.bias)>>
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
@@ -121,7 +121,7 @@ struct flux_matmul_gelu_template {
                 } 
             }
             warpgroup::store(args.finish.acc[warpgroup::groupid()], args.state.acc);
-            warpgroup::sync();
+            warpgroup::sync(warpgroup::groupid());
             if(warpgroup::warpid() == 0)
                 tma::store_async(args.globals.acc, args.finish.acc[warpgroup::groupid()],
                 {(int)blockIdx.x*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), (int)blockIdx.y});
