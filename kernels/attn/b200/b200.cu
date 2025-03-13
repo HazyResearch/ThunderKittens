@@ -309,7 +309,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 tma::store_async(g.o, o_smem[consumerid], {batchheadrow.x, batchheadrow.y, 2*NUM_CONSUMERS*batchheadrow.z + NUM_CONSUMERS*ctarank + consumerid, 0});
             }
 
-            mul(sr.max_vec_scaled, sr.max_vec_scaled, 0.69314718056f);
+            mul(sr.max_vec_scaled, sr.max_vec_scaled, -0.69314718056f);
             log(sr.norm_vec, sr.norm_vec);
             add(sr.norm_vec, sr.norm_vec, sr.max_vec_scaled);
 
@@ -578,7 +578,7 @@ compute_bwd_loop(
     }
     
     copy(ds_block_t_mma, ds_block_t);
-    warpgroup::store_async(wg_tmem.dp_bf, ds_block_t);
+    warpgroup::store_async(wg_tmem.dp_bf, ds_block_t_mma);
     tm_store_wait();
     warpgroup::sync(warpgroup::groupid()+4);
     warpgroup::store(ds_smem[warpgroup::groupid()], ds_block_t);
@@ -611,18 +611,8 @@ kv_store(auto &kg_smem, auto &kg_reg,
     group<4>::sync(warpgroup::groupid()+4);
 
     if (warpgroup::warpid() == 0) {
-        printf("Saving vg_smem\n");
         coord<vg_tile> tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + warpgroup::groupid(), 0};
         tma::store_add_async(dst.vg, vg_smem[warpgroup::groupid()], tile_idx);
-        if (laneid() == 0) {
-            printf("vg_smem[%d]:\n", warpgroup::groupid());
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4; j++) {
-                    printf("%f ", vg_smem[warpgroup::groupid()][{i, j}]);
-                }
-                printf("\n");
-            }
-        }
     }
     tma::store_async_wait(); 
 }
@@ -630,6 +620,7 @@ kv_store(auto &kg_smem, auto &kg_reg,
 template<int D, bool is_causal>
 __global__ __launch_bounds__(BWD_NUM_WORKERS*kittens::WARP_THREADS, bwd_attend_ker_tile_dims<D>::blocks_sm)
 void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
+    static_assert(D == 128);
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
 

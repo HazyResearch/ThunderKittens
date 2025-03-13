@@ -15,16 +15,16 @@ def ref_attn(q, k, v):
 
 B = 1
 H = 1
-N = 512
+N = 1536
 D = 128
 
 print('Starting making tensors')
-# q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-# k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-# v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
-v = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+q = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+k = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+v = torch.randn((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# q = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# k = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
+# v = torch.ones((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 l = torch.zeros((B, H, 1, N), dtype=torch.float, device='cuda')
 o = torch.zeros((B, H, N, D), dtype=torch.bfloat16, device='cuda')
 
@@ -47,7 +47,6 @@ b200_attn.fwd_attend_ker_128_noncausal(q, k, v, l, o)
 # print(f'Total FLOPs: {flops}')
 # print(f'TFLOPS: {(flops / (avg_us*1e-6))*10**-12} TFLOPS')
 
-print(l)
 print(o.abs().max())
 
 q.requires_grad = True
@@ -80,16 +79,13 @@ def custom_backward(q, k, v, l, o, o_grad):
     # Create d vector tensor
     d_vec = torch.empty((B, H, 1, N), dtype=torch.float, device='cuda')
     b200_attn.bwd_attend_prep_ker_128(o_grad, o, d_vec)
+    print(d_vec)
     b200_attn.bwd_attend_ker_128_noncausal(q, k, v, o_grad, qg, kg, vg, l, d_vec, q.shape[-2], 1)
     torch.cuda.synchronize()
 
     return qg, kg, vg
 
 qg, kg, vg = custom_backward(q, k, v, l, o, o_grad)
-
-print(qg)
-print(kg)
-print(vg)
 
 def compare_grads(ref_grad, custom_grad, name):
     max_diff = (ref_grad - custom_grad).abs().max()
