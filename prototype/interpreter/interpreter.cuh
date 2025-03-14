@@ -72,7 +72,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -129,7 +129,7 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -196,7 +196,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = 0;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -247,7 +247,7 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = -1;
-        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -325,7 +325,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #endif
 #ifdef KITTENS_BLACKWELL
     constexpr int NCTA_TENSOR_ALLOC = detail::CLUSTER_BLOCKS_v<config> > 1 ? 2 : 1;
-    auto tt_alloc = allocate_tensor_memory<1, NCTA_TENSOR_ALLOC>();
+    tensor_allocator<1, NCTA_TENSOR_ALLOC> tensor_alloc{};
 #endif
     __shared__ __align__(16) int instructions[2][globals.instructions.cols()];
     __shared__ kittens::semaphore inputs_arrived[8], inputs_finished[8], outputs_arrived[8], outputs_finished[8], finish_finished, instruction_arrived[2], instruction_finished[2];
@@ -336,11 +336,25 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
         init_semaphore(instruction_finished[1], NUM_WARPS, 0);
     }
     extern __shared__ int __shm[];
-    persistent_state ps;
-    ps.shmem = &__shm[0];
-    ps.max_finish_offset = 1000000; // out of bounds, which is to say, no need to stall on the first instruction
+    persistent_state ps{
+        0, // task iter
+        &__shm[0], // shmem
+        1000000, // max_finish_offset
+        &inputs_arrived[0],
+        &inputs_finished[0],
+        &outputs_arrived[0],
+        &outputs_finished[0],
+        &finish_finished,
+        0xFFFF0000, // semaphore_bitfield
+#ifdef KITTENS_BLACKWELL
+        tensor_alloc,
+#endif
+#ifdef KITTENS_TIMINGS
+        &timings[0][0],
+#endif
+        nullptr // instruction
+    };
     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
-    ps.semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
     if(warpid() < 8) {
         init_semaphore(inputs_arrived[warpid()], NUM_PRODUCER_WARPS, 0);
         init_semaphore(inputs_finished[warpid()], NUM_CONSUMER_WARPS, 0);
@@ -348,11 +362,6 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
         init_semaphore(outputs_finished[warpid()], NUM_PRODUCER_WARPS, 0);
     }
     if(warpid() == 0) init_semaphore(finish_finished, NUM_CONSUMER_WARPS, 0);
-    ps.inputs_arrived = &inputs_arrived[0];
-    ps.inputs_finished = &inputs_finished[0];
-    ps.outputs_arrived = &outputs_arrived[0];
-    ps.outputs_finished = &outputs_finished[0];
-    ps.finish_finished = &finish_finished;
     if(detail::CLUSTER_BLOCKS_v<config> == 1) group<NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
     else tma::cluster::sync();
     if(warpid() < NUM_CONSUMER_WARPS) { // CONSUMER WARPS
@@ -364,7 +373,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #endif
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
-            if(opcode == 0) return; // Stop Op
+            if(opcode == 0) break; // Stop Op
             dispatch_consumer<config, ops...>::run(opcode, globals, ps);
 #ifdef KITTENS_TIMINGS
             if(threadIdx.x < 64) {
@@ -400,6 +409,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
+    if(detail::CLUSTER_BLOCKS_v<config> > 1) tma::cluster::sync();
 }
 template<typename config, typename... ops>
 void run(typename config::globals &globals) {

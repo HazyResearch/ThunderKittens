@@ -215,7 +215,7 @@ template<int num_warps> struct barrier {
  * @param[out] semaphore The semaphore variable to initialize.
  * @param[in] tc The thread counter for the semaphore.
  */
-__device__ static inline void init_semaphore(semaphore& bar, int thread_count, int transaction_count) {
+__device__ static inline void init_semaphore(semaphore& bar, int thread_count, int transaction_count=0) {
     if (::kittens::laneid() == 0) {
         void const* const ptr = &bar;
         uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 

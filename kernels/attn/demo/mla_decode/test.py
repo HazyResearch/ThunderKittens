@@ -10,17 +10,17 @@ import matplotlib.pyplot as plt
 from scheduler_v2 import backward_schedule
 from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule
 from timings import save_gantt_chart
-from graphviz import Digraph
 from scheduler_regression import estimate_schedule_length
 
 
 torch.manual_seed(0)
 
+GPU = 'B200'
 D_Main, D_Rot = 512, 64
 PAGE_SIZE = 256
 # H = 16                  # set by q_heads
 NUM_PAGES = 10000        # number of pages in cache
-NUM_PROCESSORS = 132    # number of processors
+NUM_PROCESSORS = 148 if GPU == 'B200' else 132    # number of processors
 MAX_NUM_PAGES = 65536 // PAGE_SIZE
 
 ENABLE_TIMINGS = True
@@ -158,17 +158,17 @@ def main(seq_lengths, new_tokens, q_heads=16):
     time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
     print(f"Time per iter: {time_per_iter*1000} ms")
 
-    save_gantt_chart(Timings, Instructions, save_all=False, name='new')
+    save_gantt_chart(Timings, Instructions, save_all=True, name='new')
 
 if __name__ == "__main__":
     main([4641,45118,1730,1696], 4, 16)
     main([65536], 1, 16)
     main([512]*64, 2, 16)
-    main([4096]*132, 4, 16)
+    main([4096]*NUM_PROCESSORS, 4, 16)
     main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 16)
 
     main([4641,45118,1730,1696], 4, 8)
     main([65536], 1, 8)
     main([512]*64, 2, 8)
-    main([4096]*132, 4, 8)
+    main([4096]*NUM_PROCESSORS, 4, 8)
     main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)
