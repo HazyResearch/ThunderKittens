@@ -7,7 +7,7 @@ from mla_decode import __get_quality__
 # Timing constants (in microseconds)
 PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
 PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
-PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
+PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 128 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
 REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
@@ -41,7 +41,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     
     NUM_PROCESSORS = len(processors)
     if NUM_PROCESSORS == 1:
-        steps = (seq_length + 31) // 32
+        steps = (seq_length + 127) // 128
         duration = PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
         return [Task(
             uid=partial_uid,
@@ -157,7 +157,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             partial_info[processors[p_idx]] = [actual_start_time, partial_info[processors[p_idx]][1], 0]
 
     # Finally we can go through and assign work to each partial op.
-    num_partial_steps = (seq_length + 31) // 32
+    num_partial_steps = (seq_length + 127) // 128
     # So long as the gap between the earliest and latest partial time is greater than the cost of a step, we should allocate work to the latest one (moving backwards).
     min_val = min([x[0] for x in partial_info.values()]) # Most negative time.
     for k, v in partial_info.items():
@@ -189,9 +189,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             start=v[0]-PARTIAL_OVERHEAD,
             finish=v[0]+v[2]*PARTIAL_COST_PER_STEP,
             processor=p,
-            args={"start": current_pos, "end": min(current_pos+v[2]*32, seq_length), "length": seq_length, "write_scratch": True}
+            args={"start": current_pos, "end": min(current_pos+v[2]*128, seq_length), "length": seq_length, "write_scratch": True}
         ))
-        current_pos += v[2]*32
+        current_pos += v[2]*128
 
     for p, p_tasks in tasks.items():
         earliest_start = p_tasks[-1].start

@@ -410,6 +410,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
         }
     }
     if(detail::CLUSTER_BLOCKS_v<config> > 1) tma::cluster::sync();
+    else group<NUM_WARPS>::sync(15);
 }
 template<typename config, typename... ops>
 void run(typename config::globals &globals) {

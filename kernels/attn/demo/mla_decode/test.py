@@ -12,7 +12,6 @@ from scheduler import sample_schedule_generator, priority_schedule_tasks, visual
 from timings import save_gantt_chart
 from scheduler_regression import estimate_schedule_length
 
-
 torch.manual_seed(0)
 
 GPU = 'B200'

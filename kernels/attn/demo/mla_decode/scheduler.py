@@ -51,7 +51,7 @@ def generate_sequence_tasks(batch_id: int, length: int, chunking,
     for chunk_length in chunking:
         end_pos = min(position + chunk_length, length)
         chunk_length = end_pos - position
-        duration = m1 * (((chunk_length+31)//32)*32) + b1
+        duration = m1 * (((chunk_length+127)//128)*128) + b1
         for n in range((new_tokens+3)//4):
             tok_ids = list(range(4*n, min(4*n+4, new_tokens)))
             task = Task(
