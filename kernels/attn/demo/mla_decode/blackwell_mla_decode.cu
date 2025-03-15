@@ -177,16 +177,15 @@ struct partial_template {
             // Allocate tensor memory
             args.state.att_block_tt = args.tensor_alloc.template allocate<typename layout::att_block_tt_t>(0);
 
-            rt_fl<16, 128> z;
-            z = 0.f;
+            zero(args.state.o_chunk);
             typename layout::o_tt_t o0 = get_o(args.tensor_alloc, 0);
             typename layout::o_tt_t o1 = get_o(args.tensor_alloc, 1);
             typename layout::o_tt_t o2 = get_o(args.tensor_alloc, 2);
             typename layout::o_tt_t o3 = get_o(args.tensor_alloc, 3);
-            consumer_group::store_async(o0, z);
-            consumer_group::store_async(o1, z);
-            consumer_group::store_async(o2, z);
-            consumer_group::store_async(o3, z);
+            consumer_group::store_async(o0, args.state.o_chunk);
+            consumer_group::store_async(o1, args.state.o_chunk);
+            consumer_group::store_async(o2, args.state.o_chunk);
+            consumer_group::store_async(o3, args.state.o_chunk);
             tm_store_wait();
             consumer_group::sync(10);
             #ifdef KITTENS_TIMINGS
@@ -241,6 +240,19 @@ struct partial_template {
             
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled, max_vec_last_scaled);
+
+
+            // for(int j = 0; j < att_block_fp32.height; j++) {
+            //     for(int k = 0; k < att_block_fp32.width; k++) {
+            //         for(int l = 0; l < 4; l++) {
+            //             float x = __bfloat162float(att_block_fp32.tiles[j][k].data[l].x);
+            //             float y = __bfloat162float(att_block_fp32.tiles[j][k].data[l].y);
+            //             if(isnan(x) || isnan(y)) {
+            //                 printf("att block nan at %d, %d %d %d; %f %f\n", (int)threadIdx.x, j, k, l, x, y);
+            //             }
+            //         }
+            //     }
+            // }
 
             consumer_group::store(args.scratch.att_block, att_block_fp32); // store to shared memory
                 
@@ -338,16 +350,19 @@ struct partial_template {
             #pragma unroll
             for(int i = 0; i < 4; i++) {
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, i));
-                div_row(args.state.o_chunk, args.state.o_chunk, local_norm_vec);
 
                 // for(int j = 0; j < args.state.o_chunk.height; j++) {
                 //     for(int k = 0; k < args.state.o_chunk.width; k++) {
                 //         for(int l = 0; l < 4; l++) {
-                //             printf("%f ", __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].x));
-                //             printf("%f ", __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].y));
+                //             float x = __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].x);
+                //             float y = __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].y);
+                //             if(isnan(x) || isnan(y)) {
+                //                 printf("output nan at %d, %d %d %d %d; %f %f\n", (int)threadIdx.x, i, j, k, l, x, y);
+                //             }
                 //         }
                 //     }
                 // }
+                div_row(args.state.o_chunk, args.state.o_chunk, local_norm_vec);
 
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                     auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpid()][i%2]);
@@ -366,6 +381,8 @@ struct partial_template {
                     __syncwarp();
                     tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpid()][i%2], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpid(), 0, i});
                 }
+                // tma::store_async_wait();
+                // consumer_group::sync(10);
                 tma::store_async_read_wait<1>();
             }
              // if(consumer_group::laneid() == 0) printf("pre invalidate semaphore\n");
