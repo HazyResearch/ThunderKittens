@@ -138,13 +138,13 @@ struct partial_template {
                     if(intra_idx < 8) {
                         #pragma unroll
                         for(int i = 0; i < 8; i++) {
-                            tma::load_async(q_arr[i], args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, intra_idx}, args.inputs_arrived);
+                            tma::load_async<dim::ROW, cache_policy::NORMAL>(q_arr[i], args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, intra_idx}, args.inputs_arrived);
                         }
                     }
                     else {
                         #pragma unroll
                         for(int i = 0; i < 8; i++) {
-                            tma::load_async(q_arr[i], args.globals.Q_rot, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, 0}, args.inputs_arrived);
+                            tma::load_async<dim::ROW, cache_policy::NORMAL>(q_arr[i], args.globals.Q_rot, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, 0}, args.inputs_arrived);
                         }
                     }
                 }
@@ -193,16 +193,34 @@ struct partial_template {
             #endif
         }
         __device__ static inline void initial_qk(consumer_compute_args<layout> args) { // intra_idx == 0
-            if(warpid() == 0) {
+            if(consumer_group::warpid() == 0) {
+                // if(laneid() == 0) printf("initial q\n");
+                // print(args.input.q);
+                // if(laneid() == 0) printf("initial k\n");
+                // print(args.input.k);
                 mm_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
+                // mm_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.scratch.mma_sem);
             }
             else if(laneid() == 0) arrive(args.inputs_finished);
+            consumer_group::sync(10);
+            // wait(args.scratch.mma_sem, 0);
+            // if(consumer_group::laneid() == 0) arrive(args.inputs_finished);
+            // if(consumer_group::laneid() == 0) arrive(args.scratch.mma_sem);
+            // rt_fl<16, k_tile::rows> att_block_fp32;
+            // consumer_group::load_async(att_block_fp32, args.state.att_block_tt);
+            // consumer_group::store(args.scratch.att_block, att_block_fp32);
+            // consumer_group::sync(10);
+            // if(warpid() == 0) {
+            //     if(laneid() == 0) printf("initial att_block\n");
+            //     print(args.scratch.att_block);
+            // }
         }
         __device__ static inline void main_qk(consumer_compute_args<layout> args) { // intra_idx in 1...7
-            if(warpid() == 0) {
+            if(consumer_group::warpid() == 0) {
                 mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
             }
             else if(laneid() == 0) arrive(args.inputs_finished);
+            consumer_group::sync(10);
         }
         __device__ static inline void final_qk_softmax(consumer_compute_args<layout> args) { // intra_idx == 8
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
@@ -210,7 +228,7 @@ struct partial_template {
             col_vec<rt_fl<16, k_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, k_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
-            if(warpid() == 0) {
+            if(consumer_group::warpid() == 0) {
                 mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.scratch.mma_sem);
             }
             consumer_group::sync(10);
@@ -221,12 +239,22 @@ struct partial_template {
             mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
             wait(args.scratch.mma_sem, 0);
-            if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 8);
+            if(laneid() == 0) arrive(args.inputs_finished);
 
             // softmax
 
             rt_fl<16, k_tile::rows> att_block_fp32;
             consumer_group::load_async(att_block_fp32, args.state.att_block_tt);
+
+            // DEBUGGING
+            // consumer_group::store(args.scratch.att_block, att_block_fp32);
+            // consumer_group::sync(10);
+            // if(warpid() == 0) {
+            //     if(laneid() == 0) printf("final accumulate (pre-softmax) att_block_fp32\n");
+            //     print(args.scratch.att_block);
+            // }
+            // consumer_group::sync(10);
+
             const int length = args.common.length - args.common.start_pos - (args.iter/13)*NUM_ROWS;
             right_fill(att_block_fp32, att_block_fp32, length, -9999999999.f);
 
@@ -241,19 +269,6 @@ struct partial_template {
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled, max_vec_last_scaled);
 
-
-            // for(int j = 0; j < att_block_fp32.height; j++) {
-            //     for(int k = 0; k < att_block_fp32.width; k++) {
-            //         for(int l = 0; l < 4; l++) {
-            //             float x = __bfloat162float(att_block_fp32.tiles[j][k].data[l].x);
-            //             float y = __bfloat162float(att_block_fp32.tiles[j][k].data[l].y);
-            //             if(isnan(x) || isnan(y)) {
-            //                 printf("att block nan at %d, %d %d %d; %f %f\n", (int)threadIdx.x, j, k, l, x, y);
-            //             }
-            //         }
-            //     }
-            // }
-
             consumer_group::store(args.scratch.att_block, att_block_fp32); // store to shared memory
                 
             mul(local_norm_vec, local_norm_vec, max_vec_last_scaled);
@@ -261,16 +276,20 @@ struct partial_template {
 
             // Now we need to normalize O
             typename layout::o_tt_t o0 = get_o(args.tensor_alloc, 0);
+            // o0 is already loaded into args.state.o_chunk
             mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
             consumer_group::store_async(o0, args.state.o_chunk);
+
             typename layout::o_tt_t o1 = get_o(args.tensor_alloc, 1);
             consumer_group::load_async(args.state.o_chunk, o1);
             mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
             consumer_group::store_async(o1, args.state.o_chunk);
+
             typename layout::o_tt_t o2 = get_o(args.tensor_alloc, 2);
             consumer_group::load_async(args.state.o_chunk, o2);
             mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
             consumer_group::store_async(o2, args.state.o_chunk);
+
             typename layout::o_tt_t o3 = get_o(args.tensor_alloc, 3);
             consumer_group::load_async(args.state.o_chunk, o3);
             mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
@@ -297,11 +316,9 @@ struct partial_template {
             tm_store_wait();
             consumer_group::sync(10); // tensor memory ready, shared memory ready, we can now rip av matmuls!
 
-            // if(consumer_group::laneid() == 0) {
-            //     for(int i = 0; i < 128*128; i++) {
-            //         printf("%f ", __bfloat162float(args.scratch.att_block.data[i]));
-            //     }
-            //     printf("\n\n\n\n\n");
+            // if(warpid() == 0) {
+            //     printf("Att block, post store to scratch memory\n");
+            //     print(args.scratch.att_block);
             // }
         }
         __device__ static inline void av(consumer_compute_args<layout> args) { // intra_idx in 9...12
@@ -309,18 +326,18 @@ struct partial_template {
             typename layout::v_input_block &v_input = reinterpret_cast<typename layout::v_input_block&>(args.input);
             auto ot = get_o(args.tensor_alloc, intra_idx-9);
             if(intra_idx < 12) {
-                if(warpid() == 0) {
+                if(consumer_group::warpid() == 0) {
                     mma_AB(ot, args.scratch.att_block, v_input.v, args.inputs_finished);
                 }
                 else if(laneid() == 0) arrive(args.inputs_finished);
             }
             else {
-                if(warpid() == 0) {
+                if(consumer_group::warpid() == 0) {
                     mma_AB(ot, args.scratch.att_block, v_input.v, args.scratch.mma_sem);
                 }
                 consumer_group::sync(10);
                 wait(args.scratch.mma_sem, 1);
-                if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 8);
+                if(laneid() == 0) arrive(args.inputs_finished);
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, 0));
                 tm_load_wait();
                 consumer_group::sync(10);
@@ -337,7 +354,6 @@ struct partial_template {
             else av(args);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
-             // if(consumer_group::laneid() == 0) printf("starting finish\n");
             col_vec<rt_fl<16, k_tile::rows>> local_max_vec, local_norm_vec;
 
             copy(local_norm_vec, args.state.norm_vec);
@@ -350,46 +366,31 @@ struct partial_template {
             #pragma unroll
             for(int i = 0; i < 4; i++) {
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, i));
-
-                // for(int j = 0; j < args.state.o_chunk.height; j++) {
-                //     for(int k = 0; k < args.state.o_chunk.width; k++) {
-                //         for(int l = 0; l < 4; l++) {
-                //             float x = __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].x);
-                //             float y = __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].y);
-                //             if(isnan(x) || isnan(y)) {
-                //                 printf("output nan at %d, %d %d %d %d; %f %f\n", (int)threadIdx.x, i, j, k, l, x, y);
-                //             }
-                //         }
-                //     }
-                // }
                 div_row(args.state.o_chunk, args.state.o_chunk, local_norm_vec);
 
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
-                    auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpid()][i%2]);
+                    auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[consumer_group::warpid()][i%2]);
                     store(o_smem, args.state.o_chunk);
                     __syncwarp();
-                    tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpid(), 0, i});
+                    tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+consumer_group::warpid(), 0, i});
                 }
                 else { // write out directly to O scratch, without going through smem
                     mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
                     log2(local_norm_vec, local_norm_vec);
                     add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
-                    store(args.finish.lvec[warpid()][i%2][0], local_norm_vec);
+                    store(args.finish.lvec[consumer_group::warpid()][i%2][0], local_norm_vec);
                     __syncwarp();
-                    tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpid()][i%2][0], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpid(), 0});
+                    tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[consumer_group::warpid()][i%2][0], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+consumer_group::warpid(), 0});
                     store(args.finish.o[warpid()][i%2], args.state.o_chunk);
                     __syncwarp();
                     tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpid()][i%2], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpid(), 0, i});
                 }
-                // tma::store_async_wait();
-                // consumer_group::sync(10);
-                tma::store_async_read_wait<1>();
+                tma::store_async_wait();
+                consumer_group::sync(10);
+                // tma::store_async_read_wait<1>();
             }
-             // if(consumer_group::laneid() == 0) printf("pre invalidate semaphore\n");
-            if(warpid() == 0) invalidate_semaphore(args.scratch.mma_sem); // invalidate the semaphore for the next iteration.
-             // if(consumer_group::laneid() == 0) printf("post invalidate semaphore\n");
+            if(consumer_group::warpid() == 0) invalidate_semaphore(args.scratch.mma_sem); // invalidate the semaphore for the next iteration.
             tma::store_async_wait(); // not just read wait
-             // if(consumer_group::laneid() == 0) printf("post store_async_wait\n");
             asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {

@@ -60,7 +60,7 @@ def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
             break
     num_processors = [None for _ in seq_lengths]
     for _, p, s, i in processor_assignments:
-        num_processors[i] = min(p, s//128)
+        num_processors[i] = max(min(p, s//128), 1)
     # Create schedule
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
@@ -90,8 +90,7 @@ def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_s
     stream = torch.cuda.current_stream()
     torch.cuda.synchronize()
     mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
-    for _ in [Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings]:
-        print(_.shape if type(_) == torch.Tensor else f'not a tensor, instead {_}')
+    print('Starting mla_decode')
     if Timings is not None:
         mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
         mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, Timings)
@@ -162,7 +161,7 @@ def main(seq_lengths, new_tokens, q_heads=16):
     save_gantt_chart(Timings, Instructions, save_all=True, name='new')
 
 if __name__ == "__main__":
-    main([4641,45118,1730,1696], 4, 16)
+    main([4641,45118,1730,1696], 8, 16)
     main([65536], 1, 16)
     main([512]*64, 2, 16)
     main([4096]*NUM_PROCESSORS, 4, 16)

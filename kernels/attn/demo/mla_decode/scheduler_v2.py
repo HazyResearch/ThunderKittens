@@ -40,7 +40,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
     assert (len(tok_ids) > 0 and len(tok_ids) <= max_tokens), f"If num_tokens is > {max_tokens}, please generate two separate schedules for each group of {max_tokens} tokens."
     
     NUM_PROCESSORS = len(processors)
-    if NUM_PROCESSORS == 1:
+    if NUM_PROCESSORS < len(tok_ids):
         steps = (seq_length + 127) // 128
         duration = PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
         return [Task(
@@ -210,5 +210,5 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
 
 
 if __name__ == "__main__":
-    backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3], 16)
+    print(len(backward_schedule(list(range(8)), 0, 1024, [0, 1, 2, 3, 4, 5, 6, 7], 0, 100, 16)[0]))
     # backward_schedule(list(range(112)), 0, 45096, [0, 1, 2, 3])
