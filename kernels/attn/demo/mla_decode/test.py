@@ -90,6 +90,8 @@ def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_s
     stream = torch.cuda.current_stream()
     torch.cuda.synchronize()
     mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
+    for _ in [Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings]:
+        print(_.shape if type(_) == torch.Tensor else f'not a tensor, instead {_}')
     if Timings is not None:
         mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, tic, Timings)
         mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic, Timings)

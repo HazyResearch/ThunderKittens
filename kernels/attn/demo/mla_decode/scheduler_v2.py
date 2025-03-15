@@ -5,9 +5,9 @@ from typing import List, Tuple, Dict
 from mla_decode import __get_quality__
 
 # Timing constants (in microseconds)
-PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
-PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
-PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 128 tokens) for partial operations
+PARTIAL_STARTUP_TIME = 1.0         # Startup time for partial operations
+PARTIAL_WRITEOUT_TIME = 4.0        # Writeout time for partial operations
+PARTIAL_COST_PER_STEP = 12.0       # Cost per step (per 128 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
 REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
@@ -36,7 +36,7 @@ class Task:
         return self.uid < other.uid # just need a way to break ties.
 
 def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int, q_heads: int = 16):
-    max_tokens = 4
+    max_tokens = 8
     assert (len(tok_ids) > 0 and len(tok_ids) <= max_tokens), f"If num_tokens is > {max_tokens}, please generate two separate schedules for each group of {max_tokens} tokens."
     
     NUM_PROCESSORS = len(processors)

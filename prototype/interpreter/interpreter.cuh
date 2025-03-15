@@ -223,9 +223,9 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
             wait(ps.outputs_finished[i], get_phasebit<1>(ps.semaphore_bitfield, i));
         }
         // no need to update phase bit, as nothing is actually changing before the next wait starts.
-        consumers::sync(15); // cannot overwrite finish block until all consumer warps are done.
+        consumers::sync(13); // cannot overwrite finish block until all consumer warps are done.
         Op::consumer::finish({c_state, *finish_smem, *ps.finish_finished, unif});
-        consumers::sync(15); // cannot overwrite finish block until all consumer warps are done.
+        consumers::sync(13); // cannot overwrite finish block until all consumer warps are done.
     }
     else {
         static_assert(
@@ -264,9 +264,9 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
             Op::consumer::compute({c_state, *input_smem[input_ring], ps.inputs_finished[input_ring], it, unif});
             input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
         } // work loop
-        consumers::sync(15); // cannot overwrite finish block until all consumer warps are done.
+        consumers::sync(13); // cannot overwrite finish block until all consumer warps are done.
         Op::consumer::finish({c_state, *finish_smem, *ps.finish_finished, unif});
-        consumers::sync(15); // cannot overwrite finish block until all consumer warps are done.
+        consumers::sync(13); // cannot overwrite finish block until all consumer warps are done.
     }
 }
 

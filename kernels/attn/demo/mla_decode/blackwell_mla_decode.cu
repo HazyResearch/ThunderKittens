@@ -13,10 +13,10 @@ using q_tile              = st_bf<128, 64>;
 using k_tile              = st_bf<128, 64>;
 using v_tile              = st_bf<128, 128>; // w i d e
 using att_tile            = st_bf<128, 128>;
-using q_rot_global        = kittens::gl<bf16, -1, -1, -1, QKRot_D, q_tile>; // B * R * H * D_QKRot_D
-using q_global            = kittens::gl<bf16, -1, -1, -1, QVO_D, q_tile>; // B * R * H * D_QVO_D
-using kv_cache_global     = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKRot_D, k_tile, v_tile>; // 1 * #page * pagesize * QKRot_D
-using k_rot_cache_global  = kittens::gl<bf16, 1, -1, PAGE_SIZE, QVO_D, k_tile>; // 1 * #page * pagesize * QVO_D
+using q_rot_global        = kittens::gl<bf16, -1, -1, -1, QKRot_D, st_bf<16, 64>>; // B * R * H * D_QKRot_D
+using q_global            = kittens::gl<bf16, -1, -1, -1, QVO_D, st_bf<16, 64>>; // B * R * H * D_QVO_D
+using k_rot_cache_global  = kittens::gl<bf16, 1, -1, PAGE_SIZE, QKRot_D, k_tile>; // 1 * #page * pagesize * QKRot_D
+using kv_cache_global     = kittens::gl<bf16, 1, -1, PAGE_SIZE, QVO_D, k_tile, v_tile>; // 1 * #page * pagesize * QVO_D
 using instructions_global = kittens::gl<int, 1, -1, -1, 32>;
 using table_global        = kittens::gl<int, 1, 1, -1, -1>; // B * (max # pages)
 using o_tile              = st_bf<128, QVO_D>;
@@ -37,8 +37,8 @@ struct config {
         instructions_global instructions;
         q_rot_global Q_rot;
         q_global Q;
-        kv_cache_global KV_cache;
         k_rot_cache_global K_rot_cache;
+        kv_cache_global KV_cache;
         table_global Table;
         o_global O;
         o_scratch_global<Q_HEADS> O_scratch;
@@ -50,7 +50,7 @@ struct config {
         gl<int, 1, -1, -1, 64> timings;
 #endif
         int dynamic_shared_memory() { return 226000; }
-        dim3 grid()  { return dim3(148); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
+        dim3 grid()  { return dim3(instructions.depth()); } // but should probably be 148 unless debugging!
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
     };
 };
@@ -95,7 +95,7 @@ struct partial_template {
     using config = config<Q_HEADS>;
     using layout = partial_layout<Q_HEADS>;
     static constexpr int opcode = 1;
-    static constexpr int INPUT_PIPE_STAGES = 1;
+    static constexpr int INPUT_PIPE_STAGES = 5;
     using consumer_group = group<8>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         #ifdef KITTENS_TIMINGS
@@ -124,38 +124,34 @@ struct partial_template {
             int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
             int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
             // next page we need to load?
-            if(intra_idx < 9) {
-                if(warpgroup::warpid() == 0) {
-                    tma::expect(args.inputs_arrived, args.input.k);
+            if(warpgroup::warpid() == 0) {
+                if(intra_idx < 9) {
+                    tma::expect(args.inputs_arrived, args.input);
                     if(intra_idx < 8) {
-                        tma::load_async<dim::ROW, cache_policy::NORMAL>(args.input.k, args.globals.KV_cache, {0, next_page_id, within_page_idx, intra_idx}, args.inputs_arrived);
+                        tma::load_async<dim::ROW, cache_policy::NORMAL>(args.input.k, args.globals.KV_cache, {next_page_id, within_page_idx, intra_idx}, args.inputs_arrived);
                     }
                     else {
-                        tma::load_async<dim::ROW, cache_policy::NORMAL>(args.input.k, args.globals.K_rot_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                        tma::load_async<dim::ROW, cache_policy::NORMAL>(args.input.k, args.globals.K_rot_cache, {next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                    }
+                    // Since we are only load 64 rows of Q at a time, TMA is actually fair game here.
+                    st_bf<16, 64> (&q_arr)[8] = reinterpret_cast<st_bf<16, 64>(&)[8]>(args.input.q);
+                    if(intra_idx < 8) {
+                        #pragma unroll
+                        for(int i = 0; i < 8; i++) {
+                            tma::load_async(q_arr[i], args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, intra_idx}, args.inputs_arrived);
+                        }
+                    }
+                    else {
+                        #pragma unroll
+                        for(int i = 0; i < 8; i++) {
+                            tma::load_async(q_arr[i], args.globals.Q_rot, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, 0}, args.inputs_arrived);
+                        }
                     }
                 }
-                // if(intra_idx < 8) {
-                //     #pragma unroll
-                //     for(int i = 0; i < 8; i++) {
-                //         auto q_st = subtile_inplace<16, 64>(args.input.q, {i, 0});
-                //         warpgroup::load_async(q_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, intra_idx});
-                //     }
-                // }
-                // else {
-                //     #pragma unroll
-                //     for(int i = 0; i < 8; i++) {
-                //         auto q_st = subtile_inplace<16, 64>(args.input.q, {i, 0});
-                //         warpgroup::load_async(q_st, args.globals.Q_rot, {args.common.q_batch_idx, args.common.q_seq_idx + i, 0, 0});
-                //     }
-                // }
-                // load_async_wait();
-            }
-            else {
-                if(warpgroup::warpid() == 0) {
-                    typename layout::v_input_block *v_input = reinterpret_cast<typename layout::v_input_block*>(&args.input);
-                    tma::expect(args.inputs_arrived, v_input->v);
-                    tma::load_async<dim::ROW, cache_policy::NORMAL>(v_input->v, args.globals.KV_cache, {0, next_page_id, within_page_idx, intra_idx-9}, args.inputs_arrived);
-                    if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                else {
+                    typename layout::v_input_block &v_input = reinterpret_cast<typename layout::v_input_block&>(args.input);
+                    tma::expect(args.inputs_arrived, v_input);
+                    tma::load_async<dim::ROW, cache_policy::NORMAL>(v_input.v, args.globals.KV_cache, {next_page_id, within_page_idx, intra_idx-9}, args.inputs_arrived);
                 }
             }
             warpgroup::sync(5);
@@ -198,12 +194,18 @@ struct partial_template {
             #endif
         }
         __device__ static inline void initial_qk(consumer_compute_args<layout> args) { // intra_idx == 0
-            if(warpid() == 0) mm_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
-            if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 7);
+            if(warpid() == 0) {
+                 // if(laneid() == 0) printf("initial_qk 1, %p, %p, %p\n", &args.input.q, &args.input.k, &args.inputs_finished);
+                mm_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
+            }
+            else if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static inline void main_qk(consumer_compute_args<layout> args) { // intra_idx == 1-7
-            if(warpid() == 0) mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
-            if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 7);
+            if(warpid() == 0) {
+                 // if(laneid() == 0) printf("main_qk 2, %p, %p, %p\n", &args.input.q, &args.input.k, &args.inputs_finished);
+                mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
+            }
+            else if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static inline void final_qk_softmax(consumer_compute_args<layout> args) { // intra_idx == 8
             const float SOFTMAX_TEMPERATURE = args.globals.Softmax_scale * 1.44269504089f;
@@ -211,7 +213,11 @@ struct partial_template {
             col_vec<rt_fl<16, k_tile::rows>> local_max_vec, local_norm_vec;
             col_vec<rt_fl<16, k_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
-            if(warpid() == 0) mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.scratch.mma_sem);
+            if(warpid() == 0) {
+                 // if(laneid() == 0) printf("final_qk_softmax 3, %p, %p, %p\n", &args.input.q, &args.input.k, &args.scratch.mma_sem);
+                mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.scratch.mma_sem);
+            }
+            consumer_group::sync(10);
 
             copy(local_max_vec,  args.state.max_vec);
             copy(local_norm_vec, args.state.norm_vec);
@@ -271,21 +277,29 @@ struct partial_template {
         }
         __device__ static inline void av(consumer_compute_args<layout> args) { // intra_idx == 9-12
             int intra_idx = args.iter % 13;
-            typename layout::v_input_block *v_input = reinterpret_cast<typename layout::v_input_block*>(&args.input);
+            typename layout::v_input_block &v_input = reinterpret_cast<typename layout::v_input_block&>(args.input);
             auto ot = get_o(args.tensor_alloc, intra_idx-9);
             if(intra_idx < 12) {
-                if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.inputs_finished);
-                // if(warpid() == 0) mma_AB(ot, args.scratch.att_block, v_input->v, args.inputs_finished);
-                if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 7);
+                // if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.inputs_finished);
+                if(warpid() == 0) {
+                     // if(laneid() == 0) printf("av 1, %p, %p, %p\n", &args.scratch.att_block, &v_input->v, &args.inputs_finished);
+                    mma_AB(ot, args.scratch.att_block, v_input.v, args.inputs_finished);
+                }
+                else if(laneid() == 0) arrive(args.inputs_finished);
             }
             else {
-                if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.scratch.mma_sem);
-                // if(warpid() == 0) mma_AB(ot, args.scratch.att_block, v_input->v, args.scratch.mma_sem);
+                // if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.scratch.mma_sem);
+                if(warpid() == 0) {
+                     // if(laneid() == 0) printf("av 2, %p, %p, %p\n", &args.scratch.att_block, &v_input->v, &args.scratch.mma_sem);
+                    mma_AB(ot, args.scratch.att_block, v_input.v, args.scratch.mma_sem);
+                }
+                consumer_group::sync(10);
                 wait(args.scratch.mma_sem, 1);
                 if(consumer_group::laneid() == 0) arrive(args.inputs_finished, 8);
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, 0));
                 tm_load_wait();
                 consumer_group::sync(10);
+                 // if(consumer_group::laneid() == 0) printf("finishing av 2\n");
             }
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
@@ -294,11 +308,12 @@ struct partial_template {
 #endif
             int intra_idx = args.iter % 13;
             if(intra_idx == 0) initial_qk(args);
-            else if(intra_idx == 1) main_qk(args);
+            else if(intra_idx > 0 && intra_idx < 8) main_qk(args);
             else if(intra_idx == 8) final_qk_softmax(args);
             else av(args);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
+             // if(consumer_group::laneid() == 0) printf("starting finish\n");
             col_vec<rt_fl<16, k_tile::rows>> local_max_vec, local_norm_vec;
 
             copy(local_norm_vec, args.state.norm_vec);
@@ -312,6 +327,7 @@ struct partial_template {
             for(int i = 0; i < 4; i++) {
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, i));
                 div_row(args.state.o_chunk, args.state.o_chunk, local_norm_vec);
+                 // if(consumer_group::laneid() == 0) printf("div_row %d\n", i);
 
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                     auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpid()][i%2]);
@@ -332,7 +348,11 @@ struct partial_template {
                 }
                 tma::store_async_read_wait<1>();
             }
+             // if(consumer_group::laneid() == 0) printf("pre invalidate semaphore\n");
+            if(warpid() == 0) invalidate_semaphore(args.scratch.mma_sem); // invalidate the semaphore for the next iteration.
+             // if(consumer_group::laneid() == 0) printf("post invalidate semaphore\n");
             tma::store_async_wait(); // not just read wait
+             // if(consumer_group::laneid() == 0) printf("post store_async_wait\n");
             asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
             group<8>::sync(10);
             if(args.common.dst.batch_idx < 0) {
@@ -581,8 +601,8 @@ PYBIND11_MODULE(mla_decode, m) {
         &config<16>::globals::instructions,
         &config<16>::globals::Q_rot,
         &config<16>::globals::Q,
-        &config<16>::globals::KV_cache,
         &config<16>::globals::K_rot_cache,
+        &config<16>::globals::KV_cache,
         &config<16>::globals::Table,
         &config<16>::globals::O,
         &config<16>::globals::O_scratch,
@@ -594,23 +614,23 @@ PYBIND11_MODULE(mla_decode, m) {
         , &config<16>::globals::timings
 #endif
     );
-    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "mla_decode_8_heads",
-        &config<8>::globals::instructions,
-        &config<8>::globals::Q_rot,
-        &config<8>::globals::Q,
-        &config<8>::globals::KV_cache,
-        &config<8>::globals::K_rot_cache,
-        &config<8>::globals::Table,
-        &config<8>::globals::O,
-        &config<8>::globals::O_scratch,
-        &config<8>::globals::Lvec_scratch,
-        &config<8>::globals::semaphore,
-        &config<8>::globals::Softmax_scale,
-        &config<8>::globals::tic
-#ifdef KITTENS_TIMINGS
-        , &config<8>::globals::timings
-#endif
-    );
+//     kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "mla_decode_8_heads",
+//         &config<8>::globals::instructions,
+//         &config<8>::globals::Q_rot,
+//         &config<8>::globals::Q,
+//         &config<8>::globals::K_rot_cache,
+//         &config<8>::globals::KV_cache,
+//         &config<8>::globals::Table,
+//         &config<8>::globals::O,
+//         &config<8>::globals::O_scratch,
+//         &config<8>::globals::Lvec_scratch,
+//         &config<8>::globals::semaphore,
+//         &config<8>::globals::Softmax_scale,
+//         &config<8>::globals::tic
+// #ifdef KITTENS_TIMINGS
+//         , &config<8>::globals::timings
+// #endif
+//     );
     m.def("__get_quality__", &get_quality, 
         "An internal utility function for generating efficient schedules.",
         pybind11::arg("next_times"), 
