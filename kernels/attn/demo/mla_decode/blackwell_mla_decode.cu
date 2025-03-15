@@ -8,7 +8,7 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 128, PAGE_SIZE = 256;
+static constexpr int QKRot_D = 64, QVO_D = 512, NUM_ROWS = 128, PAGE_SIZE = 256;
 using q_tile              = st_bf<128, 64>;
 using k_tile              = st_bf<128, 64>;
 using v_tile              = st_bf<128, 128>; // w i d e
@@ -195,14 +195,12 @@ struct partial_template {
         }
         __device__ static inline void initial_qk(consumer_compute_args<layout> args) { // intra_idx == 0
             if(warpid() == 0) {
-                 // if(laneid() == 0) printf("initial_qk 1, %p, %p, %p\n", &args.input.q, &args.input.k, &args.inputs_finished);
                 mm_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
             }
             else if(laneid() == 0) arrive(args.inputs_finished);
         }
-        __device__ static inline void main_qk(consumer_compute_args<layout> args) { // intra_idx == 1-7
+        __device__ static inline void main_qk(consumer_compute_args<layout> args) { // intra_idx in 1...7
             if(warpid() == 0) {
-                 // if(laneid() == 0) printf("main_qk 2, %p, %p, %p\n", &args.input.q, &args.input.k, &args.inputs_finished);
                 mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.inputs_finished);
             }
             else if(laneid() == 0) arrive(args.inputs_finished);
@@ -214,7 +212,6 @@ struct partial_template {
             col_vec<rt_fl<16, k_tile::rows>> max_vec_last_scaled, max_vec_scaled;
 
             if(warpid() == 0) {
-                 // if(laneid() == 0) printf("final_qk_softmax 3, %p, %p, %p\n", &args.input.q, &args.input.k, &args.scratch.mma_sem);
                 mma_ABt(args.state.att_block_tt, args.input.q, args.input.k, args.scratch.mma_sem);
             }
             consumer_group::sync(10);
@@ -252,45 +249,61 @@ struct partial_template {
 
             // Now we need to normalize O
             typename layout::o_tt_t o0 = get_o(args.tensor_alloc, 0);
+            mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
+            consumer_group::store_async(o0, args.state.o_chunk);
             typename layout::o_tt_t o1 = get_o(args.tensor_alloc, 1);
+            consumer_group::load_async(args.state.o_chunk, o1);
+            mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
+            consumer_group::store_async(o1, args.state.o_chunk);
             typename layout::o_tt_t o2 = get_o(args.tensor_alloc, 2);
+            consumer_group::load_async(args.state.o_chunk, o2);
+            mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
+            consumer_group::store_async(o2, args.state.o_chunk);
             typename layout::o_tt_t o3 = get_o(args.tensor_alloc, 3);
-            decltype(args.state.o_chunk) o_chunk_2;
-            consumer_group::load_async(o_chunk_2, o1); // >>> 1
+            consumer_group::load_async(args.state.o_chunk, o3);
             mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
-            consumer_group::store_async(o0, args.state.o_chunk); // <<< 0
-            consumer_group::load_async(args.state.o_chunk, o2); // >>> 2
-            mul_row(o_chunk_2, o_chunk_2, max_vec_last_scaled);
-            consumer_group::store_async(o1, o_chunk_2); // <<< 1
-            consumer_group::load_async(o_chunk_2, o3); // >>> 3
-            mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
-            consumer_group::store_async(o2, args.state.o_chunk); // <<< 2
-            // no load for get_o(0) until after the matmul.
-            mul_row(o_chunk_2, o_chunk_2, max_vec_last_scaled);
-            consumer_group::store_async(o3, o_chunk_2); // <<< 3
+            consumer_group::store_async(o3, args.state.o_chunk);
+
+
+            // decltype(args.state.o_chunk) o_chunk_2;
+            // consumer_group::load_async(o_chunk_2, o1); // >>> 1
+            // mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
+            // consumer_group::store_async(o0, args.state.o_chunk); // <<< 0
+            // consumer_group::load_async(args.state.o_chunk, o2); // >>> 2
+            // mul_row(o_chunk_2, o_chunk_2, max_vec_last_scaled);
+            // consumer_group::store_async(o1, o_chunk_2); // <<< 1
+            // consumer_group::load_async(o_chunk_2, o3); // >>> 3
+            // mul_row(args.state.o_chunk, args.state.o_chunk, max_vec_last_scaled);
+            // consumer_group::store_async(o2, args.state.o_chunk); // <<< 2
+            // // no load for get_o(0) until after the matmul.
+            // mul_row(o_chunk_2, o_chunk_2, max_vec_last_scaled);
+            // consumer_group::store_async(o3, o_chunk_2); // <<< 3
 
             copy(args.state.max_vec, local_max_vec);
             copy(args.state.norm_vec, local_norm_vec);
 
             tm_store_wait();
             consumer_group::sync(10); // tensor memory ready, shared memory ready, we can now rip av matmuls!
+
+            // if(consumer_group::laneid() == 0) {
+            //     for(int i = 0; i < 128*128; i++) {
+            //         printf("%f ", __bfloat162float(args.scratch.att_block.data[i]));
+            //     }
+            //     printf("\n\n\n\n\n");
+            // }
         }
-        __device__ static inline void av(consumer_compute_args<layout> args) { // intra_idx == 9-12
+        __device__ static inline void av(consumer_compute_args<layout> args) { // intra_idx in 9...12
             int intra_idx = args.iter % 13;
             typename layout::v_input_block &v_input = reinterpret_cast<typename layout::v_input_block&>(args.input);
             auto ot = get_o(args.tensor_alloc, intra_idx-9);
             if(intra_idx < 12) {
-                // if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.inputs_finished);
                 if(warpid() == 0) {
-                     // if(laneid() == 0) printf("av 1, %p, %p, %p\n", &args.scratch.att_block, &v_input->v, &args.inputs_finished);
                     mma_AB(ot, args.scratch.att_block, v_input.v, args.inputs_finished);
                 }
                 else if(laneid() == 0) arrive(args.inputs_finished);
             }
             else {
-                // if(warpid() == 0) mma_ABt(ot, args.input.q, args.input.k, args.scratch.mma_sem);
                 if(warpid() == 0) {
-                     // if(laneid() == 0) printf("av 2, %p, %p, %p\n", &args.scratch.att_block, &v_input->v, &args.scratch.mma_sem);
                     mma_AB(ot, args.scratch.att_block, v_input.v, args.scratch.mma_sem);
                 }
                 consumer_group::sync(10);
@@ -299,7 +312,6 @@ struct partial_template {
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, 0));
                 tm_load_wait();
                 consumer_group::sync(10);
-                 // if(consumer_group::laneid() == 0) printf("finishing av 2\n");
             }
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
@@ -327,7 +339,15 @@ struct partial_template {
             for(int i = 0; i < 4; i++) {
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, i));
                 div_row(args.state.o_chunk, args.state.o_chunk, local_norm_vec);
-                 // if(consumer_group::laneid() == 0) printf("div_row %d\n", i);
+
+                // for(int j = 0; j < args.state.o_chunk.height; j++) {
+                //     for(int k = 0; k < args.state.o_chunk.width; k++) {
+                //         for(int l = 0; l < 4; l++) {
+                //             printf("%f ", __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].x));
+                //             printf("%f ", __bfloat162float(args.state.o_chunk.tiles[j][k].data[l].y));
+                //         }
+                //     }
+                // }
 
                 if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                     auto &o_smem = reinterpret_cast<st_bf<16, 128>&>(args.finish.o[warpid()][i%2]);
