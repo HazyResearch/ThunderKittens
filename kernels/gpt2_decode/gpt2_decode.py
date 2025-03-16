@@ -24,7 +24,7 @@ gpt2_decode.gpt2_decode(instructions, layer_input, after_first_norm, qkv_weights
 print(ref)
 print(after_first_norm)
 print(qkv)
-print((qkv - (after_first_norm @ qkv_weights)).abs().max())
+print((qkv - ref).abs().max())
 
 # print(torch.allclose(A @ B, C))
 

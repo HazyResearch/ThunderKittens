@@ -84,19 +84,19 @@ struct layernorm_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {}
         __device__ static inline void compute(consumer_compute_args<layout> args) {
 
-            rv_bf<DIM> head;
+            rv_fl<DIM> head;
             kittens::load(head, args.input.heads[kittens::warpid()]);
             __syncwarp();
             if(laneid() == 0) arrive(args.inputs_finished);
 
             // Calculate mean of input vector
-            bf16 mean = bf16(kittens::sum(head)) / bf16(DIM);
+            float mean = kittens::sum(head) / float(DIM);
 
             // Compute variance
-            rv_bf<DIM> temp;
+            rv_fl<DIM> temp;
             kittens::sub(temp, head, mean);
             kittens::mul(temp, temp, temp);
-            bf16 rstd = rsqrt((bf16(kittens::sum(temp)) / bf16(DIM)) + bf16(EPS));
+            float rstd = rsqrt((kittens::sum(temp) / float(DIM)) + EPS);
 
             kittens::sub(temp, head, mean);
             kittens::mul(head, temp, rstd);
