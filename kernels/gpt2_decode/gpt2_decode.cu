@@ -42,6 +42,7 @@ struct config {
         
         // Weight and output of the QKV matmul
         global_layout weight_qkv;
+        global_layout bias_qkv;
         global_layout mid_qkv;
 
         // Output of the attention
@@ -163,7 +164,19 @@ struct layernorm_template {
 
 };
 
-template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* BMember, global_layout config::globals::* CMember, bool GELU = false>
+/**
+    Given tensors A and B, computes C = A @ B. 
+    If BIAS is true, computes C = A @ B + bias.
+    If GELU is true, applies GELU activation to C.
+ */
+template <
+    OpCode _opcode, 
+    global_layout config::globals::* AMember, 
+    global_layout config::globals::* BMember, 
+    global_layout config::globals::* CMember, 
+    bool GELU = false, bool BIAS = false,
+    global_layout config::globals::* BiasMember = CMember // default value just to avoid error, need to specify is using bias
+>
 struct matmul_template {
 
     using config = config;
@@ -219,6 +232,14 @@ struct matmul_template {
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
+
+            if(BIAS){
+
+                rt_fl<16, N_BLOCK*base_tile::cols>::row_vec bias;
+                kittens::load(bias, args.globals.*BiasMember, {args.common.coord.y / N_BLOCK});
+                add_col(args.state.accum, args.state.accum, bias);
+
+            }
 
             if(GELU){
 
@@ -348,7 +369,7 @@ PYBIND11_MODULE(gpt2_decode, m) {
     kittens::py::bind_kernel<
         interpreter::kernel<config, 
             layernorm_template<OpCode::FIRST_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
-            matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv>,
+            matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv, false, true, &config::globals::bias_qkv>,
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
             matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>,
             layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::output_residual, &config::globals::mid_second_norm>,
@@ -361,6 +382,7 @@ PYBIND11_MODULE(gpt2_decode, m) {
             &config::globals::mid_residual,
             &config::globals::mid_first_norm,
             &config::globals::weight_qkv,
+            &config::globals::bias_qkv,
             &config::globals::mid_qkv,
             &config::globals::mid_attn,
             &config::globals::weight_proj,

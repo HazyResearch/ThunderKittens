@@ -72,6 +72,7 @@ if __name__ == '__main__':
     mid_residual = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
     mid_first_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
     weight_qkv = torch.rand(EMBED_DIM, 3 * EMBED_DIM, dtype=dtype, device=device)
+    bias_qkv = torch.rand(3 * EMBED_DIM, dtype=dtype, device=device)
     mid_qkv = torch.zeros(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
     mid_attn = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
     weight_proj = torch.rand(EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
@@ -89,6 +90,7 @@ if __name__ == '__main__':
                 mid_residual, 
                 mid_first_norm, 
                 weight_qkv, 
+                bias_qkv,
                 mid_qkv, 
                 mid_attn, 
                 weight_proj, 
@@ -102,7 +104,7 @@ if __name__ == '__main__':
     
     print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
     print('mid_first_norm:', (F.layer_norm(mid_residual, (EMBED_DIM, )) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
-    print('mid_qkv:', (mid_first_norm @ weight_qkv - mid_qkv).abs().max().item(), mid_qkv.std().item())
+    print('mid_qkv:', ((mid_first_norm @ weight_qkv + bias_qkv) - mid_qkv).abs().max().item(), mid_qkv.std().item())
     print('mid_attn:', (mid_qkv[:, :EMBED_DIM] - mid_attn).abs().max().item(), mid_attn.std().item())
     print('mid_proj:', (mid_attn @ weight_proj - mid_proj).abs().max().item(), mid_proj.std().item())
     print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
