@@ -21,9 +21,9 @@ NUM_HEADS = 12
 HEAD_DIM = 64
 EMBED_DIM = NUM_HEADS * HEAD_DIM
 
-def get_layernorm_inst():
+def get_layernorm_inst(opcode):
     instructions = torch.zeros(SM_COUNT, 1, INST_SIZE, dtype=torch.int, device=device)
-    instructions[0,0,0] = OpCode.INPUT_NORM.value
+    instructions[0,0,0] = opcode.value
     return instructions
 
 def get_mm_inst(opcode, m, n):
@@ -55,10 +55,13 @@ if __name__ == '__main__':
 
     instructions = torch.cat(
         (
-            get_layernorm_inst(), 
+            get_layernorm_inst(OpCode.FIRST_NORM), 
             get_mm_inst(OpCode.QKV, seq_len, 3 * EMBED_DIM), 
             get_attn_inst(),
             get_mm_inst(OpCode.PROJECTION, seq_len, EMBED_DIM), 
+            get_layernorm_inst(OpCode.SECOND_NORM), 
+            get_mm_inst(OpCode.FF_EXPAND, seq_len, 4 * EMBED_DIM),
+            get_mm_inst(OpCode.FF_CONTRACT, seq_len, EMBED_DIM),
             get_null_inst()
          ), 
         dim=1
@@ -73,12 +76,37 @@ if __name__ == '__main__':
     mid_attn = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
     weight_proj = torch.rand(EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
     mid_proj = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    output_residual = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_second_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    weight_ff_expand = torch.rand(EMBED_DIM, 4 * EMBED_DIM, dtype=dtype, device=device)
+    mid_ff_expand = torch.zeros(seq_len, 4 * EMBED_DIM, dtype=dtype, device=device)
+    weight_ff_contract = torch.rand(4 * EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
+    output_hidden = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
 
-    gpt2_decode(instructions, input_hidden, input_residual, mid_residual, mid_first_norm, weight_qkv, mid_qkv, mid_attn, weight_proj, mid_proj)
+    gpt2_decode(instructions, 
+                input_hidden, 
+                input_residual, 
+                mid_residual, 
+                mid_first_norm, 
+                weight_qkv, 
+                mid_qkv, 
+                mid_attn, 
+                weight_proj, 
+                mid_proj, 
+                output_residual, 
+                mid_second_norm,
+                weight_ff_expand,
+                mid_ff_expand,
+                weight_ff_contract,
+                output_hidden)
     
     print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
     print('mid_first_norm:', (F.layer_norm(mid_residual, (EMBED_DIM, )) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
     print('mid_qkv:', (mid_first_norm @ weight_qkv - mid_qkv).abs().max().item(), mid_qkv.std().item())
     print('mid_attn:', (mid_qkv[:, :EMBED_DIM] - mid_attn).abs().max().item(), mid_attn.std().item())
     print('mid_proj:', (mid_attn @ weight_proj - mid_proj).abs().max().item(), mid_proj.std().item())
+    print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
+    print('mid_second_norm:', (F.layer_norm(output_residual, (EMBED_DIM, )) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
+    print('mid_ff_expand:', (mid_second_norm @ weight_ff_expand - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
+    print('output_hidden:', (mid_ff_expand @ weight_ff_contract - output_hidden).abs().max().item(), output_hidden.std().item())
     

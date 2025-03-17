@@ -17,10 +17,13 @@ using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile, head_vec>;
 
 enum OpCode{
     STOP,
-    INPUT_NORM,
+    FIRST_NORM,
     QKV,
     ATTENTION,
-    PROJECTION
+    PROJECTION,
+    SECOND_NORM,
+    FF_EXPAND,
+    FF_CONTRACT
 };
 
 struct config {
@@ -47,6 +50,18 @@ struct config {
         // Weight and output of the projection matmul
         global_layout weight_proj;
         global_layout mid_proj;
+
+        // Output (hidden + residual) of the second layer norm
+        global_layout output_residual;
+        global_layout mid_second_norm;
+
+        // Weight and output of the first feed-forward matmul
+        global_layout weight_ff_expand;
+        global_layout mid_ff_expand;
+
+        // Weight and output of the second feed-forward matmul
+        global_layout weight_ff_contract;
+        global_layout output_hidden;
 
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); }
@@ -293,18 +308,24 @@ PYBIND11_MODULE(gpt2_decode, m) {
 
     pybind11::enum_<OpCode>(m, "OpCode")
         .value("STOP", STOP)
-        .value("INPUT_NORM", INPUT_NORM)
+        .value("FIRST_NORM", FIRST_NORM)
         .value("QKV", QKV)
         .value("ATTENTION", ATTENTION)
         .value("PROJECTION", PROJECTION)
+        .value("SECOND_NORM", SECOND_NORM)
+        .value("FF_EXPAND", FF_EXPAND)
+        .value("FF_CONTRACT", FF_CONTRACT)
         .export_values();
 
     kittens::py::bind_kernel<
         interpreter::kernel<config, 
-            layernorm_template<OpCode::INPUT_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
+            layernorm_template<OpCode::FIRST_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
             matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv>,
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
-            matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>
+            matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>,
+            layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::output_residual, &config::globals::mid_second_norm>,
+            matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand>,
+            matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden>
         >>(m, "gpt2_decode",
             &config::globals::instructions,
             &config::globals::input_hidden,
@@ -315,6 +336,12 @@ PYBIND11_MODULE(gpt2_decode, m) {
             &config::globals::mid_qkv,
             &config::globals::mid_attn,
             &config::globals::weight_proj,
-            &config::globals::mid_proj
+            &config::globals::mid_proj,
+            &config::globals::output_residual,
+            &config::globals::mid_second_norm,
+            &config::globals::weight_ff_expand,
+            &config::globals::mid_ff_expand,
+            &config::globals::weight_ff_contract,
+            &config::globals::output_hidden
     );
 }
