@@ -6,7 +6,7 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int BATCH_SIZE = 256;
+static constexpr int SEQ_LEN = 128;
 static constexpr int DIM = 768;
 static constexpr float EPS = 1e-5;
 using head_vec   = sv_bf<DIM>; 
@@ -101,8 +101,8 @@ struct layernorm_template {
     };
 
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.num_iters = BATCH_SIZE / NUM_CONSUMER_WARPS;
-        static_assert(BATCH_SIZE % NUM_CONSUMER_WARPS == 0, "Assumes BATCH_SIZE % NUM_CONSUMER_WARPS == 0");
+        args.num_iters = SEQ_LEN / NUM_CONSUMER_WARPS;
+        static_assert(SEQ_LEN % NUM_CONSUMER_WARPS == 0, "Assumes SEQ_LEN % NUM_CONSUMER_WARPS == 0");
     }
 
     struct producer {
@@ -319,37 +319,19 @@ struct attention_template {
     };
 
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        args.num_iters = BATCH_SIZE / NUM_CONSUMER_WARPS;
-        static_assert(BATCH_SIZE % NUM_CONSUMER_WARPS == 0, "Assumes BATCH_SIZE % NUM_CONSUMER_WARPS == 0");
+        args.num_iters = SEQ_LEN / NUM_CONSUMER_WARPS;
+        static_assert(SEQ_LEN % NUM_CONSUMER_WARPS == 0, "Assumes SEQ_LEN % NUM_CONSUMER_WARPS == 0");
     }
 
     struct producer {
         __device__ static inline void setup(producer_setup_args<layout> args) {}
         __device__ static inline void load(producer_load_args<layout> args) {
-            if(warpgroup::warpid() == (args.iter % 4)){
-
-                tma::expect_bytes(args.inputs_arrived, sizeof(head_vec) * NUM_CONSUMER_WARPS);
-                for(int i = 0; i < NUM_CONSUMER_WARPS; i++) {
-                    tma::load_async(args.input.heads[i], args.globals.*AMember, {args.iter * NUM_CONSUMER_WARPS + i, 0}, args.inputs_arrived);
-                }
-                
-                if(laneid() == 0) arrive(args.inputs_arrived, 3);
-                __syncwarp();
-
-            }
+            if(laneid() == 0) arrive(args.inputs_arrived);
+            __syncwarp();
         }
         __device__ static void store(producer_store_args<layout> args) {
-            if(warpgroup::warpid() == (args.iter % 4)){
-
-                for(int i = 0; i < NUM_CONSUMER_WARPS; i++) {
-                    tma::store_async(args.globals.*CMember, args.output.heads[i], {args.iter * NUM_CONSUMER_WARPS + i, 0});
-                }
-                tma::store_async_read_wait();
-                if(laneid() == 0) arrive(args.outputs_finished, 4);
-                __syncwarp();
-
-            }
-
+            if(laneid() == 0) arrive(args.outputs_finished);
+            __syncwarp();
         }
     };
 
@@ -357,12 +339,55 @@ struct attention_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {}
         __device__ static inline void compute(consumer_compute_args<layout> args) {
 
-            rv_fl<DIM> head;
-            kittens::load(head, args.input.heads[kittens::warpid()]);
+            int my_idx = args.iter * NUM_CONSUMER_WARPS + kittens::warpid();
+
+            for(int head = 0; head < 12; head++){
+
+                rv_fl<64> query;
+                kittens::load(query, args.globals.*AMember, {my_idx, head});
+
+                rv_fl<64> output;
+                zero(output);
+
+                float curr_max = -1e9f;
+                float curr_softmax_sum = 0;
+
+                for(int i = 0; i <= my_idx; i++) {
+
+                    // Compute query-key product
+                    rv_fl<64> key;
+                    kittens::load(key, args.globals.*AMember, {i, DIM / 64 + head});
+                    rv_fl<64> temp;
+                    kittens::mul(temp, query, key);
+                    float logit = kittens::sum(temp) / sqrtf(float(64));
+
+                    // Update maximum
+                    float new_max = max(curr_max, logit);
+                    logit = expf(logit - new_max);
+
+                    kittens::mul(output, output, expf(curr_max - new_max));
+                    curr_softmax_sum *= expf(curr_max - new_max);
+                    
+                    // Compute logit-value product
+                    rv_fl<64> value;
+                    kittens::load(value, args.globals.*AMember, {i, (DIM * 2) / 64 + head});
+                    kittens::mul(value, value, logit);
+                    kittens::add(output, output, value);
+
+                    // Update softmax sum
+                    curr_softmax_sum += logit;
+
+                    curr_max = new_max;
+                    
+                }
+
+                kittens::mul(output, output, 1.0f / curr_softmax_sum);
+                kittens::store(args.globals.*CMember, output, {my_idx, head});
+
+            }
+        
             __syncwarp();
             if(laneid() == 0) arrive(args.inputs_finished);
-
-            kittens::store(args.output.heads[kittens::warpid()], head);
 
             __syncwarp();
             if(laneid() == 0) arrive(args.outputs_arrived);

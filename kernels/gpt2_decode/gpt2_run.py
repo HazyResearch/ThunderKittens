@@ -54,7 +54,7 @@ if __name__ == '__main__':
     
     model = GPT2Model.from_pretrained('gpt2').to(device=device, dtype=dtype)
     
-    seq_len = 256
+    seq_len = 128
 
     instructions = torch.cat(
         (
@@ -69,6 +69,21 @@ if __name__ == '__main__':
          ), 
         dim=1
     )
+    
+    def mha(x):
+        import math
+        
+        q = x[:, :EMBED_DIM].view(seq_len, NUM_HEADS, HEAD_DIM).transpose(0, 1)
+        k = x[:, EMBED_DIM:2*EMBED_DIM].view(seq_len, NUM_HEADS, HEAD_DIM).transpose(0, 1)
+        v = x[:, 2*EMBED_DIM:3*EMBED_DIM].view(seq_len, NUM_HEADS, HEAD_DIM).transpose(0, 1)
+        
+        attention = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(64)
+        for i in range(seq_len):
+            for j in range(i + 1, seq_len):
+                attention[:, i, j] = float('-inf')
+        attention = torch.softmax(attention, dim=-1)
+        
+        return torch.matmul(attention, v).transpose(0, 1).contiguous().view(seq_len, EMBED_DIM)
     
     input_hidden = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
     input_residual = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
@@ -122,10 +137,20 @@ if __name__ == '__main__':
     print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
     print('mid_first_norm:', (model.h[0].ln_1(mid_residual) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
     print('mid_qkv:', (model.h[0].attn.c_attn(mid_first_norm) - mid_qkv).abs().max().item(), mid_qkv.std().item())
-    print('mid_attn:', (mid_qkv[:, :EMBED_DIM] - mid_attn).abs().max().item(), mid_attn.std().item())
+    print('mid_attn:', (mha(mid_qkv) - mid_attn).abs().max().item(), mid_attn.std().item())
     print('mid_proj:', (model.h[0].attn.c_proj(mid_attn) - mid_proj).abs().max().item(), mid_proj.std().item())
     print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
     print('mid_second_norm:', (model.h[0].ln_2(output_residual) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
     print('mid_ff_expand:', (F.gelu(model.h[0].mlp.c_fc(mid_second_norm)) - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
     print('output_hidden:', (model.h[0].mlp.c_proj(mid_ff_expand) - output_hidden).abs().max().item(), output_hidden.std().item())
+    
+    print((mid_proj))
+    print((mid_residual))
+    print((mid_proj + mid_residual))
+    print(output_residual)
+    
+    overall = output_residual + output_hidden
+    print(overall)
+    print(model.h[0]((input_hidden + input_residual).unsqueeze(0))[0])
+    print('overall:', (model.h[0]((input_hidden + input_residual).unsqueeze(0))[0] - overall).abs().max().item(), overall.std().item())
     
