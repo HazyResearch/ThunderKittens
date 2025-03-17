@@ -375,7 +375,6 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #endif
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
-        if(laneid() == 0) printf("[%d %d] HERE1\n", blockIdx.x, threadIdx.x);
     }
     else { // PRODUCER WARPS
         warpgroup::decrease_registers<40>();
@@ -398,7 +397,6 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
             if(opcode != 0) dispatch_producer<config, ops...>::run(opcode, globals, ps);
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
-        if(laneid() == 0) printf("[%d %d] HERE2\n", blockIdx.x, threadIdx.x);
     }
 }
 template<typename config, typename... ops>
