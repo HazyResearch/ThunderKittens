@@ -237,7 +237,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
     KittensClub club(device_ids, NUM_DEVICES);
 
-    // Set up kerenl - P2P access
+    // Set up kerenl - P2P access (todo: only access to next device needed)
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         cudaSetDevice(dev_idx);
         for (int peer_dev_idx = 0; peer_dev_idx < NUM_DEVICES; ++peer_dev_idx) {
