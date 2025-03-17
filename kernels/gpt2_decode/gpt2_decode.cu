@@ -36,7 +36,9 @@ struct config {
         global_layout input_hidden;
         global_layout input_residual;
 
-        // Output of the first layer norm (sum of hidden + residual and normalized output)
+        // Weights and output of the first layer norm (sum of hidden + residual and normalized output)
+        global_layout gamma_first_norm;
+        global_layout beta_first_norm;
         global_layout mid_residual;
         global_layout mid_first_norm;
         
@@ -52,7 +54,9 @@ struct config {
         global_layout weight_proj;
         global_layout mid_proj;
 
-        // Output (hidden + residual) of the second layer norm
+        // Weights and output (hidden + residual) of the second layer norm
+        global_layout gamma_second_norm;
+        global_layout beta_second_norm;
         global_layout output_residual;
         global_layout mid_second_norm;
 
@@ -71,9 +75,17 @@ struct config {
 };
 
 /**
-    Given tensors A and B, computes C = A + B and D = norm(C)
+    Given tensors A, B, gamma, beta, computes C = A + B and D = norm(C) * gamma + beta
  */
-template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* BMember, global_layout config::globals::* CMember, global_layout config::globals::* DMember>
+template <
+    OpCode _opcode, 
+    global_layout config::globals::* AMember, 
+    global_layout config::globals::* BMember, 
+    global_layout config::globals::* GammaMember, 
+    global_layout config::globals::* BetaMember, 
+    global_layout config::globals::* CMember, 
+    global_layout config::globals::* DMember
+>
 struct layernorm_template {
     using config = config;
     static constexpr int opcode = _opcode;
@@ -82,6 +94,7 @@ struct layernorm_template {
         using globals = config::globals;
         struct input_block { head_vec heads[2][NUM_CONSUMER_WARPS]; };
         struct output_block { head_vec heads[2][NUM_CONSUMER_WARPS]; };
+        struct consumer_state { rv_fl<DIM> gamma, beta; };
     };
 
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -122,7 +135,10 @@ struct layernorm_template {
     };
 
     struct consumer {
-        __device__ static inline void setup(consumer_setup_args<layout> args) {}
+        __device__ static inline void setup(consumer_setup_args<layout> args) {
+            kittens::load(args.state.gamma, args.globals.*GammaMember, {0});
+            kittens::load(args.state.beta, args.globals.*BetaMember, {0});
+        }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
 
             rv_fl<DIM> head, res;
@@ -149,6 +165,10 @@ struct layernorm_template {
 
             kittens::sub(temp, head, mean);
             kittens::mul(head, temp, rstd);
+
+            // Gamma-beta scaling
+            kittens::mul(head, head, args.state.gamma);
+            kittens::add(head, head, args.state.beta);
 
             // Store as D
             kittens::store(args.output.heads[1][kittens::warpid()], head);
@@ -368,17 +388,19 @@ PYBIND11_MODULE(gpt2_decode, m) {
 
     kittens::py::bind_kernel<
         interpreter::kernel<config, 
-            layernorm_template<OpCode::FIRST_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
+            layernorm_template<OpCode::FIRST_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::gamma_first_norm, &config::globals::beta_first_norm, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
             matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv, false, true, &config::globals::bias_qkv>,
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
             matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>,
-            layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::output_residual, &config::globals::mid_second_norm>,
+            layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::gamma_second_norm, &config::globals::beta_second_norm, &config::globals::output_residual, &config::globals::mid_second_norm>,
             matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand, true>,
             matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden>
         >>(m, "gpt2_decode",
             &config::globals::instructions,
             &config::globals::input_hidden,
             &config::globals::input_residual,
+            &config::globals::gamma_first_norm,
+            &config::globals::beta_first_norm,
             &config::globals::mid_residual,
             &config::globals::mid_first_norm,
             &config::globals::weight_qkv,
@@ -387,6 +409,8 @@ PYBIND11_MODULE(gpt2_decode, m) {
             &config::globals::mid_attn,
             &config::globals::weight_proj,
             &config::globals::mid_proj,
+            &config::globals::gamma_second_norm,
+            &config::globals::beta_second_norm,
             &config::globals::output_residual,
             &config::globals::mid_second_norm,
             &config::globals::weight_ff_expand,

@@ -2,6 +2,7 @@ import itertools
 import torch
 from gpt2_decode import gpt2_decode, OpCode
 import torch.nn.functional as F
+from transformers import GPT2Model
 
 dtype = torch.bfloat16
 device = 'cuda'
@@ -51,6 +52,8 @@ def get_null_inst():
 
 if __name__ == '__main__':
     
+    model = GPT2Model.from_pretrained('gpt2').to(device=device, dtype=dtype)
+    
     seq_len = 256
 
     instructions = torch.cat(
@@ -69,24 +72,30 @@ if __name__ == '__main__':
     
     input_hidden = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
     input_residual = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    mid_residual = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    mid_first_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    weight_qkv = torch.rand(EMBED_DIM, 3 * EMBED_DIM, dtype=dtype, device=device)
-    bias_qkv = torch.rand(3 * EMBED_DIM, dtype=dtype, device=device)
-    mid_qkv = torch.zeros(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
-    mid_attn = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    gamma_first_norm = model.h[0].ln_1.weight.detach()
+    beta_first_norm = model.h[0].ln_1.bias.detach()
+    mid_residual = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_first_norm = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    weight_qkv = model.h[0].attn.c_attn.weight.detach()
+    bias_qkv = model.h[0].attn.c_attn.bias.detach()
+    mid_qkv = torch.empty(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
+    mid_attn = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
     weight_proj = torch.rand(EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
-    mid_proj = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    output_residual = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    mid_second_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_proj = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    gamma_second_norm = model.h[0].ln_2.weight.detach()
+    beta_second_norm = model.h[0].ln_2.bias.detach()
+    output_residual = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_second_norm = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
     weight_ff_expand = torch.rand(EMBED_DIM, 4 * EMBED_DIM, dtype=dtype, device=device)
-    mid_ff_expand = torch.zeros(seq_len, 4 * EMBED_DIM, dtype=dtype, device=device)
+    mid_ff_expand = torch.empty(seq_len, 4 * EMBED_DIM, dtype=dtype, device=device)
     weight_ff_contract = torch.rand(4 * EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
-    output_hidden = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    output_hidden = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
 
     gpt2_decode(instructions, 
                 input_hidden, 
                 input_residual, 
+                gamma_first_norm,
+                beta_first_norm,
                 mid_residual, 
                 mid_first_norm, 
                 weight_qkv, 
@@ -95,6 +104,8 @@ if __name__ == '__main__':
                 mid_attn, 
                 weight_proj, 
                 mid_proj, 
+                gamma_second_norm,
+                beta_second_norm,
                 output_residual, 
                 mid_second_norm,
                 weight_ff_expand,
@@ -103,12 +114,12 @@ if __name__ == '__main__':
                 output_hidden)
     
     print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
-    print('mid_first_norm:', (F.layer_norm(mid_residual, (EMBED_DIM, )) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
+    print('mid_first_norm:', (F.layer_norm(mid_residual, (EMBED_DIM, ), weight=gamma_first_norm, bias=beta_first_norm) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
     print('mid_qkv:', ((mid_first_norm @ weight_qkv + bias_qkv) - mid_qkv).abs().max().item(), mid_qkv.std().item())
     print('mid_attn:', (mid_qkv[:, :EMBED_DIM] - mid_attn).abs().max().item(), mid_attn.std().item())
     print('mid_proj:', (mid_attn @ weight_proj - mid_proj).abs().max().item(), mid_proj.std().item())
     print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
-    print('mid_second_norm:', (F.layer_norm(output_residual, (EMBED_DIM, )) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
+    print('mid_second_norm:', (F.layer_norm(output_residual, (EMBED_DIM, ), weight=gamma_second_norm, bias=beta_second_norm) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
     print('mid_ff_expand:', (F.gelu(mid_second_norm @ weight_ff_expand) - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
     print('output_hidden:', (mid_ff_expand @ weight_ff_contract - output_hidden).abs().max().item(), output_hidden.std().item())
     
