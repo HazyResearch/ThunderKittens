@@ -19,7 +19,8 @@ enum OpCode{
     STOP,
     INPUT_NORM,
     QKV,
-    ATTENTION
+    ATTENTION,
+    PROJECTION
 };
 
 struct config {
@@ -36,8 +37,8 @@ struct config {
 
         global_layout attn_output;
 
-        // global_layout proj_weights;
-        // global_layout proj_output;
+        global_layout proj_weights;
+        global_layout proj_output;
 
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); }
@@ -273,19 +274,23 @@ PYBIND11_MODULE(gpt2_decode, m) {
         .value("INPUT_NORM", INPUT_NORM)
         .value("QKV", QKV)
         .value("ATTENTION", ATTENTION)
+        .value("PROJECTION", PROJECTION)
         .export_values();
 
     kittens::py::bind_kernel<
         interpreter::kernel<config, 
             layernorm_template<OpCode::INPUT_NORM, &config::globals::layer_input, &config::globals::after_first_norm>, 
             matmul_template<OpCode::QKV, &config::globals::after_first_norm, &config::globals::qkv_weights, &config::globals::qkv>,
-            attention_template<OpCode::ATTENTION, &config::globals::qkv, &config::globals::attn_output>
+            attention_template<OpCode::ATTENTION, &config::globals::qkv, &config::globals::attn_output>,
+            matmul_template<OpCode::PROJECTION, &config::globals::attn_output, &config::globals::proj_weights, &config::globals::proj_output>
         >>(m, "gpt2_decode",
             &config::globals::instructions,
             &config::globals::layer_input,
             &config::globals::after_first_norm,
             &config::globals::qkv_weights,
             &config::globals::qkv,
-            &config::globals::attn_output
+            &config::globals::attn_output,
+            &config::globals::proj_weights,
+            &config::globals::proj_output
     );
 }
