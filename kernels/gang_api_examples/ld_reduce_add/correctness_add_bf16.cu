@@ -1,16 +1,19 @@
 #include "kittens.cuh"
 
 #include <random>
+#include <chrono>
 
 constexpr int NUM_DEVICES = 8;
 constexpr size_t N = 4096;
 
+constexpr int ITER_PER_THREAD = 32;
+constexpr int MAX_VEC_SIZE = 16;
+
 using namespace kittens;
 
-using base_tile       =  st_bf<64, 64>;
-using global_layout   =  gl<bf16, 1, 1, -1, -1, base_tile>;
-using pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1, base_tile>, true>;
-using kittens_pgl = kittens::pgl_obj<global_layout>;
+using global_layout   =  gl<bf16, 1, 1, -1, -1>;
+using pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1>, true>;
+using kittens_pgl = kittens::PglObj<global_layout>;
 
 __global__ void all_reduce_bf16(kittens_pgl p_o) {
     kittens::all_reduce_add(p_o);
@@ -24,23 +27,23 @@ int main() {
     std::uniform_real_distribution<> dis(-0.5, 0.5);
 
     // Setup
-    int nelem = N * N;
+    size_t nelem = N * N;
     size_t size = nelem * sizeof(bf16);
 
     // Allocate and initialize host memory
     float **host_mats = new float*[NUM_DEVICES];
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         host_mats[dev_idx] =  new float[nelem];
-        for (int i = 0; i < nelem; ++i) host_mats[dev_idx][i] = dis(gen);
+        for (size_t i = 0; i < nelem; ++i) host_mats[dev_idx][i] = dis(gen);
     }
     bf16 **host_mats_bf16 = new bf16*[NUM_DEVICES];
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         host_mats_bf16[dev_idx] = new bf16[nelem];
-        for (int i = 0; i < nelem; ++i)
+        for (size_t i = 0; i < nelem; ++i)
             host_mats_bf16[dev_idx][i] = __float2bfloat16(host_mats[dev_idx][i]);
     }
     float *expected = new float[nelem];
-    for (int i = 0; i < nelem; ++i) {
+    for (size_t i = 0; i < nelem; ++i) {
         expected[i] = 0.0f;
         for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx)
             expected[i] += host_mats[dev_idx][i];
@@ -49,13 +52,13 @@ int main() {
     // Print data
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         std::cout << "Device " << dev_idx << ": ";
-        for (int i = 0; i < std::min(nelem, 10); ++i) {
+        for (int i = 0; i < 10; ++i) {
             std::cout << host_mats[dev_idx][i] << " ";
         }
         std::cout << "... (" << nelem << " elements)" << std::endl;
     }
     std::cout << "Expected: ";
-    for (int i = 0; i < std::min(nelem, 10); ++i) {
+    for (int i = 0; i < 10; ++i) {
         std::cout << expected[i] << " ";
     }
     std::cout << "... (" << nelem << " elements)" << std::endl;
@@ -81,11 +84,22 @@ int main() {
     constexpr int nelem_per_block = 256 * ITER_PER_THREAD * (MAX_VEC_SIZE / sizeof(__nv_bfloat16));
 
     dim3 grid((nelem_per_dev + nelem_per_block - 1) / nelem_per_block);
-    dim3 block(64, 4);
-    club.execute([&](int worker_id) {
-        all_reduce_bf16<<<grid, block>>>(dev_mat_pgl.get_pgl_obj(worker_id));
-        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-    });
+    dim3 block(256);
+
+    constexpr int NUM_ITERS = 1;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < NUM_ITERS; ++i) {
+        club.execute([&](int worker_id) {
+            all_reduce_bf16<<<grid, block>>>(dev_mat_pgl.get_pgl_obj(worker_id));
+            CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        });
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    double avg_time = elapsed.count() / NUM_ITERS;
+    printf("Average time: %f ms\n", avg_time * 1000);
+
 
     // Bring back data
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
@@ -95,14 +109,14 @@ int main() {
 
     // Convert back to float
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        for (int i = 0; i < nelem; ++i) 
+        for (size_t i = 0; i < nelem; ++i) 
             host_mats[dev_idx][i] = __bfloat162float(host_mats_bf16[dev_idx][i]);
     }
 
     // Print results
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         std::cout << "Device " << dev_idx << ": ";
-        for (int i = 0; i < std::min(nelem, 10); ++i) {
+        for (int i = 0; i < 10; ++i) {
             std::cout << host_mats[dev_idx][i] << " ";
         }
         std::cout << "... (" << nelem << " elements)" << std::endl;
@@ -111,7 +125,7 @@ int main() {
     // Verify the results
     float TOL = 1e-1; // large due to fp16 <-> bf16 conversion
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        for (int i = 0; i < nelem; ++i) {
+        for (size_t i = 0; i < nelem; ++i) {
             if (fabs(expected[i] - host_mats[dev_idx][i]) > TOL) {
                 std::cerr << "Mismatch at device " << dev_idx << 
                              ", index " << i << 

@@ -27,17 +27,18 @@ struct identifier {};
     
 template <kittens::ducks::gl::all GL>
 struct PglObj {
-    PglObj(GL _gl, typename GL::dtype *_mc_ptr, int _nelem, int _dev_id)
-        : gl(_gl), mc_ptr(_mc_ptr), nelem(_nelem), dev_id(_dev_id) {}
+    PglObj(GL _gl, typename GL::dtype *_mc_ptr, int _nelem, int _dev_id, int _num_devices)
+        : gl(_gl), mc_ptr(_mc_ptr), nelem(_nelem), dev_id(_dev_id), num_devices(_num_devices) {}
 
     using T = GL::dtype;
     using dtype = T;
     GL gl;
     T *mc_ptr;
+    // TODO: Need to figure out how to manage this
     int nelem;
     int dev_id;
+    int num_devices;
 };
-
 
 // INIT_P: whether to initialize the multicast handle inside the constructor
 //         if false, the user must manually initialize the multicast handle
@@ -56,7 +57,7 @@ struct pgl {
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     T **raw_multi_ptr;                 // mc_ptr, an array of virtual addresses on each machine attached to the mc_handle
 
-    int nelem_per_dev; // number of elements per device
+    int nelem; // number of elements per device
     int num_devices; // number of CUDA devices
     int *device_ids; // CUDA device IDs. Corresponds to the order of vector<GL> tensors
 
@@ -111,10 +112,9 @@ struct pgl {
         }
 
         // Ignore zeros (TODO: is this the best way to calculate size?)
-        nelem_per_dev = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
-                        std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
-        size = nelem_per_dev * sizeof(T);
-        nelem_per_dev /= num_devices;
+        nelem = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
+                std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
+        size = nelem * sizeof(T);
     
         for (int i = 0; i < num_devices; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
@@ -210,8 +210,9 @@ struct pgl {
         return {
             tensors[dev_id], 
             raw_multi_ptr[dev_id], // TODO: modify kernel example code to increment pointer on their end
-            nelem_per_dev, 
-            dev_id
+            nelem, 
+            dev_id,
+            num_devices
         };
     }
 };

@@ -1,61 +1,48 @@
 #include "kittens.cuh"
-
 #include <random>
+#include <cuda_bf16.h>  // Include bfloat16 support
 
 constexpr int NUM_DEVICES = 2;
 constexpr size_t N = 64;
 
 using namespace kittens;
 
-using global_layout   =  gl<float, 1, 1, -1, -1>;
-using pglobal_layout  =  pgl<gl<float, 1, 1, -1, -1>, true>;
+// Change the layout to use __nv_bfloat16 instead of float
+using global_layout   =  gl<__nv_bfloat16, 1, 1, -1, -1>;
+using pglobal_layout  =  pgl<gl<__nv_bfloat16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::PglObj<global_layout>;
 
-// need to use same datatype otherwise doesn't add anything
 __global__ void all_reduce_int(kittens_pgl p_o) {
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 &&
-        blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-        float val1 = 1.0f;
-        float val2 = 1.0f;
-        float val3 = 1.0f;
-        float val4 = 1.0f;
-        
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1, %2, %3, %4};"
-            :
-            : "l"(p_o.mc_ptr), "f"(val1), "f"(val2), "f"(val3), "f"(val4)
-            : "memory"
-        );
-    }
+    kittens::atomic_add(p_o);
 }
 
 int main() {
     // Setup
     int nelem = N * N;
-    size_t size = nelem * sizeof(int);
+    size_t size = nelem * sizeof(__nv_bfloat16);  // Use bfloat16 size
 
-    float *host_mat_1 = new float[nelem];
-    for (int i = 0; i < nelem; ++i) host_mat_1[i] = 1.0f;
+    // Create and initialize host arrays with bfloat16 values
+    __nv_bfloat16 *host_mat_1 = new __nv_bfloat16[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_1[i] = __float2bfloat16(1.5f);
 
-    float *host_mat_2 = new float[nelem];
-    for (int i = 0; i < nelem; ++i) host_mat_2[i] = i;
+    __nv_bfloat16 *host_mat_2 = new __nv_bfloat16[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_2[i] = __float2bfloat16(static_cast<float>(i));
 
-    // Print data
+    // Print data - convert bfloat16 to float for printing
     printf("Device 1: ");
     for (int i = 0; i < 10; ++i) {
-        printf("%f ", host_mat_1[i]);
+        printf("%f ", __bfloat162float(host_mat_1[i]));
     }
     printf("... (%d elements)\n", nelem);
 
     printf("Device 2: ");
     for (int i = 0; i < 10; ++i) {
-        printf("%f ", host_mat_2[i]);
+        printf("%f ", __bfloat162float(host_mat_2[i]));
     }
     printf("... (%d elements)\n", nelem);
     
-    
     // Allocate and copy data to device
-    float **dev_mats = new float*[NUM_DEVICES];
+    __nv_bfloat16 **dev_mats = new __nv_bfloat16*[NUM_DEVICES];
     CUmemGenericAllocationHandle *dev_handles = new CUmemGenericAllocationHandle[NUM_DEVICES];
 
     cudaSetDevice(0);
@@ -73,13 +60,11 @@ int main() {
 
     // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);
-
     
-    dim3 grid(2);
-    dim3 block(64);
+    dim3 grid(1);
+    dim3 block(16, 2);
     cudaSetDevice(0);
     all_reduce_int<<<grid, block>>>(dev_mat_pgl.get_pgl_obj(0));
-    printf("Device 0 mc_ptr: %p\n", dev_mat_pgl.get_pgl_obj(0).mc_ptr);
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
     // Bring back data
@@ -87,18 +72,27 @@ int main() {
     cudaSetDevice(1);
     cudaMemcpy(host_mat_2, dev_mats[1], size, cudaMemcpyDeviceToHost);
     
-    // Print results
+    // Print results - convert bfloat16 to float for printing
     printf("Device 1: ");
     for (int i = 0; i < 10; ++i) {
-        printf("%f ", host_mat_1[i]);
+        printf("%f ", __bfloat162float(host_mat_1[i]));
     }
     printf("... (%d elements)\n", nelem);
 
     printf("Device 2: ");
     for (int i = 0; i < 10; ++i) {
-        printf("%f ", host_mat_2[i]);
+        printf("%f ", __bfloat162float(host_mat_2[i]));
     }
     printf("... (%d elements)\n", nelem);
+
+    // Check correctness, for Device 1, all elements should be 1.5 + 1.5 = 3.0
+    for (int i = 0; i < nelem; ++i) {
+        if (host_mat_1[i] != __float2bfloat16(3.0f)) {
+            // printf("%d ", i);
+            std::cerr << "Error: Device 1, index " << i << " expected " << 3.0f << " but got " << __bfloat162float(host_mat_1[i]) << std::endl;
+            return -1;
+        }
+    }
 
     // Cleanup and exit
     delete[] dev_mats;
