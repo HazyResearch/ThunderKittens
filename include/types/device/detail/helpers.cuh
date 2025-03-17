@@ -35,20 +35,5 @@ namespace detail {
         desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         return desc;
     }
-
-    template <typename T>
-    void init_vas_for_handle(CUmemGenericAllocationHandle mc_handle, int *device_ids,
-                        int num_devices, T **uc_ptrs, size_t size) {
-        for (int dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
-            cudaSetDevice(device_ids[dev_idx]);
-            
-            // Direct reinterpret_cast for the pointer types
-            cuMemAddressReserve(reinterpret_cast<CUdeviceptr*>(&uc_ptrs[dev_idx]), size, size, 0, 0);
-            cuMemMap(reinterpret_cast<CUdeviceptr>(uc_ptrs[dev_idx]), size, 0, mc_handle, 0);
-            
-            CUmemAccessDesc desc = create_mem_desc(device_ids[dev_idx]);
-            cuMemSetAccess(reinterpret_cast<CUdeviceptr>(uc_ptrs[dev_idx]), size, &desc, 1);
-        }
-    }
 } // namespace detail
 } // namespace kittens

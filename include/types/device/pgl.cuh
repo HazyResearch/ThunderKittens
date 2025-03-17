@@ -25,6 +25,19 @@ struct identifier {};
 }
 }
     
+template <kittens::ducks::gl::all GL>
+struct PglObj {
+    PglObj(GL _gl, typename GL::dtype *_mc_ptr, int _nelem, int _dev_id)
+        : gl(_gl), mc_ptr(_mc_ptr), nelem(_nelem), dev_id(_dev_id) {}
+
+    using T = GL::dtype;
+    using dtype = T;
+    GL gl;
+    T *mc_ptr;
+    int nelem;
+    int dev_id;
+};
+
 
 // INIT_P: whether to initialize the multicast handle inside the constructor
 //         if false, the user must manually initialize the multicast handle
@@ -34,6 +47,7 @@ struct pgl {
     using identifier = ducks::pgl::identifier;
     
     using T = GL::dtype;
+    using dtype = T;
 
     size_t size; // size of the raw data in bytes (on each device, not aggregate of all devices)
     std::vector<GL> tensors; // an array of global layouts
@@ -42,6 +56,7 @@ struct pgl {
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     T **raw_multi_ptr;                 // mc_ptr, an array of virtual addresses on each machine attached to the mc_handle
 
+    int nelem_per_dev; // number of elements per device
     int num_devices; // number of CUDA devices
     int *device_ids; // CUDA device IDs. Corresponds to the order of vector<GL> tensors
 
@@ -96,9 +111,11 @@ struct pgl {
         }
 
         // Ignore zeros (TODO: is this the best way to calculate size?)
-        size = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
-               std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1) * sizeof(T);
-
+        nelem_per_dev = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
+                        std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
+        size = nelem_per_dev * sizeof(T);
+        nelem_per_dev /= num_devices;
+    
         for (int i = 0; i < num_devices; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
@@ -165,10 +182,14 @@ struct pgl {
         for (int i = 0; i < num_devices; ++i) {
             cudaSetDevice(device_ids[i]);
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, size, 0);    
-        }
+            cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, mc_size, 0);    
+            cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], mc_size, mc_size, 0, 0);
+            cuMemMap((CUdeviceptr)raw_multi_ptr[i], mc_size, 0, mc_handle, 0);
 
-        detail::init_vas_for_handle(mc_handle, device_ids, num_devices, raw_multi_ptr, size);
+            // Set access permissions
+            CUmemAccessDesc desc = detail::create_mem_desc(device_ids[i]);
+            cuMemSetAccess((CUdeviceptr)raw_multi_ptr[i], mc_size, &desc, 1);
+        }
     }
 
     __host__ inline void multicast_check(int device_id) {
@@ -183,6 +204,15 @@ struct pgl {
             std::cerr << "DEVICE ISSUE: Device " << device_id <<" does not support Multicast Objects." << std::endl;
             std::exit(EXIT_FAILURE);
         }
+    }
+
+    PglObj<GL> get_pgl_obj(int dev_id) {
+        return {
+            tensors[dev_id], 
+            raw_multi_ptr[dev_id], // TODO: modify kernel example code to increment pointer on their end
+            nelem_per_dev, 
+            dev_id
+        };
     }
 };
 
@@ -211,10 +241,9 @@ __host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocatio
     // Query for recommended granularity
     size_t mem_granularity;
     cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
-    if (size % mem_granularity != 0) {
-        std::cerr << "pglCudaMalloc: Size must be a multiple of mem granularity " << mem_granularity << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
+
+    // Round up size to the nearest multiple of the granularity
+    size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
     // Allocate physical memory on the device
     cuMemCreate(mem_handle, size, &mem_prop, 0);
