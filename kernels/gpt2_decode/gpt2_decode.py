@@ -22,14 +22,9 @@ NUM_HEADS = 12
 HEAD_DIM = 64
 EMBED_DIM = NUM_HEADS * HEAD_DIM
 
-class OpCode(Enum):
-    STOP = 0
-    LAYER_NORM = 1
-    MM = 2
-
 def get_layernorm_inst():
     instructions = torch.zeros(SM_COUNT, 1, INST_SIZE, dtype=torch.int, device=device)
-    instructions[0,0,0] = OpCode.LAYER_NORM.value
+    instructions[0,0,0] = gpt2_decode.OpCode.INPUT_NORM.value
     return instructions
 
 def get_mm_inst(m, n):
@@ -42,9 +37,14 @@ def get_mm_inst(m, n):
     instructions = torch.zeros(SM_COUNT, num_inst, INST_SIZE, dtype=torch.int, device=device)
     for inst in range(num_inst):
         for i, tile in enumerate(tiles[inst * SM_COUNT: (inst + 1) * SM_COUNT]):
-            instructions[i, inst, 0] = OpCode.MM.value
+            instructions[i, inst, 0] = gpt2_decode.OpCode.QKV.value
             instructions[i, inst, 1], instructions[i, inst, 2] = tile
     
+    return instructions
+
+def get_attn_inst():
+    instructions = torch.zeros(SM_COUNT, 1, INST_SIZE, dtype=torch.int, device=device)
+    instructions[0,0,0] = gpt2_decode.OpCode.ATTENTION.value
     return instructions
 
 def get_null_inst():
@@ -58,6 +58,7 @@ if __name__ == '__main__':
         (
             get_layernorm_inst(), 
             get_mm_inst(seq_len, 3 * EMBED_DIM), 
+            get_attn_inst(),
             get_null_inst()
          ), 
         dim=1
@@ -67,12 +68,14 @@ if __name__ == '__main__':
     after_first_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
     qkv_weights = torch.rand(EMBED_DIM, 3 * EMBED_DIM, dtype=dtype, device=device)
     qkv = torch.zeros(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
+    attn_output = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
 
-    ref = F.layer_norm(layer_input, (EMBED_DIM, )) @ qkv_weights
+    ref = (F.layer_norm(layer_input, (EMBED_DIM, )) @ qkv_weights)[:, :EMBED_DIM]
 
-    gpt2_decode.gpt2_decode(instructions, layer_input, after_first_norm, qkv_weights, qkv)
+    gpt2_decode.gpt2_decode(instructions, layer_input, after_first_norm, qkv_weights, qkv, attn_output)
     
-    print(after_first_norm)
-    print(qkv)
-    print(ref)
-    print((qkv - ref).abs().max())
+    print('after_first_norm', after_first_norm)
+    print('qkv', qkv)
+    print('attn_output', attn_output)
+    print('ref', ref)
+    print('(attn_output - ref).abs().max()', (attn_output - ref).abs().max())
