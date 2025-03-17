@@ -63,10 +63,12 @@ struct config {
 
         // Weight and output of the first feed-forward matmul
         global_layout weight_ff_expand;
+        global_layout bias_ff_expand;
         global_layout mid_ff_expand;
 
         // Weight and output of the second feed-forward matmul
         global_layout weight_ff_contract;
+        global_layout bias_ff_contract;
         global_layout output_hidden;
 
         int dynamic_shared_memory() { return 226000; }
@@ -394,8 +396,8 @@ PYBIND11_MODULE(gpt2_decode, m) {
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
             matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj, false, true, &config::globals::bias_proj>,
             layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::gamma_second_norm, &config::globals::beta_second_norm, &config::globals::output_residual, &config::globals::mid_second_norm>,
-            matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand, true>,
-            matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden>
+            matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand, true, true, &config::globals::bias_ff_expand>,
+            matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden, false, true, &config::globals::bias_ff_contract>
         >>(m, "gpt2_decode",
             &config::globals::instructions,
             &config::globals::input_hidden,
@@ -416,8 +418,10 @@ PYBIND11_MODULE(gpt2_decode, m) {
             &config::globals::output_residual,
             &config::globals::mid_second_norm,
             &config::globals::weight_ff_expand,
+            &config::globals::bias_ff_expand,
             &config::globals::mid_ff_expand,
             &config::globals::weight_ff_contract,
+            &config::globals::bias_ff_contract,
             &config::globals::output_hidden
     );
 }

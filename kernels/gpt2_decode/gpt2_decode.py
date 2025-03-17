@@ -87,9 +87,11 @@ if __name__ == '__main__':
     beta_second_norm = model.h[0].ln_2.bias.detach()
     output_residual = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
     mid_second_norm = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    weight_ff_expand = torch.rand(EMBED_DIM, 4 * EMBED_DIM, dtype=dtype, device=device)
+    weight_ff_expand = model.h[0].mlp.c_fc.weight.detach()
+    bias_ff_expand = model.h[0].mlp.c_fc.bias.detach()
     mid_ff_expand = torch.empty(seq_len, 4 * EMBED_DIM, dtype=dtype, device=device)
-    weight_ff_contract = torch.rand(4 * EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
+    weight_ff_contract = model.h[0].mlp.c_proj.weight.detach()
+    bias_ff_contract = model.h[0].mlp.c_proj.bias.detach()
     output_hidden = torch.empty(seq_len, EMBED_DIM, dtype=dtype, device=device)
 
     gpt2_decode(instructions, 
@@ -111,8 +113,10 @@ if __name__ == '__main__':
                 output_residual, 
                 mid_second_norm,
                 weight_ff_expand,
+                bias_ff_expand,
                 mid_ff_expand,
                 weight_ff_contract,
+                bias_ff_contract,
                 output_hidden)
     
     print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
@@ -122,6 +126,6 @@ if __name__ == '__main__':
     print('mid_proj:', (model.h[0].attn.c_proj(mid_attn) - mid_proj).abs().max().item(), mid_proj.std().item())
     print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
     print('mid_second_norm:', (model.h[0].ln_2(output_residual) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
-    print('mid_ff_expand:', (F.gelu(mid_second_norm @ weight_ff_expand) - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
-    print('output_hidden:', (mid_ff_expand @ weight_ff_contract - output_hidden).abs().max().item(), output_hidden.std().item())
+    print('mid_ff_expand:', (F.gelu(model.h[0].mlp.c_fc(mid_second_norm)) - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
+    print('output_hidden:', (model.h[0].mlp.c_proj(mid_ff_expand) - output_hidden).abs().max().item(), output_hidden.std().item())
     
