@@ -29,16 +29,24 @@ struct config {
         using instructions_global = kittens::gl<int, 1, -1, -1, 4>;
         instructions_global instructions;
 
-        global_layout layer_input;
-        global_layout after_first_norm;
+        // Layer input given as hidden + residual
+        global_layout input_hidden;
+        global_layout input_residual;
+
+        // Output of the first layer norm (sum of hidden + residual and normalized output)
+        global_layout mid_residual;
+        global_layout mid_first_norm;
         
-        global_layout qkv_weights;
-        global_layout qkv;
+        // Weight and output of the QKV matmul
+        global_layout weight_qkv;
+        global_layout mid_qkv;
 
-        global_layout attn_output;
+        // Output of the attention
+        global_layout mid_attn;
 
-        global_layout proj_weights;
-        global_layout proj_output;
+        // Weight and output of the projection matmul
+        global_layout weight_proj;
+        global_layout mid_proj;
 
         int dynamic_shared_memory() { return 226000; }
         dim3 grid()  { return dim3(132); }
@@ -46,15 +54,18 @@ struct config {
     };
 };
 
-template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* CMember>
+/**
+    Given tensors A and B, computes C = A + B and D = norm(C)
+ */
+template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* BMember, global_layout config::globals::* CMember, global_layout config::globals::* DMember>
 struct layernorm_template {
     using config = config;
     static constexpr int opcode = _opcode;
 
     struct layout {
         using globals = config::globals;
-        struct input_block { head_vec heads[NUM_CONSUMER_WARPS]; };
-        struct output_block { head_vec heads[NUM_CONSUMER_WARPS]; };
+        struct input_block { head_vec heads[2][NUM_CONSUMER_WARPS]; };
+        struct output_block { head_vec heads[2][NUM_CONSUMER_WARPS]; };
     };
 
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -67,9 +78,10 @@ struct layernorm_template {
         __device__ static inline void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == (args.iter % 4)){
 
-                tma::expect_bytes(args.inputs_arrived, sizeof(head_vec) * NUM_CONSUMER_WARPS);
+                tma::expect_bytes(args.inputs_arrived, sizeof(head_vec) * NUM_CONSUMER_WARPS * 2);
                 for(int i = 0; i < NUM_CONSUMER_WARPS; i++) {
-                    tma::load_async(args.input.heads[i], args.globals.*AMember, {args.iter * NUM_CONSUMER_WARPS + i, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.heads[0][i], args.globals.*AMember, {args.iter * NUM_CONSUMER_WARPS + i, 0}, args.inputs_arrived);
+                    tma::load_async(args.input.heads[1][i], args.globals.*BMember, {args.iter * NUM_CONSUMER_WARPS + i, 0}, args.inputs_arrived);
                 }
                 
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
@@ -81,7 +93,8 @@ struct layernorm_template {
             if(warpgroup::warpid() == (args.iter % 4)){
 
                 for(int i = 0; i < NUM_CONSUMER_WARPS; i++) {
-                    tma::store_async(args.globals.*CMember, args.output.heads[i], {args.iter * NUM_CONSUMER_WARPS + i, 0});
+                    tma::store_async(args.globals.*CMember, args.output.heads[0][i], {args.iter * NUM_CONSUMER_WARPS + i, 0});
+                    tma::store_async(args.globals.*DMember, args.output.heads[1][i], {args.iter * NUM_CONSUMER_WARPS + i, 0});
                 }
                 tma::store_async_read_wait();
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
@@ -96,10 +109,18 @@ struct layernorm_template {
         __device__ static inline void setup(consumer_setup_args<layout> args) {}
         __device__ static inline void compute(consumer_compute_args<layout> args) {
 
-            rv_fl<DIM> head;
-            kittens::load(head, args.input.heads[kittens::warpid()]);
+            rv_fl<DIM> head, res;
+            kittens::load(head, args.input.heads[0][kittens::warpid()]);
+            kittens::load(res, args.input.heads[1][kittens::warpid()]);
             __syncwarp();
             if(laneid() == 0) arrive(args.inputs_finished);
+
+            // Add the residual to the hidden
+            kittens::add(head, head, res);
+
+            // Store as C
+            kittens::store(args.output.heads[0][kittens::warpid()], head);
+            __syncwarp();
 
             // Calculate mean of input vector
             float mean = kittens::sum(head) / float(DIM);
@@ -113,7 +134,8 @@ struct layernorm_template {
             kittens::sub(temp, head, mean);
             kittens::mul(head, temp, rstd);
 
-            kittens::store(args.output.heads[kittens::warpid()], head);
+            // Store as D
+            kittens::store(args.output.heads[1][kittens::warpid()], head);
 
             __syncwarp();
             if(laneid() == 0) arrive(args.outputs_arrived);
@@ -279,18 +301,20 @@ PYBIND11_MODULE(gpt2_decode, m) {
 
     kittens::py::bind_kernel<
         interpreter::kernel<config, 
-            layernorm_template<OpCode::INPUT_NORM, &config::globals::layer_input, &config::globals::after_first_norm>, 
-            matmul_template<OpCode::QKV, &config::globals::after_first_norm, &config::globals::qkv_weights, &config::globals::qkv>,
-            attention_template<OpCode::ATTENTION, &config::globals::qkv, &config::globals::attn_output>,
-            matmul_template<OpCode::PROJECTION, &config::globals::attn_output, &config::globals::proj_weights, &config::globals::proj_output>
+            layernorm_template<OpCode::INPUT_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
+            matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv>,
+            attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
+            matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>
         >>(m, "gpt2_decode",
             &config::globals::instructions,
-            &config::globals::layer_input,
-            &config::globals::after_first_norm,
-            &config::globals::qkv_weights,
-            &config::globals::qkv,
-            &config::globals::attn_output,
-            &config::globals::proj_weights,
-            &config::globals::proj_output
+            &config::globals::input_hidden,
+            &config::globals::input_residual,
+            &config::globals::mid_residual,
+            &config::globals::mid_first_norm,
+            &config::globals::weight_qkv,
+            &config::globals::mid_qkv,
+            &config::globals::mid_attn,
+            &config::globals::weight_proj,
+            &config::globals::mid_proj
     );
 }

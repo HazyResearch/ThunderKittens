@@ -63,22 +63,22 @@ if __name__ == '__main__':
          ), 
         dim=1
     )
-
-    layer_input = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    after_first_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device) * 100
-    qkv_weights = torch.rand(EMBED_DIM, 3 * EMBED_DIM, dtype=dtype, device=device)
-    qkv = torch.zeros(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
-    attn_output = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-    proj_weights = torch.rand(EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
-    proj_output = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
-
-    ref = ((F.layer_norm(layer_input, (EMBED_DIM, )) @ qkv_weights)[:, :EMBED_DIM]) @ proj_weights
-
-    gpt2_decode(instructions, layer_input, after_first_norm, qkv_weights, qkv, attn_output, proj_weights, proj_output)
     
-    print('after_first_norm', after_first_norm)
-    print('qkv', qkv)
-    print('attn_output', attn_output)
-    print('proj_output', proj_output)
-    print('ref', ref)
-    print('(proj_output - ref).abs().max()', (proj_output - ref).abs().max())
+    input_hidden = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    input_residual = torch.rand(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_residual = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    mid_first_norm = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    weight_qkv = torch.rand(EMBED_DIM, 3 * EMBED_DIM, dtype=dtype, device=device)
+    mid_qkv = torch.zeros(seq_len, 3 * EMBED_DIM, dtype=dtype, device=device)
+    mid_attn = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+    weight_proj = torch.rand(EMBED_DIM, EMBED_DIM, dtype=dtype, device=device)
+    mid_proj = torch.zeros(seq_len, EMBED_DIM, dtype=dtype, device=device)
+
+    gpt2_decode(instructions, input_hidden, input_residual, mid_residual, mid_first_norm, weight_qkv, mid_qkv, mid_attn, weight_proj, mid_proj)
+    
+    print('mid_residual:', ((input_hidden + input_residual) - mid_residual).abs().max().item(), mid_residual.std().item())
+    print('mid_first_norm:', (F.layer_norm(mid_residual, (EMBED_DIM, )) - mid_first_norm).abs().max().item(), mid_first_norm.std().item())
+    print('mid_qkv:', (mid_first_norm @ weight_qkv - mid_qkv).abs().max().item(), mid_qkv.std().item())
+    print('mid_attn:', (mid_qkv[:, :EMBED_DIM] - mid_attn).abs().max().item(), mid_attn.std().item())
+    print('mid_proj:', (mid_attn @ weight_proj - mid_proj).abs().max().item(), mid_proj.std().item())
+    
