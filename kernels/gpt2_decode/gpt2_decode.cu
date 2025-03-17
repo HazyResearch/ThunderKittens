@@ -163,7 +163,7 @@ struct layernorm_template {
 
 };
 
-template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* BMember, global_layout config::globals::* CMember>
+template <OpCode _opcode, global_layout config::globals::* AMember, global_layout config::globals::* BMember, global_layout config::globals::* CMember, bool GELU = false>
 struct matmul_template {
 
     using config = config;
@@ -219,6 +219,34 @@ struct matmul_template {
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
+
+            if(GELU){
+
+                // GELU(x) = 0.5 * x * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x^3)))
+                
+                rt_fl<16, N_BLOCK*base_tile::cols> temp;
+
+                // Compute x^3
+                mul(temp, args.state.accum, args.state.accum);
+                mul(temp, temp, args.state.accum);
+
+                // Compute x + 0.044715 * x^3
+                mul(temp, temp, 0.044715f);
+                add(temp, args.state.accum, temp);
+
+                // Compute sqrt(2 / pi) * (x + 0.044715 * x^3)
+                mul(temp, temp, 0.7978845608028654f); // sqrt(2 / pi)
+
+                // Compute tanh(sqrt(2 / pi) * (x + 0.044715 * x^3))
+                tanh(temp, temp);
+
+                // Compute 0.5 * x * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x^3)))
+                add(temp, temp, 1.0f);
+                mul(temp, temp, args.state.accum);
+                mul(args.state.accum, temp, 0.5f);
+
+            }
+
             warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
 
             warpgroup::sync(warpgroup::groupid() + 4);
@@ -324,7 +352,7 @@ PYBIND11_MODULE(gpt2_decode, m) {
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
             matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>,
             layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::output_residual, &config::globals::mid_second_norm>,
-            matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand>,
+            matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand, true>,
             matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden>
         >>(m, "gpt2_decode",
             &config::globals::instructions,

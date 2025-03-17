@@ -206,6 +206,17 @@ __device__ static inline void log2(T &dst, const T &src) {
     unary_map<base_ops::log2, T>(dst, src);
 }
 /**
+ * @brief Applies the hyperbolic tangent function to each element of the source tile and stores the result in the destination tile.
+ * 
+ * @tparam T The type of the tile. Must satisfy the `ducks::st::all` concept.
+ * @param[out] dst The destination tile where the results are stored.
+ * @param[in] src The source tile to which the hyperbolic tangent function is applied.
+ */
+template<ducks::st::all T>
+__device__ static inline void tanh(T &dst, const T &src) {
+    unary_map<base_ops::tanh, T>(dst, src);
+}
+/**
  * @brief Applies the absolute function to each element of the source tile and stores the result in the destination tile.
  * 
  * @tparam T The type of the tile. Must satisfy the `ducks::st::all` concept.

@@ -107,6 +107,6 @@ if __name__ == '__main__':
     print('mid_proj:', (mid_attn @ weight_proj - mid_proj).abs().max().item(), mid_proj.std().item())
     print('output_residual:', ((mid_proj + mid_residual) - output_residual).abs().max().item(), output_residual.std().item())
     print('mid_second_norm:', (F.layer_norm(output_residual, (EMBED_DIM, )) - mid_second_norm).abs().max().item(), mid_second_norm.std().item())
-    print('mid_ff_expand:', (mid_second_norm @ weight_ff_expand - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
+    print('mid_ff_expand:', (F.gelu(mid_second_norm @ weight_ff_expand) - mid_ff_expand).abs().max().item(), mid_ff_expand.std().item())
     print('output_hidden:', (mid_ff_expand @ weight_ff_contract - output_hidden).abs().max().item(), output_hidden.std().item())
     
