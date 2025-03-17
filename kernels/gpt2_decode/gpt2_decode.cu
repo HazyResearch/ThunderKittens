@@ -42,7 +42,7 @@ struct config {
         global_layout mid_residual;
         global_layout mid_first_norm;
         
-        // Weight and output of the QKV matmul
+        // Weights and output of the QKV matmul
         global_layout weight_qkv;
         global_layout bias_qkv;
         global_layout mid_qkv;
@@ -50,8 +50,9 @@ struct config {
         // Output of the attention
         global_layout mid_attn;
 
-        // Weight and output of the projection matmul
+        // Weights and output of the projection matmul
         global_layout weight_proj;
+        global_layout bias_proj;
         global_layout mid_proj;
 
         // Weights and output (hidden + residual) of the second layer norm
@@ -391,7 +392,7 @@ PYBIND11_MODULE(gpt2_decode, m) {
             layernorm_template<OpCode::FIRST_NORM, &config::globals::input_hidden, &config::globals::input_residual, &config::globals::gamma_first_norm, &config::globals::beta_first_norm, &config::globals::mid_residual, &config::globals::mid_first_norm>, 
             matmul_template<OpCode::QKV, &config::globals::mid_first_norm, &config::globals::weight_qkv, &config::globals::mid_qkv, false, true, &config::globals::bias_qkv>,
             attention_template<OpCode::ATTENTION, &config::globals::mid_qkv, &config::globals::mid_attn>,
-            matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj>,
+            matmul_template<OpCode::PROJECTION, &config::globals::mid_attn, &config::globals::weight_proj, &config::globals::mid_proj, false, true, &config::globals::bias_proj>,
             layernorm_template<OpCode::SECOND_NORM, &config::globals::mid_proj, &config::globals::mid_residual, &config::globals::gamma_second_norm, &config::globals::beta_second_norm, &config::globals::output_residual, &config::globals::mid_second_norm>,
             matmul_template<OpCode::FF_EXPAND, &config::globals::mid_second_norm, &config::globals::weight_ff_expand, &config::globals::mid_ff_expand, true>,
             matmul_template<OpCode::FF_CONTRACT, &config::globals::mid_ff_expand, &config::globals::weight_ff_contract, &config::globals::output_hidden>
@@ -408,6 +409,7 @@ PYBIND11_MODULE(gpt2_decode, m) {
             &config::globals::mid_qkv,
             &config::globals::mid_attn,
             &config::globals::weight_proj,
+            &config::globals::bias_proj,
             &config::globals::mid_proj,
             &config::globals::gamma_second_norm,
             &config::globals::beta_second_norm,
