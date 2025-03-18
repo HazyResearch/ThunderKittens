@@ -6,7 +6,11 @@ NVCC?=nvcc
 
 NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static -lcublas -lgomp -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype # H100
 
-SRC=add_float.cu
+# SRC=add_int.cu
+# SRC=add_float.cu
+# SRC=add_float_rt.cu
+SRC=add_bf16_rt.cu
+# SRC=add_bf16.cu
 TARGET=add
 
 # Default target

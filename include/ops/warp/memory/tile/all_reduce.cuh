@@ -5,17 +5,11 @@
 #pragma once
 
 #include <cuda.h>
-#include "util/ld_reduce.cuh"
-#include "util/reduce.cuh"
+#include "../util/ld_reduce.cuh"
+#include "../util/reduce.cuh"
 
 
 namespace kittens {
-
-enum class ReduceOperation {
-    ADD,
-    MIN,
-    MAX
-};
 
 /**
  * @brief Implementation of reduction operations across devices.
@@ -69,7 +63,6 @@ __device__ static inline void ld_reduce_op(PglObj<GL> p_o) {
 
             move<float4>::stg((float4*)ptr, val);
         }
-        __syncthreads();
     }
 }
 

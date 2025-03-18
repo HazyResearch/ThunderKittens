@@ -58,41 +58,41 @@ __device__ static inline bool is_in_gang(int dev_idx) {
     return ((dev_idx == GPUS) || ...);
 }
 
-template <typename PGL_OBJ>
-__device__ static inline void reduce_add(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::all_reduce_add(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void reduce_add(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::all_reduce_add(pgl);
+// }
 
-template <typename PGL_OBJ>
-__device__ static inline void reduce_min(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::all_reduce_min(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void reduce_min(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::all_reduce_min(pgl);
+// }
 
-template <typename PGL_OBJ>
-__device__ static inline void reduce_max(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::all_reduce_max(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void reduce_max(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::all_reduce_max(pgl);
+// }
 
-template <typename PGL_OBJ>
-__device__ static inline void atomic_add(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::atomic_add(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void atomic_add(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::atomic_add(pgl);
+// }
 
-template <typename PGL_OBJ>
-__device__ static inline void atomic_min(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::atomic_min(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void atomic_min(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::atomic_min(pgl);
+// }
 
-template <typename PGL_OBJ>
-__device__ static inline void atomic_max(PGL_OBJ pgl) {
-    if (!is_in_gang(pgl.dev_id)) return;
-    kittens::atomic_max(pgl);
-}
+// template <typename PGL_OBJ>
+// __device__ static inline void atomic_max(PGL_OBJ pgl) {
+//     if (!is_in_gang(pgl.dev_id)) return;
+//     kittens::atomic_max(pgl);
+// }
 };
 
 } // namespace kittens

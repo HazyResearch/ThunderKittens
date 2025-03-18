@@ -13,6 +13,41 @@ template<typename T> struct multimem_reduce {
     __device__ static inline void max(T *dst, T value);
 };
 
+template<> struct multimem_reduce<bf16_2> {
+    __device__ static inline void add(bf16_2 *dst, bf16_2 *value) {
+        unsigned int packed_value = *reinterpret_cast<const unsigned int*>(value);
+        asm volatile(
+            "multimem.red.relaxed.sys.global.add.bf16x2 [%0], %1;"
+            :
+            : "l"(dst), "r"(packed_value)
+            : "memory"
+        );
+    }
+};
+
+template<> struct multimem_reduce<half_2> {
+    __device__ static inline void add(half_2 *dst, half_2 *value) {
+        unsigned int packed_value = *reinterpret_cast<const unsigned int*>(value);
+        asm volatile(
+            "multimem.red.relaxed.sys.global.add.f16x2 [%0], %1;"
+            :
+            : "l"(dst), "r"(packed_value)
+            : "memory"
+        );
+    }
+};
+
+template<> struct multimem_reduce<float2> {
+    __device__ static inline void add(float2 *dst, float2 *value) {
+        asm volatile(
+            "multimem.red.relaxed.sys.global.add.v2.f32 [%0], {%1, %2};"
+            :
+            : "l"(dst), "f"(value->x), "f"(value->y)
+            : "memory"
+        );
+    }
+};
+
 template<> struct multimem_reduce<bf16> {
     __device__ static inline void add(bf16 *dst, bf16 *value) {
         unsigned int packed1 = (__bfloat16_as_ushort(value[0]) << 16) | 

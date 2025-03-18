@@ -35,6 +35,7 @@ using namespace kittens;
 
 
 __global__ void test_barrier_kernel(SyncSpace s) {
+    // TODO: make runtime configurable
     using gang_1 = kittens::gang<0,1,2,3>;
     gang_1::sync(s); 
 }
