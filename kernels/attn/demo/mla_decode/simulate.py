@@ -406,11 +406,16 @@ class MLAB200(MLASimple):
             for j in range(iters):
                 # consumer compute
                 if j < Q.shape[1] // self.qdim:
+                    # qk.T is split into multiple mma ops
                     self.sm.mma(
                         self.att_block, self.qblock[j % self.pipeline_depth], self.kblock[j % self.pipeline_depth].T,
                         name=f'qk{j}'
                     )
+                    if j == Q.shape[1] // self.qdim - 1:
+                        # this line represents all the softmax/scaling/etc
+                        self.att_block = softmax(self.att_block)
                 else:
+                    # we need to split the av into multiple mma ops
                     jnew = j - Q.shape[1] // self.qdim
                     if jnew < 2:
                         self.sm.mma(
@@ -427,6 +432,7 @@ class MLAB200(MLASimple):
                 if next_load_idx < iters:
                     # producer load
                     if next_load_idx < Q.shape[1] // self.qdim:
+                        # we are loading the next chunk of q and k
                         self.sm.load(
                             self.kblock[next_load_idx % self.pipeline_depth], K[i * self.krows:(i + 1) * self.krows, next_load_idx * self.kdim:(next_load_idx + 1) * self.kdim],
                             name=f'k{next_load_idx}'
@@ -436,6 +442,7 @@ class MLAB200(MLASimple):
                             name=f'q{next_load_idx}'
                         )
                     elif next_load_idx - Q.shape[1] // self.qdim < V.shape[1] // self.vdim:
+                        # we are loading the next chunk of v
                         actual_load_idx = next_load_idx - Q.shape[1] // self.qdim
                         self.sm.load(
                             self.vblock[actual_load_idx % self.pipeline_depth], V[i * self.krows:(i + 1) * self.krows, actual_load_idx * self.vdim:(actual_load_idx + 1) * self.vdim],
