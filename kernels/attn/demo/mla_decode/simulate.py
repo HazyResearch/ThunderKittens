@@ -278,7 +278,7 @@ class MLASimple:
         num_partials = krows_partial // self.krows
 
         # producer load, preload for simplicity
-        for i in range(self.pipeline_depth):
+        for i in range(self.pipeline_depth-1):
             self.sm.load(
                 self.kblock[i], K[i * self.krows:(i + 1) * self.krows],
                 name='k'
@@ -306,7 +306,7 @@ class MLASimple:
             )
 
             # this is the producer stage, now we can load the next kblock
-            next_load_idx = self.pipeline_depth + i
+            next_load_idx = self.pipeline_depth + i-1
             if next_load_idx < num_partials:
                 self.sm.load(
                     self.kblock[next_load_idx % self.pipeline_depth],
