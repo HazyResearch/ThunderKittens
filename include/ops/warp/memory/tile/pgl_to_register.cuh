@@ -38,8 +38,8 @@ __device__ static inline void broadcast(PGL_OBJ p_o, const RT &src, const COORD 
     #endif
 
     // TODO: update to take in AXIS parameter instead of hardcoding 2
-    
-    auto index = ((idx.b * p_o.gl.depth() + idx.d) * p_o.gl.rows() + idx.r) * p_o.gl.cols() + idx.c;
+    auto coord = idx.template unit_coord<2, 3>();
+    auto index = ((coord.b * p_o.gl.depth() + coord.d) * p_o.gl.rows() + coord.r) * p_o.gl.cols() + coord.c;
     U *mc_ptr = p_o.mc_ptr + index;
 
     U *dst_ptr = (U*)&p_o.gl[(idx.template unit_coord<2, 3>())];
@@ -60,7 +60,7 @@ __device__ static inline void broadcast(PGL_OBJ p_o, const RT &src, const COORD 
             transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
             transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
             transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
-
+            // TODO: figure out why this call leads to issues w/ TMA
             kittens::multimem_reduce<U2>::add((U2*)&mc_ptr[(row_0to3+0)*row_stride + col], &transfers[0]);
             kittens::multimem_reduce<U2>::add((U2*)&mc_ptr[(row_0to3+4)*row_stride + col], &transfers[1]);
         }
@@ -77,60 +77,5 @@ __device__ static inline void broadcast(PGL_OBJ p_o, const RT &src, const COORD 
         }
     }
 }
-
-// template<ReduceOperation Op, typename GL>
-// __device__ static inline void reduce_op(PglObj<GL> p_o) {
-//     using T = typename PglObj<GL>::dtype;
-//     int thread_idx = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-//     int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
-//     int total_threads_per_block = blockDim.x * blockDim.y * blockDim.z;
-//     int total_blocks = gridDim.x * gridDim.y * gridDim.z;
-    
-//     int global_thread_idx = block_idx * total_threads_per_block + thread_idx;
-//     int total_threads = total_threads_per_block * total_blocks;
-    
-//     constexpr int N_per_iter = sizeof(float4) / sizeof(T);
-//     int elements_per_thread = (p_o.nelem + total_threads - 1) / total_threads;
-//     elements_per_thread = ((elements_per_thread + N_per_iter - 1) / N_per_iter) * N_per_iter;
-    
-//     int start_idx = global_thread_idx * elements_per_thread;
-    
-//     for (int i = 0; i < elements_per_thread; i += N_per_iter) {
-//         int idx = start_idx + i;
-        
-//         if (idx < p_o.nelem && idx + N_per_iter <= p_o.nelem) {
-//             T* ptr = static_cast<T*>(p_o.mc_ptr) + idx;
-            
-//             if constexpr (Op == ReduceOperation::ADD) {
-//                 multimem_reduce<T>::add(ptr, ptr);
-//             } else if constexpr (Op == ReduceOperation::MIN) {
-//                 multimem_reduce<T>::min(ptr, ptr);
-//             } else if constexpr (Op == ReduceOperation::MAX) {
-//                 multimem_reduce<T>::max(ptr, ptr);
-//             }
-//         }
-//     }
-// }
-
-// template <typename PGL_OBJ>
-// __device__ static inline void atomic_add(PGL_OBJ p_o) {
-//     reduce_op<ReduceOperation::ADD>(p_o);
-// }
-
-// template <ducks::rt::col_layout RT, typename PGL_OBJ, ducks::coord::tile COORD=coord<RT>>
-// __device__ static inline void atomic_add(PGL_OBJ p_o, const RT &src, const COORD &idx) {
-    
-// }
-
-
-// template <typename PGL_OBJ>
-// __device__ static inline void atomic_min(PGL_OBJ p_o) {
-//     reduce_op<ReduceOperation::MIN>(p_o);
-// }
-
-// template <typename PGL_OBJ>
-// __device__ static inline void atomic_max(PGL_OBJ p_o) {
-//     reduce_op<ReduceOperation::MAX>(p_o);
-// }
 
 } // namespace kittens

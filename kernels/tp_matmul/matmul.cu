@@ -1,65 +1,6 @@
-/*
-
-    Nothing useful. Just so I can understand TK better
-
-    Original output, run from TK directory:
-    --------------------  M=4096 N=4096 K=4096  --------------------
-    Block size: 128x256
-    Allocated host memory
-    Initialized matrices
-    Performed CPU matrix multiplication
-    Allocated device memory
-    Copied matrices to device
-    Launching warmup kernel with grid (132, 1), block (384)
-    Launching kernel with grid (132, 1), block (384)
-    Avg Kernel execution time: 176.418 us
-    Achieved performance: 779.055 TFLOPs
-    Copied result back to host
-    Converted result back to float
-    Max error: 0.0982647
-    Error count: 0
-
-    My output (previous 32 program):
-    ------------------------- Benchmark -------------------------
-    M = 4096, N = 4096, K = 4096
-    Block size: 128x256
-
-    Matrix A (M x K): 0.296543 -0.316565 0.279691 0.0968502 -0.0541672 -0.400025 -0.0407511 -0.166291 -0.357133 0.150888 
-    Matrix B (K x N): 0.0904346 0.178184 0.267407 0.0267467 -0.389856 0.35117 -0.260957 -0.339091 -0.398018 0.262312 
-    Expected C (M x N): -1.39006 1.66512 2.44395 -8.22833 2.22921 6.12578 -7.62248 -1.25781 3.26331 3.74322 
-
-    Launching kernel with grid (132, 1), block (384)
-        Execution time: 0.176627 ms
-        Performance: 778.131 TFLOPs
-    Matrix C (M x N): -1.38281 1.67188 2.45312 -8.25 2.23438 6.125 -7.625 -1.26562 3.28125 3.76562 
-        Maximum error: 0.0982647
-        Error count: 0
-    -------------------------------------------------------------
-
-    My output (TK kernel + all_reduce):
-    ------------------------- Benchmark -------------------------
-    M = 4096, N = 4096, K = 4096
-    Block size: 128x256
-
-    Matrix A (M x K): 0.296543 -0.316565 0.279691 0.0968502 -0.0541672 -0.400025 -0.0407511 -0.166291 -0.357133 0.150888 
-    Matrix B (K x N): 0.0904346 0.178184 0.267407 0.0267467 -0.389856 0.35117 -0.260957 -0.339091 -0.398018 0.262312 
-    Expected C (M x N): -1.39006 1.66512 2.44395 -8.22833 2.22921 6.12578 -7.62248 -1.25781 3.26331 3.74322 
-
-    Launching kernels with grid (132, 1), block (384) on all devices
-        Execution time: 0.191944 ms
-    Matrix C (M x N): -1.39062 1.65625 2.4375 -8.1875 2.21875 6.125 -7.625 -1.24219 3.25 3.78125 
-        Maximum error: 0.272608
-        Error count: 0
-    -------------------------------------------------------------
-
-*/
-
 #include <iostream>
 #include <iostream>
 #include <random>
-
-// #include "multi-gpu.cuh"
-
 #include "kittens.cuh"
 #include "prototype.cuh"
 #include <cuda_bf16.h>
@@ -72,11 +13,8 @@ using base_tile = st_bf<64, 64>;
 using g_layout = gl<bf16, 1, 1, -1, -1, base_tile>;
 using pglobal_layout = pgl<gl<bf16, 1, 1, -1, -1, base_tile>, true>;
 
-constexpr int N = 1024;
-constexpr int NUM_ITERS = 10;
+constexpr int N = 32768;
 constexpr int NUM_DEVICES = 8;
-constexpr int WARPSIZE = 32;
-constexpr int STRIDE = 4;
 
 template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
@@ -91,14 +29,13 @@ struct matmul_layout {
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
     struct common_state   { int2 coord; };
-    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; }; // 16 x 256
 };
 template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
 struct matmul_template {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
     using wide_tile = st_bf<64, 64*N_BLOCK>;
-    using gang = kittens::gang<0,1,2,3,4,5,6,7>;
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
@@ -157,31 +94,19 @@ struct matmul_template {
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
-            warpgroup::sync(warpgroup::groupid()+4);
-            if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
-                tma::store_async(args.globals.C_pgl.gl, args.finish.c[warpgroup::groupid()][i],
-                                             {args.common.coord.x, args.common.coord.y+i});
-                tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
-            }
+            kittens::broadcast(
+                args.globals.C_pgl, 
+                args.state.accum, 
+                {
+                    (args.common.coord.x * 4) + warpgroup::warpid(),
+                    args.common.coord.y / 4
+                }
+            );
             zero(args.state.accum);
             if(laneid() == 0) arrive(args.finish_finished);
-            
-            // gang::sync(args.globals.sync_space);
-            // kittens::all_reduce_add(args.globals.C_pgl);
-
-            // TODO: Need to figure out best way to specify tile size to perform reduction op
-            // This is only done for a 64 x 64 tile, only want to reduce on that bit 
-            // gang::reduce_add(args.globals.C_pgl);
         }
     };
 };
-
-__global__ void finish(PglObj<g_layout> C_pgl, SyncSpace s_m) {
-    using gang = kittens::gang<0,1,2,3,4,5,6,7>;
-    gang::sync(s_m); 
-    kittens::all_reduce_add(C_pgl);
-}
 
 __global__ void all_reduce_bf16(kittens::bf16 *device_mat, const int N);
 
@@ -198,12 +123,6 @@ void inner_run(kittens::bf16 *device_A, kittens::bf16 *device_B, PglObj<GL> C_pg
     globals G{A_global, B_global, C_pgl, dev_idx, s_m};
 
     kittens::prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY - 1024>>>(G);
-    cudaDeviceSynchronize();
-    int nelem = M * N;
-    int nelem_per_dev = nelem / NUM_DEVICES;
-    int offset = nelem_per_dev * s_m.dev_id;
-    finish<<<(nelem_per_dev + 2048 * STRIDE - 1) / (2048 * STRIDE), 256>>>(C_pgl, s_m);
-   
 }
 
 // CUDA driver API
@@ -230,6 +149,7 @@ void inner_run(kittens::bf16 *device_A, kittens::bf16 *device_B, PglObj<GL> C_pg
 
 void init_bf16_mat(__nv_bfloat16* matrix, int size, std::mt19937& prng, 
                     std::uniform_real_distribution<>& dist) {
+    #pragma omp parallel for collapse(1)
     for (int i = 0; i < size; ++i) {
         // Convert to BF16 immediately during initialization
         matrix[i] = __float2bfloat16(dist(prng));
@@ -253,7 +173,10 @@ void run(size_t M, size_t N, size_t K) {
     __nv_bfloat16* host_B_bf16 = new __nv_bfloat16[K * N];
 
     // Initialize A & B matrices
-    std::mt19937 prng(42);
+    // Random seed
+    std::random_device rd;  // Hardware entropy source if available
+    std::mt19937 prng(rd()); // Seed with non-deterministic value
+    // std::mt19937 prng(1234);
     std::uniform_real_distribution<> random(-0.5, 0.5);
     
     std::cout << "Matrix A (M x K): ";
@@ -266,10 +189,10 @@ void run(size_t M, size_t N, size_t K) {
     // Generate expected output (just do first 10x10 tile)
     std::cout << "  Expected C (M x N): ";
     #pragma omp parallel for collapse(2)
-    for (int i = 0; i < 10; i++) {
-        for (int j = 0; j < 10; j++) {
+    for (int i = 0; i < 1024; i++) {
+        for (int j = 0; j < 1024; j++) {
             float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
+            for (int k = 0; k < 128; k++) {
                 sum += float(host_A_bf16[i * K + k]) * float(host_B_bf16[k * N + j]);
             }
             host_C_ref[i * N + j] = sum;
@@ -319,6 +242,12 @@ void run(size_t M, size_t N, size_t K) {
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         pglCudaMalloc(dev_idx, &device_C_ptrs[dev_idx], &device_C_handles[dev_idx], M * N * sizeof(__nv_bfloat16));
     }
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        CUDACHECK(cudaSetDevice(dev_idx));
+        CUDACHECK(cudaMemset(device_C_ptrs[dev_idx], 0, M * N * sizeof(__nv_bfloat16)));
+    }
+
     pglobal_layout C_pgl(device_ids, NUM_DEVICES, device_C_ptrs, nullptr, nullptr, M, N);
 
 
@@ -335,23 +264,25 @@ void run(size_t M, size_t N, size_t K) {
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
 
     SyncManager sync_m(NUM_DEVICES, device_ids);
-
-    for (int i = 0; i < 2; ++i) { // warmup
+    constexpr int PROFILE_ITERS = 2;
+    for (int i = 0; i < PROFILE_ITERS; ++i) { // warmup
         club.execute([&device_A_uc, &device_B_uc, &C_pgl, &M, &N, &K_sh, &grid, &block, &sync_m](int dev_idx) { // warmup
             inner_run<mmt>(device_A_uc[dev_idx], device_B_uc[dev_idx], C_pgl.get_pgl_obj(dev_idx), M, N, K_sh, grid, block, sync_m.get_sync_space(dev_idx), dev_idx);
-            CUDACHECK(cudaDeviceSynchronize());
+            cudaDeviceSynchronize();
+            // CUDACHECK(cudaDeviceSynchronize());
         });
     }
     
     // Start timing
+    constexpr int NUM_ITERS = 10;
     std::cout << "\n  Launching kernels with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ") on all devices\n";
     auto start = std::chrono::high_resolution_clock::now();
-
     // Launch!
     for (int i = 0; i < NUM_ITERS; ++i) {
         club.execute([&device_A_uc, &device_B_uc, &C_pgl, &M, &N, &K_sh, &grid, &block, &sync_m](int dev_idx) {
             inner_run<mmt>(device_A_uc[dev_idx], device_B_uc[dev_idx], C_pgl.get_pgl_obj(dev_idx), M, N, K_sh, grid, block, sync_m.get_sync_space(dev_idx), dev_idx);
-            CUDACHECK(cudaDeviceSynchronize());
+            cudaDeviceSynchronize();
+            // CUDACHECK(cudaDeviceSynchronize());
         });
     }
 
@@ -371,26 +302,26 @@ void run(size_t M, size_t N, size_t K) {
     CUDACHECK(cudaMemcpy(host_C_bf16, (void *)C_pgl[random_dev_idx].raw_ptr, M * N * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
     for (int i = 0; i < M * N; ++i) host_C[i] = __bfloat162float(host_C_bf16[i]);
 
-    std::cout << "  Matrix C (M x N): ";
-    for (int i = 0; i < 10; i++) {
-        std::cout << host_C[i] << " ";
-    }
-    std::cout << "\n";
+    // std::cout << "  Matrix C (M x N): ";
+    // for (int i = 0; i < 10; i++) {
+    //     std::cout << host_C[i] << " ";
+    // }
+    // std::cout << "\n";
 
-    // Verify result (just do first 10x10 tile)
-    float max_error = 0.f;
-    int n_error = 0;
-    for (int i = 0; i < 10; ++i) {
-        for (int j = 0; j < 10; j++) {
-            float error = std::abs(host_C[i * N + j] - host_C_ref[i * N + j]);
-            if (error > 1.0) // large due to bf16 <-> fp32 conversion
-                ++n_error;
-            max_error = std::max(max_error, error);
-        }
-    }
-    std::cout << "    Maximum error: " << max_error << "\n";
-    std::cout << "    Error count (out of 10x10): " << n_error << "\n";
-    std::cout << "-------------------------------------------------------------\n";
+    // float max_error = 0.0f;
+    // int error_count = 0;
+    // for (int i = 0; i < M * N; ++i) {
+    //     float error = std::abs(host_C[i] - host_C_ref[i]);
+    //     if(error > 1.0) { // large because of bf16 vs fp32 numerics
+    //         if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << host_C[i] << " != " << host_C_ref[i] << " (ref)" << std::endl;
+    //         else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
+    //         error_count++;
+    //     }
+    //     max_error = std::max(max_error, error);
+    // }
+    // std::cout << "    Maximum error: " << max_error << "\n";
+    // std::cout << "    Error count: " << error_count << "\n";
+    // std::cout << "-------------------------------------------------------------\n";
 
     // Clean up
     delete[] host_A_bf16;
@@ -413,3 +344,4 @@ int main() {
     run<matmul_template<2, 4, 8>>(N, N, N);
     return 0;
 }
+

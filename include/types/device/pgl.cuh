@@ -196,8 +196,9 @@ __host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocatio
 
     // Query for recommended granularity
     size_t mem_granularity;
-    cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
-
+    // cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
+    cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+    
     // Round up size to the nearest multiple of the granularity
     size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
@@ -218,7 +219,7 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, CUmemGenericAllocationHa
     cudaSetDevice(device_id);
     cuMemUnmap((CUdeviceptr)ptr, size); // always free in this order
     cuMemAddressFree((CUdeviceptr)ptr, size);
-    cuMemRelease(mem_handle);
+    // cuMemRelease(mem_handle);
 }
 
 } // namespace kittens

@@ -12,13 +12,14 @@ using namespace kittens;
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
 using pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::PglObj<global_layout>;
-using rt_tile = kittens::rt<bf16, 32, 32>;
+using rt_tile = kittens::rt<bf16, 16, 16>;
 
 __global__ void all_reduce_int(kittens_pgl p_o) {
     rt_tile tile;
     kittens::load(tile, p_o.gl, {0, 0});
     kittens::one(tile);
-    kittens::broadcast(p_o, tile, {0, 0});
+    kittens::broadcast(p_o, tile, {0, 1});
+    // kittens::store(p_o.gl, tile, {1, 0});
 }
 
 int main() {
@@ -101,36 +102,40 @@ int main() {
     }
     
     // Print results
-    // printf("Device 1: \n");
-    // for (int i = 0; i < N; ++i) {
-    //     for (int j = 0; j < N; ++j) {
-    //         printf("%f ", host_mat_1_float[i * N + j]);
-    //     }
-    //     printf("\n");
-    // }   
-    // printf("\n\n");
+    printf("Device 1: \n");
+    for (int i = 0; i < N; ++i) {
+        if (i % 16 == 0 && i != 0) printf("\n");
+        for (int j = 0; j < N; ++j) {
+            if (j % 16 == 0 && j != 0) printf(" ");
+            printf("%f ", host_mat_1_float[i * N + j]);
+        }
+        printf("\n");
+    }   
+    printf("\n\n");
 
-    // printf("Device 2: \n");
-    // for (int i = 0; i < N; ++i) {
-    //     for (int j = 0; j < N; ++j) {
-    //         printf("%f ", host_mat_2_float[i * N + j]);
-    //     }
-    //     printf("\n");
-    // }
-    // printf("\n\n");
+    printf("Device 2: \n");
+    for (int i = 0; i < N; ++i) {
+        if (i % 16 == 0 && i != 0) printf("\n");
+        for (int j = 0; j < N; ++j) {
+            if (j % 16 == 0 && j != 0) printf(" ");
+            printf("%f ", host_mat_2_float[i * N + j]);
+        }
+        printf("\n");
+    }
+    printf("\n\n");
 
     // Check correctness, should be all ones
-    for (int i = 0; i < nelem; ++i) {
-        if (host_mat_1_float[i] != 1.0f) {
-            std::cerr << "Error: Device 1 element " << i << " is " << host_mat_1_float[i] << std::endl;
-            return 1;
-        }
-        if (host_mat_2_float[i] != 1.0f) {
-            std::cerr << "Error: Device 2 element " << i << " is " << host_mat_2_float[i] << std::endl;
-            return 1;
-        }
-    }
-    printf("Results are correct!\n");
+    // for (int i = 0; i < nelem; ++i) {
+    //     if (host_mat_1_float[i] != 1.0f) {
+    //         std::cerr << "Error: Device 1 element " << i << " is " << host_mat_1_float[i] << std::endl;
+    //         return 1;
+    //     }
+    //     if (host_mat_2_float[i] != 1.0f) {
+    //         std::cerr << "Error: Device 2 element " << i << " is " << host_mat_2_float[i] << std::endl;
+    //         return 1;
+    //     }
+    // }
+    // printf("Results are correct!\n");
 
     // Cleanup and exit
     delete[] dev_mats;
