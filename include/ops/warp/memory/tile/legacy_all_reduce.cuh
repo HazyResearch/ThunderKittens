@@ -5,8 +5,7 @@
 #pragma once
 
 #include <cuda.h>
-#include "../util/ld_reduce.cuh"
-#include "../util/reduce.cuh"
+#include "../util/legacy_reduce.cuh"
 
 
 namespace kittens {
@@ -20,7 +19,7 @@ namespace kittens {
  * @tparam GL The global layout of the data.
  * @param p_o A parallel global layout object.
  */
-template<ReduceOperation Op, typename GL>
+template<ReduceOp Op, typename GL>
 __device__ static inline void ld_reduce_op(PglObj<GL> p_o) {
     using T = typename PglObj<GL>::dtype;
 
@@ -53,11 +52,11 @@ __device__ static inline void ld_reduce_op(PglObj<GL> p_o) {
             float4 val;
             T* ptr = static_cast<T*>(p_o.mc_ptr + nelem_per_dev * p_o.dev_id) + idx;
 
-            if constexpr (Op == ReduceOperation::ADD) {
+            if constexpr (Op == ReduceOp::ADD) {
                 multimem_ld_reduce<T>::add(val, ptr);
-            } else if constexpr (Op == ReduceOperation::MIN) {
+            } else if constexpr (Op == ReduceOp::MIN) {
                 multimem_ld_reduce<T>::min(val, ptr);
-            } else if constexpr (Op == ReduceOperation::MAX) {
+            } else if constexpr (Op == ReduceOp::MAX) {
                 multimem_ld_reduce<T>::max(val, ptr);
             }
 
@@ -68,20 +67,20 @@ __device__ static inline void ld_reduce_op(PglObj<GL> p_o) {
 
 template <typename PGL_OBJ>
 __device__ static inline void all_reduce_add(PGL_OBJ p_o) {
-    ld_reduce_op<ReduceOperation::ADD>(p_o);
+    ld_reduce_op<ReduceOp::ADD>(p_o);
 }
 
 template <typename PGL_OBJ>
 __device__ static inline void all_reduce_min(PGL_OBJ p_o) {
-    ld_reduce_op<ReduceOperation::MIN>(p_o);
+    ld_reduce_op<ReduceOp::MIN>(p_o);
 }
 
 template <typename PGL_OBJ>
 __device__ static inline void all_reduce_max(PGL_OBJ p_o) {
-    ld_reduce_op<ReduceOperation::MAX>(p_o);
+    ld_reduce_op<ReduceOp::MAX>(p_o);
 }
 
-template<ReduceOperation Op, typename GL>
+template<ReduceOp Op, typename GL>
 __device__ static inline void reduce_op(PglObj<GL> p_o) {
     using T = typename PglObj<GL>::dtype;
     int thread_idx = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
@@ -104,11 +103,11 @@ __device__ static inline void reduce_op(PglObj<GL> p_o) {
         if (idx < p_o.nelem && idx + N_per_iter <= p_o.nelem) {
             T* ptr = static_cast<T*>(p_o.mc_ptr) + idx;
             
-            if constexpr (Op == ReduceOperation::ADD) {
+            if constexpr (Op == ReduceOp::ADD) {
                 multimem_reduce<T>::add(ptr, ptr);
-            } else if constexpr (Op == ReduceOperation::MIN) {
+            } else if constexpr (Op == ReduceOp::MIN) {
                 multimem_reduce<T>::min(ptr, ptr);
-            } else if constexpr (Op == ReduceOperation::MAX) {
+            } else if constexpr (Op == ReduceOp::MAX) {
                 multimem_reduce<T>::max(ptr, ptr);
             }
         }
@@ -117,17 +116,17 @@ __device__ static inline void reduce_op(PglObj<GL> p_o) {
 
 template <typename PGL_OBJ>
 __device__ static inline void atomic_add(PGL_OBJ p_o) {
-    reduce_op<ReduceOperation::ADD>(p_o);
+    reduce_op<ReduceOp::ADD>(p_o);
 }
 
 template <typename PGL_OBJ>
 __device__ static inline void atomic_min(PGL_OBJ p_o) {
-    reduce_op<ReduceOperation::MIN>(p_o);
+    reduce_op<ReduceOp::MIN>(p_o);
 }
 
 template <typename PGL_OBJ>
 __device__ static inline void atomic_max(PGL_OBJ p_o) {
-    reduce_op<ReduceOperation::MAX>(p_o);
+    reduce_op<ReduceOp::MAX>(p_o);
 }
 
 } // namespace kittens

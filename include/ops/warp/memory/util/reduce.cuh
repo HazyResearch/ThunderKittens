@@ -7,14 +7,33 @@
 
 namespace kittens {
 
-template<typename T> struct multimem_reduce {
-    __device__ static inline void add(T *dst, T value);
-    __device__ static inline void min(T *dst, T value);
-    __device__ static inline void max(T *dst, T value);
+enum class ReduceOp {
+    ADD,
+    MIN,
+    MAX
 };
 
-template<> struct multimem_reduce<bf16_2> {
-    __device__ static inline void add(bf16_2 *dst, bf16_2 *value) {
+
+template<typename T, ReduceOp Op> 
+struct multimem_reduce_op {
+    __device__ static inline void apply(T *dst, T *value);
+};
+
+// For floating point types, only ADD is supported for .red 
+template<> 
+struct multimem_reduce_op<float, ReduceOp::ADD> {
+    __device__ static inline void apply(float *dst, float *value) {
+        asm volatile(
+            "multimem.red.relaxed.sys.global.add.v2.f32 [%0], %1;"
+            :
+            : "l"(dst), "f"(*value)
+            : "memory"
+        );
+    }
+};
+template<> 
+struct multimem_reduce_op<bf16_2, ReduceOp::ADD> {
+    __device__ static inline void apply(bf16_2 *dst, bf16_2 *value) {
         unsigned int packed_value = *reinterpret_cast<const unsigned int*>(value);
         asm volatile(
             "multimem.red.relaxed.sys.global.add.bf16x2 [%0], %1;"
@@ -24,9 +43,9 @@ template<> struct multimem_reduce<bf16_2> {
         );
     }
 };
-
-template<> struct multimem_reduce<half_2> {
-    __device__ static inline void add(half_2 *dst, half_2 *value) {
+template<> 
+struct multimem_reduce_op<half_2, ReduceOp::ADD> {
+    __device__ static inline void apply(half_2 *dst, half_2 *value) {
         unsigned int packed_value = *reinterpret_cast<const unsigned int*>(value);
         asm volatile(
             "multimem.red.relaxed.sys.global.add.f16x2 [%0], %1;"
@@ -36,9 +55,9 @@ template<> struct multimem_reduce<half_2> {
         );
     }
 };
-
-template<> struct multimem_reduce<float2> {
-    __device__ static inline void add(float2 *dst, float2 *value) {
+template<> 
+struct multimem_reduce_op<float2, ReduceOp::ADD> {
+    __device__ static inline void apply(float2 *dst, float2 *value) {
         asm volatile(
             "multimem.red.relaxed.sys.global.add.v2.f32 [%0], {%1, %2};"
             :
@@ -48,136 +67,117 @@ template<> struct multimem_reduce<float2> {
     }
 };
 
-// template<> struct multimem_reduce<bf16> {
-//     __device__ static inline void add(bf16 *dst, bf16 *value) {
-//         unsigned int packed1 = (__bfloat16_as_ushort(value[0]) << 16) | 
-//                                 __bfloat16_as_ushort(value[1]);
-//         unsigned int packed2 = (__bfloat16_as_ushort(value[2]) << 16) | 
-//                                 __bfloat16_as_ushort(value[3]);
-//         unsigned int packed3 = (__bfloat16_as_ushort(value[4]) << 16) |
-//                                 __bfloat16_as_ushort(value[5]);
-//         unsigned int packed4 = (__bfloat16_as_ushort(value[6]) << 16) |
-//                                 __bfloat16_as_ushort(value[7]);
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.add.v4.bf16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     }
-//     __device__ static inline void min(bf16 *dst, bf16 *value) {
-//         unsigned int packed1 = (__bfloat16_as_ushort(value[0]) << 16) | 
-//                                 __bfloat16_as_ushort(value[1]);
-//         unsigned int packed2 = (__bfloat16_as_ushort(value[2]) << 16) | 
-//                                 __bfloat16_as_ushort(value[3]);
-//         unsigned int packed3 = (__bfloat16_as_ushort(value[4]) << 16) |
-//                                 __bfloat16_as_ushort(value[5]);
-//         unsigned int packed4 = (__bfloat16_as_ushort(value[6]) << 16) |
-//                                 __bfloat16_as_ushort(value[7]);
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.min.v4.bf16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     } 
-//     __device__ static inline void max(bf16 *dst, bf16 *value) {
-//         unsigned int packed1 = (__bfloat16_as_ushort(value[0]) << 16) | 
-//                                 __bfloat16_as_ushort(value[1]);
-//         unsigned int packed2 = (__bfloat16_as_ushort(value[2]) << 16) | 
-//                                 __bfloat16_as_ushort(value[3]);
-//         unsigned int packed3 = (__bfloat16_as_ushort(value[4]) << 16) |
-//                                 __bfloat16_as_ushort(value[5]);
-//         unsigned int packed4 = (__bfloat16_as_ushort(value[6]) << 16) |
-//                                 __bfloat16_as_ushort(value[7]);
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.max.v4.bf16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     }
-// };
 
-// template<> struct multimem_reduce<half> {
-//     __device__ static inline void add(half *dst, half *value) {
-//         unsigned int packed1 = (__half_as_ushort(value[0]) << 16) |
-//                                 __half_as_ushort(value[1]);
-//         unsigned int packed2 = (__half_as_ushort(value[2]) << 16) |
-//                                 __half_as_ushort(value[3]);
-//         unsigned int packed3 = (__half_as_ushort(value[4]) << 16) |
-//                                 __half_as_ushort(value[5]);
-//         unsigned int packed4 = (__half_as_ushort(value[6]) << 16) |
-//                                 __half_as_ushort(value[7]);
+template<typename T, ReduceOp Op> 
+struct multimem_ld_reduce_op {
+    __device__ static inline void apply(T *dst, T *value);
+};
 
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.add.v4.f16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     }
-//     __device__ static inline void min(half *dst, half *value) {
-//         unsigned int packed1 = (__half_as_ushort(value[0]) << 16) |
-//                                 __half_as_ushort(value[1]);
-//         unsigned int packed2 = (__half_as_ushort(value[2]) << 16) |
-//                                 __half_as_ushort(value[3]);
-//         unsigned int packed3 = (__half_as_ushort(value[4]) << 16) |
-//                                 __half_as_ushort(value[5]);
-//         unsigned int packed4 = (__half_as_ushort(value[6]) << 16) |
-//                                 __half_as_ushort(value[7]);
+template<>
+struct multimem_ld_reduce_op<bf16_2, ReduceOp::ADD> {
+    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.add.bf16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
+template<>
+struct multimem_ld_reduce_op<bf16_2, ReduceOp::MIN> {
+    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.min.bf16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
 
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.min.v4.f16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     }
-//     __device__ static inline void max(half *dst, half *value) {
-//         unsigned int packed1 = (__half_as_ushort(value[0]) << 16) |
-//                                 __half_as_ushort(value[1]);
-//         unsigned int packed2 = (__half_as_ushort(value[2]) << 16) |
-//                                 __half_as_ushort(value[3]);
-//         unsigned int packed3 = (__half_as_ushort(value[4]) << 16) |
-//                                 __half_as_ushort(value[5]);
-//         unsigned int packed4 = (__half_as_ushort(value[6]) << 16) |
-//                                 __half_as_ushort(value[7]);
+template<>
+struct multimem_ld_reduce_op<bf16_2, ReduceOp::MAX> {
+    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.max.bf16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
 
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.max.v4.f16x2 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-//             : "memory"
-//         );
-//     }
-// };
+template<>
+struct multimem_ld_reduce_op<half_2, ReduceOp::ADD> {
+    __device__ static inline void apply(half_2* dst, half_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.add.f16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
 
-// template<> struct multimem_reduce<float> {
-//     __device__ static inline void add(float *dst, float *value) {
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "f"(value[0]), "f"(value[1]), "f"(value[2]), "f"(value[3])
-//             : "memory"
-//         );
-//     }
-//     __device__ static inline void min(float *dst, float *value) {
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.min.v4.f32 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "f"(value[0]), "f"(value[1]), "f"(value[2]), "f"(value[3])
-//             : "memory"
-//         );
-//     }
-//     __device__ static inline void max(float *dst, float *value) {
-//         asm volatile(
-//             "multimem.red.relaxed.sys.global.max.v4.f32 [%0], {%1, %2, %3, %4};"
-//             :
-//             : "l"(dst), "f"(value[0]), "f"(value[1]), "f"(value[2]), "f"(value[3])
-//             : "memory"
-//         );
-//     }
-// };
+template<>
+struct multimem_ld_reduce_op<half_2, ReduceOp::MIN> {
+    __device__ static inline void apply(half_2* dst, half_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.min.f16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
+
+template<>
+struct multimem_ld_reduce_op<half_2, ReduceOp::MAX> {
+    __device__ static inline void apply(half_2* dst, half_2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.max.f16x2 %0, [%1];"
+            : "=r"(*reinterpret_cast<unsigned int*>(dst))
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
+
+template<>
+struct multimem_ld_reduce_op<float2, ReduceOp::ADD> {
+    __device__ static inline void apply(float2* dst, float2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.add.v2.f32 {%0, %1}, [%2];"
+            : "=f"(dst->x), "=f"(dst->y)
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
+
+template<>
+struct multimem_ld_reduce_op<float2, ReduceOp::MIN> {
+    __device__ static inline void apply(float2* dst, float2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.min.v2.f32 {%0, %1}, [%2];"
+            : "=f"(dst->x), "=f"(dst->y)
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
+
+template<>
+struct multimem_ld_reduce_op<float2, ReduceOp::MAX> {
+    __device__ static inline void apply(float2* dst, float2 *src) {
+        asm volatile(
+            "multimem.ld_reduce.relaxed.sys.global.max.v2.f32 {%0, %1}, [%2];"
+            : "=f"(dst->x), "=f"(dst->y)
+            : "l"(src)
+            : "memory"
+        );
+    }
+};
 
 } // namespace kittens

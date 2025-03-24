@@ -4,7 +4,7 @@
 #include <cuda_bf16.h>
 
 constexpr int NUM_DEVICES = 2;
-constexpr size_t N = 1024;
+constexpr size_t N = 32;
 
 using namespace kittens;
 
@@ -19,17 +19,6 @@ using rt_tile = kittens::rt<bf16, 16, 16>;
 // but that became more intricate, and is ambiguous on what work a warp is actually doing   
 __global__ void all_reduce_int(kittens_pgl p_o) {
     rt_tile tile;
-    /*
-    Elements on same device take care of specific rows
-
-    Divide total 
-    */ 
-   int num_rows = p_o.gl.rows();
-   int row_start = (num_rows / p_o.num_devices) * p_o.dev_id;
-   int row = row_start + kittens::warpid();
-
-
-
     if (kittens::warpid() == 0) {
         kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 0});
     }

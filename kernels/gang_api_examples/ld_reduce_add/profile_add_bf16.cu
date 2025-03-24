@@ -5,7 +5,8 @@
 #include <curand_kernel.h>
 
 constexpr int NUM_DEVICES = 8;
-constexpr size_t N = 1024 * 1024 * 1024;
+// constexpr size_t N = 2ULL * 1024 * 1024 * 1024;
+constexpr size_t N = 32;
 
 constexpr int ITER_PER_THREAD = 32;
 constexpr int MAX_VEC_SIZE = 16;
@@ -15,6 +16,8 @@ using namespace kittens;
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
 using pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::PglObj<global_layout>;
+
+using rt_tile = kittens::rt<bf16, 16, 16>;
 
 // Kernel to initialize matrices with random values on device
 __global__ void initialize_matrix(bf16 *mat, size_t n, unsigned long seed) {
@@ -29,7 +32,10 @@ __global__ void initialize_matrix(bf16 *mat, size_t n, unsigned long seed) {
 }
 
 __global__ void all_reduce_bf16(kittens_pgl p_o) {
-    kittens::all_reduce_add(p_o);
+    // kittens::all_reduce_add(p_o);
+    rt_tile tile; 
+    
+    kittens::all_reduce_add(p_o, tile, {0, 0});
 }
 
 int main() {
@@ -67,7 +73,7 @@ int main() {
     dim3 grid((nelem_per_dev + nelem_per_block - 1) / nelem_per_block);
     dim3 block(256);
 
-    constexpr int NUM_ITERS = 20;
+    constexpr int NUM_ITERS = 1;
 
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < NUM_ITERS; ++i) {
