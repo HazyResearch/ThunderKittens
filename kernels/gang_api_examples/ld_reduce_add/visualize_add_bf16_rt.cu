@@ -18,13 +18,20 @@ using rt_tile = kittens::rt<bf16, 16, 16>;
 // initially was thinking about dividing tile into equivalent parts and then doing all_reduce
 // but that became more intricate, and is ambiguous on what work a warp is actually doing   
 __global__ void all_reduce_int(kittens_pgl p_o) {
+    /*
+    Single warp example
+    */
+    // rt_tile tile;
+    // if (kittens::warpid() == 0) {
+    //     kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 0});
+    // }
+    // if (kittens::warpid() == 1) {
+    //     kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 1});
+    // }
+
+    using friends = kittens::group<2>;
     rt_tile tile;
-    if (kittens::warpid() == 0) {
-        kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 0});
-    }
-    if (kittens::warpid() == 1) {
-        kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 1});
-    }
+    friends::all_reduce_add(p_o, tile, {p_o.dev_id, friends::groupid()});
 }
 
 int main() {
