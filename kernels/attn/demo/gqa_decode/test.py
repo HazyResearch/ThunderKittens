@@ -60,7 +60,7 @@ def create_thundergqa_arguments(seq_lengths, new_tokens, q_heads = 16):
             break
     num_processors = [None for _ in seq_lengths]
     for _, p, s, i in processor_assignments:
-        num_processors[i] = min(p, s//128)
+        num_processors[i] = max(1, min(p, s//128))
     # Create schedule
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
@@ -155,6 +155,9 @@ def main(seq_lengths, new_tokens, q_heads=16):
     # save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
+    main([1], 1, 8)
+    main([32], 1, 8)
+    main([64], 1, 8)
     main([4641,45118,1730,1696], 4, 8)
     main([65536], 1, 8)
     main([871,568,711,329,617,1015,348,978,543,837,650,1020,924,679,560,497,650,406,381,423,511,423,569,943,645,820,829,883,937,765,711,847,722,546,519,279,516,315,664,845,850,546,670,871,527,329,446,764,582,1011,453,655,532,985,1019,810,317,305,949,317,669,768,530,349], 4, 8)

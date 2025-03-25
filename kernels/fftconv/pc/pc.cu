@@ -38,8 +38,8 @@ struct fft_1024_template {
     }
     // tk
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int heads_handled = (args.globals.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
-        int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
+        int heads_handled = (args.globals.x.depth()+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
+        int iters_per_head = (args.globals.x.batch() + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
         args.num_iters = args.task_iter == 0 ? heads_handled * iters_per_head : -1;
     }
     struct producer {
@@ -47,11 +47,11 @@ struct fft_1024_template {
             warpgroup::decrease_registers<40>();
         }
         __device__ static inline void load(producer_load_args<layout> args) {
-            int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
+            int iters_per_head = (args.globals.x.batch() + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * (NUM_CONSUMER_WARPGROUPS*4); // 4 batch per warpgroup
             if(warpgroup::warpid() == args.iter%4) {
-                for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch; b++) {
+                for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch(); b++) {
                     int diff = b-batch;
                     auto st = subtile_inplace<32,32>(args.input.x[diff/4], {(diff%4)/2, diff%2});
                     load_async(st, args.globals.x, { b, head, 0, 0 });
@@ -62,11 +62,11 @@ struct fft_1024_template {
             }
         }
         __device__ static inline void store(producer_store_args<layout> args) {
-            int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
+            int iters_per_head = (args.globals.x.batch() + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * (NUM_CONSUMER_WARPGROUPS*4); // 4 batch per warpgroup
             if(warpgroup::warpid() == args.iter%4) {
-                for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch; b++) {
+                for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch(); b++) {
                     int diff = b-batch;
                     auto st = subtile_inplace<32,32>(args.output.o[diff/4], {(diff%4)/2, diff%2});
                     kittens::store(args.globals.o, st, { b, head, 0, 0 });
@@ -80,7 +80,7 @@ struct fft_1024_template {
     struct consumer {
         __device__ static inline void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>();
-            int iters_per_head = (args.globals.x.batch + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
+            int iters_per_head = (args.globals.x.batch() + (NUM_CONSUMER_WARPGROUPS*4)-1) / (NUM_CONSUMER_WARPGROUPS*4);
             args.state.current_head = (0 / iters_per_head)*132 + blockIdx.x; // start for iter 0
             using consumers = group<NUM_CONSUMER_WARPS>;
             consumers::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
@@ -136,7 +136,7 @@ struct fft_1024_template {
             __syncwarp();
 
             // persistent grid
-            int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+            int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
             if(next_head != args.state.current_head) {
                 load_head_data(args.scratch, args.globals, next_head);
@@ -177,8 +177,8 @@ struct fft_4096_template {
     }
     // tk
     __device__ static void common_setup(common_setup_args<layout> args) {
-        int heads_handled = (args.globals.x.depth+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
-        int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+        int heads_handled = (args.globals.x.depth()+131-blockIdx.x) / 132; // I am guaranteeing batch is handled by just one block.
+        int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
         args.num_iters = args.task_iter == 0 ? heads_handled * iters_per_head : -1;
     }
     struct producer {
@@ -186,12 +186,12 @@ struct fft_4096_template {
             warpgroup::producer_registers();
         }
         __device__ static void load(producer_load_args<layout> args) {
-            int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+            int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * NUM_CONSUMER_WARPGROUPS;
             if(warpgroup::warpid() == args.iter%4) {
-                tma::expect_bytes(args.inputs_arrived, sizeof(args.input.x[0]) * min((int)NUM_CONSUMER_WARPGROUPS, (int)(args.globals.x.batch - batch)));
-                for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch; b++) {
+                tma::expect_bytes(args.inputs_arrived, sizeof(args.input.x[0]) * min((int)NUM_CONSUMER_WARPGROUPS, (int)(args.globals.x.batch() - batch)));
+                for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch(); b++) {
                     tma::load_async(args.input.x[b-batch], args.globals.x, { b, head, 0, 0 }, args.inputs_arrived);
                 }
                 if(laneid() == 0) arrive(args.inputs_arrived, 3); // extra arrivals needed
@@ -199,11 +199,11 @@ struct fft_4096_template {
             }
         }
         __device__ static void store(producer_store_args<layout> args) {
-            int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+            int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * NUM_CONSUMER_WARPGROUPS;
             if(warpgroup::warpid() == args.iter%4) {
-                for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch; b++) {
+                for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch(); b++) {
                     tma::store_async(args.globals.o, args.output.o[b-batch], { b, head, 0, 0 });
                 }
                 tma::store_async_read_wait();
@@ -215,7 +215,7 @@ struct fft_4096_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<NUM_CONSUMER_WARPS/4>();
-            int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+            int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             args.state.current_head = (0 / iters_per_head)*132 + blockIdx.x; // start for iter 0
             using consumers = group<NUM_CONSUMER_WARPS>;
             consumers::load(args.scratch.f,       args.globals.f,       {0, 0, 0, 0});
@@ -269,7 +269,7 @@ struct fft_4096_template {
                 arrive(args.outputs_arrived);
             }
             __syncwarp();
-            int iters_per_head = (args.globals.x.batch + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
+            int iters_per_head = (args.globals.x.batch() + NUM_CONSUMER_WARPGROUPS-1) / NUM_CONSUMER_WARPGROUPS;
             int next_head = ((args.iter+1) / iters_per_head)*132 + blockIdx.x;
             if(next_head != args.state.current_head) {
                 load_head_data(args.scratch, args.globals, next_head);
