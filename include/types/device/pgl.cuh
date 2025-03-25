@@ -95,7 +95,10 @@ struct pgl_manager {
     using T = GL::dtype;
     using dtype = T;
 
-    size_t size; // size of the raw data in bytes (on each device, not aggregate of all devices)
+    size_t size; // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
+    size_t handle_size; // size of actual memory 
+    size_t mc_size;
+
     std::vector<GL> tensors; // an array of global layouts
                             // should conceptually be a single tensor, shared across all devices
 
@@ -126,7 +129,11 @@ struct pgl_manager {
         nelem = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
                 std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
         size = nelem * sizeof(T);
-        printf("Size: %lu\n", size);
+
+        CUmemAllocationProp mem_prop{};
+        size_t mem_granularity;
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
     
         for (int i = 0; i < num_devices; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
@@ -151,9 +158,9 @@ struct pgl_manager {
         if (mc_handle) {
             for (int i = 0; i < num_devices; ++i) {
                 CUDACHECK(cudaSetDevice(device_ids[i]));
-                CUCHECK(cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], size));
-                CUCHECK(cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], size));
-                CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, size));
+                CUCHECK(cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], mc_size));
+                CUCHECK(cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], mc_size));
+                CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
             }
         }
 
@@ -166,7 +173,7 @@ struct pgl_manager {
     
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
-        size_t mc_size = detail::init_mc_prop(&mc_prop, num_devices, size);
+        mc_size = detail::init_mc_prop(&mc_prop, num_devices, size);
         
         // Create MC handle (once for all devices)
         CUCHECK(cuMulticastCreate(&mc_handle, &mc_prop));
@@ -185,7 +192,7 @@ struct pgl_manager {
         for (int i = 0; i < num_devices; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, size, 0));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, handle_size, 0));
 
             CUCHECK(cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], mc_size, mc_granularity, 0, 0));
             CUCHECK(cuMemMap((CUdeviceptr)raw_multi_ptr[i], mc_size, 0, mc_handle, 0));
