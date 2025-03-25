@@ -10,8 +10,8 @@ using namespace kittens;
 
 // Changed float to bf16 throughout the layouts
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
-using pglobal_layout  =  pgl<gl<bf16, 1, 1, -1, -1>, true>;
-using kittens_pgl = kittens::PglObj<global_layout>;
+using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
+using kittens_pgl = kittens::pgl<global_layout>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
 
 // TODO: User has to decide logic for splitting up all_reduce 
@@ -83,18 +83,19 @@ int main() {
     bf16 **dev_mats = new bf16*[NUM_DEVICES];
     CUmemGenericAllocationHandle *dev_handles = new CUmemGenericAllocationHandle[NUM_DEVICES];
 
+    int device_ids[NUM_DEVICES];
+    for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
+    
     cudaSetDevice(0);
-    pglCudaMalloc(0, &dev_mats[0], &dev_handles[0], size);
+    pglCudaMalloc(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
     cudaMemcpy(dev_mats[0], host_mat_1, size, cudaMemcpyHostToDevice);
 
     cudaSetDevice(1);
-    pglCudaMalloc(1, &dev_mats[1], &dev_handles[1], size);
+    pglCudaMalloc(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
     cudaMemcpy(dev_mats[1], host_mat_2, size, cudaMemcpyHostToDevice);
 
     // Initialize parallel global layout
-    int device_ids[NUM_DEVICES];
-    for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
-    pglobal_layout dev_mat_pgl{device_ids, NUM_DEVICES, dev_mats, nullptr, nullptr, N, N};
+    pgl_m dev_mat_pgl{device_ids, NUM_DEVICES, dev_mats, nullptr, nullptr, N, N};
 
     // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);

@@ -20,8 +20,8 @@ namespace kittens {
  * @param p_o A parallel global layout object.
  */
 template<ReduceOp Op, typename GL>
-__device__ static inline void ld_reduce_op(PglObj<GL> p_o) {
-    using T = typename PglObj<GL>::dtype;
+__device__ static inline void ld_reduce_op(pgl<GL> p_o) {
+    using T = typename pgl<GL>::dtype;
 
     int thread_idx = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
     int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
@@ -81,8 +81,8 @@ __device__ static inline void all_reduce_max(PGL_OBJ p_o) {
 }
 
 template<ReduceOp Op, typename GL>
-__device__ static inline void reduce_op(PglObj<GL> p_o) {
-    using T = typename PglObj<GL>::dtype;
+__device__ static inline void reduce_op(pgl<GL> p_o) {
+    using T = typename pgl<GL>::dtype;
     int thread_idx = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
     int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
     int total_threads_per_block = blockDim.x * blockDim.y * blockDim.z;

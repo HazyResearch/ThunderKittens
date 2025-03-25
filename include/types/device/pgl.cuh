@@ -14,7 +14,30 @@
 #include "../global/global.cuh"
 #include "detail/helpers.cuh"
 
+
 namespace kittens {
+
+// CUDA driver API
+#define CUCHECK(cmd) do {                                     \
+    CUresult err = cmd;                                       \
+    if (err != CUDA_SUCCESS) {                                \
+        const char *errStr;                                   \
+        cuGetErrorString(err, &errStr);                       \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
+            __FILE__, __LINE__, errStr);                      \
+        exit(EXIT_FAILURE);                                   \
+    }                                                         \
+} while(0)
+
+// CUDA runtime API
+#define CUDACHECK(cmd) do {                                   \
+    cudaError_t err = cmd;                                    \
+    if (err != cudaSuccess) {                                 \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
+            __FILE__, __LINE__, cudaGetErrorString(err));     \
+        exit(EXIT_FAILURE);                                   \
+    }                                                         \
+} while(0)
 
 /* ----------  Parallel global layout descriptor  ---------- */
 // Refers to a single tensor shared across multiple devices
@@ -26,44 +49,66 @@ struct identifier {};
 }
     
 template <kittens::ducks::gl::all GL>
-struct PglObj {
-    PglObj(GL _gl, typename GL::dtype *_mc_ptr, int _nelem, int _dev_id, int _num_devices)
-        : gl(_gl), mc_ptr(_mc_ptr), nelem(_nelem), dev_id(_dev_id), num_devices(_num_devices) {}
-
+struct pgl {
+    using identifier = ducks::pgl::identifier;
     using T = GL::dtype;
     using dtype = T;
+
+    __host__ inline pgl(GL _gl, 
+                        typename GL::dtype *_mc_ptr, 
+                        GL* _gls_ptr, 
+                        int* _dev_ids, 
+                        size_t _nelem, 
+                        int _dev_id, 
+                        int _num_devices) : 
+            gl(_gl), mc_ptr(_mc_ptr), gls_ptr(_gls_ptr), device_ids(_dev_ids), 
+            nelem(_nelem), dev_id(_dev_id), num_devices(_num_devices) {}
+
     GL gl;
-    T *mc_ptr;
-    // TODO: Need to figure out how to manage this
-    int nelem;
+    T* mc_ptr;
+    GL* gls_ptr;
+    int* device_ids;
+
+    size_t nelem;
     int dev_id;
     int num_devices;
 };
 
-// INIT_P: whether to initialize the multicast handle inside the constructor
-//         if false, the user must manually initialize the multicast handle
-//         in order to use TK collective operations
-template<kittens::ducks::gl::all GL, bool INIT_P = true>
-struct pgl {
-    using identifier = ducks::pgl::identifier;
-    
+
+namespace ducks {
+namespace pgl {
+/**
+ * @brief Concept for all parallel global layouts.
+ * @tparam T The type to check against the concept requirements.
+ *
+ * Requires:
+ * - T has a nested type identifier that is the same as ducks::pgl::identifier.
+ */
+template<typename T> concept all = requires {
+    typename T::identifier;
+} && std::is_same_v<typename T::identifier, identifier>;
+}
+}
+
+template<kittens::ducks::gl::all GL, bool INIT_MC = true>
+struct pgl_manager {
     using T = GL::dtype;
     using dtype = T;
 
     size_t size; // size of the raw data in bytes (on each device, not aggregate of all devices)
     std::vector<GL> tensors; // an array of global layouts
-                              // should conceptually be a single tensor, shared across all devices
+                            // should conceptually be a single tensor, shared across all devices
 
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     T **raw_multi_ptr;                 // mc_ptr, an array of virtual addresses on each machine attached to the mc_handle
 
-    int nelem; // number of elements per device
+    size_t nelem; // number of elements per device
     int num_devices; // number of CUDA devices
     int *device_ids; // CUDA device IDs. Corresponds to the order of vector<GL> tensors
 
     GL &operator[](int idx) { return tensors[idx]; } 
 
-    __host__ inline pgl(int *_device_ids, // an array of NUM_DEVS device IDs
+    __host__ inline pgl_manager(int *_device_ids, // an array of NUM_DEVS device IDs
                         int _num_devices,  // number of devices
                         T **_data,        // an array of NUM_DEVS pointers
                         ducks::gl::make_arg_t<GL::__b__> _batch,
@@ -71,17 +116,17 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols)
             : num_devices(_num_devices),
-              device_ids(new int[_num_devices]),
-              raw_multi_ptr(new T*[_num_devices]) {
+            device_ids(new int[_num_devices]),
+            raw_multi_ptr(new T*[_num_devices]) {
         if (num_devices <= 1) {
             std::cerr << "SKILL ISSUE: No point in using pgl with a single device." << std::endl;
             std::exit(EXIT_FAILURE);
         }
 
-        // Ignore zeros (TODO: is this the best way to calculate size?)
         nelem = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
                 std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
         size = nelem * sizeof(T);
+        printf("Size: %lu\n", size);
     
         for (int i = 0; i < num_devices; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
@@ -89,7 +134,7 @@ struct pgl {
             tensors.emplace_back(_data[i], _batch, _depth, _rows, _cols); // construct each gl
         }
 
-        if (INIT_P) {
+        if (INIT_MC) {
             multicast_init();
         } else {
             mc_handle = 0;
@@ -99,16 +144,16 @@ struct pgl {
 
     // Users really shouldn't copy this object around
     // as it complicates CUDA virtual memory management
-    pgl(const pgl &other) = delete;
-    pgl& operator=(const pgl &other) = delete;
+    pgl_manager(const pgl_manager &other) = delete;
+    pgl_manager& operator=(const pgl_manager &other) = delete;
 
-    __host__ inline ~pgl() {
+    __host__ inline ~pgl_manager() {
         if (mc_handle) {
             for (int i = 0; i < num_devices; ++i) {
-                cudaSetDevice(device_ids[i]);
-                cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], size);
-                cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], size);
-                cuMulticastUnbind(mc_handle, device_ids[i], 0, size);
+                CUDACHECK(cudaSetDevice(device_ids[i]));
+                CUCHECK(cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], size));
+                CUCHECK(cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], size));
+                CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, size));
             }
         }
 
@@ -124,36 +169,40 @@ struct pgl {
         size_t mc_size = detail::init_mc_prop(&mc_prop, num_devices, size);
         
         // Create MC handle (once for all devices)
-        cuMulticastCreate(&mc_handle, &mc_prop);
+        CUCHECK(cuMulticastCreate(&mc_handle, &mc_prop));
     
         // Add devices to MC handle
         for (int i = 0; i < num_devices; ++i) {
             CUdevice dev;
-            cuDeviceGet(&dev, device_ids[i]);
-            cuMulticastAddDevice(mc_handle, dev); // must be done before any bindig
+            CUCHECK(cuDeviceGet(&dev, device_ids[i]));
+            CUCHECK(cuMulticastAddDevice(mc_handle, dev)); // must be done before any bindig
         }
+
+        size_t mc_granularity = 0;
+        cuMulticastGetGranularity(&mc_granularity, &mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
 
         // Attach MC handle to physical memory & map to virtual memory on each device
         for (int i = 0; i < num_devices; ++i) {
-            cudaSetDevice(device_ids[i]);
+            CUDACHECK(cudaSetDevice(device_ids[i]));
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, mc_size, 0);    
-            cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], mc_size, mc_size, 0, 0);
-            cuMemMap((CUdeviceptr)raw_multi_ptr[i], mc_size, 0, mc_handle, 0);
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, size, 0));
+
+            CUCHECK(cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], mc_size, mc_granularity, 0, 0));
+            CUCHECK(cuMemMap((CUdeviceptr)raw_multi_ptr[i], mc_size, 0, mc_handle, 0));
 
             // Set access permissions
             CUmemAccessDesc desc = detail::create_mem_desc(device_ids[i]);
-            cuMemSetAccess((CUdeviceptr)raw_multi_ptr[i], mc_size, &desc, 1);
+            CUCHECK(cuMemSetAccess((CUdeviceptr)raw_multi_ptr[i], mc_size, &desc, 1));
         }
     }
 
     __host__ inline void multicast_check(int device_id) {
         // Check if device supports MultiCast Objects
         CUdevice dev;
-        cuDeviceGet(&dev, device_id);
+        CUCHECK(cuDeviceGet(&dev, device_id));
     
         int device_supports_multicast;
-        cuDeviceGetAttribute(&device_supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev);
+        CUCHECK(cuDeviceGetAttribute(&device_supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
     
         if (!device_supports_multicast) {
             std::cerr << "DEVICE ISSUE: Device " << device_id <<" does not support Multicast Objects." << std::endl;
@@ -161,10 +210,21 @@ struct pgl {
         }
     }
 
-    PglObj<GL> get_pgl_obj(int dev_id) {
+    pgl<GL> get_pgl_obj(int dev_id) {
+        CUDACHECK(cudaSetDevice(dev_id));
+        GL* d_gls_ptr;
+        CUDACHECK(cudaMalloc(&d_gls_ptr, sizeof(GL) * num_devices));
+        CUDACHECK(cudaMemcpy(d_gls_ptr, tensors.data(), sizeof(GL) * num_devices, cudaMemcpyHostToDevice));
+        
+        int* d_device_ids;
+        CUDACHECK(cudaMalloc(&d_device_ids, sizeof(int) * num_devices));
+        CUDACHECK(cudaMemcpy(d_device_ids, device_ids, sizeof(int) * num_devices, cudaMemcpyHostToDevice));
+
         return {
             tensors[dev_id], 
-            raw_multi_ptr[dev_id], // TODO: modify kernel example code to increment pointer on their end
+            raw_multi_ptr[dev_id],
+            d_gls_ptr,
+            d_device_ids,
             nelem, 
             dev_id,
             num_devices
@@ -172,54 +232,40 @@ struct pgl {
     }
 };
 
-namespace ducks {
-namespace pgl {
-/**
-* @brief Concept for all parallel global layouts.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as ducks::pgl::identifier.
-*/
-template<typename T> concept all = requires {
-    typename T::identifier;
-} && std::is_same_v<typename T::identifier, identifier>;
-}
-}
-
 template <typename T>
-__host__ inline void pglCudaMalloc(int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
-    cudaSetDevice(device_id);
+__host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
+    CUDACHECK(cudaSetDevice(device_id));
 
     // Create memory handle prop
     CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
 
     // Query for recommended granularity
     size_t mem_granularity;
-    // cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
-    cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-    
+    CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
     // Round up size to the nearest multiple of the granularity
     size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
     // Allocate physical memory on the device
-    cuMemCreate(mem_handle, size, &mem_prop, 0);
+    CUCHECK(cuMemCreate(mem_handle, size, &mem_prop, 0));
 
     // Bind virtual address
-    cuMemAddressReserve((CUdeviceptr *)ptr, size, mem_granularity, 0, 0);
-    cuMemMap((CUdeviceptr)*ptr, size, 0, *mem_handle, 0);
+    CUCHECK(cuMemAddressReserve((CUdeviceptr *)ptr, size, mem_granularity, 0, 0));
+    CUCHECK(cuMemMap((CUdeviceptr)*ptr, size, 0, *mem_handle, 0));
 
     // Set access
-    CUmemAccessDesc desc = detail::create_mem_desc(device_id);
-    cuMemSetAccess((CUdeviceptr)*ptr, size, &desc, 1);
+    CUmemAccessDesc desc_list[num_devices];
+    for (int i = 0; i < num_devices; i++) {
+        desc_list[i] = detail::create_mem_desc(device_ids[i]);
+    }
+    CUCHECK(cuMemSetAccess((CUdeviceptr)*ptr, size, desc_list, num_devices));
 }
 
 template <typename T>
 __host__ inline void pglCudaFree(int device_id, T *ptr, CUmemGenericAllocationHandle mem_handle, size_t size) {
-    cudaSetDevice(device_id);
-    cuMemUnmap((CUdeviceptr)ptr, size); // always free in this order
-    cuMemAddressFree((CUdeviceptr)ptr, size);
-    // cuMemRelease(mem_handle);
+    CUDACHECK(cudaSetDevice(device_id));
+    CUCHECK(cuMemUnmap((CUdeviceptr)ptr, size)); // always free in this order
+    CUCHECK(cuMemAddressFree((CUdeviceptr)ptr, size));
+    CUCHECK(cuMemRelease(mem_handle));
 }
 
 } // namespace kittens
