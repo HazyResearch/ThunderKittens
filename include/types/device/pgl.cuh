@@ -58,7 +58,7 @@ struct pgl {
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     size_t nelem;                           // number of elements per device
 
-    __host__ __device__ GL &gls(int idx) { return *reinterpret_cast<GL*>(&gls[idx]); } 
+    __host__ __device__ GL &gls(int idx) { return *reinterpret_cast<GL*>(&_gls[idx]); } 
     __host__ __device__ GL &operator[](int idx) { return gls(idx); } 
 
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
@@ -81,24 +81,27 @@ struct pgl {
         CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
         handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
     
-        for (int i = 0; i < num_devices; i++) {
+        for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
-            new (&gls[i]) GL(_data[i], _batch, _depth, _rows, _cols);
+            new (&_gls[i]) GL(_data[i], _batch, _depth, _rows, _cols);
         }
 
         if (INIT_MC) {
             multicast_init();
         } else {
             mc_handle = 0;
-            for (int i = 0; i < num_devices; i++) mc_vas[i] = nullptr;
+            for (int i = 0; i < NUM_DEVICES; i++) mc_vas[i] = nullptr;
         }
     }
 
     // Device code should be able to call this, but not actually do anything
-    __host__ __device__ inline ~pgl() {
-        #ifndef __CUDA_ARCH__
-        for (int i = 0; i < num_devices; i++) {
+    #ifdef __CUDA_ARCH__
+    __device__ ~pgl() { }
+    #else
+    __host__ ~pgl() {
+        // Host-only logic
+        for (int i = 0; i < NUM_DEVICES; i++) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             if (mc_handle) {
                 CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
@@ -106,21 +109,21 @@ struct pgl {
                 CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
             }
         }
-        #endif
     }
+    #endif
 
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
     
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
-        mc_size = detail::init_mc_prop(&mc_prop, num_devices, size);
+        mc_size = detail::init_mc_prop(&mc_prop, NUM_DEVICES, size);
         
         // Create MC handle (once for all devices)
         CUCHECK(cuMulticastCreate(&mc_handle, &mc_prop));
     
         // Add devices to MC handle
-        for (int i = 0; i < num_devices; ++i) {
+        for (int i = 0; i < NUM_DEVICES; ++i) {
             CUdevice dev;
             CUCHECK(cuDeviceGet(&dev, device_ids[i]));
             CUCHECK(cuMulticastAddDevice(mc_handle, dev)); // must be done before any bindig
@@ -130,10 +133,10 @@ struct pgl {
         cuMulticastGetGranularity(&mc_granularity, &mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
 
         // Attach MC handle to physical memory & map to virtual memory on each device
-        for (int i = 0; i < num_devices; ++i) {
+        for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)(*this)[i].raw_ptr, handle_size, 0));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls(i).raw_ptr, handle_size, 0));
 
             CUCHECK(cuMemAddressReserve((CUdeviceptr *)&mc_vas[i], mc_size, mc_granularity, 0, 0));
             CUCHECK(cuMemMap((CUdeviceptr)mc_vas[i], mc_size, 0, mc_handle, 0));
