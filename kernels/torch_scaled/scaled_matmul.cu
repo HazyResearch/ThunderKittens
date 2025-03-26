@@ -126,11 +126,25 @@ struct matmul_template {
 
 
 #include <iostream>
+#include <fstream>
 #include <random>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
 #include <omp.h>
 
+void write_matrix_to_csv(const std::string& filename, float* matrix, int rows, int cols) {
+    std::ofstream file(filename);
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            file << matrix[i * cols + j];
+            if (j < cols - 1) {
+                file << ",";
+            }
+        }
+        file << "\n";
+    }
+    file.close();
+}
 
 template<typename mmt>
 void inner_run(
@@ -344,6 +358,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float input_a = 0.0f, input_b = 0.0f;
     int error_count = 0;
     printf("Num rows: %zu, Num cols: %zu\n", M, N);
+    // int max_error_row = 0, max_error_col = 0;
+    std::vector<int> max_error_rows, max_error_cols;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if( error > 0.10 ) { // large because of fp8 vs fp32 numerics # error > 0.10
@@ -351,7 +367,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
         }
-        max_error = std::max(max_error, error);
+        if (error > 0.4) {
+            max_error = error;
+            max_error_rows.push_back(i / N);
+            max_error_cols.push_back(i % N);
+        }
         total_ref += std::abs(h_C_ref[i]);
         total_error += error;
         total_ours += std::abs(h_C[i]);
@@ -372,6 +392,14 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Average input_a: " << input_a / M / K << std::endl;
     std::cout << "Average input_b: " << input_b / K / N << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
+    std::cout << "Number of elements with error > 0.4: " << max_error_rows.size() << std::endl;
+
+    std::ofstream max_error_file("max_error_positions.txt");
+    for (int i = 0; i < max_error_rows.size(); i++) {
+        max_error_file << max_error_rows[i] << ", " << max_error_cols[i] << "\n";
+    }
+    // write_matrix_to_csv("h_C_ref.csv", h_C_ref, M, N);
+    // write_matrix_to_csv("h_C.csv", h_C, M, N);
 
     // Clean up
     delete[] h_A;
