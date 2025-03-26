@@ -18,10 +18,8 @@ struct matmul_layout {
     using  c_layout = gl<c_dtype, 1, 1, -1, -1, c_tile>;
 
     // tiles for the dequantized inputs
-    using scale_a_vec = sv<c_dtype, c_tile::rows/4>;
-    using scale_b_vec = sv<c_dtype, c_tile::cols>;
-    using scale_a_layout = gl<c_dtype, 1, 1, 1, -1, scale_a_vec>;
-    using scale_b_layout = gl<c_dtype, 1, 1, 1, -1, scale_b_vec>;
+    using scale_a_layout = gl<c_dtype, 1, 1, 1, -1>;
+    using scale_b_layout = gl<c_dtype, 1, 1, 1, -1>;
 
     template<typename T=float> using accum_tile = rt<T, 16, c_tile::cols>;
 
@@ -71,6 +69,8 @@ struct matmul_template {
             return;
         }
         args.num_iters = args.globals.A.cols()/layout::a_tile::cols;
+        int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid();
+        args.common.coord = { args.common.coord.x*2 + id, args.common.coord.y };
     }
 
     struct producer {
@@ -80,9 +80,10 @@ struct matmul_template {
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
                 tma::expect(args.inputs_arrived, args.input);
+                #pragma unroll
                 for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
-                                    {2*args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                                    {args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 }
                 tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
@@ -107,7 +108,7 @@ struct matmul_template {
         __device__ static void finish(consumer_finish_args<layout> args) {
             col_vec<rt<c_dtype, 16, 128>> scale_a_rv;
             row_vec<rt<c_dtype, 16, 128>> scale_b_rv;
-            load(scale_a_rv, args.globals.scale_a, {8*args.common.coord.x+warpid()});
+            warpgroup::load(scale_a_rv, args.globals.scale_a, {args.common.coord.x});
             load(scale_b_rv, args.globals.scale_b, {args.common.coord.y});
             mul_col(args.state.accum, args.state.accum, scale_b_rv);
             mul_row(args.state.accum, args.state.accum, scale_a_rv);
@@ -115,10 +116,9 @@ struct matmul_template {
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
-                                 {2*args.common.coord.x+warpgroup::groupid(), args.common.coord.y});
+                                 {args.common.coord.x, args.common.coord.y});
                 tma::store_async_read_wait();
             }
-            zero(args.state.accum);
             if(laneid() == 0) arrive(args.finish_finished);
         }
     };
