@@ -157,9 +157,10 @@ struct multimem_ld_reduce_op<bf16, ReduceOp::MAX> {
 template<>
 struct multimem_ld_reduce_op<half, ReduceOp::ADD> {
     __device__ static inline void apply_vec(float4 *dst, half *src) {
+        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
         asm volatile(
             "multimem.ld_reduce.relaxed.sys.global.add.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
+            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
             : "l"(src)
             : "memory"
         );
@@ -169,9 +170,10 @@ struct multimem_ld_reduce_op<half, ReduceOp::ADD> {
 template<>
 struct multimem_ld_reduce_op<half, ReduceOp::MIN> {
     __device__ static inline void apply_vec(float4 *dst, half *src) {
+        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
         asm volatile(
             "multimem.ld_reduce.relaxed.sys.global.min.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
+            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
             : "l"(src)
             : "memory"
         );
@@ -181,9 +183,10 @@ struct multimem_ld_reduce_op<half, ReduceOp::MIN> {
 template<>
 struct multimem_ld_reduce_op<half, ReduceOp::MAX> {
     __device__ static inline void apply_vec(float4 *dst, half *src) {
+        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
         asm volatile(
             "multimem.ld_reduce.relaxed.sys.global.max.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
+            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
             : "l"(src)
             : "memory"
         );
@@ -202,29 +205,7 @@ struct multimem_ld_reduce_op<float, ReduceOp::ADD> {
     }
 };
 
-template<>
-struct multimem_ld_reduce_op<float, ReduceOp::MIN> {
-    __device__ static inline void apply_vec(float4 *dst, float *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.v4.f32 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<float, ReduceOp::MAX> {
-    __device__ static inline void apply_vec(float4 *dst, float *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.v4.f32 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
+// MIN/MAX ops are NOT supported on float32
 
 template<>
 struct multimem_ld_reduce_op<bf16_2, ReduceOp::ADD> {
@@ -302,30 +283,6 @@ struct multimem_ld_reduce_op<float2, ReduceOp::ADD> {
     __device__ static inline void apply(float2* dst, float2 *src) {
         asm volatile(
             "multimem.ld_reduce.relaxed.sys.global.add.v2.f32 {%0, %1}, [%2];"
-            : "=f"(dst->x), "=f"(dst->y)
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<float2, ReduceOp::MIN> {
-    __device__ static inline void apply(float2* dst, float2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.v2.f32 {%0, %1}, [%2];"
-            : "=f"(dst->x), "=f"(dst->y)
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<float2, ReduceOp::MAX> {
-    __device__ static inline void apply(float2* dst, float2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.v2.f32 {%0, %1}, [%2];"
             : "=f"(dst->x), "=f"(dst->y)
             : "l"(src)
             : "memory"
