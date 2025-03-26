@@ -1,18 +1,18 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_WARP_MEMORY
+#ifdef TEST_WARP_MEMORY_UTIL_REDUCE
 
 #include "testing_commons.cuh"
 
-#include "tile/tile.cuh"
-#include "vec/vec.cuh"
-#include "util/util.cuh"
-
 namespace warp {
 namespace memory {
+namespace util {
+namespace reduce {
 
 void tests(test_data &results);
 
+}
+}
 }
 }
 
