@@ -355,7 +355,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
         total_ref += std::abs(h_C_ref[i]);
         total_error += error;
         total_ours += std::abs(h_C[i]);
+    }
+
+    for (int i = 0; i < M * K; i++) {
         input_a += std::abs(h_A[i]);
+    }
+    for (int i = 0; i < K * N; i++) {
         input_b += std::abs(h_B[i]);
     }
 
@@ -364,8 +369,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Average error: " << total_error / M / N << std::endl;
     std::cout << "Average ref: " << total_ref / (M * N) << std::endl;
     std::cout << "Average ours: " << total_ours / M / N << std::endl;
-    std::cout << "Average input_a: " << input_a / M / N << std::endl;
-    std::cout << "Average input_b: " << input_b / M / N << std::endl;
+    std::cout << "Average input_a: " << input_a / M / K << std::endl;
+    std::cout << "Average input_b: " << input_b / K / N << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up
@@ -383,9 +388,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
 
 int main() {
-    int N;
-    N = 4096;
-    run_benchmark<matmul_template<8>>(N, N, N);
+    int M = 4096, N = 4096, K = 4096;
+    run_benchmark<matmul_template<8>>(M, N, K);
     return 0;
 }
 
