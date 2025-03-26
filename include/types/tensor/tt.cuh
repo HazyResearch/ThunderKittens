@@ -72,7 +72,7 @@ struct tt {
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
-            if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
+            if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>) {
                 return addr + ((16 * chunk) << 16);
             }
             else {
@@ -82,6 +82,9 @@ struct tt {
         else {
             if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
                 return addr + (16 * chunk / (4/(uint32_t)sizeof(T)));
+            }
+            else if constexpr (std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>) {
+                return addr + (32 * chunk / (4/(uint32_t)sizeof(T)));
             }
             else {
                 static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
