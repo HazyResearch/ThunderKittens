@@ -2,7 +2,10 @@ import torch
 import torch.nn.functional as F
 import sys
 from tqdm import tqdm
-
+try:
+    import thunderkittens
+except ImportError:
+    pass
 
 size=(4096, 4096)
 
@@ -76,10 +79,81 @@ def compare_f8_mm(dtype=torch.float8_e4m3fn) -> None:
     avg_diff = (torch.mm(x, w) - y).abs().mean()
     print(f'avg_diff {avg_diff.item():.4f}')
 
+def compare_tk_torch_mm() -> None:
+    global x, w
+    x_f8, x_inv_s = to_float8_e4m3fn(x)
+    w_f8, w_inv_s = to_float8_e4m3fn(w)
+
+    print(f'x_inv_s: {x_inv_s[:10]}')
+    print(f'w_inv_s: {w_inv_s[:10]}')
+
+    y = thunderkittens.scaled_matmul(x_f8, w_f8.t().contiguous(), x_inv_s, w_inv_s)
+
+    # compare output of float8 matmul to the fp16 baseline
+    cos_sim = F.cosine_similarity(torch.mm(x, w).reshape(-1), y.reshape(-1), dim=0)    
+    print(f'cos_sim {cos_sim.item():.4f}')
+    
+    # average of x
+    avg_x = x.abs().mean()
+    print(f'avg_x {avg_x.item():.4f}')
+
+    # average of w
+    avg_w = w.abs().mean()
+    print(f'avg_w {avg_w.item():.4f}')
+
+    # average of y
+    avg_y = y.abs().mean()
+    print(f'avg_y {avg_y.item():.4f}')
+
+    # max diff
+    max_diff = (torch.mm(x, w) - y).abs().max()
+    print(f'max_diff {max_diff.item():.4f}')
+
+def compare_tk_torch_scaled_mm() -> None:
+    global x, w
+    x_f8, x_inv_s = to_float8_e4m3fn(x)
+    w_f8, w_inv_s = to_float8_e4m3fn(w)
+
+    print(f'x_inv_s: {x_inv_s[:10]}')
+    print(f'w_inv_s: {w_inv_s[:10]}')
+
+    y = thunderkittens.scaled_matmul(x_f8, w_f8.t().contiguous(), x_inv_s, w_inv_s)
+
+    y2 = torch._scaled_mm(
+        x_f8, w_f8,      
+        out_dtype=torch.bfloat16,
+        scale_a=x_inv_s.unsqueeze(-1),     # (16, 1)
+        scale_b=w_inv_s.unsqueeze(0),      # (1, 16)
+        use_fast_accum=True
+    ) # bias=bias
+
+
+    # compare output of float8 matmul to the fp16 baseline
+    cos_sim = F.cosine_similarity(y2.reshape(-1), y.reshape(-1), dim=0)    
+    print(f'cos_sim {cos_sim.item():.4f}')
+    
+    # average of x
+    avg_x = x.abs().mean()
+    print(f'avg_x {avg_x.item():.4f}')
+
+    # average of w
+    avg_w = w.abs().mean()
+    print(f'avg_w {avg_w.item():.4f}')
+
+    # average of y
+    avg_y = y.abs().mean()
+    print(f'avg_y {avg_y.item():.4f}')
+
+    # max diff
+    max_diff = (y2 - y).abs().max()
+    print(f'max_diff {max_diff.item():.4f}')
+
+
+    
 
 if __name__ == "__main__":
     compare_f8_mm()
-    
-
+    compare_tk_torch_mm()
+    compare_tk_torch_scaled_mm()
 
 
