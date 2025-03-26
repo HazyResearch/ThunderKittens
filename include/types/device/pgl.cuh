@@ -22,39 +22,9 @@ namespace kittens {
 // Allows for the collective operations
 namespace ducks {
 namespace pgl {
+
 struct identifier {};
-}
-}
-    
-template <kittens::ducks::gl::all GL>
-struct pgl {
-    using identifier = ducks::pgl::identifier;
-    using T = GL::dtype;
-    using dtype = T;
 
-    __host__ inline pgl(GL _gl, 
-                        typename GL::dtype *_mc_ptr, 
-                        GL* _gls_ptr, 
-                        int* _dev_ids, 
-                        size_t _nelem, 
-                        int _dev_id, 
-                        int _num_devices) : 
-            gl(_gl), mc_ptr(_mc_ptr), gls_ptr(_gls_ptr), device_ids(_dev_ids), 
-            nelem(_nelem), dev_id(_dev_id), num_devices(_num_devices) {}
-
-    GL gl;
-    T* mc_ptr;
-    GL* gls_ptr;
-    int* device_ids;
-
-    size_t nelem;
-    int dev_id;
-    int num_devices;
-};
-
-
-namespace ducks {
-namespace pgl {
 /**
  * @brief Concept for all parallel global layouts.
  * @tparam T The type to check against the concept requirements.
@@ -65,41 +35,39 @@ namespace pgl {
 template<typename T> concept all = requires {
     typename T::identifier;
 } && std::is_same_v<typename T::identifier, identifier>;
-}
-}
 
-template<kittens::ducks::gl::all GL, bool INIT_MC = true>
-struct pgl_manager {
+} // namespace pgl
+} // namespace ducks
+
+template<kittens::ducks::gl::all GL, int NUM_DEVICES = 8, bool INIT_MC = true>
+struct pgl {
+    using identifier = ducks::pgl::identifier;
     using T = GL::dtype;
     using dtype = T;
 
-    size_t size; // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
+    size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
     size_t handle_size; // size of actual memory 
     size_t mc_size;
 
-    std::vector<GL> tensors; // an array of global layouts
-                            // should conceptually be a single tensor, shared across all devices
+    T *mc_vas[NUM_DEVICES];
+    int device_ids[NUM_DEVICES];
+
+    // A hack to avoid calling the gl default constructor
+    alignas(GL) char _gls[NUM_DEVICES][sizeof(GL)];
 
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
-    T **raw_multi_ptr;                 // mc_ptr, an array of virtual addresses on each machine attached to the mc_handle
+    size_t nelem;                           // number of elements per device
 
-    size_t nelem; // number of elements per device
-    int num_devices; // number of CUDA devices
-    int *device_ids; // CUDA device IDs. Corresponds to the order of vector<GL> tensors
+    __host__ __device__ GL &gls(int idx) { return *reinterpret_cast<GL*>(&gls[idx]); } 
+    __host__ __device__ GL &operator[](int idx) { return gls(idx); } 
 
-    GL &operator[](int idx) { return tensors[idx]; } 
-
-    __host__ inline pgl_manager(int *_device_ids,  // an array of NUM_DEVS device IDs
-                                int _num_devices,  // number of devices
-                                T **_data,         // an array of NUM_DEVS pointers
-                                ducks::gl::make_arg_t<GL::__b__> _batch,
-                                ducks::gl::make_arg_t<GL::__d__> _depth,
-                                ducks::gl::make_arg_t<GL::__r__> _rows,
-                                ducks::gl::make_arg_t<GL::__c__> _cols)
-            : num_devices(_num_devices),
-            device_ids(new int[_num_devices]),
-            raw_multi_ptr(new T*[_num_devices]) {
-        if (num_devices <= 1) {
+    __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
+                        T **_data,         // an array of NUM_DEVS pointers
+                        ducks::gl::make_arg_t<GL::__b__> _batch,
+                        ducks::gl::make_arg_t<GL::__d__> _depth,
+                        ducks::gl::make_arg_t<GL::__r__> _rows,
+                        ducks::gl::make_arg_t<GL::__c__> _cols) {
+        if constexpr (NUM_DEVICES <= 1) {
             std::cerr << "SKILL ISSUE: No point in using pgl with a single device." << std::endl;
             std::exit(EXIT_FAILURE);
         }
@@ -116,36 +84,31 @@ struct pgl_manager {
         for (int i = 0; i < num_devices; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
-            tensors.emplace_back(_data[i], _batch, _depth, _rows, _cols); // construct each gl
+            new (&gls[i]) GL(_data[i], _batch, _depth, _rows, _cols);
         }
 
         if (INIT_MC) {
             multicast_init();
         } else {
             mc_handle = 0;
-            for (int i = 0; i < num_devices; i++) raw_multi_ptr = nullptr;
+            for (int i = 0; i < num_devices; i++) mc_vas[i] = nullptr;
         }
     }
 
-    // Users really shouldn't copy this object around
-    // as it complicates CUDA virtual memory management
-    pgl_manager(const pgl_manager &other) = delete;
-    pgl_manager& operator=(const pgl_manager &other) = delete;
-
-    __host__ inline ~pgl_manager() {
-        if (mc_handle) {
-            for (int i = 0; i < num_devices; ++i) {
-                CUDACHECK(cudaSetDevice(device_ids[i]));
-                CUCHECK(cuMemUnmap((CUdeviceptr)raw_multi_ptr[i], mc_size));
-                CUCHECK(cuMemAddressFree((CUdeviceptr)raw_multi_ptr[i], mc_size));
+    // Device code should be able to call this, but not actually do anything
+    __host__ __device__ inline ~pgl() {
+        #ifndef __CUDA_ARCH__
+        for (int i = 0; i < num_devices; i++) {
+            CUDACHECK(cudaSetDevice(device_ids[i]));
+            if (mc_handle) {
+                CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
+                CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
                 CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
             }
         }
-
-        delete[] device_ids;
-        delete[] raw_multi_ptr;
+        #endif
     }
-    
+
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
     
@@ -170,14 +133,14 @@ struct pgl_manager {
         for (int i = 0; i < num_devices; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)tensors[i].raw_ptr, handle_size, 0));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)(*this)[i].raw_ptr, handle_size, 0));
 
-            CUCHECK(cuMemAddressReserve((CUdeviceptr *)&raw_multi_ptr[i], mc_size, mc_granularity, 0, 0));
-            CUCHECK(cuMemMap((CUdeviceptr)raw_multi_ptr[i], mc_size, 0, mc_handle, 0));
+            CUCHECK(cuMemAddressReserve((CUdeviceptr *)&mc_vas[i], mc_size, mc_granularity, 0, 0));
+            CUCHECK(cuMemMap((CUdeviceptr)mc_vas[i], mc_size, 0, mc_handle, 0));
 
             // Set access permissions
             CUmemAccessDesc desc = detail::create_mem_desc(device_ids[i]);
-            CUCHECK(cuMemSetAccess((CUdeviceptr)raw_multi_ptr[i], mc_size, &desc, 1));
+            CUCHECK(cuMemSetAccess((CUdeviceptr)mc_vas[i], mc_size, &desc, 1));
         }
     }
 
@@ -193,27 +156,6 @@ struct pgl_manager {
             std::cerr << "DEVICE ISSUE: Device " << device_id <<" does not support Multicast Objects." << std::endl;
             std::exit(EXIT_FAILURE);
         }
-    }
-
-    __host__ inline pgl<GL> get_pgl_obj(int dev_id) {
-        CUDACHECK(cudaSetDevice(dev_id));
-        GL* d_gls_ptr;
-        CUDACHECK(cudaMalloc(&d_gls_ptr, sizeof(GL) * num_devices));
-        CUDACHECK(cudaMemcpy(d_gls_ptr, tensors.data(), sizeof(GL) * num_devices, cudaMemcpyHostToDevice));
-        
-        int* d_device_ids;
-        CUDACHECK(cudaMalloc(&d_device_ids, sizeof(int) * num_devices));
-        CUDACHECK(cudaMemcpy(d_device_ids, device_ids, sizeof(int) * num_devices, cudaMemcpyHostToDevice));
-
-        return {
-            tensors[dev_id], 
-            raw_multi_ptr[dev_id],
-            d_gls_ptr,
-            d_device_ids,
-            nelem, 
-            dev_id,
-            num_devices
-        };
     }
 };
 
