@@ -5,30 +5,9 @@
 #include <unordered_map>
 #include <memory> 
 #include "detail/helpers.cuh"
+#include "../../common/common.cuh"
 
 namespace kittens {
-
-// CUDA driver API
-#define CUCHECK(cmd) do {                                     \
-    CUresult err = cmd;                                       \
-    if (err != CUDA_SUCCESS) {                                \
-        const char *errStr;                                   \
-        cuGetErrorString(err, &errStr);                       \
-        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
-            __FILE__, __LINE__, errStr);                      \
-        exit(EXIT_FAILURE);                                   \
-    }                                                         \
-} while(0)
-
-// CUDA runtime API
-#define CUDACHECK(cmd) do {                                   \
-    cudaError_t err = cmd;                                    \
-    if (err != cudaSuccess) {                                 \
-        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
-            __FILE__, __LINE__, cudaGetErrorString(err));     \
-        exit(EXIT_FAILURE);                                   \
-    }                                                         \
-} while(0)
 
 // TODO: for a given address, need to make sure address is reset back to zero
 // or some other measure to ensure that the address can be reused
