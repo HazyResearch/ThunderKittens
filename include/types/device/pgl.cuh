@@ -89,13 +89,13 @@ struct pgl_manager {
 
     GL &operator[](int idx) { return tensors[idx]; } 
 
-    __host__ inline pgl_manager(int *_device_ids, // an array of NUM_DEVS device IDs
-                        int _num_devices,  // number of devices
-                        T **_data,        // an array of NUM_DEVS pointers
-                        ducks::gl::make_arg_t<GL::__b__> _batch,
-                        ducks::gl::make_arg_t<GL::__d__> _depth,
-                        ducks::gl::make_arg_t<GL::__r__> _rows,
-                        ducks::gl::make_arg_t<GL::__c__> _cols)
+    __host__ inline pgl_manager(int *_device_ids,  // an array of NUM_DEVS device IDs
+                                int _num_devices,  // number of devices
+                                T **_data,         // an array of NUM_DEVS pointers
+                                ducks::gl::make_arg_t<GL::__b__> _batch,
+                                ducks::gl::make_arg_t<GL::__d__> _depth,
+                                ducks::gl::make_arg_t<GL::__r__> _rows,
+                                ducks::gl::make_arg_t<GL::__c__> _cols)
             : num_devices(_num_devices),
             device_ids(new int[_num_devices]),
             raw_multi_ptr(new T*[_num_devices]) {
@@ -217,7 +217,7 @@ struct pgl_manager {
     }
 };
 
-template <typename T>
+template <typename T, bool ROUND_UP = false>
 __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
 
@@ -227,8 +227,14 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
     // Query for recommended granularity
     size_t mem_granularity;
     CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
-    // Round up size to the nearest multiple of the granularity
-    size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
+    if (size % mem_granularity != 0) {
+        if constexpr (ROUND_UP) {
+            size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
+        } else {
+            std::cerr << "ERROR (pglCudaMalloc): Size is not a multiple of the recommended granularity." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+    }
 
     // Allocate physical memory on the device
     CUCHECK(cuMemCreate(mem_handle, size, &mem_prop, 0));
