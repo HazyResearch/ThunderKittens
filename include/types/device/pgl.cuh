@@ -195,7 +195,7 @@ struct pgl_manager {
         }
     }
 
-    pgl<GL> get_pgl_obj(int dev_id) {
+    __host__ inline pgl<GL> get_pgl_obj(int dev_id) {
         CUDACHECK(cudaSetDevice(dev_id));
         GL* d_gls_ptr;
         CUDACHECK(cudaMalloc(&d_gls_ptr, sizeof(GL) * num_devices));
