@@ -18,7 +18,7 @@ struct matmul_layout {
     using  c_layout = gl<c_dtype, 1, 1, -1, -1, c_tile>;
 
     // tiles for the dequantized inputs
-    using scale_a_vec = sv<c_dtype, c_tile::rows>;
+    using scale_a_vec = sv<c_dtype, c_tile::rows/4>;
     using scale_b_vec = sv<c_dtype, c_tile::cols>;
     using scale_a_layout = gl<c_dtype, 1, 1, 1, -1, scale_a_vec>;
     using scale_b_layout = gl<c_dtype, 1, 1, 1, -1, scale_b_vec>;
@@ -37,8 +37,6 @@ struct matmul_layout {
         c_tile c[2]; 
     };
     struct scratch_block  {
-        accum_tile<c_dtype>::col_vec scale_a_rv[2];
-        accum_tile<c_dtype>::row_vec scale_b_rv;
     };
     struct common_state   { int2 coord; };
     struct consumer_state { 
@@ -57,7 +55,7 @@ struct matmul_template {
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (2*layout::c_tile::rows), Cblocks = args.globals.C.cols / layout::c_tile::cols;
+        int Rblocks = args.globals.C.rows() / (2*layout::c_tile::rows), Cblocks = args.globals.C.cols() / layout::c_tile::cols;
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -72,16 +70,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/layout::a_tile::cols;
-        int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer is 0
-        args.common.coord = { args.common.coord.x*2 + id, args.common.coord.y };
-        
-        if (warpgroup::groupid() == 0) {
-            for(int i = 0; i < 2; i++) {
-                warpgroup::load(args.scratch.scale_a_rv[i], args.globals.scale_a, {args.common.coord.x+i});
-            }
-            load(args.scratch.scale_b_rv, args.globals.scale_b, {args.common.coord.y});
-        }
+        args.num_iters = args.globals.A.cols()/layout::a_tile::cols;
     }
 
     struct producer {
@@ -93,7 +82,7 @@ struct matmul_template {
                 tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
-                                    {args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                                    {2*args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 }
                 tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
@@ -104,7 +93,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            zero(args.state.accum);
+            zero(args.state.accum); 
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_ABt(
@@ -116,13 +105,17 @@ struct matmul_template {
             if(laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            mul_col(args.state.accum, args.state.accum, args.scratch.scale_b_rv);
-            mul_row(args.state.accum, args.state.accum, args.scratch.scale_a_rv[warpgroup::groupid()]);
+            col_vec<rt<c_dtype, 16, 128>> scale_a_rv;
+            row_vec<rt<c_dtype, 16, 128>> scale_b_rv;
+            load(scale_a_rv, args.globals.scale_a, {8*args.common.coord.x+warpid()});
+            load(scale_b_rv, args.globals.scale_b, {args.common.coord.y});
+            mul_col(args.state.accum, args.state.accum, scale_b_rv);
+            mul_row(args.state.accum, args.state.accum, scale_a_rv);
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
-                                 {args.common.coord.x, args.common.coord.y});
+                                 {2*args.common.coord.x+warpgroup::groupid(), args.common.coord.y});
                 tma::store_async_read_wait();
             }
             zero(args.state.accum);
@@ -233,7 +226,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     //  Obtain inputs on GPU device
     const float FP8_E4M3_MAX = 448.0f;
-    const float FP8_E4M3_MIN = -448.0f;
+    // const float FP8_E4M3_MIN = -448.0f;
     c_dtype *h_scale_a = new c_dtype[M];
     c_dtype *h_scale_b = new c_dtype[N];
     __nv_fp8_e4m3 *h_A_fp8_scaled = new __nv_fp8_e4m3[M * K];
@@ -263,7 +256,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for(int col = 0; col < N; col++) {
         float max_val = 0.0f;
         for(int row = 0; row < K; row++) {
-            float abs_val = std::abs(h_B[row * N + col]);
+            float abs_val = std::abs(h_B[row + col*K]);
             max_val = std::max(max_val, abs_val);
         }
         h_scale_b[col] = c_dtype(max_val / FP8_E4M3_MAX);
@@ -276,7 +269,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // fill h_B_fp8_scaled by following to_float8_e4m3fn
     for(int i = 0; i < N; i++) {
         for(int j = 0; j < K; j++) {
-            h_B_fp8_scaled[j * N + i] = __nv_fp8_e4m3(h_B[j * N + i] / float(h_scale_b[i]));
+            h_B_fp8_scaled[j + i * K] = __nv_fp8_e4m3(h_B[j + i * K] / float(h_scale_b[i]));
         }
     }
     
@@ -350,7 +343,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float max_error = 0.0f, total_error = 0.0f, total_ref = 0.0f, total_ours=0.0f;
     float input_a = 0.0f, input_b = 0.0f;
     int error_count = 0;
-    printf("Num rows: %d, Num cols: %d\n", M, N);
+    printf("Num rows: %zu, Num cols: %zu\n", M, N);
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
         if( error > 0.10 ) { // large because of fp8 vs fp32 numerics # error > 0.10
