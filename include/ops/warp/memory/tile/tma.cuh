@@ -30,9 +30,9 @@ template<kittens::ducks::st::all ST, int axis> __device__ inline int4 tma_coords
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
-    if (::kittens::laneid()) {
+    if (!MASK || ::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
@@ -61,7 +61,7 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx)
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
-    prefetch<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    prefetch<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
 }
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
@@ -77,9 +77,9 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx)
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
@@ -111,7 +111,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
 }
 
 /* ----------   Async reduction + store data from gmem/smem  ---------- */
@@ -127,14 +127,14 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
 
     static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
                     std::is_same_v<typename ST::dtype, fp8e5m2>), 
                     "TMA does not support async add reductions for fp8 types.");
                     
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
@@ -166,7 +166,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_add_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_add_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
 }
 
 /**
@@ -180,7 +180,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
 
@@ -188,7 +188,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
                     std::is_same_v<typename ST::dtype, fp8e5m2>), 
                     "TMA does not support async add reductions for fp8 types.");
 
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
@@ -220,7 +220,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_min_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_min_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
 }
 
 /**
@@ -234,7 +234,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
 
@@ -242,7 +242,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
                     std::is_same_v<typename ST::dtype, fp8e5m2>), 
                     "TMA does not support async add reductions for fp8 types.");
 
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
         uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
@@ -274,7 +274,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_max_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_max_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
 }
 
 /**
@@ -289,9 +289,9 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -322,7 +322,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
-    load_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, bar);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar);
 }
 
 namespace cluster {
@@ -341,14 +341,14 @@ namespace cluster {
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
 #ifdef KITTENS_BLACKWELL
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1)
 #else
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>, bool MASK=true>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask)
 #endif
 {
-    if (::kittens::laneid() == 0) {
+    if (!MASK || ::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
         uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&dst));
@@ -410,15 +410,98 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 #ifdef KITTENS_BLACKWELL
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
-    load_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
 }
 #else
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
-    load_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar, cluster_mask);
 }
 #endif
 
 } // namespace cluster
 } // namespace tma
+
+namespace thread { // Don't mask threads.
+namespace tma {
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
+    ::kittens::tma::prefetch<axis, policy, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
+    ::kittens::tma::prefetch<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_async<axis, policy, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx);
+}
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_add_async<axis, policy, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_add_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx);
+}
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_min_async<axis, policy, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_min_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx);
+}
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_max_async<axis, policy, ST, GL, COORD, false>(dst, src, idx); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
+    ::kittens::tma::store_max_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx);
+}
+
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
+    ::kittens::tma::load_async<axis, policy, ST, GL, COORD, false>(dst, src, idx, bar); // Don't do the mask
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
+    ::kittens::tma::load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx, bar);
+}
+
+namespace cluster {
+#ifdef KITTENS_BLACKWELL
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+    ::kittens::tma::cluster::load_async<axis, policy, ST, GL, COORD, false>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+    ::kittens::tma::cluster::load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
+}
+#else
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
+    ::kittens::tma::cluster::load_async<axis, policy, ST, GL, COORD, false>(dst, src, idx, bar, cluster_mask);
+}
+template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
+    ::kittens::tma::cluster::load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, false>(dst, src, idx, bar, cluster_mask);
+}
+#endif
+}
+} // namespace tma
+} // namespace thread
+
+
 } // namespace kittens
