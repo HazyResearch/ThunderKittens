@@ -76,7 +76,7 @@ __device__ static inline void all_reduce_max(RT &src, const PGL &p_o, int dev_id
 }
 
 template <int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void reduce_op(PGL p_o, const RT &src, const COORD &idx) {
+__device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
 
@@ -84,10 +84,10 @@ __device__ static inline void reduce_op(PGL p_o, const RT &src, const COORD &idx
         "Unsupported type for reduce_op");
 
     auto coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * p_o.gl.depth() + coord.d) * p_o.gl.rows() + coord.r) * p_o.gl.cols() + coord.c;
-    U *mc_ptr = p_o.mc_ptr + index;
+    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
+    U *mc_ptr = dst.mc_vas[dev_id] + index;
 
-    const int row_stride = p_o.gl.template stride<axis>();
+    const int row_stride = dst[dev_id].template stride<axis>();
     using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -127,18 +127,69 @@ __device__ static inline void reduce_op(PGL p_o, const RT &src, const COORD &idx
 }
 
 template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_add(PGL p_o, const RT &src, const COORD &idx) {
-    reduce_op<2, ReduceOp::ADD>(p_o, src, idx);
+__device__ static inline void atomic_add(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::ADD>(p_o, src, dev_id, idx);
 }
 
 template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_min(PGL p_o, const RT &src, const COORD &idx) {
-    reduce_op<2, ReduceOp::MIN>(p_o, src, idx);
+__device__ static inline void atomic_min(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::MIN>(p_o, src, dev_id, idx);
 }
 
 template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_max(PGL p_o, const RT &src, const COORD &idx) {
-    reduce_op<2, ReduceOp::MAX>(p_o, src, idx);
+__device__ static inline void atomic_max(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::MAX>(p_o, src, dev_id, idx);
+}
+
+template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
+    using T2 = RT::dtype;
+    using U = typename PGL::dtype;
+
+    #ifdef KITTENS_HOPPER
+    // static assert that we're not using fp8e4m3 or fp8e5m2
+    static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for load/store");
+    #endif
+
+    auto coord = idx.template unit_coord<axis, 3>();
+    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
+    U *mc_ptr = dst.mc_vas[dev_id] + index;
+
+    const int row_stride = dst[dev_id].template stride<axis>();
+    using U2 = base_types::packing<U>::packed_type;
+    int laneid = kittens::laneid();
+    int warphalf = (laneid & 16) > 0;
+    int warphalflaneid = laneid % 16;
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        int row_0to3 = i*src.tile_size_row + (warphalflaneid / 4);
+        int row = i*src.tile_size_row + (laneid / 4);
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + warphalf*8 + 2*(laneid % 4);
+            U2 transfers[2];
+            transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+            transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
+            *(U2*)(&mc_ptr[(row_0to3+0)*row_stride + col]) = transfers[0];
+            *(U2*)(&mc_ptr[(row_0to3+4)*row_stride + col]) = transfers[1];
+        }
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + warphalf*8 + 2*(laneid % 4);
+            U2 transfers[2];
+            transfers[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            transfers[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+            transfers[1-warphalf] = packed_shfl_sync(MASK_ALL, transfers[1-warphalf], laneid^16);
+            *(U2*)(&mc_ptr[(row_0to3+ 8)*row_stride + col]) = transfers[0];
+            *(U2*)(&mc_ptr[(row_0to3+12)*row_stride + col]) = transfers[1];
+        }
+    }
+}
+
+template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void broadcast(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
+    broadcast<2>(p_o, src, dev_id, idx);
 }
 
 } // namespace kittens

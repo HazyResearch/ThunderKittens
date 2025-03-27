@@ -10,21 +10,21 @@ using namespace kittens;
 
 // Changed float to bf16 throughout the layouts
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
-using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
-using kittens_pgl = kittens::pgl<global_layout>;
+// using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
+using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
 using st_tile = kittens::st<bf16, 16, 16>;
 
-__global__ void all_reduce_int(kittens_pgl p_o) {
-    // rt_tile tile;
-    // kittens::load(tile, p_o.gl, {0, 0});
+__global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
+    rt_tile tile;
+    kittens::load(tile, p_o[dev_id], {0, 0});
+    kittens::one(tile);
+    kittens::atomic_add(p_o, tile, dev_id, {0, 1});
+    
+    // st_tile tile; 
+    // kittens::load(tile, p_o[dev_id], {0, 0});
     // kittens::one(tile);
     // kittens::atomic_add(p_o, tile, {0, 1});
-    
-    st_tile tile; 
-    kittens::load(tile, p_o.gl, {0, 0});
-    kittens::one(tile);
-    kittens::atomic_add(p_o, tile, {0, 1});
 }
 
 int main() {
@@ -76,15 +76,15 @@ int main() {
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
     
     cudaSetDevice(0);
-    pglCudaMalloc(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
     cudaMemcpy(dev_mats[0], host_mat_1, size, cudaMemcpyHostToDevice);
 
     cudaSetDevice(1);
-    pglCudaMalloc(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
     cudaMemcpy(dev_mats[1], host_mat_2, size, cudaMemcpyHostToDevice);
 
     // Initialize parallel global layout
-    pgl_m dev_mat_pgl{device_ids, NUM_DEVICES, dev_mats, nullptr, nullptr, N, N};
+    kittens_pgl dev_mat_pgl{device_ids, dev_mats, nullptr, nullptr, N, N};
 
     // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);
@@ -92,8 +92,8 @@ int main() {
     dim3 grid(1);
     dim3 block(32);
     cudaSetDevice(0);
-    all_reduce_int<<<grid, block>>>(dev_mat_pgl.get_pgl_obj(0));
-    printf("Device 0 mc_ptr: %p\n", dev_mat_pgl.get_pgl_obj(0).mc_ptr);
+    all_reduce_int<<<grid, block>>>(dev_mat_pgl, 0);
+    // printf("Device 0 mc_ptr: %p\n", dev_mat_pgl.get_pgl_obj(0).mc_ptr);
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
     // Bring back data
