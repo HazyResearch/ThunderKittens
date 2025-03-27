@@ -49,12 +49,14 @@ struct pgl {
     using dtype = T;
 
     size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
-    size_t handle_size; // size of actual memory allocated
-    size_t mc_size;
+    size_t mc_size;     // size of multicast object (>= size)
+    size_t handle_size; // size of address range bound to multicast object (>= size)
 
     GL gls[NUM_DEVICES];
     T *mc_vas[NUM_DEVICES];
+
     int device_ids[NUM_DEVICES];
+    static constexpr int num_devices = NUM_DEVICES;
 
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     size_t nelem;                           // number of elements per device
@@ -100,30 +102,8 @@ struct pgl {
         }
     }
 
-    // Device code should be able to call this, but not actually do anything
-    // #ifdef __CUDA_ARCH__
-    // __device__ ~pgl() { }
-    // #else
-    // __host__ ~pgl() {
-    //     // Host-only logic
-    //     for (int i = 0; i < NUM_DEVICES; i++) {
-    //         CUDACHECK(cudaSetDevice(device_ids[i]));
-    //         if (mc_handle) {
-    //             CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
-    //             CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
-    //             CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
-    //         }
-    //     }
-    // }
-    // #endif
-
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
-
-        CUmemAllocationProp mem_prop{};
-        size_t mem_granularity;
-        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
-        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
     
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
@@ -141,6 +121,11 @@ struct pgl {
 
         size_t mc_granularity = 0;
         cuMulticastGetGranularity(&mc_granularity, &mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+
+        CUmemAllocationProp mem_prop{};
+        size_t mem_granularity;
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
         // Attach MC handle to physical memory & map to virtual memory on each device
         for (int i = 0; i < NUM_DEVICES; ++i) {
@@ -212,6 +197,24 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, CUmemGenericAllocationHa
     CUCHECK(cuMemUnmap((CUdeviceptr)ptr, size)); // always free in this order
     CUCHECK(cuMemAddressFree((CUdeviceptr)ptr, size));
     CUCHECK(cuMemRelease(mem_handle));
+}
+
+// This should be called to free the MC object within an PGL object
+template<kittens::ducks::pgl::all PGL>
+__host__ inline void pglFree(PGL &pgl_obj) {
+    if (pgl_obj.mc_handle) {
+        for (int i = 0; i < pgl_obj.num_devices; ++i) {
+            CUDACHECK(cudaSetDevice(pgl_obj.device_ids[i]));
+            CUCHECK(cuMemUnmap((CUdeviceptr)pgl_obj.mc_vas[i], pgl_obj.mc_size));
+            CUCHECK(cuMemAddressFree((CUdeviceptr)pgl_obj.mc_vas[i], pgl_obj.mc_size));
+
+            int dev;
+            cuDeviceGet(&dev, pgl_obj.device_ids[i]);
+            CUCHECK(cuMulticastUnbind(pgl_obj.mc_handle, dev, 0, pgl_obj.handle_size));
+            pgl_obj.mc_vas[i] = nullptr;
+        }
+        pgl_obj.mc_handle = 0;
+    }
 }
 
 } // namespace kittens
