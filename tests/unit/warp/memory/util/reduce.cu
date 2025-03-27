@@ -175,11 +175,10 @@ struct multimem_test_wrapper {
         test_info this_result;
         this_result.label = test::test_identifier;
         if constexpr (test::valid::value) {
-            constexpr int SIZE = 16 / sizeof(dtype); // multimem vec ops are 16B maximum
             // initialize
             PGL *d_i, *d_o; // we only use PGL for conveniently allocating MC objects, nothing else
-            std::vector<std::vector<float>> i_ref(NUM_DEVICES, std::vector<float>(SIZE));
-            std::vector<std::vector<float>> o_ref(NUM_DEVICES, std::vector<float>(SIZE));
+            std::vector<std::vector<float>> i_ref(NUM_DEVICES, std::vector<float>(test::test_size));
+            std::vector<std::vector<float>> o_ref(NUM_DEVICES, std::vector<float>(test::test_size));
             initialize<dtype>(&d_i, &d_o, i_ref, o_ref);
             // run kernel
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
@@ -212,6 +211,7 @@ struct test_multimem_ld_reduce_vec {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_ld_reduce_vec=bf16,op=" + op_identifier :
                                                       std::is_same_v<T, kittens::half> ? "multimem_ld_reduce_vec=half,op=" + op_identifier :
                                                                                          "multimem_ld_reduce_vec=float,op=" + op_identifier;
+    static inline const int test_size = 16 / sizeof(T);
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
@@ -234,6 +234,41 @@ struct test_multimem_ld_reduce_vec {
     }
 };
 
+template<typename T, kittens::ReduceOp op>
+struct test_multimem_ld_reduce_packed_scalar {
+    using dtype = T;
+    using packed_dtype = std::conditional_t<std::is_same_v<T, kittens::half>, kittens::half_2,
+                         std::conditional_t<std::is_same_v<T, kittens::bf16>, kittens::bf16_2,
+                         std::conditional_t<std::is_same_v<T, float>, float2, void>>>;
+    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
+    using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
+    static inline const std::string op_identifier = op == kittens::ReduceOp::ADD ? "ADD" : op == kittens::ReduceOp::MIN ? "MIN" : "MAX";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_ld_reduce_packed_scalar=bf16,op=" + op_identifier :
+                                                      std::is_same_v<T, kittens::half> ? "multimem_ld_reduce_packed_scalar=half,op=" + op_identifier :
+                                                                                         "multimem_ld_reduce_packed_scalar=float,op=" + op_identifier;
+    static inline const int test_size = 2; // currently tk only supports x2 packed types (very easy to extend in the future though)
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                    if (op == kittens::ReduceOp::ADD) {
+                        o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
+                    } else if (op == kittens::ReduceOp::MIN) {
+                        o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
+                    } else if (op == kittens::ReduceOp::MAX) {
+                        o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
+                    }
+                }
+            }
+        }
+    }
+    __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
+        kittens::multimem_ld_reduce_op<packed_dtype, op>::apply((packed_dtype *)output[dev_idx].raw_ptr, (packed_dtype *)input.mc_vas[dev_idx]);
+    }
+};
+
 template<typename T>
 struct test_multimem_reduce_vec {
     using dtype = T;
@@ -242,6 +277,7 @@ struct test_multimem_reduce_vec {
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_reduce_vec=bf16,op=ADD" :
                                                       std::is_same_v<T, kittens::half> ? "multimem_reduce_vec=half,op=ADD" :
                                                                                          "multimem_reduce_vec=float,op=ADD";
+    static inline const int test_size = 16 / sizeof(T);
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
@@ -273,6 +309,14 @@ void warp::memory::util::reduce::tests(test_data &results) {
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
+    
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<float, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results); // MIN/MAX ops are NOT supported on float32
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
 
     multimem_test_wrapper<test_multimem_reduce_vec<float>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_reduce_vec<kittens::bf16>, NUM_DEVICES>::run(results);
