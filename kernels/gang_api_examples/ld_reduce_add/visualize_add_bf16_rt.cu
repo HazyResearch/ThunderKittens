@@ -66,7 +66,7 @@ int main() {
 
     // Use float for host arrays and convert to/from bf16 during transfer
     float *host_mat_1_float = new float[nelem];
-    for (int i = 0; i < nelem; ++i) host_mat_1_float[i] = 1.0f;
+    for (int i = 0; i < nelem; ++i) host_mat_1_float[i] = float(i);
 
     float *host_mat_2_float = new float[nelem];
     for (int i = 0; i < nelem; ++i) host_mat_2_float[i] = 0.0f;
@@ -126,7 +126,7 @@ int main() {
 
     unsigned long smem = 16 * 32 * sizeof(bf16);
 
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < NUM_DEVICES; ++i) {
         cudaSetDevice(i);
         all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());

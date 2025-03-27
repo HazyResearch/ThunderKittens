@@ -93,7 +93,9 @@ template <int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, 
 __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
-
+    
+    static_assert(!std::is_floating_point_v<U> || OP == ReduceOp::ADD, 
+        "Floating point types can only be used with ReduceOp::ADD");
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
         "Unsupported type for reduce_op");
 

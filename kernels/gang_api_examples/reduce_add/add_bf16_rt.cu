@@ -16,15 +16,14 @@ using rt_tile = kittens::rt<bf16, 16, 16>;
 using st_tile = kittens::st<bf16, 16, 16>;
 
 __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
-    rt_tile tile;
-    kittens::load(tile, p_o[dev_id], {0, 0});
-    kittens::one(tile);
-    kittens::atomic_add(p_o, tile, dev_id, {0, 1});
-    
-    // st_tile tile; 
-    // kittens::load(tile, p_o[dev_id], {0, 0});
+    // rt_tile tile;
     // kittens::one(tile);
-    // kittens::atomic_add(p_o, tile, {0, 1});
+    // kittens::atomic_add(p_o, tile, dev_id, {0, 1});
+
+    using friends = kittens::group<2>;
+    rt_tile tile; 
+    kittens::one(tile);
+    friends::atomic_add(p_o, tile, dev_id, {0, friends::groupid()});    
 }
 
 int main() {
@@ -90,7 +89,7 @@ int main() {
     KittensClub club(device_ids, NUM_DEVICES);
 
     dim3 grid(1);
-    dim3 block(32);
+    dim3 block(128);
     cudaSetDevice(0);
     all_reduce_int<<<grid, block>>>(dev_mat_pgl, 0);
     // printf("Device 0 mc_ptr: %p\n", dev_mat_pgl.get_pgl_obj(0).mc_ptr);

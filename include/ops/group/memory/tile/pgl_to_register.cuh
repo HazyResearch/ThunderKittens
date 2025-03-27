@@ -77,6 +77,82 @@ __device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_id
     ld_reduce_op<2, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
+template<int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
+    using T2 = RT::dtype;
+    using U = typename PGL::dtype;
+    using U2 = base_types::packing<U>::packed_type;
+
+    static_assert(!std::is_floating_point_v<U> || OP == ReduceOp::ADD, 
+        "Floating point types can only be used with ReduceOp::ADD");
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
+        "Unsupported type for reduce_op");
+    
+    auto coord = idx.template unit_coord<axis, 3>();
+    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
+    U *mc_ptr = dst.mc_vas[dev_id] + index;
+
+    const int row_stride = dst[dev_id].template stride<axis>();
+    int warp_laneid = threadIdx.x % WARP_THREADS;
+    const int row_offset = src.rows*warpid();
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        int row = row_offset + i*src.tile_size_row + (warp_laneid / 4);
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + 2*(warp_laneid % 4);
+            U2 dst_buf[2];
+            dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+            multimem_reduce_op<U2, OP>::apply(
+                (U2*)&mc_ptr[(row+0)*row_stride + (col+0)], dst_buf);
+            multimem_reduce_op<U2, OP>::apply(
+                (U2*)&mc_ptr[(row+0)*row_stride + (col+8)], dst_buf);
+        }
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + 2*(warp_laneid % 4);
+            U2 dst_buf[2];
+            dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+            multimem_reduce_op<U2, OP>::apply(
+                (U2*)&mc_ptr[(row+8)*row_stride + (col+0)], dst_buf);
+            multimem_reduce_op<U2, OP>::apply(
+                (U2*)&mc_ptr[(row+8)*row_stride + (col+8)], dst_buf);
+        }
+    }
+}
+
+template<int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
+}
+
+template<ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
+}
+
+template<int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_min(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<axis, ReduceOp::MIN>(dst, src, dev_id, idx);
+}
+
+template<ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_min(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::MIN>(dst, src, dev_id, idx);
+}
+
+template<int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_max(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<axis, ReduceOp::MAX>(dst, src, dev_id, idx);
+}
+
+template<ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_max(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+    reduce_op<2, ReduceOp::MAX>(dst, src, dev_id, idx);
+}
+
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
