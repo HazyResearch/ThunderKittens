@@ -33,17 +33,11 @@ __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     /*
     Group level register tile example
     */
-    // if (dev_id == 0) return;
-    if (threadIdx.x == 0) printf("Device %d\n", dev_id);
     using friends = kittens::group<2>;
     rt_tile tile;
-    // kittens::one(tile);
-    // friends::store(p_o[dev_id], tile, {0, friends::groupid()});
-    // friends::load(tile, p_o[dev_id], {0, friends::groupid()});
     friends::all_reduce_add(tile, p_o, dev_id, {0, friends::groupid()});
     friends::store(p_o[dev_id], tile, {0, friends::groupid()});
-    // kittens::store(p_o[dev_id], tile, {0, 0});
-
+    
     
     /*
     Warp level shared tile example 
@@ -128,24 +122,21 @@ int main() {
     KittensClub club(device_ids, NUM_DEVICES);
 
     dim3 grid(1);
-    dim3 block(64);
+    dim3 block(128);
 
     unsigned long smem = 16 * 32 * sizeof(bf16);
 
-    for (int i = 0; i < NUM_DEVICES; ++i) {
+    for (int i = 0; i < 2; ++i) {
         cudaSetDevice(i);
         all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, i);
-        // all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl.gls[i], i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
 
 
     // Bring back data
     cudaSetDevice(0);
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(host_mat_1, dev_mats[0], size, cudaMemcpyDeviceToHost);
     cudaSetDevice(1);
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(host_mat_2, dev_mats[1], size, cudaMemcpyDeviceToHost);
     
     // Convert from bf16 to float for printing results

@@ -216,11 +216,6 @@ __device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template <int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void broadcast(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
-    broadcast<axis>(p_o, src, dev_id, idx);
-}
-
 template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void broadcast(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     broadcast<2>(p_o, src, dev_id, idx);
