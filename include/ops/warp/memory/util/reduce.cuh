@@ -24,14 +24,14 @@ struct multimem_reduce_op {
 template<>
 struct multimem_reduce_op<bf16, ReduceOp::ADD> {
     __device__ static inline void apply_vec(bf16* dst, bf16* src) {
-        unsigned int packed1 = (__bfloat16_as_ushort(src[0]) << 16) | 
-                                __bfloat16_as_ushort(src[1]);
-        unsigned int packed2 = (__bfloat16_as_ushort(src[2]) << 16) | 
-                                __bfloat16_as_ushort(src[3]);
-        unsigned int packed3 = (__bfloat16_as_ushort(src[4]) << 16) |
-                                __bfloat16_as_ushort(src[5]);
-        unsigned int packed4 = (__bfloat16_as_ushort(src[6]) << 16) |
-                                __bfloat16_as_ushort(src[7]);
+        unsigned int packed1 = (__bfloat16_as_ushort(src[1]) << 16) | 
+                                __bfloat16_as_ushort(src[0]);
+        unsigned int packed2 = (__bfloat16_as_ushort(src[3]) << 16) | 
+                                __bfloat16_as_ushort(src[2]);
+        unsigned int packed3 = (__bfloat16_as_ushort(src[5]) << 16) |
+                                __bfloat16_as_ushort(src[4]);
+        unsigned int packed4 = (__bfloat16_as_ushort(src[7]) << 16) |
+                                __bfloat16_as_ushort(src[6]);
         asm volatile(
             "multimem.red.relaxed.sys.global.add.v4.bf16x2 [%0], {%1, %2, %3, %4};"
             :
@@ -44,14 +44,14 @@ struct multimem_reduce_op<bf16, ReduceOp::ADD> {
 template<>
 struct multimem_reduce_op<half, ReduceOp::ADD> {
     __device__ static inline void apply_vec(half* dst, half* src) {
-        unsigned int packed1 = (__half_as_ushort(src[0]) << 16) |
-                                __half_as_ushort(src[1]);
-        unsigned int packed2 = (__half_as_ushort(src[2]) << 16) |
-                                __half_as_ushort(src[3]);
-        unsigned int packed3 = (__half_as_ushort(src[4]) << 16) |
-                                __half_as_ushort(src[5]);
-        unsigned int packed4 = (__half_as_ushort(src[6]) << 16) |
-                                __half_as_ushort(src[7]);
+        unsigned int packed1 = (__half_as_ushort(src[1]) << 16) |
+                                __half_as_ushort(src[0]);
+        unsigned int packed2 = (__half_as_ushort(src[3]) << 16) |
+                                __half_as_ushort(src[2]);
+        unsigned int packed3 = (__half_as_ushort(src[5]) << 16) |
+                                __half_as_ushort(src[4]);
+        unsigned int packed4 = (__half_as_ushort(src[7]) << 16) |
+                                __half_as_ushort(src[6]);
         asm volatile(
             "multimem.red.relaxed.sys.global.add.v4.f16x2 [%0], {%1, %2, %3, %4};"
             :
