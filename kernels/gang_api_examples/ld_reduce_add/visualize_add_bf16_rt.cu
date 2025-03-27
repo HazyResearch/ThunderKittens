@@ -10,25 +10,39 @@ using namespace kittens;
 
 // Changed float to bf16 throughout the layouts
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
-using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
-using kittens_pgl = kittens::pgl<global_layout>;
+// using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
+using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
 using st_tile = kittens::st<bf16, 16, 16>;
 
 // TODO: User has to decide logic for splitting up all_reduce 
 // initially was thinking about dividing tile into equivalent parts and then doing all_reduce
 // but that became more intricate, and is ambiguous on what work a warp is actually doing   
-__global__ void all_reduce_int(kittens_pgl p_o) {
-    /*
-    Single warp example
-    */
+__global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
+
+    // if (dev_id == 0) {
+    //     return; 
+    // }
+
+   
     rt_tile tile;
     if (kittens::warpid() == 0) {
-        kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 0});
+        kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 0});
+        kittens::broadcast(p_o, tile, dev_id, {dev_id, 0});
+        // kittens::store(p_o[dev_id], tile, {dev_id, 0});
+        // if (threadIdx.x == 0) {
+        //     printf("Storing to device %d at (%d, %d)\n", dev_id, dev_id, 0);
+        // }
     }
     if (kittens::warpid() == 1) {
-        kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 1});
+        kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 1});
+        kittens::broadcast(p_o, tile, dev_id, {dev_id, 1});
+        // kittens::store(p_o[dev_id], tile, {dev_id, 1});
+        // if (threadIdx.x == 32) {
+        //     printf("Storing to device %d at (%d, %d)\n", dev_id, dev_id, 1);
+        // }
     }
+
 
     // using friends = kittens::group<2>;
     // rt_tile tile;
@@ -100,15 +114,15 @@ int main() {
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
 
     cudaSetDevice(0);
-    pglCudaMalloc(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
     cudaMemcpy(dev_mats[0], host_mat_1, size, cudaMemcpyHostToDevice);
 
     cudaSetDevice(1);
-    pglCudaMalloc(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
     cudaMemcpy(dev_mats[1], host_mat_2, size, cudaMemcpyHostToDevice);
 
     // Initialize parallel global layout
-    pgl_m dev_mat_pgl{device_ids, NUM_DEVICES, dev_mats, nullptr, nullptr, N, N};
+    kittens_pgl dev_mat_pgl{device_ids, dev_mats, nullptr, nullptr, N, N};
 
     // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);
@@ -118,7 +132,7 @@ int main() {
 
     for (int i = 0; i < NUM_DEVICES; ++i) {
         cudaSetDevice(i);
-        all_reduce_int<<<grid, block>>>(dev_mat_pgl.get_pgl_obj(i));
+        all_reduce_int<<<grid, block>>>(dev_mat_pgl, i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
 
