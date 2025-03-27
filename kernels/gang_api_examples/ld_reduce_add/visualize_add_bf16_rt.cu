@@ -13,52 +13,52 @@ using global_layout   =  gl<bf16, 1, 1, -1, -1>;
 // using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
-using st_tile = kittens::st<bf16, 16, 16>;
+using st_tile = kittens::st<bf16, 16, 32>;
 
-// TODO: User has to decide logic for splitting up all_reduce 
-// initially was thinking about dividing tile into equivalent parts and then doing all_reduce
-// but that became more intricate, and is ambiguous on what work a warp is actually doing   
 __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
-
-    // if (dev_id == 0) {
-    //     return; 
-    // }
-
-   
-    rt_tile tile;
-    if (kittens::warpid() == 0) {
-        kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 0});
-        kittens::broadcast(p_o, tile, dev_id, {dev_id, 0});
-        // kittens::store(p_o[dev_id], tile, {dev_id, 0});
-        // if (threadIdx.x == 0) {
-        //     printf("Storing to device %d at (%d, %d)\n", dev_id, dev_id, 0);
-        // }
-    }
-    if (kittens::warpid() == 1) {
-        kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 1});
-        kittens::broadcast(p_o, tile, dev_id, {dev_id, 1});
-        // kittens::store(p_o[dev_id], tile, {dev_id, 1});
-        // if (threadIdx.x == 32) {
-        //     printf("Storing to device %d at (%d, %d)\n", dev_id, dev_id, 1);
-        // }
-    }
-
-
-    // using friends = kittens::group<2>;
+    /*
+    Warp level register tile example
+    */
     // rt_tile tile;
-    // friends::all_reduce_min(p_o, tile, {p_o.dev_id, friends::groupid()});
-    
-    
-    // st_tile tile;
     // if (kittens::warpid() == 0) {
-    //     kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 0});
+    //     kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 0});
+    //     kittens::broadcast(p_o, tile, dev_id, {dev_id, 0});
     // }
     // if (kittens::warpid() == 1) {
-    //     kittens::all_reduce_add(p_o, tile, {p_o.dev_id, 1});
+    //     kittens::all_reduce_add(tile, p_o, dev_id, {dev_id, 1});
+    //     kittens::broadcast(p_o, tile, dev_id, {dev_id, 1});
+    // }
+
+
+    /*
+    Group level register tile example
+    */
+    // if (dev_id == 0) return;
+    if (threadIdx.x == 0) printf("Device %d\n", dev_id);
+    using friends = kittens::group<2>;
+    rt_tile tile;
+    // kittens::one(tile);
+    // friends::store(p_o[dev_id], tile, {0, friends::groupid()});
+    // friends::load(tile, p_o[dev_id], {0, friends::groupid()});
+    friends::all_reduce_add(tile, p_o, dev_id, {0, friends::groupid()});
+    friends::store(p_o[dev_id], tile, {0, friends::groupid()});
+    // kittens::store(p_o[dev_id], tile, {0, 0});
+
+    
+    /*
+    Warp level shared tile example 
+    */
+    // extern __shared__ kittens::alignment_dummy __shm[]; 
+    // kittens::shared_allocator al((int*)&__shm[0]);
+    // st_tile (&s_tile)[1] = al.allocate<st_tile, 1>();
+    // __syncthreads();
+    // if (kittens::warpid() == 0) {
+    //     kittens::all_reduce_add(s_tile[0], p_o, dev_id, {dev_id, 0});
+    //     kittens::broadcast(p_o, s_tile[0], dev_id, {dev_id, 0});
     // }
             
     /*
-    Group example
+    Group level shared tile example
     */
     // st_tile tile;
     // using friends = kittens::group<2>;
@@ -128,18 +128,24 @@ int main() {
     KittensClub club(device_ids, NUM_DEVICES);
 
     dim3 grid(1);
-    dim3 block(128);
+    dim3 block(64);
+
+    unsigned long smem = 16 * 32 * sizeof(bf16);
 
     for (int i = 0; i < NUM_DEVICES; ++i) {
         cudaSetDevice(i);
-        all_reduce_int<<<grid, block>>>(dev_mat_pgl, i);
+        all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, i);
+        // all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl.gls[i], i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
 
+
     // Bring back data
     cudaSetDevice(0);
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(host_mat_1, dev_mats[0], size, cudaMemcpyDeviceToHost);
     cudaSetDevice(1);
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     cudaMemcpy(host_mat_2, dev_mats[1], size, cudaMemcpyDeviceToHost);
     
     // Convert from bf16 to float for printing results
