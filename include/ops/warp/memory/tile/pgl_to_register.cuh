@@ -24,7 +24,6 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     U *mc_ptr = src.mc_vas[dev_id] + index;
 
     const int row_stride = src[dev_id].template stride<axis>();
-    using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
     int warphalflaneid = laneid % 16;
