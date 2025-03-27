@@ -60,17 +60,17 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     }
 }
 
-template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+template <ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_add(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::ADD>(src, p_o, dev_id, idx);
 }
 
-template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+template <ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_min(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MIN>(src, p_o, dev_id, idx);
 }
 
-template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+template <ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_max(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MAX>(src, p_o, dev_id, idx);
 }
@@ -126,17 +126,17 @@ __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_add(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::ADD>(p_o, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_min(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::MIN>(p_o, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_max(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::MAX>(p_o, src, dev_id, idx);
 }
@@ -187,7 +187,7 @@ __device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template <ducks::pgl::all PGL, ducks::rt::all RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void broadcast(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     broadcast<2>(p_o, src, dev_id, idx);
 }
