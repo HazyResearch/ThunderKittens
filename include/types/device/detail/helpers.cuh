@@ -10,7 +10,7 @@ namespace detail {
         mc_prop->handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR; // single node
         mc_prop->flags = 0; // SBZ
         
-        // If size is not provided, return the recommended granularity
+        // If size is not provided, return the recommended granularity (TODO: separate this functionality)
         size_t mc_size = 0;
         cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
         // cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_MINIMUM);
