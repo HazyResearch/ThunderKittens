@@ -76,3 +76,43 @@ template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD
 __device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
+
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
+    using T2 = RT::dtype;
+    using U = typename PGL::dtype;
+
+    #ifdef KITTENS_HOPPER
+    static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for load/store");
+    #endif
+
+    auto coord = idx.template unit_coord<axis, 3>();
+    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
+    U *mc_ptr = dst.mc_vas[dev_id] + index;
+
+    const int row_stride = dst[dev_id].template stride<axis>();
+    using U2 = base_types::packing<U>::packed_type;
+    int warp_laneid = threadIdx.x % WARP_THREADS;
+    const int row_offset = src.rows*warpid();
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        int row = row_offset + i*src.tile_size_row + (warp_laneid / 4);
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + 2*(warp_laneid % 4);
+            *(U2*)(&mc_ptr[(row+0)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            *(U2*)(&mc_ptr[(row+0)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+        }
+        #pragma unroll
+        for(int j = 0; j < src.width; j++) {
+            int col = j*src.tile_size_col + 2*(warp_laneid % 4);
+            *(U2*)(&mc_ptr[(row+8)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            *(U2*)(&mc_ptr[(row+8)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+        }
+    }
+}
+
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
+    broadcast<2>(dst, src, dev_id, idx);
+}
