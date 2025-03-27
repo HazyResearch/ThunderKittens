@@ -39,6 +39,9 @@ template<typename T> concept all = requires {
 } // namespace pgl
 } // namespace ducks
 
+// INIT_MC: whether to initialize the multicast handle inside the constructor
+//         if false, the user must manually initialize the multicast handle
+//         in order to use collective operations
 template<kittens::ducks::gl::all GL, int NUM_DEVICES = 8, bool INIT_MC = true>
 struct pgl {
     using identifier = ducks::pgl::identifier;
@@ -46,27 +49,35 @@ struct pgl {
     using dtype = T;
 
     size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
-    size_t handle_size; // size of actual memory 
+    size_t handle_size; // size of actual memory allocated
     size_t mc_size;
 
+    GL gls[NUM_DEVICES];
     T *mc_vas[NUM_DEVICES];
     int device_ids[NUM_DEVICES];
-
-    // A hack to avoid calling the gl default constructor
-    alignas(GL) char _gls[NUM_DEVICES][sizeof(GL)];
 
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     size_t nelem;                           // number of elements per device
 
-    __host__ __device__ GL &gls(int idx) { return *reinterpret_cast<GL*>(&_gls[idx]); } 
-    __host__ __device__ GL &operator[](int idx) { return gls(idx); } 
+    __host__ __device__ GL &operator[](int idx) { return gls[idx]; } 
 
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
                         T **_data,         // an array of NUM_DEVS pointers
                         ducks::gl::make_arg_t<GL::__b__> _batch,
                         ducks::gl::make_arg_t<GL::__d__> _depth,
                         ducks::gl::make_arg_t<GL::__r__> _rows,
-                        ducks::gl::make_arg_t<GL::__c__> _cols) {
+                        ducks::gl::make_arg_t<GL::__c__> _cols) : 
+        pgl(std::make_index_sequence<NUM_DEVICES>{}, _device_ids, _data, _batch, _depth, _rows, _cols) { }
+
+    template<size_t... I>
+    __host__ inline pgl(std::index_sequence<I...>,
+                        int *_device_ids,  // an array of NUM_DEVS device IDs
+                        T **_data,         // an array of NUM_DEVS pointers
+                        ducks::gl::make_arg_t<GL::__b__> _batch,
+                        ducks::gl::make_arg_t<GL::__d__> _depth,
+                        ducks::gl::make_arg_t<GL::__r__> _rows,
+                        ducks::gl::make_arg_t<GL::__c__> _cols) : 
+            gls{GL(_data[I], _batch, _depth, _rows, _cols)...} {
         if constexpr (NUM_DEVICES <= 1) {
             std::cerr << "SKILL ISSUE: No point in using pgl with a single device." << std::endl;
             std::exit(EXIT_FAILURE);
@@ -75,16 +86,10 @@ struct pgl {
         nelem = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
                 std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
         size = nelem * sizeof(T);
-
-        CUmemAllocationProp mem_prop{};
-        size_t mem_granularity;
-        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
-        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
     
         for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
-            new (&_gls[i]) GL(_data[i], _batch, _depth, _rows, _cols);
         }
 
         if (INIT_MC) {
@@ -96,24 +101,29 @@ struct pgl {
     }
 
     // Device code should be able to call this, but not actually do anything
-    #ifdef __CUDA_ARCH__
-    __device__ ~pgl() { }
-    #else
-    __host__ ~pgl() {
-        // Host-only logic
-        for (int i = 0; i < NUM_DEVICES; i++) {
-            CUDACHECK(cudaSetDevice(device_ids[i]));
-            if (mc_handle) {
-                CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
-                CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
-                CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
-            }
-        }
-    }
-    #endif
+    // #ifdef __CUDA_ARCH__
+    // __device__ ~pgl() { }
+    // #else
+    // __host__ ~pgl() {
+    //     // Host-only logic
+    //     for (int i = 0; i < NUM_DEVICES; i++) {
+    //         CUDACHECK(cudaSetDevice(device_ids[i]));
+    //         if (mc_handle) {
+    //             CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
+    //             CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
+    //             CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
+    //         }
+    //     }
+    // }
+    // #endif
 
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
+
+        CUmemAllocationProp mem_prop{};
+        size_t mem_granularity;
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
     
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
@@ -136,7 +146,7 @@ struct pgl {
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             // Bind the physical memory (malloc'ed by user) to the multicast handle
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls(i).raw_ptr, handle_size, 0));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, handle_size, 0));
 
             CUCHECK(cuMemAddressReserve((CUdeviceptr *)&mc_vas[i], mc_size, mc_granularity, 0, 0));
             CUCHECK(cuMemMap((CUdeviceptr)mc_vas[i], mc_size, 0, mc_handle, 0));
