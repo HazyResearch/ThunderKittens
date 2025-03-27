@@ -298,6 +298,38 @@ struct test_multimem_reduce_vec {
     }
 };
 
+template<typename T>
+struct test_multimem_packed_packed_scalar {
+    using dtype = T;
+    using packed_dtype = std::conditional_t<std::is_same_v<T, kittens::half>, kittens::half_2,
+                         std::conditional_t<std::is_same_v<T, kittens::bf16>, kittens::bf16_2,
+                         std::conditional_t<std::is_same_v<T, float>, float2, void>>>;
+    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
+    using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_reduce_vec=bf16,op=ADD" :
+                                                      std::is_same_v<T, kittens::half> ? "multimem_reduce_vec=half,op=ADD" :
+                                                                                         "multimem_reduce_vec=float,op=ADD";
+    static inline const int test_size = 2; // currently tk only supports x2 packed types (very easy to extend in the future though)
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+            }
+        }
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                    o_ref[other_dev_idx][i] += i_ref[dev_idx][i];
+                }
+            }
+        }
+    }
+    __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
+        kittens::multimem_reduce_op<packed_dtype, kittens::ReduceOp::ADD>::apply((packed_dtype *)output.mc_vas[dev_idx], (packed_dtype *)input[dev_idx].raw_ptr);
+    }
+};
+
 void warp::memory::util::reduce::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/util/reduce tests! -----\n" << std::endl;
     constexpr int NUM_DEVICES = 8;
@@ -321,6 +353,10 @@ void warp::memory::util::reduce::tests(test_data &results) {
     multimem_test_wrapper<test_multimem_reduce_vec<float>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_reduce_vec<kittens::bf16>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_reduce_vec<kittens::half>, NUM_DEVICES>::run(results);
+
+    multimem_test_wrapper<test_multimem_packed_packed_scalar<float>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_packed_packed_scalar<kittens::bf16>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_packed_packed_scalar<kittens::half>, NUM_DEVICES>::run(results);
 }
 
 #endif
