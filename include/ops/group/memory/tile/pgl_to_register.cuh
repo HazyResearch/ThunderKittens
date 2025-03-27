@@ -47,14 +47,29 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     }
 }
 
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
+    ld_reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
+}
+
 template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
+    ld_reduce_op<axis, ReduceOp::MIN>(dst, src, dev_id, idx);
+}
+
 template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MIN>(dst, src, dev_id, idx);
+}
+
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
+    ld_reduce_op<axis, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
 template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
