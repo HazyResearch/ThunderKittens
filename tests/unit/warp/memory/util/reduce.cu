@@ -1,3 +1,6 @@
+/*
+    Basic check on all the wrapper functions around multimem red/ld_reduce operation
+*/
 #include "reduce.cuh"
 #include <algorithm>
 
@@ -6,14 +9,14 @@
 extern int should_write_outputs;
 
 template<typename Ker, typename T>
-static __global__ void global_wrapper(T *input, T *output) {
-    Ker::device_func(input, output);
+static __global__ void global_wrapper(const __grid_constant__ int dev_idx, const __grid_constant__ T input, const __grid_constant__ T output) {
+    Ker::device_func(dev_idx, input, output);
 }
 
 template<typename test, int NUM_DEVICES>
 struct multimem_test_wrapper {
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
-    using PGL = kittens::pgl_manager<kittens::gl<dtype, 1, 1, 1, -1>, true>;
+    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     template<typename T, initializers initializer=initializers::RANDOM, int SEED=42>
     static void initialize(PGL **d_i, PGL **d_o, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         using namespace kittens;
@@ -62,14 +65,14 @@ struct multimem_test_wrapper {
 
             cudaSetDevice(dev_idx);
             CUmemGenericAllocationHandle dev_handle; // no need to keep track of this in the tests
-            pglCudaMalloc<dtype, true>(NUM_DEVICES, device_ids, dev_idx, &d_i_raw[dev_idx], &dev_handle, input_size * sizeof(T));
-            pglCudaMalloc<dtype, true>(NUM_DEVICES, device_ids, dev_idx, &d_o_raw[dev_idx], &dev_handle, output_size * sizeof(T));
+            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_raw[dev_idx], &dev_handle, input_size * sizeof(T));
+            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_raw[dev_idx], &dev_handle, output_size * sizeof(T));
             cudaMemcpy(d_i_raw[dev_idx], i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
             CudaCheckError();
         }
 
-        *d_i = new PGL(device_ids, NUM_DEVICES, d_i_raw, nullptr, nullptr, nullptr, input_size);
-        *d_o = new PGL(device_ids, NUM_DEVICES, d_o_raw, nullptr, nullptr, nullptr, output_size);
+        *d_i = new PGL(device_ids, d_i_raw, nullptr, nullptr, nullptr, input_size);
+        *d_o = new PGL(device_ids, d_o_raw, nullptr, nullptr, nullptr, output_size);
     }
     static test_result validate(PGL *d_i, PGL *d_o, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=5e-2) { // default eps has to be fairly high due to lots of different types
         using namespace kittens;
@@ -85,7 +88,7 @@ struct multimem_test_wrapper {
         for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
             cudaDeviceSynchronize();
             CudaCheckError();
-            cudaMemcpy(o_t, d_o->tensors[dev_idx].raw_ptr, output_size * sizeof(dtype), cudaMemcpyDeviceToHost);
+            cudaMemcpy(o_t, d_o->gls[dev_idx].raw_ptr, output_size * sizeof(dtype), cudaMemcpyDeviceToHost);
             CudaCheckError();
 
             for(int idx = 0; idx < output_size; idx++) {
@@ -154,6 +157,8 @@ struct multimem_test_wrapper {
             outfile.close();
         }
 
+        pglFree(*d_i);
+        pglFree(*d_o);
         free(d_i);
         free(d_o);
         delete[] o_t, o;
@@ -180,11 +185,11 @@ struct multimem_test_wrapper {
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
                 cudaSetDevice(dev_idx);
                 cudaFuncSetAttribute(
-                    global_wrapper<test, dtype>,
+                    global_wrapper<test, PGL>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                global_wrapper<test, dtype><<<1, 1>>>(d_i->raw_multi_ptr[dev_idx], d_o->tensors[dev_idx].raw_ptr);
+                global_wrapper<test, PGL><<<1, 1>>>(dev_idx, *d_i, *d_o);
                 cudaDeviceSynchronize();
                 CudaCheckError();
             }
@@ -201,6 +206,7 @@ struct multimem_test_wrapper {
 template<typename T, kittens::ReduceOp op>
 struct test_multimem_ld_reduce_vec {
     using dtype = T;
+    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     static inline const std::string op_identifier = op == kittens::ReduceOp::ADD ? "ADD" : op == kittens::ReduceOp::MIN ? "MIN" : "MAX";
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_ld_reduce_vec=bf16,op=" + op_identifier :
@@ -223,8 +229,36 @@ struct test_multimem_ld_reduce_vec {
             }
         }
     }
-    __device__ static void device_func(T *input, T *output) {
-        kittens::multimem_ld_reduce_op<T, op>::apply_vec((float4 *)output, input);
+    __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
+        kittens::multimem_ld_reduce_op<T, op>::apply_vec((float4 *)output[dev_idx].raw_ptr, input.mc_vas[dev_idx]);
+    }
+};
+
+template<typename T>
+struct test_multimem_reduce_vec {
+    using dtype = T;
+    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
+    using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_reduce_vec=bf16,op=ADD" :
+                                                      std::is_same_v<T, kittens::half> ? "multimem_reduce_vec=half,op=ADD" :
+                                                                                         "multimem_reduce_vec=float,op=ADD";
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+            }
+        }
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                    o_ref[other_dev_idx][i] += i_ref[dev_idx][i];
+                }
+            }
+        }
+    }
+    __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
+        kittens::multimem_reduce_op<T, kittens::ReduceOp::ADD>::apply_vec(output.mc_vas[dev_idx], input[dev_idx].raw_ptr);
     }
 };
 
@@ -239,6 +273,10 @@ void warp::memory::util::reduce::tests(test_data &results) {
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
     multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
+
+    multimem_test_wrapper<test_multimem_reduce_vec<float>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_reduce_vec<kittens::bf16>, NUM_DEVICES>::run(results);
+    multimem_test_wrapper<test_multimem_reduce_vec<kittens::half>, NUM_DEVICES>::run(results);
 }
 
 #endif
