@@ -10,10 +10,10 @@
 
 namespace kittens {
 
-template <int axis, ReduceOp OP, ducks::rt::row_layout RT, typename PGL_OBJ, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void ld_reduce_op(RT &dst, PGL_OBJ src, int dev_id, const COORD &idx) {
+template <int axis, ReduceOp OP, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
-    using U = typename PGL_OBJ::dtype;
+    using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
 
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
@@ -60,18 +60,18 @@ __device__ static inline void ld_reduce_op(RT &dst, PGL_OBJ src, int dev_id, con
     }
 }
 
-template <ducks::rt::all RT, typename PGL_OBJ, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void all_reduce_add(RT &src, PGL_OBJ p_o, int dev_id, const COORD &idx) {
+template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void all_reduce_add(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::ADD>(src, p_o, dev_id, idx);
 }
 
-template <ducks::rt::all RT, typename PGL_OBJ, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void all_reduce_min(RT &src, PGL_OBJ p_o, int dev_id, const COORD &idx) {
+template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void all_reduce_min(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MIN>(src, p_o, dev_id, idx);
 }
 
-template <ducks::rt::all RT, typename PGL_OBJ, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void all_reduce_max(RT &src, PGL_OBJ p_o, int dev_id, const COORD &idx) {
+template <ducks::rt::all RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
+__device__ static inline void all_reduce_max(RT &src, const PGL &p_o, int dev_id, const COORD &idx) {
     ld_reduce_op<2, ReduceOp::MAX>(src, p_o, dev_id, idx);
 }
 

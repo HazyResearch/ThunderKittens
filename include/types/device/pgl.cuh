@@ -61,6 +61,9 @@ struct pgl {
     __host__ __device__ GL &gls(int idx) { return *reinterpret_cast<GL*>(&_gls[idx]); } 
     __host__ __device__ GL &operator[](int idx) { return gls(idx); } 
 
+    __host__ __device__ const GL &gls(int idx) const { return *reinterpret_cast<const GL*>(&_gls[idx]); }
+    __host__ __device__ const GL &operator[](int idx) const { return gls(idx); }
+
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
                         T **_data,         // an array of NUM_DEVS pointers
                         ducks::gl::make_arg_t<GL::__b__> _batch,
@@ -96,21 +99,21 @@ struct pgl {
     }
 
     // Device code should be able to call this, but not actually do anything
-    #ifdef __CUDA_ARCH__
-    __device__ ~pgl() { }
-    #else
-    __host__ ~pgl() {
-        // Host-only logic
-        for (int i = 0; i < NUM_DEVICES; i++) {
-            CUDACHECK(cudaSetDevice(device_ids[i]));
-            if (mc_handle) {
-                CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
-                CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
-                CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
-            }
-        }
-    }
-    #endif
+    // #ifdef __CUDA_ARCH__
+    // __device__ ~pgl() { }
+    // #else
+    // __host__ ~pgl() {
+    //     // Host-only logic
+    //     for (int i = 0; i < NUM_DEVICES; i++) {
+    //         CUDACHECK(cudaSetDevice(device_ids[i]));
+    //         if (mc_handle) {
+    //             CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
+    //             CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
+    //             CUCHECK(cuMulticastUnbind(mc_handle, device_ids[i], 0, handle_size));
+    //         }
+    //     }
+    // }
+    // #endif
 
     __host__ inline void multicast_init() {
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
@@ -162,7 +165,7 @@ struct pgl {
     }
 };
 
-template <typename T, bool ROUND_UP = false>
+template <bool ROUND_UP = false, typename T>
 __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
 
