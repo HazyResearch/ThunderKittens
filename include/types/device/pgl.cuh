@@ -59,10 +59,7 @@ struct pgl {
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     size_t nelem;                           // number of elements per device
 
-    __host__ __device__ GL &operator[](int idx) { return gls[idx]; } 
-
-    __host__ __device__ const GL &gls(int idx) const { return *reinterpret_cast<const GL*>(&_gls[idx]); }
-    __host__ __device__ const GL &operator[](int idx) const { return gls(idx); }
+    __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; } 
 
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
                         T **_data,         // an array of NUM_DEVS pointers
