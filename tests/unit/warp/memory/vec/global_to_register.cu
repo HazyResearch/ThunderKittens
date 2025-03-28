@@ -18,8 +18,8 @@ struct reg_vec_load_store {
     }
     template<int S, int NW, kittens::ducks::gl::all GL, kittens::ducks::rv_layout::all L> __device__ static void device_func(const GL &input, const GL &output) {
         kittens::rv_bf<16*S, L> reg_vec;
-        kittens::load(reg_vec, input, {});
-        kittens::store(output, reg_vec, {});
+        kittens::warp::load(reg_vec, input, {});
+        kittens::warp::store(output, reg_vec, {});
     }
 };
 

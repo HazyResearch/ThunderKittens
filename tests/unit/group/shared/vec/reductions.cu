@@ -39,12 +39,12 @@ struct vec_norm {
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &vec    = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
         kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &absvec = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
-        kittens::load(vec, input, {});
+        kittens::warp::load(vec, input, {});
         kittens::abs(absvec, vec);
         dtype f = kittens::base_types::constants<dtype>::one();
         kittens::sum(f, absvec, f);
         kittens::div(vec, vec, f);
-        kittens::store(output, vec, {});
+        kittens::warp::store(output, vec, {});
     }
 };
 

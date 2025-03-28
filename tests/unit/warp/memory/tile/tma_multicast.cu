@@ -40,7 +40,7 @@ struct test_load_multicast { // load with TMA, write out normally
         }
 
         kittens::wait(smem_semaphore, 0);
-        kittens::store(output, shared_tile, {0, 0, rank, 0});
+        kittens::warp::store(output, shared_tile, {0, 0, rank, 0});
         kittens::everyone::tma::cluster::sync();
     }
 };

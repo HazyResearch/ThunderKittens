@@ -13,9 +13,9 @@ struct vec_add1 {
     template<int S, int NW, gl_t GL, kittens::ducks::rv_layout::all L>
     __device__ static void device_func(const GL &input, const GL &output) {
         kittens::rv_fl<16*S, L> vec;
-        kittens::load(vec, input, {});
+        kittens::warp::load(vec, input, {});
         kittens::add(vec, vec, 1.f);
-        kittens::store(output, vec, {});
+        kittens::warp::store(output, vec, {});
     }
 };
 

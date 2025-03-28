@@ -36,7 +36,7 @@ __device__ static inline void reduce(typename SV::dtype &dst_accum, const SV &sr
         dst_accum = packed_shfl_sync(kittens::MASK_ALL, accum, 0); // everyone takes from warp leader
     }
     else {
-        ::kittens::warp::reduce<op, SV, reset>(dst_accum, src, src_accum);
+        ::kittens::group<1>::reduce<op, SV, reset>(dst_accum, src, src_accum);
     }
 }
 

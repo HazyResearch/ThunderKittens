@@ -73,13 +73,17 @@ __device__ inline static void load(RT &dst, const ST &src) {
                 // handle the row-major layout for 32-bit types
                 int row = (local_warpid*warp_height + i)*dst.tile_size_row + (warp_laneid / 4);
                 int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
+                if constexpr (ST::rows != ST::underlying_rows || ST::cols != ST::underlying_cols) { // subtile case
+                    row += src.row_offset;
+                    col += src.col_offset;
+                }
                 int blit = sizeof(typename ST::dtype) * ((warp_laneid%4) / 2);
                 U2 tmp[4];
                 static constexpr int swizzle_repeat = ST::swizzle_bytes * 8;
                 static constexpr int subtile_cols   = ST::swizzle_bytes / sizeof(U);
                 const int outer_idx = col/subtile_cols;
-                const uint32_t addr_1 = shared_addr + sizeof(U)*(outer_idx*ST::rows*subtile_cols + (row+0)*subtile_cols + col%subtile_cols);
-                const uint32_t addr_2 = shared_addr + sizeof(U)*(outer_idx*ST::rows*subtile_cols + (row+8)*subtile_cols + col%subtile_cols);
+                const uint32_t addr_1 = shared_addr + sizeof(U)*(outer_idx*ST::underlying_rows*subtile_cols + (row+0)*subtile_cols + col%subtile_cols);
+                const uint32_t addr_2 = shared_addr + sizeof(U)*(outer_idx*ST::underlying_rows*subtile_cols + (row+8)*subtile_cols + col%subtile_cols);
                 const int swizzle_1 = blit ^ ((addr_1 % swizzle_repeat) >> 7) << 4;
                 const int swizzle_2 = blit ^ ((addr_2 % swizzle_repeat) >> 7) << 4;
                 move<U>::lds(tmp[0].x, (addr_1+ 0)^swizzle_1);
@@ -218,6 +222,10 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 // handle the row-major layout for 32-bit types
                 int row = (local_warpid*warp_height + i)*src.tile_size_row + (warp_laneid / 4);
                 int col = j*src.tile_size_col + 2*(warp_laneid % 4);
+                if constexpr (ST::rows != ST::underlying_rows || ST::cols != ST::underlying_cols) { // subtile case
+                    row += dst.row_offset;
+                    col += dst.col_offset;
+                }
                 int blit = sizeof(typename ST::dtype) * ((warp_laneid%4) / 2);
                 T2 reg_tmp[4];
                 if(blit) {
@@ -240,8 +248,8 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 static constexpr int swizzle_repeat = ST::swizzle_bytes * 8;
                 static constexpr int subtile_cols   = ST::swizzle_bytes / sizeof(U);
                 const int outer_idx = col/subtile_cols;
-                const uint32_t addr_1 = shared_addr + sizeof(U)*(outer_idx*ST::rows*subtile_cols + (row+0)*subtile_cols + col%subtile_cols);
-                const uint32_t addr_2 = shared_addr + sizeof(U)*(outer_idx*ST::rows*subtile_cols + (row+8)*subtile_cols + col%subtile_cols);
+                const uint32_t addr_1 = shared_addr + sizeof(U)*(outer_idx*ST::underlying_rows*subtile_cols + (row+0)*subtile_cols + col%subtile_cols);
+                const uint32_t addr_2 = shared_addr + sizeof(U)*(outer_idx*ST::underlying_rows*subtile_cols + (row+8)*subtile_cols + col%subtile_cols);
                 const int swizzle_1 = blit ^ ((addr_1 % swizzle_repeat) >> 7) << 4;
                 const int swizzle_2 = blit ^ ((addr_2 % swizzle_repeat) >> 7) << 4;
                 move<U>::sts((addr_1+ 0)^swizzle_1, tmp[0].x);

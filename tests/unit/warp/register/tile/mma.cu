@@ -22,11 +22,11 @@ struct test_mma_AB {
         kittens::rt_bf<16*H, 16*K> a;
         kittens::rt_bf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
         kittens::rt_fl<16*H, 16*W> c;
-        kittens::load(a, a_input, {});
-        kittens::load(b, b_input, {});
+        kittens::warp::load(a, a_input, {});
+        kittens::warp::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AB(c, a, b, c);
-        kittens::store(c_output, c, {});
+        kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*W>;
@@ -52,11 +52,11 @@ struct test_mma_ABt {
         kittens::rt_bf<16*H, 16*K> a;
         kittens::rt_bf<16*W, 16*K> b;
         kittens::rt_fl<16*H, 16*W> c;
-        kittens::load(a, a_input, {});
-        kittens::load(b, b_input, {});
+        kittens::warp::load(a, a_input, {});
+        kittens::warp::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_ABt(c, a, b, c);
-        kittens::store(c_output, c, {});
+        kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
@@ -82,11 +82,11 @@ struct test_mma_AtB {
         kittens::rt_bf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
         kittens::rt_bf<16*K, 16*W, kittens::ducks::rt_layout::col> b;
         kittens::rt_fl<16*H, 16*W> c;
-        kittens::load(a, a_input, {});
-        kittens::load(b, b_input, {});
+        kittens::warp::load(a, a_input, {});
+        kittens::warp::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AtB(c, a, b, c);
-        kittens::store(c_output, c, {});
+        kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*W>;
@@ -112,11 +112,11 @@ struct test_mma_AtBt {
         kittens::rt_bf<16*K, 16*H, kittens::ducks::rt_layout::col> a;
         kittens::rt_bf<16*W, 16*K> b;
         kittens::rt_fl<16*H, 16*W> c;
-        kittens::load(a, a_input, {});
-        kittens::load(b, b_input, {});
+        kittens::warp::load(a, a_input, {});
+        kittens::warp::load(b, b_input, {});
         kittens::zero(c);
         kittens::mma_AtBt(c, a, b, c);
-        kittens::store(c_output, c, {});
+        kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*W, 16*K::value>;
@@ -159,15 +159,15 @@ struct test_mma_ABt_fp8 {
         kittens::rt<float, 16*W, 16*K> b_fl;
         kittens::rt<float, 16*H, 16*W> c;
 
-        kittens::load(a_st, a_input, {});
-        kittens::load(b_st, b_input, {});
-        kittens::load(a_fl, a_st);
-        kittens::load(b_fl, b_st);
+        kittens::warp::load(a_st, a_input, {});
+        kittens::warp::load(b_st, b_input, {});
+        kittens::warp::load(a_fl, a_st);
+        kittens::warp::load(b_fl, b_st);
         kittens::copy(a, a_fl);
         kittens::copy(b, b_fl);
         kittens::zero(c);
         kittens::mma_ABt(c, a, b, c);
-        kittens::store(c_output, c, {});
+        kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<float, 1, 1, 16*H, 16*K::value>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<float, 1, 1, 16*W, 16*K::value>;

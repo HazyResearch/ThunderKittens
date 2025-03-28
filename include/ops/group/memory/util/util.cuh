@@ -8,6 +8,11 @@ template<int N=0> __device__ static inline void load_async_wait(int bar_id) { //
     asm volatile("cp.async.wait_group %0;\n" : : "n"(N) : "memory");
     sync(bar_id);
 }
+template<int N=0> __device__ static inline void load_async_wait() { // for completing (non-TMA) async loads
+    KITTENS_CHECK_WARP
+    asm volatile("cp.async.wait_group %0;\n" : : "n"(N) : "memory");
+    __syncwarp();
+}
 
 __device__ static inline void arrive(barrier<GROUP_WARPS> bar) {
     asm volatile("bar.arrive %0, %1;\n" :: "r"(bar.barrier_id), "n"(GROUP_WARPS*WARP_THREADS) : "memory");

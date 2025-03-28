@@ -48,20 +48,20 @@ struct test_subtile {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::st<dtype, 16*H, 16*W> &t = al.allocate<kittens::st<dtype, 16*H, 16*W>>();
-        kittens::load(t, input, {});
+        kittens::warp::load(t, input, {});
         __syncwarp();
         for(int i = 0; i < H/ST_H; i++) {
             for(int j = 0; j < W/ST_W; j++) {
                 auto ref = t.template subtile<16*ST_H, 16*ST_W>({i, j});
                 kittens::rt_fl<16*ST_H, 16*ST_W> reg;
-                kittens::load(reg, ref);
+                kittens::warp::load(reg, ref);
                 kittens::mul(reg, reg, float(i));
                 kittens::add(reg, reg, float(j));
-                kittens::store(ref, reg);
+                kittens::warp::store(ref, reg);
             }
         }
         __syncwarp();
-        kittens::store(output, t, {});
+        kittens::warp::store(output, t, {});
     }
 };
 

@@ -26,14 +26,14 @@ struct sharedreg_load_store {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         kittens::st<T, 16*H, 16*W> &shared_tile = al.allocate<kittens::st<T, 16*H, 16*W>>();
-        kittens::load(shared_tile, input, {0, 0, 0, 0});
+        kittens::warp::load(shared_tile, input, {0, 0, 0, 0});
         __syncthreads();
         kittens::rt<T, 16*H, 16*W, RL> reg_tile;
-        kittens::load(reg_tile, shared_tile);
+        kittens::warp::load(reg_tile, shared_tile);
         __syncthreads();
-        kittens::store(shared_tile, reg_tile);
+        kittens::warp::store(shared_tile, reg_tile);
         __syncthreads();
-        kittens::store(output, shared_tile, {0, 0, 0, 0});
+        kittens::warp::store(output, shared_tile, {0, 0, 0, 0});
     }
 };
 

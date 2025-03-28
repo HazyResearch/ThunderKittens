@@ -92,8 +92,8 @@ struct st_load_store {
             for(int j = 0; j < num_depths; j++)
                 for(int k = 0; k < num_rows; k++)
                     for(int l = 0; l < (input.cols()/shared_tile.cols); l++) {
-            kittens::load <axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile,  input, {i, j, k, l});
-            kittens::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
+            kittens::warp::load <axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile,  input, {i, j, k, l});
+            kittens::warp::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
         }
     }
 };
@@ -130,9 +130,9 @@ struct st_load_store_async {
             for(int j = 0; j < num_depths; j++)
                 for(int k = 0; k < num_rows; k++)
                     for(int l = 0; l < (input.cols()/shared_tile.cols); l++) {
-            kittens::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l});
-            kittens::load_async_wait();
-            kittens::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
+            kittens::warp::load_async<axis::value, false, ST, GL, kittens::coord<ST>>(shared_tile, input, {i, j, k, l});
+            kittens::warp::load_async_wait();
+            kittens::warp::store<axis::value, false, ST, GL, kittens::coord<ST>>(output, shared_tile, {i, j, k, l});
         }
     }
 };

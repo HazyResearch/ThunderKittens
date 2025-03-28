@@ -10,9 +10,9 @@ struct test_exp {
     }
     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> __device__ static void device_func(const kittens::bf16 *input, kittens::bf16 *output) {
         kittens::rt_bf<H, W, L> reg_tile;
-        kittens::load(reg_tile, input, W*16);
+        kittens::warp::load(reg_tile, input, W*16);
         kittens::exp(reg_tile, reg_tile);
-        kittens::store(output, reg_tile, W*16);
+        kittens::warp::store(output, reg_tile, W*16);
     }
 };
 

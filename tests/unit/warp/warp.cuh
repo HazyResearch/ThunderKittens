@@ -6,7 +6,6 @@
 
 #include "memory/memory.cuh"
 #include "register/register.cuh"
-#include "shared/shared.cuh"
 
 namespace warp {
 

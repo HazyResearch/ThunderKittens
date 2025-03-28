@@ -34,7 +34,7 @@ struct test_load { // load with TMA, write out normally
             }
             kittens::wait(smem_semaphore, (a*input.depth()+b)%2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::store(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::store(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }
@@ -65,7 +65,7 @@ struct test_load_oob { // load oob memory via TMA
         for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) {
             kittens::rt<T, 16*H, 16*W> reg_tile;
             kittens::one(reg_tile);
-            kittens::store(shared_tile[i][j], reg_tile);
+            kittens::warp::store(shared_tile[i][j], reg_tile);
         }
         __syncthreads(); 
         
@@ -79,7 +79,7 @@ struct test_load_oob { // load oob memory via TMA
             }
             kittens::wait(smem_semaphore, (a*input.depth()+b)%2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::store(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::store(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }
@@ -110,7 +110,7 @@ struct test_store { // load normally, store with TMA
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::warp::tma::store_async_read_wait<3>(); // make sure next tile is ready for write
-                kittens::load(shared_tile[i][j], input, {a, b, i, j});
+                kittens::warp::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -149,7 +149,7 @@ struct test_store_add_reduce {
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
-                kittens::load(shared_tile[i][j], input, {a, b, i, j});
+                kittens::warp::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -188,7 +188,7 @@ struct test_store_min_reduce {
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
-                kittens::load(shared_tile[i][j], input, {a, b, i, j});
+                kittens::warp::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -227,7 +227,7 @@ struct test_store_max_reduce {
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
                 kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
-                kittens::load(shared_tile[i][j], input, {a, b, i, j});
+                kittens::warp::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {

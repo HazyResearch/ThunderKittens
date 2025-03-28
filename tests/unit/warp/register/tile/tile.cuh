@@ -6,14 +6,14 @@
 
 #include "maps.cuh"
 #include "reductions.cuh"
-#include "mma.cuh"
+// #include "mma.cuh" // Need to move to group scope tests
 #include "conversions.cuh"
 
 #ifdef TEST_WARP_REGISTER_TILE_COMPLEX
 
 #include "complex/complex_maps.cuh"
 #include "complex/complex_mul.cuh"
-#include "complex/complex_mma.cuh"
+// #include "complex/complex_mma.cuh" // Need to move to group scope tests
 #include "complex/complex_conversions.cuh"
 #endif
 

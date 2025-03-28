@@ -22,13 +22,13 @@ struct vec_load_store {
         kittens::shared_allocator al((int*)&__shm[0]); 
         kittens::sv<dtype, 16*S> &shared_vec = al.allocate<kittens::sv<dtype, 16*S>>();
         kittens::rv_fl<16*S, L> reg_vec;
-        kittens::load(shared_vec, input, {});
+        kittens::warp::load(shared_vec, input, {});
         __syncthreads();
-        kittens::load(reg_vec, shared_vec);
+        kittens::warp::load(reg_vec, shared_vec);
         kittens::add(reg_vec, reg_vec, float(1.)); // TODO: CHANGE HOST TOO
-        kittens::store(shared_vec, reg_vec);
+        kittens::warp::store(shared_vec, reg_vec);
         __syncthreads();
-        kittens::store(output, shared_vec, {});
+        kittens::warp::store(output, shared_vec, {});
     }
 };
 

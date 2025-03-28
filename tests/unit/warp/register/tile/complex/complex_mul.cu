@@ -32,9 +32,9 @@ struct test_mul {
     template<int H, int W, int NW, typename CGL> __device__ static void device_func(const CGL &input, const CGL &output) {
         kittens::crt_bf<16*H, 16*W> a;
         kittens::crt_bf<16*H, 16*W> c;
-        kittens::load(a, input, {});
+        kittens::warp::load(a, input, {});
         kittens::mul(c, a, a);
-        kittens::store(output, c, {});
+        kittens::warp::store(output, c, {});
     }
 };
 

@@ -20,7 +20,7 @@ NVCCFLAGS+= -DTEST_INTENSITY=2
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY
 # Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
-NVCCFLAGS+= -DTEST_ALL_GROUP_SHARED
+NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
 # NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
 
 ifeq ($(COMP_LEVEL),fast)

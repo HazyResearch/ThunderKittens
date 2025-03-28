@@ -14,9 +14,9 @@ struct vec_copy_convert {
     __device__ static void device_func(const GL &input, const GL &output) {
         kittens::rv_bf<16*S, L1> vec1;
         kittens::rv_bf<16*S, L2> vec2;
-        kittens::load(vec1, input, {});
+        kittens::warp::load(vec1, input, {});
         kittens::copy(vec2, vec1);
-        kittens::store(output, vec2, {});
+        kittens::warp::store(output, vec2, {});
     }
 };
 

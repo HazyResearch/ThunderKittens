@@ -45,7 +45,7 @@ struct test_mma_ABt_fp32_fp8 {
 
         kittens::copy(c_out_reg, c);  // we don't have direct global to register right now
         kittens::warpgroup::store(c_out_st, c_out_reg);
-        kittens::store(c_output, c_out_st, {});
+        kittens::warp::store(c_output, c_out_st, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<dtype, 1, 1, 16*H, 16*K::value>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<dtype, 1, 1, 16*W, 16*K::value>;
@@ -85,8 +85,8 @@ struct reg_test_mma_ABt_fp32_fp8 {
         kittens::rt_fl<H*4, 16*W> c;
         kittens::rt<dtype, 16, 16*W> c_out;
 
-        kittens::load(a, a_input, {}); // we don't have direct global to register right now
-        kittens::load(b, b_input, {});
+        kittens::warp::load(a, a_input, {}); // we don't have direct global to register right now
+        kittens::warp::load(b, b_input, {});
         kittens::warpgroup::load(a_reg, a);
         kittens::warpgroup::mma_fence(c);
         kittens::warpgroup::mm_ABt(c, a_reg, b);
@@ -95,7 +95,7 @@ struct reg_test_mma_ABt_fp32_fp8 {
 
         kittens::copy(c_out, c); // we don't have direct global to register right now
         kittens::warpgroup::store(c_out_st, c_out);
-        kittens::store(c_output, c_out_st, {});
+        kittens::warp::store(c_output, c_out_st, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<dtype, 1, 1, 16*H, 16*K::value>;
     template<int H, int W, typename K> using make_b_layout = typename kittens::gl<dtype, 1, 1, 16*W, 16*K::value>;
