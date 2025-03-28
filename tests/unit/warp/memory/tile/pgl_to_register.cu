@@ -63,7 +63,6 @@ struct p2r_test_wrapper_2d {
 template<typename T, kittens::ReduceOp op>
 struct p2r_all_reduce_test {
     using dtype = T;
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using _valid_type = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     template<int H, int W, int NW> using _valid_dims = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
     template<int H, int W, int NW> using valid = std::bool_constant<_valid_type::value && _valid_dims<H, W, NW>::value>;
