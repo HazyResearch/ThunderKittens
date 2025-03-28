@@ -80,7 +80,7 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__d__> _depth,
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
-            gls{GL(_data[I], _batch, _depth, _rows, _cols)...} {
+            gls{GL(_data[I], _batch, _depth, _rows, _cols)...}, mc_handle(0), mc_vas{} {
         if constexpr (NUM_DEVICES <= 1) {
             std::cerr << "SKILL ISSUE: No point in using pgl with a single device." << std::endl;
             std::exit(EXIT_FAILURE);
@@ -96,16 +96,22 @@ struct pgl {
         }
 
         if (INIT_MC) {
-            multicast_init();
-        } else {
-            mc_handle = 0;
-            for (int i = 0; i < NUM_DEVICES; i++) mc_vas[i] = nullptr;
+            multicast_init(); // should be called only once
+            multicast_bind();
         }
     }
 
+    // This should be only called once in the lifetime of the pgl object
+    // There is a constraint on mc objects, which is apparently around 130 for 8 H100s on NVSwitch platform
+    // NVIDIA does not document this and does not provide any driver APIs to clean resources during process runtime
     __host__ inline void multicast_init() {
+        if (mc_handle) {
+            std::cerr << "Multicast handle already initialized." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
-    
+
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
         mc_size = detail::init_mc_prop(&mc_prop, NUM_DEVICES, size);
@@ -120,20 +126,19 @@ struct pgl {
             CUCHECK(cuMulticastAddDevice(mc_handle, dev)); // must be done before any bindig
         }
 
-        size_t mc_granularity = 0;
-        cuMulticastGetGranularity(&mc_granularity, &mc_prop, MC_GRAN_TYPE);
-
+        // Get granularities
         CUmemAllocationProp mem_prop{};
         size_t mem_granularity;
         CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
+        size_t mc_granularity;
+        cuMulticastGetGranularity(&mc_granularity, &mc_prop, MC_GRAN_TYPE);
+
+        // Set handle size (this is needed because mc has larger granularity and we cannot bind larger than actual allocated size)
         handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
-        // Attach MC handle to physical memory & map to virtual memory on each device
+        // Map virtual addresses to the mc handle. All devices must be added before any address can be mapped per CUDA docs
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
-            // Bind the physical memory (malloc'ed by user) to the multicast handle
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, handle_size, 0));
-
             CUCHECK(cuMemAddressReserve((CUdeviceptr *)&mc_vas[i], mc_size, mc_granularity, 0, 0));
             CUCHECK(cuMemMap((CUdeviceptr)mc_vas[i], mc_size, 0, mc_handle, 0));
 
@@ -141,6 +146,58 @@ struct pgl {
             CUmemAccessDesc desc = detail::create_mem_desc(device_ids[i]);
             CUCHECK(cuMemSetAccess((CUdeviceptr)mc_vas[i], mc_size, &desc, 1));
         }
+    }
+
+    // This can be called multiple times to share the pgl objects across different kernels. 
+    // However, size && participating devices CANNOT be changed
+    // If you are calling this manually after constructor call, you should:
+    //   1. Allocate device memory with pglCudaMalloc
+    //   2. Create GL objects with the above device memory
+    //   3. Set the GLs in this PGL object
+    //   4. Call multicast_unbind() to unbind the old GLs
+    //   5. Call multicast_bind() to bind the new GLs
+    // If you call this multiple times without changing the GLs or unbinding the old bindings, runtime error will occur
+    __host__ inline void multicast_bind() {
+        if (!mc_handle) {
+            std::cerr << "Multicast handle is uninitialized or destroyed." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
+        // Bind the underlying GLs (with memory alloc'ed by pglCudaMalloc) to the multicast handle
+        for (int i = 0; i < NUM_DEVICES; ++i) {
+            CUDACHECK(cudaSetDevice(device_ids[i]));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, handle_size, 0));
+        }
+    }
+
+    __host__ inline void multicast_unbind() {
+        if (!mc_handle) {
+            std::cerr << "Multicast handle is uninitialized or destroyed." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
+        // Unbind the underlying GLs from the multicast handle
+        for (int i = 0; i < NUM_DEVICES; ++i) {
+            int dev;
+            cuDeviceGet(&dev, device_ids[i]);
+            CUCHECK(cuMulticastUnbind(mc_handle, dev, 0, handle_size));
+        }
+    }
+
+    // Don't call this if you are reusing this pgl
+    // Call multicast_unbind() first to unbind the old bindings
+    // This only frees the v address space; CUDA does not provide a way to completely free the multicast handle
+    __host__ inline void multicast_destroy() {
+        if (!mc_handle) return; // already destroyed
+
+        for (int i = 0; i < num_devices; ++i) {
+            CUDACHECK(cudaSetDevice(device_ids[i]));
+            CUCHECK(cuMemUnmap((CUdeviceptr)mc_vas[i], mc_size));
+            CUCHECK(cuMemAddressFree((CUdeviceptr)mc_vas[i], mc_size));
+            mc_vas[i] = nullptr;
+        }
+
+        mc_handle = 0;
     }
 
     __host__ inline void multicast_check(int device_id) {
@@ -217,23 +274,11 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, size_t size) {
     CUCHECK(cuMemRelease(mem_handle));
 }
 
-// This should be called to free the MC object within an PGL object
-// Call this BEFORE calling pglCudaFree on underlying 
+// This should be called only once per pgl object
 template<kittens::ducks::pgl::all PGL>
 __host__ inline void pglFree(PGL &pgl_obj) {
-    if (pgl_obj.mc_handle) {
-        for (int i = 0; i < pgl_obj.num_devices; ++i) {
-            CUDACHECK(cudaSetDevice(pgl_obj.device_ids[i]));
-            CUCHECK(cuMemUnmap((CUdeviceptr)pgl_obj.mc_vas[i], pgl_obj.mc_size));
-            CUCHECK(cuMemAddressFree((CUdeviceptr)pgl_obj.mc_vas[i], pgl_obj.mc_size));
-
-            int dev;
-            cuDeviceGet(&dev, pgl_obj.device_ids[i]);
-            CUCHECK(cuMulticastUnbind(pgl_obj.mc_handle, dev, 0, pgl_obj.handle_size));
-            pgl_obj.mc_vas[i] = nullptr;
-        }
-        pgl_obj.mc_handle = 0;
-    }
+    pgl_obj.multicast_unbind(); // unbind the old bindings
+    pgl_obj.multicast_destroy(); // free the address space
 }
 
 } // namespace kittens
