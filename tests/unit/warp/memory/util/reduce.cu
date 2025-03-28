@@ -218,11 +218,11 @@ struct test_multimem_ld_reduce_vec {
             for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
                 o_ref[dev_idx][i] = 0;
                 for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
-                    if (op == kittens::ReduceOp::ADD) {
+                    if constexpr (op == kittens::ReduceOp::ADD) {
                         o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
-                    } else if (op == kittens::ReduceOp::MIN) {
+                    } else if constexpr (op == kittens::ReduceOp::MIN) {
                         o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-                    } else if (op == kittens::ReduceOp::MAX) {
+                    } else if constexpr (op == kittens::ReduceOp::MAX) {
                         o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
                     }
                 }
@@ -253,11 +253,11 @@ struct test_multimem_ld_reduce_packed_scalar {
             for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
                 o_ref[dev_idx][i] = 0;
                 for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
-                    if (op == kittens::ReduceOp::ADD) {
+                    if constexpr (op == kittens::ReduceOp::ADD) {
                         o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
-                    } else if (op == kittens::ReduceOp::MIN) {
+                    } else if constexpr (op == kittens::ReduceOp::MIN) {
                         o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-                    } else if (op == kittens::ReduceOp::MAX) {
+                    } else if constexpr (op == kittens::ReduceOp::MAX) {
                         o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
                     }
                 }
