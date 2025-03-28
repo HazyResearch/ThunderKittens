@@ -50,9 +50,9 @@ __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_id, 
     }
 }
 
-template <int axis, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<axis, false, ReduceOp::ADD>(dst, src, dev_id, idx);
+    ld_reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
@@ -60,9 +60,9 @@ __device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_id
     ld_reduce_op<2, false, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template <int axis, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<axis, false, ReduceOp::MIN>(dst, src, dev_id, idx);
+    ld_reduce_op<axis, assume_aligned, ReduceOp::MIN>(dst, src, dev_id, idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
@@ -70,9 +70,9 @@ __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id
     ld_reduce_op<2, false, ReduceOp::MIN>(dst, src, dev_id, idx);
 }
 
-template <int axis, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<axis, false, ReduceOp::MAX>(dst, src, dev_id, idx);
+    ld_reduce_op<axis, assume_aligned, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
@@ -126,8 +126,8 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
 }
 
 template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void broadcast(const PGL &p_o, const ST &src, int dev_id, const COORD &idx) {
-    broadcast<2, false>(p_o, src, dev_id, idx);
+__device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
+    broadcast<2, false>(dst, src, dev_id, idx);
 }
 
 } // namespace kittens
