@@ -13,6 +13,9 @@ void warp::memory::tile::tests(test_data &results) {
 #ifdef TEST_WARP_MEMORY_TILE_PGL_TO_REGISTER
     warp::memory::tile::pgl_to_register::tests(results);
 #endif
+#ifdef TEST_WARP_MEMORY_TILE_PGL_TO_SHARED
+    warp::memory::tile::pgl_to_shared::tests(results);
+#endif
 #ifdef TEST_WARP_MEMORY_TILE_SHARED_TO_REGISTER
     warp::memory::tile::shared_to_register::tests(results);
 #endif
