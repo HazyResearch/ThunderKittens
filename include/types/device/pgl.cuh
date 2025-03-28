@@ -45,6 +45,7 @@ template<typename T> concept all = requires {
 template<kittens::ducks::gl::all GL, int NUM_DEVICES = 8, bool INIT_MC = true>
 struct pgl {
     using identifier = ducks::pgl::identifier;
+    using _GL = GL;
     using T = GL::dtype;
     using dtype = T;
 
