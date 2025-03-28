@@ -1,12 +1,5 @@
-/*
-    Idea is from this article: https://discuss.pytorch.org/t/distributed-w-torchtitan-introducing-async-tensor-parallelism-in-pytorch/209487
-    Implementation is by Stuart Sul
-*/
-
 #include "kittens.cuh"
 #include "prototype.cuh"
-
-constexpr int NUM_DEVICES = 8;
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -98,7 +91,7 @@ struct matmul_template {
 };
 
 
-// constexpr bool NCU = false;
+constexpr bool NCU = false;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
@@ -118,23 +111,14 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
 }
 
 template<typename mmt>
-void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block, cudaStream_t stream) {
+void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using global_layout = typename mmt::layout::global_layout;
     using globals  = typename mmt::layout::globals;
     global_layout Ag{d_A, nullptr, nullptr, M, K};
     global_layout Bg{d_B, nullptr, nullptr, K, N};
     global_layout Cg{d_C, nullptr, nullptr, M, N};
     globals G{Ag, Bg, Cg};
-    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024, stream>>>(G);
-}
-
-__global__ void print_bfloat16(__nv_bfloat16* data, int dev_idx) {
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 &&
-        blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-        printf("Dev %d: ", dev_idx);
-        for (int i = 0; i < 10; ++i) printf("%f ", __bfloat162float(data[i])); 
-        printf("\n");
-    }
+    prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
 }
 
 template<typename mmt>
@@ -164,11 +148,25 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
-    // NOTE: in order for the check to pass, it should be ITER = 1 without warmups
-    bool check = false;
-    if(check) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
 
     std::cout << "Performed CPU matrix multiplication" << std::endl;
+
+    // Allocate device memory
+    __nv_bfloat16 *d_A, *d_B, *d_C;
+    cudaMalloc(&d_A, M*K*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_B, K*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16));
+
+    // Check for CUDA errors
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
+        // Optionally, you might want to exit the program or handle the error in some way
+        return -1;
+    }
+
+    std::cout << "Allocated device memory" << std::endl;
 
     // Convert to __nv_bfloat16 and copy to device
     __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
@@ -176,128 +174,32 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
     for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
 
-    // Allocate device memory
-    int M_sh = M / NUM_DEVICES, N_sh = N / NUM_DEVICES;
-    __nv_bfloat16 *d_A[NUM_DEVICES * 2], *d_B[NUM_DEVICES], *d_C[NUM_DEVICES];
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        cudaMalloc(&d_A[dev_idx * 2], M_sh*K*sizeof(__nv_bfloat16)); // row-wise sharding; used to alternate comm & comp
-        cudaMalloc(&d_A[dev_idx * 2 + 1], M_sh*K*sizeof(__nv_bfloat16)); // row-wise sharding
-        cudaMalloc(&d_B[dev_idx], K*N_sh*sizeof(__nv_bfloat16)); // column-wise sharding
-        cudaMalloc(&d_C[dev_idx], M*N_sh*sizeof(__nv_bfloat16)); // A is asynchronously all-gathered, so column-wise sharding only
-
-        // Check for CUDA errors
-        cudaStatus = cudaGetLastError();
-        if (cudaStatus != cudaSuccess) {
-            std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
-            // Optionally, you might want to exit the program or handle the error in some way
-            return -1;
-        }
-    }
-
-    std::cout << "Allocated device memory" << std::endl;
-
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        cudaMemcpy(d_A[dev_idx * 2], &h_A_bf16[dev_idx * M_sh * K], M_sh*K*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice);
-        for (int i = 0; i < K; ++i) { // must memcpy per row as it's not contiguous
-            cudaMemcpy(d_B[dev_idx] + i * N_sh, &h_B_bf16[i*N + dev_idx*N_sh], N_sh*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice);
-        }
-    }
-    // for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-    //     cudaSetDevice(dev_idx);
-    //     print_bfloat16<<<1, 1, 0>>>(d_A[dev_idx][0], dev_idx);
-    //     cudaDeviceSynchronize();
-    // }
-    // for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-    //     cudaSetDevice(dev_idx);
-    //     print_bfloat16<<<1, 1, 0>>>(d_B[dev_idx], dev_idx);
-    //     cudaDeviceSynchronize();
-    // }
+    cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
 
     std::cout << "Copied matrices to device" << std::endl;
 
-    // Set up kernel - smem
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
-    }
-
-    // Set up kernel - streams
-    cudaStream_t streams[NUM_DEVICES * 2];
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        cudaStreamCreate(&streams[dev_idx * 2]);
-        cudaStreamCreate(&streams[dev_idx * 2 + 1]);
-    }
-
-    // Set up kernel - threadpool
-    int device_ids[NUM_DEVICES];
-    for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
-    KittensClub club(device_ids, NUM_DEVICES);
-
-    // Set up kerenl - P2P access (todo: only access to next device needed)
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        for (int peer_dev_idx = 0; peer_dev_idx < NUM_DEVICES; ++peer_dev_idx) {
-            if (peer_dev_idx == dev_idx) continue;
-            int can_access_peer;
-            cudaDeviceCanAccessPeer(&can_access_peer, dev_idx, peer_dev_idx);
-            if (can_access_peer) cudaDeviceEnablePeerAccess(peer_dev_idx, 0);
-            else {
-                std::cerr << "Device " << dev_idx << " cannot access device " << peer_dev_idx << std::endl;
-                return -1;
-            }
-        }
-    }
+    cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     // Launch kernel
-    dim3 grid(mmt::grid(M_sh, N_sh, K));
+    dim3 grid(mmt::grid(M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    // Skip warmup for now
+    for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
+        inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
+    }
 
     // Start timing
+    cudaDeviceSynchronize();
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     auto start = std::chrono::high_resolution_clock::now();
 
-    constexpr int ITERS = 10;
-    cudaSetDevice(0);
-    inner_run<mmt>(d_A[0], d_B[0], d_C[0], M_sh, N_sh, K, grid, block, streams[0]);
-    return 0; 
-    // for(int i = 0; i < ITERS; i++) {
-        for (int step = 0; step < NUM_DEVICES; ++step) {
-            club.execute([&](int dev_idx) {
-                int comp_idx = step % 2;
-                int comm_idx = (step + 1) % 2;
-                int shard_idx = (dev_idx + step) % NUM_DEVICES;
-                int peer_idx = (dev_idx + 1) % NUM_DEVICES;
-                // if (dev_idx == 7) { // debug code
-                //     printf("Step %d\n", step);
-                //     print_bfloat16<<<1, 1, 0>>>(d_A[dev_idx][comp_idx], dev_idx);
-                //     cudaDeviceSynchronize();
-                //     print_bfloat16<<<1, 1, 0>>>(d_A[dev_idx][comm_idx], dev_idx);
-                //     cudaDeviceSynchronize();
-                //     print_bfloat16<<<1, 1, 0>>>(d_B[dev_idx], dev_idx);
-                //     cudaDeviceSynchronize();
-                // }
-                inner_run<mmt>(  d_A[dev_idx][comp_idx],
-                                 d_B[dev_idx],
-                                 d_C[dev_idx] + shard_idx * M_sh * N_sh,
-                                 M_sh, N_sh, K, grid, block, 
-                                 streams[dev_idx][comp_idx]   );
-                if (step < NUM_DEVICES - 1)
-                    cudaMemcpyAsync( d_A[dev_idx][comm_idx], 
-                                     d_A[peer_idx][comp_idx], 
-                                     M_sh*K*sizeof(__nv_bfloat16), cudaMemcpyDeviceToDevice, 
-                                     streams[dev_idx][comm_idx]   );
-                cudaDeviceSynchronize();
-            });
-
-            return 1;
-        }
-    // }
+    constexpr int ITERS = (NCU ? 1 : 10);
+    for(int i = 0; i < ITERS; i++) {
+        inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
+    }
+    cudaDeviceSynchronize();
 
     // End timing
     auto end = std::chrono::high_resolution_clock::now();
@@ -323,22 +225,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        for (int i = 0; i < M; ++i) { // must memcpy per row as it's not contiguous
-            cudaMemcpy(&h_C_bf16[i * N + dev_idx * N_sh], d_C[dev_idx] + i * N_sh, N_sh*sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost);
-        }
-    }
-    // for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-    //     cudaSetDevice(dev_idx);
-    //     print_bfloat16<<<1, 1, 0>>>(d_C[dev_idx] + 2000 * N_sh, dev_idx);
-    //     cudaDeviceSynchronize();
-    // }
-    // for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-    //     printf("Dev %d: ", dev_idx);
-    //     for (int i = 0; i < 10; ++i) printf("%f ", h_C_ref[2000 * N + dev_idx * N_sh + i]);
-    //     printf("\n");
-    // }
+    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
@@ -348,23 +235,20 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Converted result back to float" << std::endl;
 
     // Check result
-    // NOTE: in order for the check to pass, it should be ITER = 1 without warmups
-    if (check) {
-        float max_error = 0.0f;
-        int error_count = 0;
-        for (int i = 0; i < M * N; ++i) {
-            float error = std::abs(h_C[i] - h_C_ref[i]);
-            if(error > 1.0) { // large because of bf16 vs fp32 numerics
-                if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-                else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
-                error_count++;
-            }
-            max_error = std::max(max_error, error);
+    float max_error = 0.0f;
+    int error_count = 0;
+    for (int i = 0; i < M * N; ++i) {
+        float error = std::abs(h_C[i] - h_C_ref[i]);
+        if(error > 1.0) { // large because of bf16 vs fp32 numerics
+            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+            else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
+            error_count++;
         }
-
-        std::cout << "Max error: " << max_error << std::endl;
-        std::cout << "Error count: " << error_count << std::endl;
+        max_error = std::max(max_error, error);
     }
+
+    std::cout << "Max error: " << max_error << std::endl;
+    std::cout << "Error count: " << error_count << std::endl;
 
     // Clean up
     delete[] h_A;
@@ -374,15 +258,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_A_bf16;
     delete[] h_B_bf16;
     delete[] h_C_bf16;
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaSetDevice(dev_idx);
-        cudaFree(d_A[dev_idx * 2]);
-        cudaFree(d_A[dev_idx * 2 + 1]);
-        cudaFree(d_B[dev_idx]);
-        cudaFree(d_C[dev_idx]);
-        cudaStreamDestroy(streams[dev_idx * 2]);
-        cudaStreamDestroy(streams[dev_idx * 2 + 1]);
-    }
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
 
     return 0;
 }
@@ -393,7 +271,8 @@ int main() {
     // run_benchmark<matmul_template<4>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     // run_benchmark<matmul_template<8>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
-    int N = 8124;
+    int N;
+    N = 4096;
     run_benchmark<matmul_template<2,4,8>>(N, N, N);
     // N = 3072;
     // run_benchmark<matmul_template<2,4,8>>(N, N, N);
