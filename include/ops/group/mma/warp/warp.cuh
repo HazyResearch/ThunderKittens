@@ -3,13 +3,6 @@
  * @brief Matrix multiply-accumulate operations for tiles stored in registers.
  */
 
-#pragma once
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-namespace kittens {
-
 /**
  * @brief Perform the HMMA.16816 operation.
  *
@@ -431,6 +424,7 @@ __device__ static inline void mma_AB(D &d,
                                const A &a,
                                const B &b,
                                const C &c) {
+    KITTENS_CHECK_WARP
     static_assert(D::rows == A::rows && D::cols == B::cols); // Check D matches A, B
     static_assert(A::cols == B::rows); // Check reduction dim is same
     static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C
@@ -492,6 +486,7 @@ __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b, // notice row and (M, K) instead of col and (K, M)
                                 const C &c) {
+    KITTENS_CHECK_WARP
     static_assert(D::rows == A::rows && D::cols == B::rows); // Check D matches A, B
     static_assert(A::cols == B::cols); // Check reduction dim is same
     static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C
@@ -553,6 +548,7 @@ __device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b,
                                 const C &c) {
+    KITTENS_CHECK_WARP
     static_assert(D::rows == A::cols && D::cols == B::cols); // Check D matches A, B
     static_assert(A::rows == B::rows); // Check reduction dim is same
     static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C
@@ -614,6 +610,7 @@ __device__ static inline void mma_AtBt(D &d,
                                  const A &a,
                                  const B &b,
                                  const C &c) {
+    KITTENS_CHECK_WARP
     static_assert(D::rows == A::cols && D::cols == B::rows); // Check D matches A, B
     static_assert(A::rows == B::cols); // Check reduction dim is same
     static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C
@@ -662,6 +659,7 @@ __device__ static inline void mma(D &d,
                                   const A &a,
                                   const B &b,
                                   const C &c) {
+    KITTENS_CHECK_WARP
     if constexpr(trans_A == transpose::T) {
         if constexpr(trans_B == transpose::T) {
             mma_AtBt(d, a, b, c);
@@ -680,6 +678,7 @@ template<int trans_A, int trans_B, ducks::rt::all A, ducks::rt::all B, ducks::rt
 __device__ static inline C mma(const A &a,
                                const B &b,
                                const C &c) {
+    KITTENS_CHECK_WARP
     C d;
     if constexpr(trans_A == transpose::T) {
         if constexpr(trans_B == transpose::T) {
@@ -697,4 +696,83 @@ __device__ static inline C mma(const A &a,
     return d;
 }
 
+
+//  --------------------------------------------------------------------------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+//  -------------------------------------------------- COMPLEX INPUTS --------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+//  --------------------------------------------------------------------------------------------------------------------
+
+
+
+/**
+ * @brief Matrix multiply-accumulate operation for complex tiles
+ *
+ * This function calls mma_AB with hf arguments
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_cmplx_hf<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_cmplx_hf<N, K, row_layout> matrix.
+ * @param[in] b The second input rt_cmplx_hf<K, M, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_cmplx_hf<N, M, row_layout> accumulator matrix.
+ */
+template<int N, int K, int M>
+__device__ static inline void mma_AB(crt_hf<N, M, ducks::rt_layout::row> &d,
+                               const crt_hf<N, K, ducks::rt_layout::row> &a,
+                               const crt_hf<K, M, ducks::rt_layout::col> &b,
+                               const crt_hf<N, M, ducks::rt_layout::row> &c) {
+    KITTENS_CHECK_WARP
+    
+    // Copy data from input accumulate register into output
+    copy(d.real, c.real);
+    copy(d.imag, c.imag);
+
+    // Negative on B matrix so we can use single accum register
+    rt_hf<N, K, ducks::rt_layout::row> tmp;
+    // Hex value for -1 in float16
+    constexpr half factor = std::bit_cast<__half>(uint16_t(0xFB80));
+    mul(tmp, a.imag, factor);
+    mma_AB(d.real, a.real, b.real, d.real);
+    mma_AB(d.real, tmp, b.imag, d.real);
+
+    mma_AB(d.imag, a.real, b.imag, d.imag);
+    mma_AB(d.imag, a.imag, b.real, d.imag);
+}
+/**
+ * @brief Matrix multiply-accumulate operation for complex tiles
+ *
+ * This function calls mma_AB with bf16 arguments
+ *
+ * @tparam N The number of row tiles.
+ * @tparam K The number of column tiles for the A matrix and row tiles for the B matrix.
+ * @tparam M The number of column tiles for the B matrix.
+ * @param[out] d The output rt_cmplx_fl<N, M, row_layout> accumulator.
+ * @param[in] a The first input rt_cmplx_bf<N, K, row_layout> matrix.
+ * @param[in] b The second input rt_cmplx_bf<K, M, col_layout> matrix in column-major mode.
+ * @param[in] c The input rt_cmplx_fl<N, M, row_layout> accumulator matrix.
+ */
+
+template<int N, int K, int M>
+__device__ static inline void mma_AB(crt_fl<N, M, ducks::rt_layout::row> &d,
+                               const crt_bf<N, K, ducks::rt_layout::row> &a,
+                               const crt_bf<K, M, ducks::rt_layout::col> &b,
+                               const crt_fl<N, M, ducks::rt_layout::row> &c) {
+    KITTENS_CHECK_WARP
+    
+    // Copy data from input accumulate register into output
+    copy(d.real, c.real);
+    copy(d.imag, c.imag);
+
+    // Negative on B matrix so we can use single accum register
+    kittens::rt_bf<N, K, ducks::rt_layout::row> tmp;
+    // Hex value for -1 in bf16
+    constexpr bf16 factor = std::bit_cast<__nv_bfloat16>(uint16_t(0xBF80));
+    mul(tmp, a.imag, factor);
+    mma_AB(d.real, a.real, b.real, d.real);
+    mma_AB(d.real, tmp, b.imag, d.real);
+
+    mma_AB(d.imag, a.real, b.imag, d.imag);
+    mma_AB(d.imag, a.imag, b.real, d.imag);
 }

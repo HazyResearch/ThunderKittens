@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
+#include "../../../../../common/common.cuh"
+#include "../../../../../types/types.cuh"
 
 namespace kittens {
+namespace detail {
 namespace wgmma {
 
 // templated wrapper for PTX
@@ -42,4 +43,5 @@ struct base {
 #include "64x256.impl"
 
 } // namespace wgmma
+} // namespace detail
 } // namespace kittens

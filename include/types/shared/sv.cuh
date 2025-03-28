@@ -28,6 +28,17 @@ namespace sv {
  * If a type quacks like ducks::sv::identifier, it will be treated as an sv by compiler checks.
  */
 struct identifier {};
+/**
+* @brief Concept for all shared vectors.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as sv::identifier.
+*/
+template<typename T>
+concept all = requires {
+    typename T::identifier; // Checks if T::identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::sv::identifier
 }
 }
 
@@ -78,26 +89,6 @@ struct KITTENS_DEFAULT_ALIGN sv {
         }
     }
 };
-
-/* ----------  CONCEPTS  ---------- */
-
-namespace ducks {
-namespace sv {
-/**
-* @brief Concept for all shared vectors.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as sv::identifier.
-*/
-template<typename T>
-concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::sv::identifier
-
-} // namespace sv
-} // namespace ducks
-
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 

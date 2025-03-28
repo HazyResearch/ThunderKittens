@@ -27,6 +27,16 @@ namespace st {
  * This is particularly useful for subtiles.
  */
 struct identifier {};
+/**
+* @brief Concept for all shared tiles.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as st::identifier.
+*/
+template<typename T> concept all = requires {
+    typename T::identifier; // Checks if T::identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::st::identifier
 }
 } // namespace ducks
 
@@ -123,12 +133,12 @@ struct KITTENS_DEFAULT_ALIGN st {
         return data[idx];
     }
 
+    template<int subtile_rows, int subtile_cols>
+    __device__ inline st_subtile<st<T, rows, cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
     using row_vec = sv<dtype, cols>; ///< Row vector type for this tile
-    template<int subtile_rows, int subtile_cols> using subtile = st_subtile<
-        st<T, rows, cols>, subtile_rows, subtile_cols
-    >; ///< A templated subtile type wrapper for this tile.
 };
 
 
@@ -228,25 +238,49 @@ struct st_subtile {
     }
 };
 
-/* ----------  CONCEPTS  ---------- */
 
-namespace ducks {
-namespace st {
+template <typename _T, int _rows, int _cols> // Class template parameters
+template <int subtile_rows, int subtile_cols> // Function template parameters
+__device__ inline // Function specifiers
+st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
+st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parameters
+{
+    // Type aliases for convenience within the function body
+    using ST_t = st<_T, _rows, _cols>; // Alias for the parent tile type
+    using dtype = typename ST_t::dtype;  // Alias for the data type
 
-/**
-* @brief Concept for all shared tiles.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as st::identifier.
-*/
-template<typename T> concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::st::identifier
+    // Static assertions (as provided in the initial request)
+    static_assert(subtile_rows > 0 && subtile_cols > 0, "Subtile dimensions must be positive.");
+    static_assert(subtile_rows % kittens::TILE_ROW_DIM<dtype> == 0,
+        "Subtile rows must be divisible by the base tile row dimension.");
+    static_assert(subtile_cols % kittens::TILE_COL_DIM<dtype> == 0,
+        "Subtile cols must be divisible by the base tile col dimension.");
 
-} // namespace st
-} // namespace ducks
+    // Calculate height/width in terms of base tiles for further checks
+    constexpr int subtile_height = subtile_rows / kittens::TILE_ROW_DIM<dtype>;
+    constexpr int subtile_width = subtile_cols / kittens::TILE_COL_DIM<dtype>;
+    static_assert(subtile_height > 0 && subtile_width > 0, "Subtile height/width in base tiles must be positive.");
 
+    // Check divisibility of parent height/width by subtile height/width
+    static_assert(ST_t::height % subtile_height == 0,
+        "Parent tile height (in base tiles) must be divisible by subtile height (in base tiles).");
+    static_assert(ST_t::width % subtile_width == 0,
+        "Parent tile width (in base tiles) must be divisible by subtile width (in base tiles).");
+
+    // Ensure the parent st object is not itself a subtile view by comparing its
+    // dimensions to its underlying dimensions.
+    static_assert(ST_t::height == ST_t::underlying_height && ST_t::width == ST_t::underlying_width,
+        "Cannot create a subtile from an object that appears to be a subtile view (height/width mismatch underlying).");
+    // Also check rows/cols directly for robustness, though height/width check might suffice.
+    static_assert(ST_t::rows == ST_t::underlying_rows && ST_t::cols == ST_t::underlying_cols,
+        "Cannot create a subtile from an object that appears to be a subtile view (rows/cols mismatch underlying).");
+
+
+    // Construct and return the st_subtile object using its constructor:
+    // st_subtile(ST &src, int2 rowcol)
+    // Here, 'src' is the current 'st' object (*this)
+    return st_subtile<ST_t, subtile_rows, subtile_cols>(*this, rowcol);
+}
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 

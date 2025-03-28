@@ -9,9 +9,8 @@
 #include "../../../types/types.cuh"
 
 namespace kittens {
-
 namespace detail {
-
+namespace tcgen05 {
 // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#instruction-descriptor
 template<typename D, typename AB, int M, int N, bool trans_a, bool trans_b, bool neg=false>
 __device__ static inline uint32_t instruction_descriptor() {
@@ -239,10 +238,10 @@ template<int ncta=1> __device__ static inline void commit(kittens::semaphore &se
     }
 }
 
-}
+} // namespace tcgen05
+} // namespace detail
 
 template<typename T_AB> constexpr int reduction_dimension = sizeof(T_AB) == 2 ? 16 : sizeof(T_AB) == 4 ? 8 : 32; // haven't added fp4 yet.
-
 // RS matmul equivalent
 template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::tt::all A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
@@ -276,30 +275,27 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
         "Currently unsupported type combination for matrix multiply."
     );
-    uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
+    uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
-    if(laneid() == 0) {
-        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-        detail::template tt_st<T_AB, acc, ncta>(
+    detail::tcgen05::template tt_st<T_AB, acc, ncta>(
+        d.addr,
+        a.template chunk_addr<trans_a>(0),
+        b_desc.chunk_descriptor(0),
+        idesc
+    );
+    #pragma unroll
+    for(int i = 1; i < K/red_dim; i++) {
+        detail::tcgen05::template tt_st<T_AB, 1, ncta>(
             d.addr,
-            a.template chunk_addr<trans_a>(0),
-            b_desc.chunk_descriptor(0),
+            a.template chunk_addr<trans_a>(i),
+            b_desc.chunk_descriptor(i),
             idesc
         );
-        #pragma unroll
-        for(int i = 1; i < K/red_dim; i++) {
-            detail::template tt_st<T_AB, 1, ncta>(
-                d.addr,
-                a.template chunk_addr<trans_a>(i),
-                b_desc.chunk_descriptor(i),
-                idesc
-            );
-        }
-        detail::commit<ncta>(sem);
     }
-    __syncwarp();
+    detail::tcgen05::commit<ncta>(sem);
 }
 // SS matmul equivalent
 template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
@@ -334,31 +330,28 @@ __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) 
         (std::is_same_v<T_D, float> && !std::is_same_v<T_AB, fp8e5m2>),
         "Currently unsupported type combination for matrix multiply."
     );
-    uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
+    uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
-    if(laneid() == 0) {
-        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        
-        detail::template st_st<T_AB, acc, ncta>(
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    
+    detail::tcgen05::template st_st<T_AB, acc, ncta>(
+        d.addr,
+        a_desc.chunk_descriptor(0),
+        b_desc.chunk_descriptor(0),
+        idesc
+    );
+    #pragma unroll
+    for(int i = 1; i < K/red_dim; i++) {
+        detail::tcgen05::template st_st<T_AB, 1, ncta>(
             d.addr,
-            a_desc.chunk_descriptor(0),
-            b_desc.chunk_descriptor(0),
+            a_desc.chunk_descriptor(i),
+            b_desc.chunk_descriptor(i),
             idesc
         );
-        #pragma unroll
-        for(int i = 1; i < K/red_dim; i++) {
-            detail::template st_st<T_AB, 1, ncta>(
-                d.addr,
-                a_desc.chunk_descriptor(i),
-                b_desc.chunk_descriptor(i),
-                idesc
-            );
-        }
-        detail::commit<ncta>(sem);
     }
-    __syncwarp();
+    detail::tcgen05::commit<ncta>(sem);
 }
 template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, int acc=1>
 __device__ static inline void mma2(D &d, const A &a, const B &b, semaphore &sem) {

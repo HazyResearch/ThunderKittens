@@ -11,12 +11,13 @@
 #include "../../types/types.cuh"
 #include "../warp/warp.cuh" // several group memory ops rely on underlying warp-scope ops
 
+#define KITTENS_CHECK_WARP static_assert(GROUP_WARPS==1, "Warp (GROUP_WARPS=1) function called from a non-warp group.");
 // A "warpgroup" is a special group of 4 consecutive warps defined by NVIDIA for certain SM_90+ operations.
-#define KITTENS_CHECK_WARPGROUP static_assert(GROUP_WARPS==4, "PTX warpgroup (GROUP_WARPS=4) function called from a non-warpgroup group.");
+#define KITTENS_CHECK_WARPGROUP static_assert(GROUP_WARPS==4, "Warpgroup (GROUP_WARPS=4) function called from a non-warpgroup group.");
 
 // WGMMA relies on some template structures that cannot be specialized within the group struct, so we declare them in advance.
 #ifdef KITTENS_HOPPER
-#include "wgmma/base/base.cuh"
+#include "mma/warpgroup/base/base.cuh"
 #endif
 
 namespace kittens {
@@ -43,7 +44,7 @@ __device__ static inline void arrive(int id) {
 #include "register/register.cuh"
 
 #ifdef KITTENS_HOPPER
-#include "wgmma/wgmma.cuh"
+#include "mma/mma.cuh"
 
 template<int n_reg> __device__ static inline void increase_registers() {
     static_assert(GROUP_WARPS % 4 == 0, "GROUP_WARPS must be a multiple of 4");

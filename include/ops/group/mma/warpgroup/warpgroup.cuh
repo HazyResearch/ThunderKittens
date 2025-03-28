@@ -160,7 +160,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b); // apologies for this hack -- it either calls ST constructor or copy constructor.
 
     if constexpr (fence) { mma_fence(d); }
@@ -215,7 +215,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b);
 
@@ -277,7 +277,7 @@ __device__ static inline void mma_ABt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
     if constexpr (fence) { mma_fence(d); }
@@ -343,7 +343,7 @@ __device__ static inline void mma_ABt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
@@ -410,7 +410,7 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc(b);
 
@@ -473,7 +473,7 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc(b);
 
@@ -570,7 +570,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_imag(b.imag);
 
@@ -663,7 +663,7 @@ __device__ static inline void mma_AB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_real(a.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_imag(a.imag);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
@@ -760,7 +760,7 @@ __device__ static inline void mma_ABt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 0, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_imag(b.imag);
 
@@ -864,7 +864,7 @@ __device__ static inline void mma_ABt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 0, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_real(a.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 0> a_desc_imag(a.imag);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);
@@ -966,7 +966,7 @@ __device__ static inline void mma_AtB(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_COL_DIM<T_AB>*N, 1, 1>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_real(a.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_imag(a.imag);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 1> b_desc_real(b.real);
@@ -1064,7 +1064,7 @@ __device__ static inline void mma_AtBt(D &d,
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
-    using base = kittens::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
+    using base = kittens::detail::wgmma::base<T_D, T_AB, TILE_ROW_DIM<T_AB>*N, 1, 0>;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_real(a.real);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, 1> a_desc_imag(a.imag);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, 0> b_desc_real(b.real);

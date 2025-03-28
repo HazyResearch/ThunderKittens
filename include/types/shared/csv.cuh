@@ -18,6 +18,18 @@ namespace csv {
  * If a type quacks like ducks::st::cmplx_identifier, it will be treated as an st_cmplx by compiler checks.
  */
 struct identifier {};
+/**
+* @brief Concept for shared vectors that are complex.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T is a shared tile.
+* - T has a complex tile identifier.
+*/
+template <typename T> concept all = requires {
+    typename T::identifier;
+} && std::is_same_v<typename T::identifier, identifier> && ducks::sv::all<typename T::component>;
+
 } // namespace st
 } // namespace ducks
 
@@ -51,26 +63,6 @@ struct csv {
     component real;
     component imag;
 };
-
-/* ----------  CONCEPTS  ---------- */
-
-namespace ducks {
-namespace csv {
-
-/**
-* @brief Concept for shared vectors that are complex.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T is a shared tile.
-* - T has a complex tile identifier.
-*/
-template <typename T> concept all = requires {
-    typename T::identifier;
-} && std::is_same_v<typename T::identifier, identifier> && ducks::sv::all<typename T::component>;
-
-} // namespace st
-} // namespace ducks
 
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */

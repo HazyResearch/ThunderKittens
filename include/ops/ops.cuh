@@ -5,5 +5,5 @@
 
 #pragma once
 
-#include "warp/warp.cuh"
+#include "thread/thread.cuh"
 #include "group/group.cuh"
