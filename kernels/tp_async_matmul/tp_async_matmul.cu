@@ -9,7 +9,7 @@
 constexpr int NUM_DEVICES = 8;
 
 using namespace kittens;
-using namespace kittens::prototype;
+using namespace kittens::prototype; 
 using namespace kittens::prototype::lcf;
 template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
