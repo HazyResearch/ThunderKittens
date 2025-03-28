@@ -170,6 +170,60 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
     cudaMemcpy(*d_i, i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
     CudaCheckError();
 }
+
+// Initializer for multi-gpu tests
+template<int NUM_DEVICES, typename T, initializers initializer=initializers::RANDOM, int SEED=42>
+static void initialize(T **d_i_arr, T **d_o_arr, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+
+    const int input_size  = i_ref[0].size();
+    const int output_size = o_ref[0].size();
+
+    int device_ids[NUM_DEVICES];
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
+
+    // Initialize matrices
+    std::vector<T> i_t(input_size);
+
+    std::mt19937 gen(SEED); // Standard mersenne_twister_engine
+    std::uniform_real_distribution<float> dis(-1.0, 1.0);
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        for(int idx = 0; idx < input_size; idx++) {
+            float f;
+            if constexpr (initializer == initializers::RANDOM) {
+                f = dis(gen);
+            }
+            else if constexpr (initializer == initializers::ARANGE) {
+                f = float(idx);
+            }
+            else {
+                f = i_ref[dev_idx][idx];
+            }
+            if constexpr (std::is_same_v<T, kittens::bf16>) {
+                i_t[idx] = __float2bfloat16(f); // fill in for transfer to device
+                i_ref[dev_idx][idx] = __bfloat162float(i_t[idx]); // ensure lossiness of fp16 is captured on cpu
+            }
+            else if constexpr (std::is_same_v<T, float>) {
+                i_t[idx] = f;
+                i_ref[dev_idx][idx] = f;
+            }
+            else if constexpr (std::is_same_v<T, kittens::half>) {
+                i_t[idx] = __float2half(f);
+                i_ref[dev_idx][idx] = __half2float(i_t[idx]);
+            }
+            else {
+                assert(false && "Unsupported data type");
+            }
+        }
+
+        cudaSetDevice(dev_idx);
+        CUmemGenericAllocationHandle dev_handle; // no need to keep track of this in the tests
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_arr[dev_idx], &dev_handle, input_size * sizeof(T));
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_arr[dev_idx], &dev_handle, output_size * sizeof(T));
+        cudaMemcpy(d_i_arr[dev_idx], i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
+        CudaCheckError();
+    }
+}
+
 extern int should_write_outputs;
 template<typename T>
 test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=5e-2) { // default eps has to be fairly high due to lots of different types

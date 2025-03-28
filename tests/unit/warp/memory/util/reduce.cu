@@ -17,63 +17,7 @@ template<typename test, int NUM_DEVICES>
 struct multimem_test_wrapper {
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
     using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
-    template<typename T, initializers initializer=initializers::RANDOM, int SEED=42>
-    static void initialize(PGL **d_i, PGL **d_o, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
-        using namespace kittens;
 
-        const int input_size  = i_ref[0].size();
-        const int output_size = o_ref[0].size();
-
-        // Initialize matrices
-        std::vector<T> i_t(input_size);
-        dtype *d_i_raw[NUM_DEVICES];
-        dtype *d_o_raw[NUM_DEVICES];
-
-        int device_ids[NUM_DEVICES];
-        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
-
-        std::mt19937 gen(SEED); // Standard mersenne_twister_engine
-        std::uniform_real_distribution<float> dis(-1.0, 1.0);
-        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-            for(int idx = 0; idx < input_size; idx++) {
-                float f;
-                if constexpr (initializer == initializers::RANDOM) {
-                    f = dis(gen);
-                }
-                else if constexpr (initializer == initializers::ARANGE) {
-                    f = float(idx);
-                }
-                else {
-                    f = i_ref[dev_idx][idx];
-                }
-                if constexpr (std::is_same_v<T, bf16>) {
-                    i_t[idx] = __float2bfloat16(f); // fill in for transfer to device
-                    i_ref[dev_idx][idx] = __bfloat162float(i_t[idx]); // ensure lossiness of fp16 is captured on cpu
-                }
-                else if constexpr (std::is_same_v<T, float>) {
-                    i_t[idx] = f;
-                    i_ref[dev_idx][idx] = f;
-                }
-                else if constexpr (std::is_same_v<T, half>) {
-                    i_t[idx] = __float2half(f);
-                    i_ref[dev_idx][idx] = __half2float(i_t[idx]);
-                }
-                else {
-                    assert(false && "Unsupported data type");
-                }
-            }
-
-            cudaSetDevice(dev_idx);
-            CUmemGenericAllocationHandle dev_handle; // no need to keep track of this in the tests
-            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_raw[dev_idx], &dev_handle, input_size * sizeof(T));
-            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_raw[dev_idx], &dev_handle, output_size * sizeof(T));
-            cudaMemcpy(d_i_raw[dev_idx], i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
-            CudaCheckError();
-        }
-
-        *d_i = new PGL(device_ids, d_i_raw, nullptr, nullptr, nullptr, input_size);
-        *d_o = new PGL(device_ids, d_o_raw, nullptr, nullptr, nullptr, output_size);
-    }
     static test_result validate(PGL *d_i, PGL *d_o, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=5e-2) { // default eps has to be fairly high due to lots of different types
         using namespace kittens;
         const int input_size  = i_ref[0].size();
@@ -159,12 +103,11 @@ struct multimem_test_wrapper {
 
         pglFree(*d_i);
         pglFree(*d_o);
-        free(d_i);
-        free(d_o);
         delete[] o_t, o;
         CudaCheckError();
         return good ? test_result::PASSED : test_result::FAILED;
     }
+
     static void run(test_data& results) {
         int device_count;
         cudaGetDeviceCount(&device_count);
@@ -176,10 +119,16 @@ struct multimem_test_wrapper {
         this_result.label = test::test_identifier;
         if constexpr (test::valid::value) {
             // initialize
-            PGL *d_i, *d_o; // we only use PGL for conveniently allocating MC objects, nothing else
+            dtype *d_i_arr[NUM_DEVICES];
+            dtype *d_o_arr[NUM_DEVICES];
             std::vector<std::vector<float>> i_ref(NUM_DEVICES, std::vector<float>(test::test_size));
             std::vector<std::vector<float>> o_ref(NUM_DEVICES, std::vector<float>(test::test_size));
-            initialize<dtype>(&d_i, &d_o, i_ref, o_ref);
+            initialize<NUM_DEVICES>(d_i_arr, d_o_arr, i_ref, o_ref);
+            // make parralel global layouts
+            int device_ids[NUM_DEVICES];
+            for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
+            PGL input(device_ids, d_i_arr, nullptr, nullptr, nullptr, test::test_size);
+            PGL output(device_ids, d_o_arr, nullptr, nullptr, nullptr, test::test_size);
             // run kernel
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
                 cudaSetDevice(dev_idx);
@@ -188,12 +137,14 @@ struct multimem_test_wrapper {
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                global_wrapper<test, PGL><<<1, 1>>>(dev_idx, *d_i, *d_o);
+                global_wrapper<test, PGL><<<1, 1>>>(dev_idx, input, output);
                 cudaDeviceSynchronize();
                 CudaCheckError();
             }
+            // fill in correct results on cpu
             test::host_func(i_ref, o_ref);
-            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label);
+            // check and cleanup
+            this_result.result = validate(&input, &output, i_ref, o_ref, this_result.label);
         }
         else {
             this_result.result = test_result::INVALID;
