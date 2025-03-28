@@ -138,6 +138,11 @@ void group::shared::tile::reductions::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
+    sweep_size_2d_warp<group_normalize_row, SIZE, SIZE>::run(results);
+    sweep_size_2d_warp<group_normalize_col, SIZE, SIZE>::run(results);
+    sweep_size_2d_warp<group_broadcast_row, SIZE, SIZE>::run(results);
+    sweep_size_2d_warp<group_broadcast_col, SIZE, SIZE>::run(results);
+
     sweep_size_2d<group_normalize_row, SIZE, SIZE, 2>::run(results);
     sweep_size_2d<group_normalize_col, SIZE, SIZE, 2>::run(results);
     sweep_size_2d<group_broadcast_row, SIZE, SIZE, 2>::run(results);

@@ -134,7 +134,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     }
 
     template<int subtile_rows, int subtile_cols>
-    __device__ inline st_subtile<st<T, rows, cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+    __device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
 
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
@@ -238,11 +238,9 @@ struct st_subtile {
     }
 };
 
-
 template <typename _T, int _rows, int _cols> // Class template parameters
 template <int subtile_rows, int subtile_cols> // Function template parameters
-__device__ inline // Function specifiers
-st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
+__device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
 st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parameters
 {
     // Type aliases for convenience within the function body

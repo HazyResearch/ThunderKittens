@@ -48,8 +48,8 @@ struct vec_norm {
     }
 };
 
-void warp::shared::vec::reductions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/shared/vec/reductions tests! -----\n" << std::endl;
+void group::shared::vec::reductions::tests(test_data &results) {
+    std::cout << "\n ----- Starting ops/group/shared/vec/reductions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :

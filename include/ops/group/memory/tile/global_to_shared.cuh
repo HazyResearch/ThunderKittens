@@ -55,7 +55,7 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
-    load<2, false, ST, GL, COORD, WARP_THREADS>(dst, src, idx);
+    load<2, false, ST, GL, COORD>(dst, src, idx);
 }
 
 /**
@@ -104,7 +104,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store(const GL &dst, const ST &src, const COORD &idx) {
-    store<2, false, ST, GL, COORD, WARP_THREADS>(dst, src, idx);
+    store<2, false, ST, GL, COORD>(dst, src, idx);
 }
 
 /**
@@ -164,5 +164,5 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
-    load_async<2, false, ST, GL, COORD, WARP_THREADS>(dst, src, idx);
+    load_async<2, false, ST, GL, COORD>(dst, src, idx);
 }

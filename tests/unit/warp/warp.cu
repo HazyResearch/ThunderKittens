@@ -12,9 +12,6 @@ void warp::tests(test_data &results) {
 #ifdef TEST_WARP_REGISTER
     reg::tests(results); // register is a reserved word, hence reg
 #endif
-#ifdef TEST_WARP_SHARED
-    shared::tests(results);
-#endif
 }
 
 #endif
