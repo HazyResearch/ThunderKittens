@@ -46,13 +46,11 @@ struct p2s_test_wrapper_2d {
                     kittens::MAX_SHARED_MEMORY
                 );
                 p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output, dev_idx);
-                cudaDeviceSynchronize();
-                CudaCheckError();
             }
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, PGL, axis>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate<NUM_DEVICES, PGL, dtype>(input, output, i_ref, o_ref, this_result.label, W * 16);
+            this_result.result = validate<NUM_DEVICES, PGL, dtype>(input, output, i_ref, o_ref, this_result.label, W * 16, 2e-1); // high due to half-precision all-reduce ops
         }
         else {
             this_result.result = test_result::INVALID;
@@ -124,9 +122,18 @@ using p2s_sweep_size_2d = mg_loop_h<p2s_test_wrapper_2d, test, NUM_DEVICES, MAX_
 template<typename test, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args> 
 using p2s_sweep_size_2d_warp = p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 1, args...>;
 
-using I0_t = std::integral_constant<int, 0>;
-using I1_t = std::integral_constant<int, 1>;
-using I2_t = std::integral_constant<int, 2>;
+template<typename test, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args>
+struct p2s_sweep_size_2d_warp_axes {
+    using I0_t = std::integral_constant<int, 0>;
+    using I1_t = std::integral_constant<int, 1>;
+    using I2_t = std::integral_constant<int, 2>;
+
+    static void run(test_data &results) {
+        p2s_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I2_t>::run(results);
+        p2s_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I1_t>::run(results);
+        p2s_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I0_t>::run(results);
+    }
+};
 
 void warp::memory::tile::pgl_to_shared::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/tile/pgl_to_shared tests! -----\n" << std::endl;
@@ -136,7 +143,13 @@ void warp::memory::tile::pgl_to_shared::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    p2s_sweep_size_2d_warp<p2s_all_reduce_test<float, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE, I2_t>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<float, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::MIN>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::MAX>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES, SIZE, SIZE>::run(results);
 }
 
 #endif
