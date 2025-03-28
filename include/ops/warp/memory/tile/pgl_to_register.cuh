@@ -16,7 +16,7 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
 
-    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
 
     auto coord = idx.template unit_coord<axis, 3>();
@@ -95,7 +95,7 @@ __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_i
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     
-    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for reduce_op");
 
     auto coord = idx.template unit_coord<axis, 3>();
