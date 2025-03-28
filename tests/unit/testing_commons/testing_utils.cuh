@@ -213,9 +213,8 @@ static void initialize(int *device_ids, T **d_i_arr, T **d_o_arr, std::vector<st
         }
 
         cudaSetDevice(dev_idx);
-        CUmemGenericAllocationHandle dev_handle; // no need to keep track of this in the tests
-        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_arr[dev_idx], &dev_handle, input_size * sizeof(T));
-        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_arr[dev_idx], &dev_handle, output_size * sizeof(T));
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_arr[dev_idx], input_size * sizeof(T));
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_arr[dev_idx], output_size * sizeof(T));
         cudaMemcpy(d_i_arr[dev_idx], i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
         CudaCheckError();
     }
@@ -390,8 +389,13 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
         outfile.close();
     }
 
-    pglFree(input);
-    pglFree(output);
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        cudaSetDevice(dev_idx);
+        kittens::pglCudaFree(dev_idx, input[dev_idx].raw_ptr, input_size * sizeof(T));
+        kittens::pglCudaFree(dev_idx, output[dev_idx].raw_ptr, output_size * sizeof(T));
+    }
+    kittens::pglFree(input);
+    kittens::pglFree(output);
     delete[] o_t, o;
     CudaCheckError();
     return good ? test_result::PASSED : test_result::FAILED;
