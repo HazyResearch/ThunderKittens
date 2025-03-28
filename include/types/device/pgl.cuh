@@ -51,7 +51,7 @@ struct pgl {
 
     size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
     size_t mc_size;     // size of multicast object (>= size)
-    size_t handle_size; // size of address range bound to multicast object (>= size)
+    size_t handle_size; // size of address range bound to multicast object (>= size && <= mc_size)
 
     GL gls[NUM_DEVICES];
     T *mc_vas[NUM_DEVICES];
