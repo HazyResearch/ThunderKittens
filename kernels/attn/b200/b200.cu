@@ -271,7 +271,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 k_input_ring=prototype::ring_advance<K::stages>(k_input_ring); // Advance the ring to the next input block
 
                 consumer::load_async(sr.att_block, att_tm);
-                tm_load_wait();
+                tensor_load_wait();
                 __syncwarp();
                 if(laneid() == 0) tma::cluster::arrive(attn_unloaded[consumerid], 0); // signal that we're ready to launch the next QK matmul for this consumer.
                 
@@ -289,7 +289,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 consumer::store(att_smem[consumerid], sr.att_block_mma);
                 mul_row(o_reg, o_reg, sr.max_vec_last_scaled);
                 consumer::store_async(o_tm, o_reg);
-                tm_store_wait();
+                tensor_store_wait();
                 __syncwarp();
                 if(laneid() == 0) tma::cluster::arrive(attn_mma_stored[consumerid], 0);
                 consumer::sync(consumerid);
@@ -539,7 +539,7 @@ compute_bwd_loop(
     wait(q_b[tic], ((qo_idx - q_start)/2)%2);
 
     // warpgroup::mma_ABt(s_block_t, k_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], q_smem[tic]);
-    tm_store_wait();
+    tensor_store_wait();
     warpgroup::sync(warpgroup::groupid()+4);
     if(warpgroup::warpid() == 0) {
         mma_ABt(wg_tmem.sb, k_smem[warpgroup::groupid()], q_smem[tic], *wg_tmem.mma_sem);
@@ -571,7 +571,7 @@ compute_bwd_loop(
     else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
 
     // warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
-    tm_store_wait();
+    tensor_store_wait();
     warpgroup::sync(warpgroup::groupid()+4);
     if(warpgroup::warpid() == 0) {
         mma_AB(wg_tmem.vg, wg_tmem.pb_bf, og_smem[tic], *wg_tmem.mma_sem);
@@ -579,7 +579,7 @@ compute_bwd_loop(
     
     copy(ds_block_t_mma, ds_block_t);
     warpgroup::store_async(wg_tmem.dp_bf, ds_block_t_mma);
-    tm_store_wait();
+    tensor_store_wait();
     warpgroup::sync(warpgroup::groupid()+4);
     warpgroup::store(ds_smem[warpgroup::groupid()], ds_block_t);
     // warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
@@ -708,7 +708,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         zero(z);
         warpgroup::store_async(kg_tt, z);
         warpgroup::store_async(vg_tt, z);
-        tm_store_wait();
+        tensor_store_wait();
     }
 
     wg_tmem_t wg_tmem{kg_tt, vg_tt, sb_tt, dp_tt, pb_tt_bf, dp_tt_bf, &mma_sem[warpgroupid]};

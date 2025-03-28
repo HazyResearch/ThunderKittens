@@ -8,7 +8,3 @@
 #ifdef KITTENS_HOPPER
 #include "tma.cuh"
 #endif
-
-#ifdef KITTENS_BLACKWELL
-#include "tensor_to_register.cuh"
-#endif

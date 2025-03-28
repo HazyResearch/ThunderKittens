@@ -186,7 +186,7 @@ struct partial_template {
             consumer_group::store_async(o1, args.state.o_chunk);
             consumer_group::store_async(o2, args.state.o_chunk);
             consumer_group::store_async(o3, args.state.o_chunk);
-            tm_store_wait();
+            tensor_store_wait();
             consumer_group::sync(10);
             #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
@@ -313,7 +313,7 @@ struct partial_template {
             copy(args.state.max_vec, local_max_vec);
             copy(args.state.norm_vec, local_norm_vec);
 
-            tm_store_wait();
+            tensor_store_wait();
             consumer_group::sync(10); // tensor memory ready, shared memory ready, we can now rip av matmuls!
 
             // if(warpid() == 0) {
@@ -339,7 +339,7 @@ struct partial_template {
                 wait(args.scratch.mma_sem, 1);
                 if(laneid() == 0) arrive(args.inputs_finished);
                 consumer_group::load_async(args.state.o_chunk, get_o(args.tensor_alloc, 0));
-                tm_load_wait();
+                tensor_load_wait();
                 consumer_group::sync(10);
             }
         }

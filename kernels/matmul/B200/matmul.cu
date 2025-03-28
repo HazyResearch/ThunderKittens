@@ -155,7 +155,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             for(int i = 0; i < Nb/d_tile::cols; i++) {
                 warpgroup::load_async(d_reg[i], d_tt.subtile<tt<float, 128, 64>>(0, 64*i));
             }
-            tm_load_wait();
+            tensor_load_wait();
             warpgroup::sync(warpgroupid);
             if(warpgroup::laneid() == 0) tma::cluster::arrive(outputs_finished[warpgroupid], 0); // Tensor memory for warpgroup 0 is now free.
             if(warpgroupid == 0) group<8>::sync(15);
