@@ -15,7 +15,7 @@ using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
 using st_tile = kittens::st<bf16, 16, 32>;
 
-__global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
+__global__ void all_reduce_int(kittens_pgl p_o, SyncSpace s, int dev_id) {
     /*
     Warp level register tile example
     */
@@ -33,10 +33,12 @@ __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     /*
     Group level register tile example
     */
-    using friends = kittens::group<2>;
-    rt_tile tile;
-    friends::all_reduce_add(tile, p_o, dev_id, {0, friends::groupid()});
-    friends::store(p_o[dev_id], tile, {0, friends::groupid()});
+    // using friends = kittens::group<2>;
+    // rt_tile tile;
+    // friends::all_reduce_add(tile, p_o, dev_id, {0, friends::groupid()});
+    // friends::store(p_o[dev_id], tile, {0, friends::groupid()});
+    // kittens::one(tile); 
+    // friends::broadcast(p_o, tile, dev_id, {0, friends::groupid()});
     
     
     /*
@@ -44,19 +46,23 @@ __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     */
     // extern __shared__ kittens::alignment_dummy __shm[]; 
     // kittens::shared_allocator al((int*)&__shm[0]);
-    // st_tile (&s_tile)[1] = al.allocate<st_tile, 1>();
+    // st_tile (&s_tile) = al.allocate<st_tile>();
     // __syncthreads();
     // if (kittens::warpid() == 0) {
-    //     kittens::all_reduce_add(s_tile[0], p_o, dev_id, {dev_id, 0});
-    //     kittens::broadcast(p_o, s_tile[0], dev_id, {dev_id, 0});
+    //     kittens::all_reduce_add(s_tile, p_o, dev_id, {dev_id, 0});
+    //     kittens::broadcast(p_o, s_tile, dev_id, {dev_id, 0});
     // }
             
     /*
     Group level shared tile example
     */
-    // st_tile tile;
-    // using friends = kittens::group<2>;
-    // friends::all_reduce_add(p_o, tile, {p_o.dev_id, friends::groupid()});
+    using friends = kittens::group<2>;
+    extern __shared__ kittens::alignment_dummy __shm[]; 
+    kittens::shared_allocator al((int*)&__shm[0]);
+    st_tile (&s_tile) = al.allocate<st_tile>();
+
+    friends::all_reduce_add(s_tile, p_o, dev_id, {friends::groupid(), 0});
+    friends::broadcast(p_o, s_tile, dev_id, {friends::groupid(), 0});
 }
 
 int main() {
@@ -66,6 +72,7 @@ int main() {
 
     // Use float for host arrays and convert to/from bf16 during transfer
     float *host_mat_1_float = new float[nelem];
+    // for (int i = 0; i < nelem; ++i) host_mat_1_float[i] = float(i);
     for (int i = 0; i < nelem; ++i) host_mat_1_float[i] = 1.0f;
 
     float *host_mat_2_float = new float[nelem];
@@ -125,10 +132,11 @@ int main() {
     dim3 block(128);
 
     unsigned long smem = 16 * 32 * sizeof(bf16);
+    SyncManager sync_m(NUM_DEVICES, device_ids);
 
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 1; ++i) {
         cudaSetDevice(i);
-        all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, i);
+        all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, sync_m.get_sync_space(i), i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
 

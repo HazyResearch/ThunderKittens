@@ -93,7 +93,8 @@ template <int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, 
 __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
-
+    using U2 = base_types::packing<U>::packed_type;
+    
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
         "Unsupported type for reduce_op");
 
@@ -102,7 +103,6 @@ __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_i
     U *mc_ptr = dst.mc_vas[dev_id] + index;
 
     const int row_stride = dst[dev_id].template stride<axis>();
-    using U2 = base_types::packing<U>::packed_type;
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
     int warphalflaneid = laneid % 16;
@@ -148,26 +148,6 @@ __device__ static inline void atomic_add(const PGL &p_o, const RT &src, int dev_
 template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_add(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::ADD>(p_o, src, dev_id, idx);
-}
-
-template <int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_min(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
-    reduce_op<axis, ReduceOp::MIN>(p_o, src, dev_id, idx);
-}
-
-template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_min(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
-    reduce_op<2, ReduceOp::MIN>(p_o, src, dev_id, idx);
-}
-
-template <int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_max(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
-    reduce_op<axis, ReduceOp::MAX>(p_o, src, dev_id, idx);
-}
-
-template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
-__device__ static inline void atomic_max(const PGL &p_o, const RT &src, int dev_id, const COORD &idx) {
-    reduce_op<2, ReduceOp::MAX>(p_o, src, dev_id, idx);
 }
 
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>

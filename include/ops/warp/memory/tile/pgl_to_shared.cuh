@@ -111,14 +111,14 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            T* ptr = static_cast<T*>(mc_ptr) + row*row_stride + col;
+            U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
             move<float4>::stg((float4*)ptr, tmp);
         }
         else {
             if (row + coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-                T* ptr = static_cast<T*>(mc_ptr) + row*row_stride + col;
+                U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
                 move<float4>::stg((float4*)ptr, tmp);
             }
         }
