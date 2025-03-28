@@ -314,6 +314,7 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
     bool good = true;
 
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        cudaSetDevice(dev_idx);
         cudaDeviceSynchronize();
         CudaCheckError();
         cudaMemcpy(o_t, output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
