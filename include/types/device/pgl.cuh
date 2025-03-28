@@ -121,11 +121,11 @@ struct pgl {
         }
 
         size_t mc_granularity = 0;
-        cuMulticastGetGranularity(&mc_granularity, &mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+        cuMulticastGetGranularity(&mc_granularity, &mc_prop, MC_GRAN_TYPE);
 
         CUmemAllocationProp mem_prop{};
         size_t mem_granularity;
-        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
         handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
         // Attach MC handle to physical memory & map to virtual memory on each device
@@ -159,15 +159,15 @@ struct pgl {
 };
 
 template <bool ROUND_UP = false, typename T>
-__host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, CUmemGenericAllocationHandle *mem_handle, size_t size) {
+__host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
 
     // Create memory handle prop
     CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
 
-    // Query for recommended granularity
+    // Query for granularity
     size_t mem_granularity;
-    CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+    CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
     if (size % mem_granularity != 0) {
         if constexpr (ROUND_UP) {
             size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
@@ -178,11 +178,12 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
     }
 
     // Allocate physical memory on the device
-    CUCHECK(cuMemCreate(mem_handle, size, &mem_prop, 0));
+    CUmemGenericAllocationHandle mem_handle; // this can be retrieved with cuMemRetainAllocationHandle()
+    CUCHECK(cuMemCreate(&mem_handle, size, &mem_prop, 0));
 
     // Bind virtual address
     CUCHECK(cuMemAddressReserve((CUdeviceptr *)ptr, size, mem_granularity, 0, 0));
-    CUCHECK(cuMemMap((CUdeviceptr)*ptr, size, 0, *mem_handle, 0));
+    CUCHECK(cuMemMap((CUdeviceptr)*ptr, size, 0, mem_handle, 0));
 
     // Set access
     CUmemAccessDesc desc_list[num_devices];
@@ -193,14 +194,31 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
 }
 
 template <typename T>
-__host__ inline void pglCudaFree(int device_id, T *ptr, CUmemGenericAllocationHandle mem_handle, size_t size) {
+__host__ inline void pglCudaFree(int device_id, T *ptr, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
-    CUCHECK(cuMemUnmap((CUdeviceptr)ptr, size)); // always free in this order
+
+    // Query for granularity
+    size_t mem_granularity;
+    CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
+    CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
+
+    // This SHOULD be the size that was actually allocated to the handle
+    if (size % mem_granularity != 0) {
+        size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
+    }
+
+    // Retrieve handle
+    CUmemGenericAllocationHandle mem_handle;
+    CUCHECK(cuMemRetainAllocationHandle(&mem_handle, (void *)ptr)); 
+
+    // Always free in this order
+    CUCHECK(cuMemUnmap((CUdeviceptr)ptr, size)); 
     CUCHECK(cuMemAddressFree((CUdeviceptr)ptr, size));
     CUCHECK(cuMemRelease(mem_handle));
 }
 
 // This should be called to free the MC object within an PGL object
+// Call this BEFORE calling pglCudaFree on underlying 
 template<kittens::ducks::pgl::all PGL>
 __host__ inline void pglFree(PGL &pgl_obj) {
     if (pgl_obj.mc_handle) {

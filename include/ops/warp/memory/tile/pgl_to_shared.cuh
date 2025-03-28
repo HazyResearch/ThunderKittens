@@ -10,8 +10,11 @@ template <int axis, bool assume_aligned, ReduceOp OP, ducks::st::all ST, ducks::
 __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
-    const int row_stride = src[dev_id].template stride<axis>();
 
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
+        "Unsupported type for ld_reduce_op");
+
+    const int row_stride = src[dev_id].template stride<axis>();
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
     constexpr int dst_num_elem = dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;

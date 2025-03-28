@@ -3,6 +3,11 @@
 #include <cuda.h>
 
 namespace kittens {
+
+// We must ensure that we use the same granularity type for all functions
+constexpr CUmemAllocationGranularity_flags_enum MEM_GRAN_TYPE = CU_MEM_ALLOC_GRANULARITY_RECOMMENDED;
+constexpr CUmulticastGranularity_flags_enum MC_GRAN_TYPE = CU_MULTICAST_GRANULARITY_RECOMMENDED;
+
 namespace detail {
     // Returns size of the multicast granularity
     __host__ inline size_t init_mc_prop(CUmulticastObjectProp *mc_prop, int num_devices, size_t size = 0) {
@@ -12,7 +17,7 @@ namespace detail {
         
         // If size is not provided, return the recommended granularity (TODO: separate this functionality)
         size_t mc_size = 0;
-        cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
+        cuMulticastGetGranularity(&mc_size, mc_prop, kittens::MC_GRAN_TYPE);
         // cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_MINIMUM);
         if (size != 0) mc_size = ((size + mc_size - 1) / mc_size) * mc_size;
         
