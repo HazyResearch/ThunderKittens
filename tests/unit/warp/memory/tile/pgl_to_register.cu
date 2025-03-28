@@ -5,7 +5,7 @@
 extern int should_write_outputs;
 
 template<typename Ker, int H, int W, int NW, kittens::ducks::pgl::all PGL>
-static __global__ void p2r_global_wrapper_2d(const PGL &input, const PGL &output, const int dev_idx) {
+static __global__ void p2r_global_wrapper_2d(const __grid_constant__ PGL input, const __grid_constant__ PGL output, const __grid_constant__ int dev_idx) {
     Ker::template device_func<H, W, NW, PGL>(input, output, dev_idx);
 }
 
@@ -224,24 +224,40 @@ struct p2r_all_reduce_test {
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL>
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
-        // for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
-        //     for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
-        //         o_ref[dev_idx][i] = 0;
-        //         for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
-        //             if (op == kittens::ReduceOp::ADD) {
-        //                 o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
-        //             } else if (op == kittens::ReduceOp::MIN) {
-        //                 o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-        //             } else if (op == kittens::ReduceOp::MAX) {
-        //                 o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-        //             }
-        //         }
-        //     }
-        // }
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                    if constexpr (op == kittens::ReduceOp::ADD) {
+                        o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
+                    } else if constexpr (op == kittens::ReduceOp::MIN) {
+                        o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
+                    } else if constexpr (op == kittens::ReduceOp::MAX) {
+                        o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
+                    }
+                }
+            }
+        }
     }
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL>
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
-        // kittens::multimem_ld_reduce_op<T, op>::apply_vec((float4 *)output[dev_idx].raw_ptr, input.mc_vas[dev_idx]);
+        kittens::rt<dtype,  16*H, 16*W, kittens::ducks::rt_layout::row> reg_tile; // currently only row-major layout is supported
+        for(int i = 0; i < input[dev_idx].batch(); i++) {
+            for(int j = 0; j < input[dev_idx].depth(); j++) {
+                for(int k = 0; k < input[dev_idx].rows()/reg_tile.rows; k++) {
+                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
+                        if constexpr (op == kittens::ReduceOp::ADD) {
+                            kittens::all_reduce_add(reg_tile, input, dev_idx, {i, j, k, l});
+                        } else if constexpr (op == kittens::ReduceOp::MIN) {
+                            kittens::all_reduce_min(reg_tile, input, dev_idx, {i, j, k, l});
+                        } else if constexpr (op == kittens::ReduceOp::MAX) {
+                            kittens::all_reduce_max(reg_tile, input, dev_idx, {i, j, k, l});
+                        }
+                        kittens::store(output[dev_idx], reg_tile, {i, j, k, l});
+                    }
+                }
+            }
+        }
     }
 };
 
