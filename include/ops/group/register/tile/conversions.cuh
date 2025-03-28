@@ -16,7 +16,7 @@
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    int row_offset = ((N_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
+    int row_offset = ((GROUP_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -38,7 +38,7 @@ __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, c
 }
 template<ducks::rt::col_layout RT>
 __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    int row_offset = ((N_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
+    int row_offset = ((GROUP_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -69,7 +69,7 @@ __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, c
  */
 template<ducks::rt::row_layout RT>
 __device__ static inline void triu(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    int row_offset = ((N_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
+    int row_offset = ((GROUP_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -91,7 +91,7 @@ __device__ static inline void triu(RT &dst, const RT &src, const int diagonal, c
 }
 template<ducks::rt::col_layout RT>
 __device__ static inline void triu(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    int row_offset = ((N_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
+    int row_offset = ((GROUP_WARPS == 8) ? ((warpid()%4)*2 + warpid()/4) : warpid()) * dst.rows;
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll

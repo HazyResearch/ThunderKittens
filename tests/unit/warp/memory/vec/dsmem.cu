@@ -26,12 +26,12 @@ struct test_dsmem_vec { // load with dsmem, write out normally
         __shared__ kittens::semaphore dsmem_semaphore;
         kittens::load(src_vec, input, {(int)blockIdx.x, 0});
 
-        kittens::init_semaphore(dsmem_semaphore, 0, 1);
-        kittens::tma::expect(dsmem_semaphore, dst_vec);
+        kittens::warp::init_semaphore(dsmem_semaphore, 0, 1);
+        kittens::warp::tma::expect(dsmem_semaphore, dst_vec);
 
-        kittens::tma::cluster::sync();
+        kittens::everyone::tma::cluster::sync();
 
-        kittens::tma::cluster::store_async(dst_vec, src_vec, (blockIdx.x+3)%4, dsmem_semaphore);
+        kittens::warp::tma::cluster::store_async(dst_vec, src_vec, (blockIdx.x+3)%4, dsmem_semaphore);
 
         kittens::wait(dsmem_semaphore, 0);
 

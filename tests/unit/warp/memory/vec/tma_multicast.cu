@@ -25,23 +25,23 @@ struct test_load_multicast { // load with TMA, write out normally
         int rank = blockIdx.x % 4;
         
         __shared__ kittens::semaphore smem_semaphore; 
-        kittens::init_semaphore(smem_semaphore, 0, 1);
+        kittens::warp::init_semaphore(smem_semaphore, 0, 1);
         // *************************************************************************************************
         // Doing it this way would also work, but I want to illustrate the use of the cluster::expect, too.
-        // kittens::tma::expect<typeof(shared_vec)>(smem_semaphore);
+        // kittens::warp::tma::expect<typeof(shared_vec)>(smem_semaphore);
         // *************************************************************************************************
-        kittens::tma::cluster::sync(); // ensure everyone has initialized their semaphore
+        kittens::everyone::tma::cluster::sync(); // ensure everyone has initialized their semaphore
 
         if(rank == 0 && threadIdx.x == 0) { // only one block issues the multicast load for everyone
             for(int j = 0; j < 4; j++) { // expect on the whole block
-                kittens::tma::cluster::expect(smem_semaphore, j, shared_vec);
+                kittens::warp::tma::cluster::expect(smem_semaphore, j, shared_vec);
             }
-            kittens::tma::cluster::load_async(shared_vec, input, {0, 0, 0, 0}, smem_semaphore, 0b1111);
+            kittens::warp::tma::cluster::load_async(shared_vec, input, {0, 0, 0, 0}, smem_semaphore, 0b1111);
         }
 
         kittens::wait(smem_semaphore, 0);
         kittens::store(output, shared_vec, {0, 0, rank, 0});
-        kittens::tma::cluster::sync();
+        kittens::everyone::tma::cluster::sync();
     }
 };
 

@@ -25,12 +25,12 @@ struct test_load { // load with TMA, write out normally
         kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>(); // assuming compile-time known dimensions
         
         __shared__ kittens::semaphore smem_semaphore; 
-        kittens::init_semaphore(smem_semaphore, 0, 1);
+        kittens::warp::init_semaphore(smem_semaphore, 0, 1);
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
-            kittens::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
+            kittens::warp::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::load_async(shared_tile[i][j], input, {a, b, i, j}, smem_semaphore);
+                kittens::warp::tma::load_async(shared_tile[i][j], input, {a, b, i, j}, smem_semaphore);
             }
             kittens::wait(smem_semaphore, (a*input.depth()+b)%2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -70,12 +70,12 @@ struct test_load_oob { // load oob memory via TMA
         __syncthreads(); 
         
         __shared__ kittens::semaphore smem_semaphore; 
-        kittens::init_semaphore(smem_semaphore, 0, 1);
+        kittens::warp::init_semaphore(smem_semaphore, 0, 1);
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
-            kittens::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
+            kittens::warp::tma::expect_bytes(smem_semaphore, kittens::size_bytes<kittens::st<T, 16*H, 16*W>> * 2 * 2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::load_async(shared_tile[i][j], input, {input.batch() + a, input.depth() + b, i + 2, j + 2}, smem_semaphore);
+                kittens::warp::tma::load_async(shared_tile[i][j], input, {input.batch() + a, input.depth() + b, i + 2, j + 2}, smem_semaphore);
             }
             kittens::wait(smem_semaphore, (a*input.depth()+b)%2);
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
@@ -109,12 +109,12 @@ struct test_store { // load normally, store with TMA
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_async_read_wait<3>(); // make sure next tile is ready for write
+                kittens::warp::tma::store_async_read_wait<3>(); // make sure next tile is ready for write
                 kittens::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_async(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::tma::store_async(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }
@@ -148,13 +148,13 @@ struct test_store_add_reduce {
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
                 kittens::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j});
-                kittens::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }
@@ -187,13 +187,13 @@ struct test_store_min_reduce {
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
                 kittens::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_min_async(output, shared_tile[i][j], {a, b, i, j}); // output is zero-initialized
-                kittens::tma::store_min_async(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::tma::store_min_async(output, shared_tile[i][j], {a, b, i, j}); // output is zero-initialized
+                kittens::warp::tma::store_min_async(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }
@@ -226,13 +226,13 @@ struct test_store_max_reduce {
         __syncwarp();
         for(int a = 0; a < input.batch(); a++) for(int b = 0; b < input.depth(); b++) {
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                kittens::warp::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
                 kittens::load(shared_tile[i][j], input, {a, b, i, j});
             }
             __syncwarp(); // mem must be visible before store
             for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++) {
-                kittens::tma::store_max_async(output, shared_tile[i][j], {a, b, i, j}); // output is zero-initialized
-                kittens::tma::store_max_async(output, shared_tile[i][j], {a, b, i, j});
+                kittens::warp::tma::store_max_async(output, shared_tile[i][j], {a, b, i, j}); // output is zero-initialized
+                kittens::warp::tma::store_max_async(output, shared_tile[i][j], {a, b, i, j});
             }
         }
     }

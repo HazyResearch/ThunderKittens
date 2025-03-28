@@ -12,7 +12,7 @@
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
@@ -26,7 +26,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
     int local_warpid;
-    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
     const int row_offset = dst.rows*local_warpid;
     #pragma unroll
@@ -55,7 +55,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @param src[in] The source array to load data from.
  * @param row_stride[in] The stride in elements between rows in the source array.
  */
-template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     using T = typename RT::T;
     using U = typename GL::dtype;
@@ -68,7 +68,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     int local_warpid;
-    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
     const int row_offset = dst.rows*local_warpid;
     #pragma unroll
@@ -100,7 +100,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
         }
     }
 }
-template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     load<2>(dst, src, idx);
 }
@@ -113,7 +113,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename GL::dtype;
@@ -127,7 +127,7 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
     int local_warpid;
-    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
     const int row_offset = src.rows*local_warpid;
     #pragma unroll
@@ -156,7 +156,7 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
  * @param[in] src The source register tile to store data from.
  * @param row_stride[in] The stride in elements between rows in the destination array.
  */
-template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     using T = base_types::packing<typename RT::dtype>::unpacked_type;
     using U = typename GL::dtype;
@@ -169,7 +169,7 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     int local_warpid;
-    if constexpr(N_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(N_WARPS/4));
+    if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
     const int row_offset = src.rows*local_warpid;
     #pragma unroll
@@ -201,7 +201,7 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
         }
     }
 }
-template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<ducks::rt::all RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
     store<2>(dst, src, idx);
 }

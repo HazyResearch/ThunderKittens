@@ -25,13 +25,11 @@ namespace tma {
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
-    if (::kittens::laneid() == 0) {
-        void const* const ptr = &bar;
-        uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+    void const* const ptr = &bar;
+    uint32_t bar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-        asm volatile ("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
-            :: "r"(bar_ptr), "r"(bytes));
-    }
+    asm volatile ("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n"
+        :: "r"(bar_ptr), "r"(bytes));
 }
 /**
 * @brief Sets the number of bytes expected at the semaphore.
@@ -49,10 +47,7 @@ __device__ static inline void expect(semaphore& bar, const T& _1, const args&...
  * @brief Commits previous asynchronous TMA stores to a group and performs them.
 */
 __device__ static inline void store_commit_group() {
-    if (::kittens::laneid() == 0) {
-        asm volatile("cp.async.bulk.commit_group;");
-    }
-    __syncwarp();
+    asm volatile("cp.async.bulk.commit_group;");
 }
 /**
  * @brief Waits for previous committed TMA store groups to complete.
@@ -61,15 +56,12 @@ __device__ static inline void store_commit_group() {
 */
 template <int N=0>
 __device__ static inline void store_async_wait() {
-    if (::kittens::laneid() == 0) {
-        asm volatile (
-            "cp.async.bulk.wait_group %0;"
-            :
-            : "n"(N)
-            : "memory"
-        );
-    }
-    __syncwarp();
+    asm volatile (
+        "cp.async.bulk.wait_group %0;"
+        :
+        : "n"(N)
+        : "memory"
+    );
 }
 /**
  * @brief Waits for previous committed TMA store groups to finish reading from shared memory.
@@ -78,32 +70,17 @@ __device__ static inline void store_async_wait() {
 */
 template <int N=0>
 __device__ static inline void store_async_read_wait() {
-    if (::kittens::laneid() == 0) {
-        asm volatile (
-            "cp.async.bulk.wait_group.read %0;"
-            :
-            : "n"(N)
-            : "memory"
-        );
-    }
-    __syncwarp();
+    asm volatile (
+        "cp.async.bulk.wait_group.read %0;"
+        :
+        : "n"(N)
+        : "memory"
+    );
 }
 
 /* ----------   Cluster-scope operations  ---------- */
 
 namespace cluster {
-
-// Synchronization functions
-__device__ static inline void arrive_aligned() { // All threads in the cluster must call this
-    asm volatile ("barrier.cluster.arrive.release.aligned;\n");
-}
-__device__ static inline void wait_aligned() {
-    asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
-}
-__device__ static inline void sync() {
-    arrive_aligned();
-    wait_aligned();
-}
 
 /**
 * @brief Waits for the requested semaphore phase, at cluster scope
@@ -144,18 +121,16 @@ __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int dst_cta) {
-    if (::kittens::laneid() == 0) {
-        uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
-        uint32_t neighbor_mbar_addr;
-        asm volatile (
-            "mapa.shared::cluster.u32  %0, %1, %2;\n"
-            : "=r"(neighbor_mbar_addr)
-            : "r"(mbar_addr), "r"(dst_cta)
-        );
+    uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
+    uint32_t neighbor_mbar_addr;
+    asm volatile (
+        "mapa.shared::cluster.u32  %0, %1, %2;\n"
+        : "=r"(neighbor_mbar_addr)
+        : "r"(mbar_addr), "r"(dst_cta)
+    );
 
-        asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
-            :: "r"(neighbor_mbar_addr), "r"(bytes));
-    }
+    asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
+        :: "r"(neighbor_mbar_addr), "r"(bytes));
 }
 /**
 * @brief Sets the number of bytes expected at the semaphore.
@@ -203,41 +178,39 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
 
 // Generic transfer
 __device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, semaphore& bar) {
-    if (laneid() == 0) {
-        void const* const ptr = &bar;
-        uint32_t mbarrier_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+    void const* const ptr = &bar;
+    uint32_t mbarrier_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-        // **************************************************
-        // load from src to dst in different threadblocks
-        uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(src));
-        uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
+    // **************************************************
+    // load from src to dst in different threadblocks
+    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(src));
+    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
 
-        // mapa instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-mapa 
-        // find dst addr in neighbor's cta
-        uint32_t neighbor_addr_dst;
-        asm volatile (
-            "mapa.shared::cluster.u32  %0, %1, %2;\n"
-            : "=r"(neighbor_addr_dst)
-            : "r"(dst_ptr), "r"(dst_cta)
-        );
-        
-        uint32_t neighbor_addr_mbarrier = mbarrier_ptr;
-        asm volatile (
-            "mapa.shared::cluster.u32  %0, %1, %2;\n"
-            : "=r"(neighbor_addr_mbarrier)
-            : "r"(mbarrier_ptr), "r"(dst_cta)
-        );
-        
-        // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
-        // copy src into dst in neighbor's cta
-        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        asm volatile (
-            "cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
-            :
-            : "r"(neighbor_addr_dst), "r"(src_ptr), "r"(size_bytes), "r"(neighbor_addr_mbarrier)
-            : "memory"
-        );
-    }
+    // mapa instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-mapa 
+    // find dst addr in neighbor's cta
+    uint32_t neighbor_addr_dst;
+    asm volatile (
+        "mapa.shared::cluster.u32  %0, %1, %2;\n"
+        : "=r"(neighbor_addr_dst)
+        : "r"(dst_ptr), "r"(dst_cta)
+    );
+    
+    uint32_t neighbor_addr_mbarrier = mbarrier_ptr;
+    asm volatile (
+        "mapa.shared::cluster.u32  %0, %1, %2;\n"
+        : "=r"(neighbor_addr_mbarrier)
+        : "r"(mbarrier_ptr), "r"(dst_cta)
+    );
+    
+    // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
+    // copy src into dst in neighbor's cta
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    asm volatile (
+        "cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
+        :
+        : "r"(neighbor_addr_dst), "r"(src_ptr), "r"(size_bytes), "r"(neighbor_addr_mbarrier)
+        : "memory"
+    );
 }
 
 // Templated transfer for convenience
