@@ -15,7 +15,7 @@ using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
 using st_tile = kittens::st<bf16, 16, 32>;
 
-__global__ void all_reduce_int(kittens_pgl p_o, SyncSpace s, int dev_id) {
+__global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     /*
     Warp level register tile example
     */
@@ -125,17 +125,14 @@ int main() {
     kittens_pgl dev_mat_pgl{device_ids, dev_mats, nullptr, nullptr, N, N};
 
     // Perform the reduction
-    KittensClub club(device_ids, NUM_DEVICES);
-
     dim3 grid(1);
     dim3 block(128);
 
     unsigned long smem = 16 * 32 * sizeof(bf16);
-    SyncManager sync_m(NUM_DEVICES, device_ids);
 
     for (int i = 0; i < 1; ++i) {
         cudaSetDevice(i);
-        all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, sync_m.get_sync_space(i), i);
+        all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, i);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
 
