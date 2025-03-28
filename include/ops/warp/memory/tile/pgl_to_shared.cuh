@@ -126,8 +126,8 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
 }
 
 template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void broadcast(const PGL &p_o, const ST &src, int dev_id, const COORD &idx) {
-    broadcast<2, false>(p_o, src, dev_id, idx);
+__device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
+    broadcast<2, false>(dst, src, dev_id, idx);
 }
 
 } // namespace kittens
