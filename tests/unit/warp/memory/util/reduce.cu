@@ -169,7 +169,7 @@ struct multimem_test_wrapper {
         int device_count;
         cudaGetDeviceCount(&device_count);
         if (device_count < NUM_DEVICES) {
-            std::cerr << "Not enough GPU devices to run test" << std::endl;
+            std::cerr << "Warning: Not enough GPU devices to run test " << test::test_identifier << std::endl;
             return;
         }
         test_info this_result;
