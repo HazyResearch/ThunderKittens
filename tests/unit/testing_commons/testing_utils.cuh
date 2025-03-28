@@ -86,6 +86,25 @@ struct loop_h {
     }
 };
 
+// 2D wrappers for multi-gpu tests
+template<template<typename,int,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, int H, int W, typename... args>
+struct mg_loop_w {
+    static void run(test_data& results) {
+        if constexpr (W > 1) {
+            mg_loop_w<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H, W-1, args...>::run(results);
+        }
+        base<test, NUM_DEVICES, H, W, NUM_WORKERS, args...>::run(results);
+    }
+};
+template<template<typename,int,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, int H, typename... args>
+struct mg_loop_h {
+    static void run(test_data& results) {
+        if constexpr (H > 1) {
+            mg_loop_h<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H-1, args...>::run(results);
+        }
+        mg_loop_w<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H, MAX_W, args...>::run(results);
+    }
+};
 
 /* --------------------  TEST INITIALIZE+VALIDATE FUNCS  -------------------- */
 
