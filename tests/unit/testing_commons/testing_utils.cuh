@@ -173,13 +173,10 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
 
 // Initializer for multi-gpu tests
 template<int NUM_DEVICES, typename T, initializers initializer=initializers::RANDOM, int SEED=42>
-static void initialize(T **d_i_arr, T **d_o_arr, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+static void initialize(int *device_ids, T **d_i_arr, T **d_o_arr, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
 
     const int input_size  = i_ref[0].size();
     const int output_size = o_ref[0].size();
-
-    int device_ids[NUM_DEVICES];
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
 
     // Initialize matrices
     std::vector<T> i_t(input_size);
@@ -298,6 +295,102 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
     }
     cudaFree(d_i);
     cudaFree(d_o);
+    delete[] o_t, o;
+    CudaCheckError();
+    return good ? test_result::PASSED : test_result::FAILED;
+}
+
+// Validation for multi-gpu tests
+template<int NUM_DEVICES, kittens::ducks::pgl::all PGL, typename T>
+test_result validate(PGL &input, PGL &output, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=5e-2) { // default eps has to be fairly high due to lots of different types
+    const int input_size  = i_ref[0].size();
+    const int output_size = o_ref[0].size();
+
+    // copy back
+    T* o_t = new T[output_size];
+    float *o = new float[output_size];
+
+    std::cout << "test `" << test_name << "`";
+    bool good = true;
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        cudaDeviceSynchronize();
+        CudaCheckError();
+        cudaMemcpy(o_t, output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
+        CudaCheckError();
+
+        for(int idx = 0; idx < output_size; idx++) {
+            if constexpr (std::is_same_v<T, kittens::bf16>) {
+                o[idx] = __bfloat162float(o_t[idx]);
+                o_ref[dev_idx][idx] = __bfloat162float(__float2bfloat16(o_ref[dev_idx][idx]));
+            }
+            else if constexpr (std::is_same_v<T, kittens::half>) {
+                o[idx] = __half2float(o_t[idx]);
+                o_ref[dev_idx][idx] = __half2float(__float2half(o_ref[dev_idx][idx]));
+            }
+            else if constexpr(std::is_same_v<T, float>) {
+                o[idx] = o_t[idx];
+                o_ref[dev_idx][idx] = o_ref[dev_idx][idx];
+            }
+            #ifdef KITTENS_HOPPER
+            else if constexpr(std::is_same_v<T, kittens::fp8e4m3>) {
+                o[idx] = float(o_t[idx]);
+                o_ref[dev_idx][idx] = float(__nv_fp8_e4m3(o_ref[dev_idx][idx])); 
+            }
+            else if constexpr(std::is_same_v<T, kittens::fp8e5m2>) {
+                o[idx] = float(o_t[idx]);
+                o_ref[dev_idx][idx] = float(__nv_fp8_e5m2(o_ref[dev_idx][idx])); 
+            }
+            #endif
+            else {
+                assert(false && "Unsupported data type");
+            }
+        }
+
+        // check
+        for(int i = 0; i < output_size; i++) {
+            if(abs(o_ref[dev_idx][i] - o[i]) > eps) {
+                good = false;
+                break;
+            }
+        }
+
+        if (!good) break;
+    }
+
+    if(good) std::cout << " -- PASSED" << std::endl;
+    else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
+
+    if(should_write_outputs && !good) {
+        std::ofstream reffile("outputs/"+test_name+"_ref.txt");
+        std::ofstream outfile("outputs/"+test_name+"_out.txt");
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+            outfile << "Device " << dev_idx << ":\n\n";
+            reffile << "Device " << dev_idx << ":\n\n";
+            for(int i = 0; i < output_size; i++) {
+                reffile << o_ref[dev_idx][i] << ' ';
+                outfile << o[i] << ' ';
+                if(i%cols == cols-1) {
+                    reffile << '\n';
+                    outfile << '\n';
+                }
+            }
+            reffile << "\n\n\nINPUTS:\n\n";
+            for(int i = 0; i < input_size; i++) {
+                reffile << i_ref[dev_idx][i] << ' ';
+                if(i%cols == cols-1) {
+                    reffile << '\n';
+                }
+            }
+            outfile << "\n\n\n\n";
+            reffile << "\n\n\n\n";
+        }
+        reffile.close();
+        outfile.close();
+    }
+
+    pglFree(input);
+    pglFree(output);
     delete[] o_t, o;
     CudaCheckError();
     return good ? test_result::PASSED : test_result::FAILED;
