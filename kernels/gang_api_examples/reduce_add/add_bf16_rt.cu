@@ -13,17 +13,46 @@ using global_layout   =  gl<bf16, 1, 1, -1, -1>;
 // using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 16, 16>;
-using st_tile = kittens::st<bf16, 16, 16>;
+using st_tile = kittens::st<bf16, 16, 32>;
 
 __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
+    /*
+    Warp level register tile example
+    */
     // rt_tile tile;
     // kittens::one(tile);
     // kittens::atomic_add(p_o, tile, dev_id, {0, 1});
 
+    /*
+    Group level register tile example
+    */
+    // using friends = kittens::group<2>;
+    // rt_tile tile; 
+    // kittens::one(tile);
+    // friends::atomic_add(p_o, tile, dev_id, {0, friends::groupid()});    
+
+    /*
+    Warp level shared tile example 
+    */
+    // extern __shared__ kittens::alignment_dummy __shm[];
+    // kittens::shared_allocator al((int*)&__shm[0]);
+    // st_tile (&s_tile) = al.allocate<st_tile>();
+    // warpgroup::one(s_tile);
+    // __syncthreads();
+    // if (kittens::warpid() == 0) {
+    //     kittens::atomic_add(p_o, s_tile, dev_id, {dev_id, 0});
+    // }
+
+    /*
+    Group level shared tile example
+    */
     using friends = kittens::group<2>;
-    rt_tile tile; 
-    kittens::one(tile);
-    friends::atomic_add(p_o, tile, dev_id, {0, friends::groupid()});    
+    extern __shared__ kittens::alignment_dummy __shm[];
+    kittens::shared_allocator al((int*)&__shm[0]);
+    st_tile (&s_tile)[2] = al.allocate<st_tile, 2>();
+    friends::one(s_tile[friends::groupid()]);
+    __syncthreads();
+    friends::atomic_add(p_o, s_tile[friends::groupid()], dev_id, {friends::groupid(), 0});
 }
 
 int main() {
@@ -87,11 +116,12 @@ int main() {
 
     // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);
+    unsigned long smem = 2 * 32 * 32 * sizeof(bf16);
 
     dim3 grid(1);
     dim3 block(128);
     cudaSetDevice(0);
-    all_reduce_int<<<grid, block>>>(dev_mat_pgl, 0);
+    all_reduce_int<<<grid, block, smem>>>(dev_mat_pgl, 0);
     // printf("Device 0 mc_ptr: %p\n", dev_mat_pgl.get_pgl_obj(0).mc_ptr);
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 

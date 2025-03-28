@@ -47,7 +47,6 @@ __global__ void all_reduce_int(kittens_pgl p_o, SyncSpace s, int dev_id) {
     // extern __shared__ kittens::alignment_dummy __shm[]; 
     // kittens::shared_allocator al((int*)&__shm[0]);
     // st_tile (&s_tile) = al.allocate<st_tile>();
-    // __syncthreads();
     // if (kittens::warpid() == 0) {
     //     kittens::all_reduce_add(s_tile, p_o, dev_id, {dev_id, 0});
     //     kittens::broadcast(p_o, s_tile, dev_id, {dev_id, 0});
@@ -61,7 +60,7 @@ __global__ void all_reduce_int(kittens_pgl p_o, SyncSpace s, int dev_id) {
     kittens::shared_allocator al((int*)&__shm[0]);
     st_tile (&s_tile) = al.allocate<st_tile>();
 
-    friends::all_reduce_add(s_tile, p_o, dev_id, {friends::groupid(), 0});
+    friends::all_reduce_max(s_tile, p_o, dev_id, {friends::groupid(), 0});
     friends::broadcast(p_o, s_tile, dev_id, {friends::groupid(), 0});
 }
 
