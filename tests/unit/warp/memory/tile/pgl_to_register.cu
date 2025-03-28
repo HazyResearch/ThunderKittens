@@ -2,13 +2,8 @@
 
 #ifdef TEST_WARP_MEMORY_TILE_PGL_TO_REGISTER
 
-template<typename Ker, typename T, int H, int W, int NW, kittens::ducks::gl::all GL, typename... args>
-static __global__ void g2r_global_wrapper_2d(const GL &input, const GL &output) {
-    Ker::template device_func<H, W, NW, GL, args...>(input, output);
-}
-
 template<typename test, int H, int W, int NUM_WORKERS, typename... args>
-struct g2r_wrapper_2d {
+struct p2r_wrapper_2d {
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
     static void run(test_data& results) {
         test_info this_result;
@@ -21,7 +16,7 @@ struct g2r_wrapper_2d {
             std::vector<float> i_ref(SIZE);
             std::vector<float> o_ref(SIZE);
             initialize(&d_i, &d_o, i_ref, o_ref);
-            // make descriptors
+            // make descriptors (TODO: change to pgl)
             using GL = typename kittens::gl<dtype, -1, D, -1, 16*C*W>;
             GL input (d_i, B, nullptr, 16*R*H, nullptr);
             GL output(d_o, B, nullptr, 16*R*H, nullptr);
@@ -31,6 +26,12 @@ struct g2r_wrapper_2d {
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 kittens::MAX_SHARED_MEMORY
             );
+            
+            std::cout << "Launching kernel with H = " << H
+                << ", W = " << W
+                << ", dtype = " << typeid(dtype).name()
+                << ", args =" << std::endl;
+
             global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
@@ -44,8 +45,8 @@ struct g2r_wrapper_2d {
     }
 };
 
-template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using g2r_sweep_size_2d = loop_h<g2r_wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
-template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using g2r_sweep_size_2d_warp = g2r_sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
+template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> using p2r_sweep_size_2d = loop_h<p2r_wrapper_2d, test, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
+template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using p2r_sweep_size_2d_warp = p2r_sweep_size_2d<test, MAX_H, MAX_W, 1, args...>;
 
 template<typename T>
 struct load_store {
@@ -74,15 +75,12 @@ void warp::memory::tile::pgl_to_register::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    std::cout << "test; should print and exit" << std::endl;
-    return;
-
-    g2r_sweep_size_2d_warp<load_store<float>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    g2r_sweep_size_2d_warp<load_store<float>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    g2r_sweep_size_2d_warp<load_store<kittens::bf16>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    g2r_sweep_size_2d_warp<load_store<kittens::bf16>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    g2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    g2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    p2r_sweep_size_2d_warp<load_store<float>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // p2r_sweep_size_2d_warp<load_store<float>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // p2r_sweep_size_2d_warp<load_store<kittens::bf16>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // p2r_sweep_size_2d_warp<load_store<kittens::bf16>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    // p2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    // p2r_sweep_size_2d_warp<load_store<kittens::half>, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
 }
 
 #endif
