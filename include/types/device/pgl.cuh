@@ -7,7 +7,6 @@
 
 #include <iostream>
 #include <algorithm>
-#include <vector>
 #include "cuda.h"
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
@@ -49,18 +48,18 @@ struct pgl {
     using T = GL::dtype;
     using dtype = T;
 
+    size_t nelem;       // number of elements per device
     size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
     size_t mc_size;     // size of multicast object (>= size)
     size_t handle_size; // size of address range bound to multicast object (>= size && <= mc_size)
 
     GL gls[NUM_DEVICES];
-    T *mc_vas[NUM_DEVICES];
-
+    
     int device_ids[NUM_DEVICES];
     static constexpr int num_devices = NUM_DEVICES;
-
+    
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
-    size_t nelem;                           // number of elements per device
+    T *mc_vas[NUM_DEVICES];
 
     __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; } 
 
@@ -86,8 +85,7 @@ struct pgl {
             std::exit(EXIT_FAILURE);
         }
 
-        nelem = std::max<size_t>(size_t(_batch), 1) * std::max<size_t>(size_t(_depth), 1) *
-                std::max<size_t>(size_t(_rows), 1) * std::max<size_t>(size_t(_cols), 1);
+        nelem = gls[0].batch() * gls[0].depth() * gls[0].rows() * gls[0].cols();
         size = nelem * sizeof(T);
     
         for (int i = 0; i < NUM_DEVICES; i++) {
@@ -95,7 +93,7 @@ struct pgl {
             device_ids[i] = _device_ids[i];
         }
 
-        if (INIT_MC) {
+        if constexpr (INIT_MC) {
             multicast_init(); // should be called only once
             multicast_bind();
         }
