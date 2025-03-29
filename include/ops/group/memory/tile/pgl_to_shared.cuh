@@ -18,7 +18,7 @@ __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id
     kittens::ld_reduce_op<axis, assume_aligned, ReduceOp::MIN, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
+template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
     kittens::ld_reduce_op<2, false, ReduceOp::MIN, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
@@ -28,7 +28,7 @@ __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id
     kittens::ld_reduce_op<axis, assume_aligned, ReduceOp::MAX, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
+template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
     kittens::ld_reduce_op<2, false, ReduceOp::MAX, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
