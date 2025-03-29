@@ -7,19 +7,10 @@ static __global__ void p2r_global_wrapper_2d(const __grid_constant__ PGL input, 
     Ker::template device_func<H, W, NW, PGL, args...>(input, output, dev_idx);
 }
 
-template<typename T, int NUM_DEVICES>
-struct shared_layouts {
-    // Do not initialize MC (we initialize with dummy GLs), and
-    // make all dims runtime, so we can create one big PGL and share it across tests
-    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false>; 
-    inline static PGL *input_pgl = nullptr;
-    inline static PGL *output_pgl = nullptr;
-};
-
+constexpr static int B = 3, D = 1, R = 4, C = 5; // arbitrary mix of prime/composite numbers
 
 template<typename test, int NUM_DEVICES, int H, int W, int NUM_WORKERS, typename axis, typename... args>
 struct p2r_test_wrapper_2d {
-    constexpr static int B = 3, D = 1, R = 4, C = 5; // arbitrary mix of prime/composite numbers
     constexpr static int SIZE = H*W*256 * B * D * R * C;
 
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
@@ -47,20 +38,7 @@ struct p2r_test_wrapper_2d {
             initialize<NUM_DEVICES>(device_ids, d_i_arr, d_o_arr, i_ref, o_ref);
 
             // set parralel global layouts
-            for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-                // This is super hacky, but I think there is no clean way to do this, and 
-                // this sort of situation with hundreds of pgls of different dims is specific to testing
-                shared_layout::input_pgl->gls[dev_idx].raw_ptr = d_i_arr[dev_idx];
-                shared_layout::output_pgl->gls[dev_idx].raw_ptr = d_o_arr[dev_idx];
-                shared_layout::input_pgl->gls[dev_idx].batch_internal.v = (axis::value==0?H*16:1)*B;
-                shared_layout::output_pgl->gls[dev_idx].batch_internal.v = (axis::value==0?H*16:1)*B;
-                shared_layout::input_pgl->gls[dev_idx].depth_internal.v = (axis::value==1?H*16:1)*D;
-                shared_layout::output_pgl->gls[dev_idx].depth_internal.v = (axis::value==1?H*16:1)*D;
-                shared_layout::input_pgl->gls[dev_idx].rows_internal.v = (axis::value==2?H*16:1)*R;
-                shared_layout::output_pgl->gls[dev_idx].rows_internal.v = (axis::value==2?H*16:1)*R;
-                shared_layout::input_pgl->gls[dev_idx].cols_internal.v = 16*C*W;
-                shared_layout::output_pgl->gls[dev_idx].cols_internal.v = 16*C*W;
-            }
+            shared_pgl_replace_gl<dtype, NUM_DEVICES>(d_i_arr, d_o_arr, (axis::value==0?H*16:1)*B, (axis::value==1?H*16:1)*D, (axis::value==2?H*16:1)*R, 16*C*W);
             shared_layout::input_pgl->multicast_bind();
             shared_layout::output_pgl->multicast_bind();
 
@@ -207,6 +185,7 @@ void warp::memory::tile::pgl_to_register::tests(test_data &results) {
 
     p2r_sweep_size_2d_warp_axes_ops<float, NUM_DEVICES, SIZE, SIZE>::run(results);
     p2r_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2r_sweep_size_2d_warp_axes_ops<kittens::half, NUM_DEVICES, SIZE, SIZE>::run(results);
 }
 
 #endif
