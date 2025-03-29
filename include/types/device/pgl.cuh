@@ -47,19 +47,15 @@ struct pgl {
     using _GL = GL;
     using T = GL::dtype;
     using dtype = T;
-
-    size_t nelem;       // number of elements per device
-    size_t size;        // size of the raw conceptual data in bytes (on each device, not aggregate of all devices)
-    size_t mc_size;     // size of multicast object (>= size)
-    size_t handle_size; // size of address range bound to multicast object (>= size && <= mc_size)
-
+    
     GL gls[NUM_DEVICES];
     
-    int device_ids[NUM_DEVICES];
-    static constexpr int num_devices = NUM_DEVICES;
-    
+    size_t mc_size;     // size of the multicast handle
     CUmemGenericAllocationHandle mc_handle; // the single multicast handle for collective ops
     T *mc_vas[NUM_DEVICES];
+
+    int device_ids[NUM_DEVICES];
+    static constexpr int num_devices = NUM_DEVICES;
 
     __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; } 
 
@@ -85,9 +81,6 @@ struct pgl {
             std::exit(EXIT_FAILURE);
         }
 
-        nelem = gls[0].batch() * gls[0].depth() * gls[0].rows() * gls[0].cols();
-        size = nelem * sizeof(T);
-    
         for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
@@ -103,16 +96,16 @@ struct pgl {
     // There is a constraint on mc objects, which is apparently around 130 for 8 H100s on NVSwitch platform
     // NVIDIA does not document this and does not provide any driver APIs to clean resources during process runtime
     __host__ inline void multicast_init() {
+        cuInit(0); // should be called before any Driver API calls (arg SBZ)
+
         if (mc_handle) {
             std::cerr << "Multicast handle already initialized." << std::endl;
             std::exit(EXIT_FAILURE);
         }
 
-        cuInit(0); // should be called before any Driver API calls (arg SBZ)
-
         // Create MC handle props (once for all devices)
         CUmulticastObjectProp mc_prop; 
-        mc_size = detail::init_mc_prop(&mc_prop, NUM_DEVICES, size);
+        mc_size = detail::init_mc_prop(&mc_prop, NUM_DEVICES, gl_size());
         
         // Create MC handle (once for all devices)
         CUCHECK(cuMulticastCreate(&mc_handle, &mc_prop));
@@ -125,14 +118,8 @@ struct pgl {
         }
 
         // Get granularities
-        CUmemAllocationProp mem_prop{};
-        size_t mem_granularity;
-        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
         size_t mc_granularity;
         cuMulticastGetGranularity(&mc_granularity, &mc_prop, MC_GRAN_TYPE);
-
-        // Set handle size (this is needed because mc has larger granularity and we cannot bind larger than actual allocated size)
-        handle_size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
         // Map virtual addresses to the mc handle. All devices must be added before any address can be mapped per CUDA docs
         for (int i = 0; i < NUM_DEVICES; ++i) {
@@ -147,7 +134,8 @@ struct pgl {
     }
 
     // This can be called multiple times to share the pgl objects across different kernels. 
-    // However, size && participating devices CANNOT be changed
+    // However, participating devices cannot be changed and the size must be less than or 
+    // equal to the original size. GL dimensions can change
     // If you are calling this manually after constructor call, you should:
     //   1. Allocate device memory with pglCudaMalloc
     //   2. Create GL objects with the above device memory
@@ -164,7 +152,7 @@ struct pgl {
         // Bind the underlying GLs (with memory alloc'ed by pglCudaMalloc) to the multicast handle
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
-            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, handle_size, 0));
+            CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, mem_handle_size(gl_size()), 0));
         }
     }
 
@@ -178,7 +166,7 @@ struct pgl {
         for (int i = 0; i < NUM_DEVICES; ++i) {
             int dev;
             cuDeviceGet(&dev, device_ids[i]);
-            CUCHECK(cuMulticastUnbind(mc_handle, dev, 0, handle_size));
+            CUCHECK(cuMulticastUnbind(mc_handle, dev, 0, mem_handle_size(gl_size())));
         }
     }
 
@@ -199,6 +187,8 @@ struct pgl {
     }
 
     __host__ inline void multicast_check(int device_id) {
+        cuInit(0); // should be called before any Driver API calls (arg SBZ)
+
         // Check if device supports MultiCast Objects
         CUdevice dev;
         CUCHECK(cuDeviceGet(&dev, device_id));
@@ -210,6 +200,23 @@ struct pgl {
             std::cerr << "DEVICE ISSUE: Device " << device_id <<" does not support Multicast Objects." << std::endl;
             std::exit(EXIT_FAILURE);
         }
+    }
+
+    // We make this a function because users can change the underlying GL
+    __host__ inline size_t gl_size() {
+        return gls[0].batch() * gls[0].depth() * gls[0].rows() * gls[0].cols() * sizeof(T);
+    }
+
+    __host__ inline size_t mem_handle_size(size_t size) {
+        size_t mem_granularity;
+        CUmemAllocationProp mem_prop;
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
+
+        // This should be the size that was actually allocated to the handle
+        if (size % mem_granularity != 0)
+            size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
+
+        return size;
     }
 };
 
@@ -257,10 +264,9 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, size_t size) {
     CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
     CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
 
-    // This SHOULD be the size that was actually allocated to the handle
-    if (size % mem_granularity != 0) {
+    // This should be the size that was actually allocated to the handle
+    if (size % mem_granularity != 0)
         size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
-    }
 
     // Retrieve handle
     CUmemGenericAllocationHandle mem_handle;
