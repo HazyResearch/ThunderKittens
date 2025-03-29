@@ -249,11 +249,11 @@ struct p2s_sweep_size_2d_warp_axes_ops {
         shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
         shared_layout::output_pgl->multicast_init();
 
-        // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        // if constexpr (!std::is_same<T, float>::value) {
-        //     p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        //     p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        // }
+        p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        if constexpr (!std::is_same<T, float>::value) {
+            p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+            p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        }
 
         p2s_sweep_size_2d_warp_axes<p2s_atomic_add_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
         p2s_sweep_size_2d_warp_axes<p2s_broadcast_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
