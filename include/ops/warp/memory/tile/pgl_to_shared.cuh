@@ -83,7 +83,7 @@ __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id
     ld_reduce_op<2, false, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
-template <int axis, bool assume_aligned, ReduceOp OP, ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
+template <int axis, bool assume_aligned, ReduceOp OP, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
 __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
@@ -128,17 +128,17 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
     }
 }
 
-template <int axis, bool assume_aligned, ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
+template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
     reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
+template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
     reduce_op<2, false, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template <int axis, bool assume_aligned, ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
+template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
 __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
@@ -161,7 +161,6 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
         int row = load_idx / memcpy_per_row;
         int col = (load_idx*elem_per_memcpy) % src.cols;
 
-
         if constexpr (needs_bounds_check) {
             if (row >= src.rows) continue;
         }
@@ -183,7 +182,7 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
     }
 }
 
-template <ducks::pgl::all PGL, ducks::st::all ST, ducks::coord::tile COORD=coord<ST>>
+template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
     broadcast<2, false>(dst, src, dev_id, idx);
 }
