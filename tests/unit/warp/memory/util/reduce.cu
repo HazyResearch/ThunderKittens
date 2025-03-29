@@ -168,7 +168,7 @@ struct test_multimem_reduce_vec {
 };
 
 template<typename T>
-struct test_multimem_packed_scalar {
+struct test_multimem_reduce_packed_scalar {
     using dtype = T;
     using packed_dtype = std::conditional_t<std::is_same_v<T, kittens::half>, kittens::half_2,
                          std::conditional_t<std::is_same_v<T, kittens::bf16>, kittens::bf16_2,
@@ -226,7 +226,7 @@ struct multimem_sweep_op {
         }
         
         multimem_test_wrapper<test_multimem_reduce_vec<T>, NUM_DEVICES>::run(results);
-        multimem_test_wrapper<test_multimem_packed_scalar<T>, NUM_DEVICES>::run(results);
+        multimem_test_wrapper<test_multimem_reduce_packed_scalar<T>, NUM_DEVICES>::run(results);
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
