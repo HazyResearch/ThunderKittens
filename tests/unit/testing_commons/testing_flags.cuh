@@ -161,6 +161,16 @@
 #define TEST_GROUP_SHARED_VEC_CONVERSIONS
 #endif
 
+/* ----------  MULTI_GPU TEST MACROS  ---------- */
+
+#define NUM_GPUS 8 // don't use NUM_DEVICES
+
+#if defined(TEST_MULTI_GPU)
+#define TEST_WARP_MEMORY_TILE_PGL_TO_REGISTER
+#define TEST_WARP_MEMORY_TILE_PGL_TO_SHARED
+#define TEST_WARP_MEMORY_UTIL_REDUCE
+#endif
+
 // Now we need to go back up the tree and make sure all dependent flags are defined.
 
 /* -----  DEPTH 3 MACROS  ----- */

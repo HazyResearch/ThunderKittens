@@ -268,15 +268,14 @@ struct p2s_sweep_size_2d_warp_axes_ops {
 
 void warp::memory::tile::pgl_to_shared::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/tile/pgl_to_shared tests! -----\n" << std::endl;
-    constexpr int NUM_DEVICES = 8;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    p2s_sweep_size_2d_warp_axes_ops<float, NUM_DEVICES, SIZE, SIZE>::run(results);
-    p2s_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_DEVICES, SIZE, SIZE>::run(results);
-    p2s_sweep_size_2d_warp_axes_ops<kittens::half, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<float, NUM_GPUS, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
 }
 
 #endif
