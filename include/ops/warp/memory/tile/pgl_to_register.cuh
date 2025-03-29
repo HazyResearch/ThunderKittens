@@ -89,7 +89,7 @@ __device__ static inline void all_reduce_max(RT &dst, const PGL &src, int dev_id
     ld_reduce_op<2, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
-template <int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
+template <int axis, ReduceOp OP, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
@@ -140,12 +140,12 @@ __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template <int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
+template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
@@ -196,7 +196,7 @@ __device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template <ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<RT>>
+template <ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     broadcast<2>(dst, src, dev_id, idx);
 }
