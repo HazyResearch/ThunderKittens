@@ -394,8 +394,6 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
         kittens::pglCudaFree(dev_idx, input[dev_idx].raw_ptr, input_size * sizeof(T));
         kittens::pglCudaFree(dev_idx, output[dev_idx].raw_ptr, output_size * sizeof(T));
     }
-    kittens::pglFree(input);
-    kittens::pglFree(output);
     delete[] o_t, o;
     CudaCheckError();
     return good ? test_result::PASSED : test_result::FAILED;
