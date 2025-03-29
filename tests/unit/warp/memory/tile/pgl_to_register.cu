@@ -145,10 +145,6 @@ struct p2r_sweep_size_2d_warp_axes {
 // This might seem like an overkill, but is needed to minimize the number of PGL instantiations
 template<typename T, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args>
 struct p2r_sweep_size_2d_warp_axes_ops {
-    using I0_t = std::integral_constant<int, 0>;
-    using I1_t = std::integral_constant<int, 1>;
-    using I2_t = std::integral_constant<int, 2>;
-
     static void run(test_data &results) {    
         using shared_layout = shared_layouts<T, NUM_DEVICES>;
 

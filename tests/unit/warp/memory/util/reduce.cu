@@ -16,7 +16,7 @@ static __global__ void global_wrapper(const __grid_constant__ int dev_idx, const
 template<typename test, int NUM_DEVICES>
 struct multimem_test_wrapper {
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
+    using shared_layout = shared_layouts<dtype, NUM_DEVICES>;
 
     static void run(test_data& results) {
         int device_count;
@@ -28,6 +28,7 @@ struct multimem_test_wrapper {
         test_info this_result;
         this_result.label = test::test_identifier;
         if constexpr (test::valid::value) {
+
             // initialize
             dtype *d_i_arr[NUM_DEVICES];
             dtype *d_o_arr[NUM_DEVICES];
@@ -36,25 +37,32 @@ struct multimem_test_wrapper {
             int device_ids[NUM_DEVICES];
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
             initialize<NUM_DEVICES>(device_ids, d_i_arr, d_o_arr, i_ref, o_ref);
-            // make parralel global layouts
-            PGL input(device_ids, d_i_arr, nullptr, nullptr, nullptr, test::test_size);
-            PGL output(device_ids, d_o_arr, nullptr, nullptr, nullptr, test::test_size);
+
+            // set parralel global layouts
+            shared_pgl_replace_gl<dtype, NUM_DEVICES>(d_i_arr, d_o_arr, 1, 1, 1, test::test_size);
+            shared_layout::input_pgl->multicast_bind();
+            shared_layout::output_pgl->multicast_bind();
+
             // run kernel
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
                 cudaSetDevice(dev_idx);
                 cudaFuncSetAttribute(
-                    global_wrapper<test, PGL>,
+                    global_wrapper<test, typename shared_layout::PGL>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                global_wrapper<test, PGL><<<1, 1>>>(dev_idx, input, output);
+                global_wrapper<test, typename shared_layout::PGL><<<1, 1>>>(dev_idx, *shared_layout::input_pgl, *shared_layout::output_pgl);
                 cudaDeviceSynchronize();
                 CudaCheckError();
             }
+
             // fill in correct results on cpu
             test::host_func(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate<NUM_DEVICES, PGL, dtype>(input, output, i_ref, o_ref, this_result.label);
+            this_result.result = validate<NUM_DEVICES, typename shared_layout::PGL, dtype>(*shared_layout::input_pgl, *shared_layout::output_pgl, i_ref, o_ref, this_result.label);
+
+            shared_layout::input_pgl->multicast_unbind();
+            shared_layout::output_pgl->multicast_unbind();
         }
         else {
             this_result.result = test_result::INVALID;
@@ -66,7 +74,6 @@ struct multimem_test_wrapper {
 template<typename T, kittens::ReduceOp op>
 struct test_multimem_ld_reduce_vec {
     using dtype = T;
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     static inline const std::string op_identifier = op == kittens::ReduceOp::ADD ? "ADD" : op == kittens::ReduceOp::MIN ? "MIN" : "MAX";
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_ld_reduce_vec=bf16,op=" + op_identifier :
@@ -90,6 +97,7 @@ struct test_multimem_ld_reduce_vec {
             }
         }
     }
+    template <kittens::ducks::pgl::all PGL>
     __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
         kittens::multimem_ld_reduce_op<T, op>::apply_vec((float4 *)output[dev_idx].raw_ptr, input.mc_vas[dev_idx]);
     }
@@ -101,7 +109,6 @@ struct test_multimem_ld_reduce_packed_scalar {
     using packed_dtype = std::conditional_t<std::is_same_v<T, kittens::half>, kittens::half_2,
                          std::conditional_t<std::is_same_v<T, kittens::bf16>, kittens::bf16_2,
                          std::conditional_t<std::is_same_v<T, float>, float2, void>>>;
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     static inline const std::string op_identifier = op == kittens::ReduceOp::ADD ? "ADD" : op == kittens::ReduceOp::MIN ? "MIN" : "MAX";
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_ld_reduce_packed_scalar=bf16,op=" + op_identifier :
@@ -125,6 +132,7 @@ struct test_multimem_ld_reduce_packed_scalar {
             }
         }
     }
+    template <kittens::ducks::pgl::all PGL>
     __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
         kittens::multimem_ld_reduce_op<packed_dtype, op>::apply((packed_dtype *)output[dev_idx].raw_ptr, (packed_dtype *)input.mc_vas[dev_idx]);
     }
@@ -133,7 +141,6 @@ struct test_multimem_ld_reduce_packed_scalar {
 template<typename T>
 struct test_multimem_reduce_vec {
     using dtype = T;
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_reduce_vec=bf16,op=ADD" :
                                                       std::is_same_v<T, kittens::half> ? "multimem_reduce_vec=half,op=ADD" :
@@ -154,18 +161,18 @@ struct test_multimem_reduce_vec {
             }
         }
     }
+    template <kittens::ducks::pgl::all PGL>
     __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
         kittens::multimem_reduce_op<T, kittens::ReduceOp::ADD>::apply_vec(output.mc_vas[dev_idx], input[dev_idx].raw_ptr);
     }
 };
 
 template<typename T>
-struct test_multimem_packed_packed_scalar {
+struct test_multimem_packed_scalar {
     using dtype = T;
     using packed_dtype = std::conditional_t<std::is_same_v<T, kittens::half>, kittens::half_2,
                          std::conditional_t<std::is_same_v<T, kittens::bf16>, kittens::bf16_2,
                          std::conditional_t<std::is_same_v<T, float>, float2, void>>>;
-    using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, -1>, 8, true>;
     using valid = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "multimem_reduce_vec=bf16,op=ADD" :
                                                       std::is_same_v<T, kittens::half> ? "multimem_reduce_vec=half,op=ADD" :
@@ -186,8 +193,46 @@ struct test_multimem_packed_packed_scalar {
             }
         }
     }
+    template <kittens::ducks::pgl::all PGL>
     __device__ static void device_func(const int dev_idx, const PGL &input, const PGL &output) {
         kittens::multimem_reduce_op<packed_dtype, kittens::ReduceOp::ADD>::apply((packed_dtype *)output.mc_vas[dev_idx], (packed_dtype *)input[dev_idx].raw_ptr);
+    }
+};
+
+template<typename T, int NUM_DEVICES>
+struct multimem_sweep_op {
+    static void run(test_data &results) {
+        using shared_layout = shared_layouts<T, NUM_DEVICES>;
+
+        // Initialize shared PGLs
+        int device_ids[NUM_DEVICES];
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
+        T *d_arr[NUM_DEVICES] = {}; // nullptrs (create dummy GLs)
+        shared_layout::input_pgl = new shared_layout::PGL(device_ids, d_arr, 1, 1, 1, 16);
+        shared_layout::output_pgl = new shared_layout::PGL(device_ids, d_arr, 1, 1, 1, 16);
+        shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
+        shared_layout::output_pgl->multicast_init();
+
+        multimem_test_wrapper<test_multimem_ld_reduce_vec<T, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
+        if constexpr (!std::is_same<T, float>::value) { // float32 is not supported for MIN/MAX ops
+            multimem_test_wrapper<test_multimem_ld_reduce_vec<T, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
+            multimem_test_wrapper<test_multimem_ld_reduce_vec<T, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
+        }
+    
+        multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<T, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
+        if constexpr (!std::is_same<T, float>::value) { // float32 is not supported for MIN/MAX ops
+            multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<T, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
+            multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<T, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
+        }
+        
+        multimem_test_wrapper<test_multimem_reduce_vec<T>, NUM_DEVICES>::run(results);
+        multimem_test_wrapper<test_multimem_packed_scalar<T>, NUM_DEVICES>::run(results);
+
+        // Delete shared PGLs
+        shared_layout::input_pgl->multicast_destroy();
+        shared_layout::output_pgl->multicast_destroy();
+        delete shared_layout::input_pgl;
+        delete shared_layout::output_pgl;
     }
 };
 
@@ -195,29 +240,9 @@ void warp::memory::util::reduce::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/util/reduce tests! -----\n" << std::endl;
     constexpr int NUM_DEVICES = 8;
 
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<float, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results); // MIN/MAX ops are NOT supported on float32
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::bf16, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::bf16, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::bf16, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_vec<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
-    
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<float, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results); // MIN/MAX ops are NOT supported on float32
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::bf16, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_ld_reduce_packed_scalar<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES>::run(results);
-
-    multimem_test_wrapper<test_multimem_reduce_vec<float>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_reduce_vec<kittens::bf16>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_reduce_vec<kittens::half>, NUM_DEVICES>::run(results);
-
-    multimem_test_wrapper<test_multimem_packed_packed_scalar<float>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_packed_packed_scalar<kittens::bf16>, NUM_DEVICES>::run(results);
-    multimem_test_wrapper<test_multimem_packed_packed_scalar<kittens::half>, NUM_DEVICES>::run(results);
+    multimem_sweep_op<float, NUM_DEVICES>::run(results);
+    multimem_sweep_op<kittens::bf16, NUM_DEVICES>::run(results);
+    multimem_sweep_op<kittens::half, NUM_DEVICES>::run(results);
 }
 
 #endif

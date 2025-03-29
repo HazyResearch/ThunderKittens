@@ -7,13 +7,14 @@ static __global__ void p2s_global_wrapper_2d(const __grid_constant__ PGL input, 
     Ker::template device_func<H, W, NW, PGL, args...>(input, output, dev_idx);
 }
 
+constexpr static int B = 3, D = 1, R = 4, C = 5; // arbitrary mix of prime/composite numbers
+
 template<typename test, int NUM_DEVICES, int H, int W, int NUM_WORKERS, typename axis, typename... args>
 struct p2s_test_wrapper_2d {
-    constexpr static int B = 3, D = 1, R = 4, C = 5; // arbitrary mix of prime/composite numbers
     constexpr static int SIZE = H*W*256 * B * D * R * C;
 
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
-    using PGL = kittens::pgl<kittens::gl<dtype, -1, -1, -1, 16*C*W>, NUM_DEVICES, true>;
+    using shared_layout = shared_layouts<dtype, NUM_DEVICES>;
 
     static void run(test_data& results) {
         int device_count;
@@ -26,6 +27,7 @@ struct p2s_test_wrapper_2d {
         this_result.label = generate_test_name<H, W, NUM_WORKERS, axis, args...>(test::test_identifier);
         static_assert(axis::value==0 || axis::value==1 || axis::value==2, "Axis must be 0, 1, or 2.");
         if constexpr (test::template valid<H, W, NUM_WORKERS>::value) {
+
             // initialize
             dtype *d_i_arr[NUM_DEVICES];
             dtype *d_o_arr[NUM_DEVICES];
@@ -34,23 +36,30 @@ struct p2s_test_wrapper_2d {
             int device_ids[NUM_DEVICES];
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
             initialize<NUM_DEVICES>(device_ids, d_i_arr, d_o_arr, i_ref, o_ref);
-            // make parralel global layouts
-            PGL input(device_ids, d_i_arr, (axis::value==0?H*16:1)*B, (axis::value==1?H*16:1)*D, (axis::value==2?H*16:1)*R, nullptr);
-            PGL output(device_ids, d_o_arr, (axis::value==0?H*16:1)*B, (axis::value==1?H*16:1)*D, (axis::value==2?H*16:1)*R, nullptr);
+
+            // set parralel global layouts
+            shared_pgl_replace_gl<dtype, NUM_DEVICES>(d_i_arr, d_o_arr, (axis::value==0?H*16:1)*B, (axis::value==1?H*16:1)*D, (axis::value==2?H*16:1)*R, 16*C*W);
+            shared_layout::input_pgl->multicast_bind();
+            shared_layout::output_pgl->multicast_bind();
+
             // run kernel
             for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
                 cudaSetDevice(dev_idx);
                 cudaFuncSetAttribute(
-                    p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...>,
+                    p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output, dev_idx);
+                p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(*shared_layout::input_pgl, *shared_layout::output_pgl, dev_idx);
             }
+            
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, PGL, axis>(i_ref, o_ref);
+            test::template host_func<H, W, NUM_WORKERS, typename shared_layout::PGL, axis>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate<NUM_DEVICES, PGL, dtype>(input, output, i_ref, o_ref, this_result.label, W * 16, 2e-1); // high due to half-precision all-reduce ops
+            this_result.result = validate<NUM_DEVICES, typename shared_layout::PGL, dtype>(*shared_layout::input_pgl, *shared_layout::output_pgl, i_ref, o_ref, this_result.label, W * 16, 2e-1); // high due to half-precision all-reduce ops
+
+            shared_layout::input_pgl->multicast_unbind();
+            shared_layout::output_pgl->multicast_unbind();
         }
         else {
             this_result.result = test_result::INVALID;
@@ -135,6 +144,35 @@ struct p2s_sweep_size_2d_warp_axes {
     }
 };
 
+// This might seem like an overkill, but is needed to minimize the number of PGL instantiations
+template<typename T, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args>
+struct p2s_sweep_size_2d_warp_axes_ops {
+    static void run(test_data &results) {    
+        using shared_layout = shared_layouts<T, NUM_DEVICES>;
+
+        // Initialize shared PGLs
+        int device_ids[NUM_DEVICES];
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
+        T *d_arr[NUM_DEVICES] = {}; // nullptrs (create dummy GLs)
+        shared_layout::input_pgl = new shared_layout::PGL(device_ids, d_arr, 16*MAX_H*B, 16*MAX_H*D, 16*MAX_H*R, 16*MAX_W*C);
+        shared_layout::output_pgl = new shared_layout::PGL(device_ids, d_arr, 16*MAX_H*B, 16*MAX_H*D, 16*MAX_H*R, 16*MAX_W*C);
+        shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
+        shared_layout::output_pgl->multicast_init();
+
+        p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        if constexpr (!std::is_same<T, float>::value) {
+            p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+            p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        }
+
+        // Delete shared PGLs
+        shared_layout::input_pgl->multicast_destroy();
+        shared_layout::output_pgl->multicast_destroy();
+        delete shared_layout::input_pgl;
+        delete shared_layout::output_pgl;
+    }
+};
+
 void warp::memory::tile::pgl_to_shared::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/tile/pgl_to_shared tests! -----\n" << std::endl;
     constexpr int NUM_DEVICES = 8;
@@ -143,13 +181,9 @@ void warp::memory::tile::pgl_to_shared::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<float, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::MIN>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::bf16, kittens::ReduceOp::MAX>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::ADD>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::MIN>, NUM_DEVICES, SIZE, SIZE>::run(results);
-    // p2s_sweep_size_2d_warp_axes<p2s_all_reduce_test<kittens::half, kittens::ReduceOp::MAX>, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<float, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_DEVICES, SIZE, SIZE>::run(results);
+    p2s_sweep_size_2d_warp_axes_ops<kittens::half, NUM_DEVICES, SIZE, SIZE>::run(results);
 }
 
 #endif
