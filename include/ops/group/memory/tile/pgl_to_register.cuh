@@ -11,11 +11,8 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
 
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
-    
-    auto coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * src[dev_id].depth() + coord.d) * src[dev_id].rows() + coord.r) * src[dev_id].cols() + coord.c;
-    U *mc_ptr = src.mc_vas[dev_id] + index;
-    
+
+    U *dst_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_id);
     const int row_stride = src[dev_id].template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = dst.rows*warpid();
@@ -27,9 +24,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&mc_ptr[(row+0)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&mc_ptr[(row+0)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)]);
             dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
@@ -38,9 +35,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&mc_ptr[(row+8)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&mc_ptr[(row+8)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)]);
             dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
@@ -86,10 +83,7 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for reduce_op");
     
-    auto coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
-    U *mc_ptr = dst.mc_vas[dev_id] + index;
-
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_id);
     const int row_stride = dst[dev_id].template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = src.rows*warpid();
@@ -103,9 +97,9 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
             dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
             dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&mc_ptr[(row+0)*row_stride + (col+0)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)], dst_buf);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&mc_ptr[(row+0)*row_stride + (col+8)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)], dst_buf);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
@@ -114,9 +108,9 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
             dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
             dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&mc_ptr[(row+8)*row_stride + (col+0)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)], dst_buf);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&mc_ptr[(row+8)*row_stride + (col+8)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)], dst_buf);
         }
     }
 }
@@ -141,10 +135,7 @@ __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_i
     static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for load/store");
     #endif
 
-    auto coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
-    U *mc_ptr = dst.mc_vas[dev_id] + index;
-
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_id);
     const int row_stride = dst[dev_id].template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = src.rows*warpid();
@@ -154,14 +145,14 @@ __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_i
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size_col + 2*(warp_laneid % 4);
-            *(U2*)(&mc_ptr[(row+0)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
-            *(U2*)(&mc_ptr[(row+0)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
+            *(U2*)(&dst_mc_ptr[(row+0)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
+            *(U2*)(&dst_mc_ptr[(row+0)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
             int col = j*src.tile_size_col + 2*(warp_laneid % 4);
-            *(U2*)(&mc_ptr[(row+8)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
-            *(U2*)(&mc_ptr[(row+8)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
+            *(U2*)(&dst_mc_ptr[(row+8)*row_stride + (col+0)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
+            *(U2*)(&dst_mc_ptr[(row+8)*row_stride + (col+8)]) = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
         }
     }
 }
