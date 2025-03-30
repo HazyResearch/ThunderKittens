@@ -21,9 +21,8 @@ __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_id, 
     constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy);
     constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
-    coord<> coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * src[dev_id].depth() + coord.d) * src[dev_id].rows() + coord.r) * src[dev_id].cols() + coord.c;
-    U* mc_ptr = src.mc_vas[dev_id] + index;
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    U *src_mc_ptr = src.mc_ptr_at(unit_coord, dev_id);
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -38,14 +37,14 @@ __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_id, 
 
         if constexpr (assume_aligned) {
             float4 tmp;
-            U* src_ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+            U* src_ptr = static_cast<U*>(src_mc_ptr) + row*row_stride + col;
             multimem_ld_reduce_op<T, OP>::apply_vec(&tmp, src_ptr);
             move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
         }
         else {
-            if (row + coord.template dim<axis>() < src[dev_id].template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < src[dev_id].template shape<axis>()) {
                 float4 tmp;
-                U* src_ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+                U* src_ptr = static_cast<U*>(src_mc_ptr) + row*row_stride + col;
                 multimem_ld_reduce_op<T, OP>::apply_vec(&tmp, src_ptr);
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
             }
@@ -95,9 +94,8 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
     constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy);
     constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
-    coord<> coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
-    U* mc_ptr = dst.mc_vas[dev_id] + index;
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    U *dst_mc_ptr = dst.mc_ptr_at(unit_coord, dev_id);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -114,14 +112,14 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+            U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
             multimem_reduce_op<U, OP>::apply_vec(ptr, (U*)&tmp);
         }
         else {
-            if (row + coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-                U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+                U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
                 multimem_reduce_op<U, OP>::apply_vec(ptr, (U*)&tmp);
             }
         }
@@ -150,9 +148,8 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
     constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy);
     constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
-    coord<> coord = idx.template unit_coord<axis, 3>();
-    auto index = ((coord.b * dst[dev_id].depth() + coord.d) * dst[dev_id].rows() + coord.r) * dst[dev_id].cols() + coord.c;
-    U* mc_ptr = dst.mc_vas[dev_id] + index;
+    coord<> unit_coord = idx.template unit_coord<axis, 3>();
+    U *dst_mc_ptr = dst.mc_ptr_at(unit_coord, dev_id);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     int laneid = threadIdx.x % N_THREADS;
 
@@ -168,14 +165,14 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+            U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
             move<float4>::stg((float4*)ptr, tmp);
         }
         else {
-            if (row + coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
+            if (row + unit_coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-                U* ptr = static_cast<U*>(mc_ptr) + row*row_stride + col;
+                U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
                 move<float4>::stg((float4*)ptr, tmp);
             }
         }
