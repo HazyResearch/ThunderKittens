@@ -9,143 +9,67 @@
 
 namespace kittens {
 
-// TODO: for a given address, need to make sure address is reset back to zero
-// or some other measure to ensure that the address can be reused
-struct SyncSpace {
-public: 
-    SyncSpace(CUdeviceptr mc_ptr, CUdeviceptr uc_ptr, int size, int dev_id)
-        : mc_ptr(mc_ptr), uc_ptr(uc_ptr), size(size), dev_id(dev_id) {}
-    
-    CUdeviceptr mc_ptr;
-    CUdeviceptr uc_ptr;
-    int dev_id;
-
-    /**
-     * @brief Get the memory address offset for a synchronization point
-     * @param sync_id Unique identifier for the sync point
-     * @return Address offset for the sync point
-     */
-    __device__ inline size_t get_address(int sync_id) const {
-        assert(sync_id < size / sizeof(unsigned int));
-        return sync_id * sizeof(unsigned int);
-    }
-private:
-    int size;
+template <typename SYNC_SPACE_DTYPE = int>
+struct sync_point {
+    SYNC_SPACE_DTYPE *mc;
+    SYNC_SPACE_DTYPE *uc;
 };
 
+namespace ducks {
+namespace sync_manager {
+    
+struct identifier {};
+
 /**
- * @brief The SyncManager class manages multicast memory spaces across 
- * multiple GPUs for synchronization. All "gangs" in TK are part of the same SyncManager.
+ * @brief Concept for all sync managers.
  */
-class SyncManager {
-public:
-    /**
-     * @brief Construct a new SyncManager object
-     * @param device_ids Array of device IDs to include in this SyncManager
-     * @throws std::runtime_error if CUDA initialization fails
-     */
-    explicit SyncManager(int hood_size, const int* device_ids) : num_devices(hood_size) {
-        mc_ptrs = new CUdeviceptr[hood_size];
-        uc_ptrs = new CUdeviceptr[hood_size];
-        device_ids_ = new int[hood_size];
-        uc_handles_ = new CUmemGenericAllocationHandle[hood_size];
-        
-        // Store device IDs for later use
-        for (int i = 0; i < hood_size; ++i) {
-            device_ids_[i] = device_ids[i];
+template<typename T> concept all = requires {
+    typename T::identifier;
+} && std::is_same_v<typename T::identifier, identifier>;
+
+} // namespace sync_manager
+} // namespace ducks
+
+/**
+ * @brief The sync_manager struct manages multicast memory spaces across 
+ * multiple GPUs for synchronization. It is just a named PGL under the hood.
+ */
+template <int NUM_DEVICES, int NUM_SYNC_POINTS = 16>
+struct sync_manager {
+    using identifier = ducks::sync_manager::identifier;
+
+    using SYNC_SPACE_DTYPE = int;
+    using SYNC_SPACE_T = pgl<gl<SYNC_SPACE_DTYPE, 1, 1, 1, NUM_SYNC_POINTS>, NUM_DEVICES, true>;
+    SYNC_SPACE_T sync_space;
+
+    // It is recommended to call the sync_manager.create() method instead of direct construction
+    inline __host__ sync_manager(int *device_ids, SYNC_SPACE_DTYPE **d_sync_spaces) : 
+        sync_space(device_ids, d_sync_spaces, nullptr, nullptr, nullptr, nullptr) { }
+
+    static inline __host__ sync_manager create(int* device_ids) {
+        SYNC_SPACE_DTYPE *d_sync_spaces[NUM_DEVICES]; 
+
+        for (int i = 0; i < NUM_DEVICES; ++i) {
+            int dev_idx = device_ids[i];
+            cudaSetDevice(dev_idx);
+            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_sync_spaces[dev_idx], NUM_SYNC_POINTS * sizeof(SYNC_SPACE_DTYPE));
         }
 
-        cuInit(0);
-
-        CUmulticastObjectProp mcProp = {};
-        mc_size_ = detail::init_mc_prop(&mcProp, hood_size);
-     
-        CUCHECK(cuMulticastCreate(&mc_handle_, &mcProp));
-
-        // Add devices to the multicast object
-        for (int dev_idx = 0; dev_idx < hood_size; ++dev_idx) {
-            CUCHECK(cuMulticastAddDevice(mc_handle_, device_ids[dev_idx]));
-        }
-        
-        for (int dev_idx = 0; dev_idx < hood_size; ++dev_idx) {
-            CUDACHECK(cudaSetDevice(device_ids[dev_idx]));
-            
-            CUmemAllocationProp memProp = detail::create_mem_prop(device_ids[dev_idx]);
-
-            size_t handle_granularity = 0;
-            CUCHECK(cuMemGetAllocationGranularity(
-                &handle_granularity, &memProp, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED
-            ));
-
-            CUCHECK(cuMemCreate(&uc_handles_[dev_idx], mc_size_, &memProp, 0));
-
-            // Bind each unicast allocation to the multicast object at offset 0
-            CUCHECK(cuMulticastBindMem(
-                mc_handle_, 
-                /*mcOffset*/ 0,
-                uc_handles_[dev_idx],
-                /*memOffset*/ 0, 
-                mc_size_, 
-                0
-            ));
-        }
-
-        // Reserve address space and map memory for multicast and unicast accesses
-        for (int dev_idx = 0; dev_idx < hood_size; ++dev_idx) {
-            CUDACHECK(cudaSetDevice(device_ids[dev_idx]));
-
-            CUCHECK(cuMemAddressReserve(&mc_ptrs[dev_idx], mc_size_, mc_size_, 0, 0));
-            CUCHECK(cuMemAddressReserve(&uc_ptrs[dev_idx], mc_size_, mc_size_, 0, 0));
-
-            CUCHECK(cuMemMap(mc_ptrs[dev_idx], mc_size_, 0, mc_handle_, 0));
-            CUCHECK(cuMemMap(uc_ptrs[dev_idx], mc_size_, 0, uc_handles_[dev_idx], 0));
-
-            CUmemAccessDesc desc = detail::create_mem_desc(device_ids[dev_idx]);
-            CUCHECK(cuMemSetAccess(mc_ptrs[dev_idx], mc_size_, &desc, 1));
-            CUCHECK(cuMemSetAccess(uc_ptrs[dev_idx], mc_size_, &desc, 1));
-            CUDACHECK(cudaMemset(reinterpret_cast<void*>(mc_ptrs[dev_idx]), 0, mc_size_));
-            CUDACHECK(cudaMemset(reinterpret_cast<void*>(uc_ptrs[dev_idx]), 0, mc_size_));
-        }
+        return sync_manager(device_ids, d_sync_spaces);
     }
 
-    /**
-     * @brief Destroy the SyncManager object and clean up resources
-     */
-    ~SyncManager() {
-        for (int i = 0; i < num_devices; ++i) {
-            cudaSetDevice(device_ids_[i]);
-            cuMemUnmap(mc_ptrs[i], mc_size_);
-            cuMemUnmap(uc_ptrs[i], mc_size_);
-            cuMemAddressFree(mc_ptrs[i], mc_size_);
-            cuMemAddressFree(uc_ptrs[i], mc_size_);
-            cuMemRelease(uc_handles_[i]);
+    inline __host__ void free() {
+        for (int i = 0; i < NUM_DEVICES; ++i) {
+            int dev_idx = sync_space.device_ids[i];
+            cudaSetDevice(dev_idx);
+            pglCudaFree(dev_idx, sync_space[i].raw_ptr, NUM_SYNC_POINTS * sizeof(SYNC_SPACE_DTYPE));
         }
-        cuMemRelease(mc_handle_);
+        pglFree(sync_space);
     }
 
-    SyncSpace get_sync_space(int dev_id) const {
-        return SyncSpace(mc_ptrs[dev_id], uc_ptrs[dev_id], mc_size_, dev_id);
+    __device__ inline sync_point<SYNC_SPACE_DTYPE> get_sync_point(int sync_id, int dev_idx) const {
+        return sync_point{sync_space.mc_vas[dev_idx] + sync_id, sync_space[dev_idx].raw_ptr + sync_id};
     }
-
-
-    SyncManager(const SyncManager&) = delete;
-    SyncManager& operator=(const SyncManager&) = delete;
-    SyncManager(SyncManager&& other) noexcept;
-    SyncManager& operator=(SyncManager&& other) noexcept;
-
-public:
-    const int num_devices;
-    CUdeviceptr *mc_ptrs;
-    CUdeviceptr *uc_ptrs;
-    
-private:
-    int *device_ids_;
-    
-    size_t mc_size_ = 0;
-    size_t cur_va_offset_ = 0;
-    
-    CUmemGenericAllocationHandle mc_handle_;
-    CUmemGenericAllocationHandle *uc_handles_;
 };
 
 } // namespace kittens

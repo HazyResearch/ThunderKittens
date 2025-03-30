@@ -11,52 +11,39 @@
 
 namespace kittens {
 
+// TODO: for a given address, need to make sure address is reset back to zero
+// or some other measure to ensure that the address can be reused
+
 /**
  * @brief Gang template represents a collection of GPUs working together
- * @tparam GPUS Compile-time list of GPU device IDs in the gang
  */
-template <int... GPUS>
+template <int NUM_DEVICES>
 struct gang {
-static constexpr int GANG_SIZE = sizeof...(GPUS);
-static constexpr std::array<int, sizeof...(GPUS)> gpu_ids{GPUS...};
 
 /**
  * @brief Synchronize all GPUs in a gang at a specific sync point
- * @tparam DEVICE_ID The device ID of the calling GPU
- * @param hood_obj A kittens::hood object
- * @param sync_id Identifier for this synchronization point
  */
-// template <int HOOD_SIZE>
-__device__ static inline void sync(SyncSpace s, int sync_id = 0) {
+template <ducks::sync_manager::all SyncManager>
+__device__ static inline void sync(const SyncManager &sm, const int sync_id, const int dev_id) {
     #if defined(__CUDA_ARCH__)
         static_assert(__CUDA_ARCH__ >= 900, 
             "Using gang::sync() requires CUDA compute capability >= 9.0 (Hopper or newer)");
     #endif
-
-    if (!is_in_gang(s.dev_id)) return;
-
+    
+    // TODO: support a subset of devices
+    if (dev_id >= NUM_DEVICES) return;
     if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0 ||
-        blockIdx.x != 0 || blockIdx.y != 0 || blockIdx.z != 0) {
-        return;
-    }
-
-    unsigned int *mc_addr = reinterpret_cast<unsigned int*>(
-        s.mc_ptr) + s.get_address(sync_id);
-    unsigned int *uc_addr = reinterpret_cast<unsigned int*>(
-        s.uc_ptr) + s.get_address(sync_id);
+        blockIdx.x != 0 || blockIdx.y != 0 || blockIdx.z != 0) return;
+    
+    sync_point sp = sm.get_sync_point(sync_id, dev_id);
 
     asm volatile ("multimem.red.release.sys.global.add.u32 [%0], %1;" 
-                  :: "l"(mc_addr), "n"(1) : "memory");
-    
+                  :: "l"(sp.mc), "n"(1) : "memory");
     asm volatile ("fence.proxy.alias;" ::: "memory");
-
-    cuda::atomic_ref<unsigned int, cuda::thread_scope_system> ac(*uc_addr);
-    while (GANG_SIZE > ac.load(cuda::memory_order_acquire));
+    cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_system> ac(*sp.uc);
+    while (NUM_DEVICES > ac.load(cuda::memory_order_acquire));
 }
 
-__device__ static inline bool is_in_gang(int dev_idx) {
-    return ((dev_idx == GPUS) || ...);
-}
 };
 
 } // namespace kittens

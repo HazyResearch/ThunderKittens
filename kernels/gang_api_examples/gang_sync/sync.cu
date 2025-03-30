@@ -33,11 +33,10 @@ using namespace kittens;
     }                                                         \
 } while(0)
 
-
-__global__ void test_barrier_kernel(SyncSpace s) {
-    // TODO: make runtime configurable
-    using gang_1 = kittens::gang<0,1,2,3>;
-    gang_1::sync(s); 
+template <ducks::sync_manager::all SyncManager>
+__global__ void test_barrier_kernel(SyncManager sm, int sync_id, int dev_id) {
+    using gang = kittens::gang<4>;
+    gang::sync(sm, sync_id, dev_id); 
 }
 
 int main() {
@@ -61,18 +60,15 @@ int main() {
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
     CUDACHECK(cudaSetDevice(0));
     KittensClub club(device_ids, NUM_DEVICES);
-    club.execute([](int dev_idx) {
-        CUDACHECK(cudaSetDevice(dev_idx));
-    });
     
     const int PROFILE_ITERS = 50;
 
-    SyncManager sync_m(NUM_DEVICES, device_ids);
+    sync_manager sm = sync_manager<NUM_DEVICES>::create(device_ids);
     
     auto start = std::chrono::high_resolution_clock::now();
     for (int iter = 0; iter < PROFILE_ITERS; iter++) {
         club.execute([&](int dev_idx) {
-            test_barrier_kernel<<<grid, block, 0, streams[dev_idx]>>>(sync_m.get_sync_space(dev_idx));
+            test_barrier_kernel<<<grid, block, 0, streams[dev_idx]>>>(sm, 0, dev_idx);
         });
 
         // Synchronize streams
@@ -90,6 +86,7 @@ int main() {
         CUDACHECK(cudaSetDevice(dev_idx));
         CUDACHECK(cudaStreamDestroy(streams[dev_idx]));
     }
+    sm.free();
 
     return 0;
 }
