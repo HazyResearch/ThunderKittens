@@ -6,8 +6,6 @@
 
 #ifdef TEST_WARP_MEMORY_UTIL_REDUCE
 
-extern int should_write_outputs;
-
 template<typename Ker, typename T>
 static __global__ void global_wrapper(const __grid_constant__ int dev_idx, const __grid_constant__ T input, const __grid_constant__ T output) {
     Ker::device_func(dev_idx, input, output);
