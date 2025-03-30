@@ -163,9 +163,9 @@
 
 /* ----------  MULTI_GPU TEST MACROS  ---------- */
 
-#define NUM_GPUS 8 // don't use NUM_DEVICES
+#define NUM_GPUS 8
 
-#if defined(TEST_MULTI_GPU)
+#if defined(TEST_ALL_MULTI_GPU) && NUM_GPUS > 1
 #define TEST_WARP_MEMORY_TILE_PGL_TO_REGISTER
 #define TEST_WARP_MEMORY_TILE_PGL_TO_SHARED
 #define TEST_WARP_MEMORY_UTIL_REDUCE
