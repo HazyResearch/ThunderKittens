@@ -1,17 +1,20 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_GROUP
+#ifdef TEST_GROUP_MMA_WARP_COMPLEX_MMA
 
 #include "testing_commons.cuh"
 
-#include "memory/memory.cuh"
-#include "shared/shared.cuh"
-#include "mma/mma.cuh"
-
 namespace group {
+namespace mma {
+namespace warp {
+namespace complex {
+namespace mma {
 
 void tests(test_data &results);
 
 }
-
+}
+}
+}
+}
 #endif

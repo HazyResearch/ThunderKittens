@@ -27,18 +27,24 @@ void group::memory::vec::global_to_register::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
+    sweep_size_1d<vec_load_store<float>, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_1d<vec_load_store<float>, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_1d<vec_load_store<kittens::half>, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_1d<vec_load_store<kittens::half>, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);

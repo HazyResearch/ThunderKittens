@@ -140,23 +140,32 @@ void group::memory::tile::global_to_shared::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
+    g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 1, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 2, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 4, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, 4, 12, I0_t>::run(results);
+
+    g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 1, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 2, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 4, I0_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, 4, 12, I0_t>::run(results);
 
+    g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 1, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 2, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 4, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, 4, 12, I1_t>::run(results);
+
+    g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 1, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 2, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 4, I1_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, 4, 12, I1_t>::run(results);
 
+    g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 1, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 2, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, SIZE, 4, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store, SIZE, 4, 12, I2_t>::run(results);
+
+    g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 1, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 2, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 4, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, 4, 12, I2_t>::run(results);
