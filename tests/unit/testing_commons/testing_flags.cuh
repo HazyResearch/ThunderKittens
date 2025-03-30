@@ -166,8 +166,9 @@
 /* ----------  MULTI_GPU TEST MACROS  ---------- */
 
 // For fast testing, set it to 2~4
-#define NUM_GPUS 8
+#define NUM_GPUS 2
 
+// Macro for testing all the multi-gpu-related tests
 #if defined(TEST_ALL_MULTI_GPU) && NUM_GPUS > 1
 #define TEST_WARP_MEMORY_TILE_PGL_TO_REGISTER
 #define TEST_WARP_MEMORY_TILE_PGL_TO_SHARED
