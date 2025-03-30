@@ -68,7 +68,7 @@ struct test_cmplx_mma_AB {
         kittens::warp::load(a, A, {});
         kittens::warp::load(b, B, {});
         kittens::zero(c);
-        kittens::mma_AB(c, a, b, c);
+        kittens::warp::mma_AB(c, a, b, c);
         kittens::warp::store(C, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;

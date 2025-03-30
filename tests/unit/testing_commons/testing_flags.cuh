@@ -58,7 +58,7 @@
 
 #ifdef TEST_ALL_GROUP_MMA
 #define TEST_ALL_GROUP_MMA_WARP
-#ifdef KITTENS_HOPPER  // only compile on H100
+#if defined(KITTENS_HOPPER) && !defined(KITTENS_BLACKWELL)
 #define TEST_ALL_GROUP_MMA_WARPGROUP
 #endif
 #ifdef KITTENS_BLACKWELL
@@ -132,7 +132,7 @@
 
 #ifdef TEST_ALL_GROUP_MMA_WARP
 #define TEST_GROUP_MMA_WARP_MMA
-#define TEST_GROUP_MMA_WARP_COMPLEX
+#define TEST_ALL_GROUP_MMA_WARP_COMPLEX
 #endif
 
 #ifdef TEST_ALL_GROUP_MMA_WARPGROUP
@@ -153,6 +153,10 @@
 #define TEST_GROUP_COMPLEX_MMA_WARPGROUP_FP16_FP16
 #endif
 
+#ifdef TEST_ALL_GROUP_MMA_WARP_COMPLEX
+#define TEST_GROUP_MMA_WARP_COMPLEX_MMA
+#endif
+
 // Now we need to go back up the tree and make sure all dependent flags are defined.
 
 /* -----  DEPTH 4 MACROS  ----- */
@@ -160,6 +164,10 @@
 #if defined(TEST_GROUP_MMA_WARPGROUP_FP32_BF16) || defined(TEST_GROUP_MMA_WARPGROUP_FP32_FP16) || \
     defined(TEST_GROUP_MMA_WARPGROUP_FP16_FP16)
 #define TEST_GROUP_MMA_WARPGROUP_COMPLEX
+#endif
+
+#if defined(TEST_GROUP_MMA_WARP_COMPLEX_MMA)
+#define TEST_GROUP_MMA_WARP_COMPLEX
 #endif
 
 /* -----  DEPTH 3 MACROS  ----- */
@@ -198,8 +206,12 @@
 
 // Group macros
 
+#if defined(TEST_GROUP_MMA_WARP_MMA) || defined(TEST_GROUP_MMA_WARP_COMPLEX)
+#define TEST_GROUP_MMA_WARP
+#endif
+
 #if defined(TEST_GROUP_MMA_WARPGROUP_FP16_FP16) || defined(TEST_GROUP_MMA_WARPGROUP_FP32_FP16) || \
-    defined(TEST_GROUP_MMA_WARPGROUP_FP32_BF16) || defined(TEST_GROUP_MMA_WARPGROUP_FP32_FP32) || \
+    defined(TEST_GROUP_MMA_WARPGROUP_FP32_BF16) || defined(TEST_GROUP_MMA_WARPGROUP_FP16_FP8)  || \
     defined(TEST_GROUP_MMA_WARPGROUP_FP32_FP8)  || defined(TEST_GROUP_MMA_WARPGROUP_COMPLEX)
 #define TEST_GROUP_MMA_WARPGROUP
 #endif

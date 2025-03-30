@@ -20,7 +20,7 @@ NVCCFLAGS+= -DTEST_INTENSITY=2
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY
 # Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
-NVCCFLAGS+= -DTEST_ALL_GROUP_MEMORY
+NVCCFLAGS+= -DTEST_ALL_GROUP_MMA
 # NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
 
 ifeq ($(COMP_LEVEL),fast)
@@ -39,7 +39,7 @@ NVCCFLAGS+= -arch=sm_80 -DKITTENS_A100
 else ifeq ($(GPU_TARGET),H100)
 NVCCFLAGS+= -arch=sm_90a -DKITTENS_HOPPER -lcuda -lcudart
 else ifeq ($(GPU_TARGET),B200)
-NVCCFLAGS+= -arch=sm_100a -DKITTENS_HOPPER -DKITTENS_BlACKWELL -lcuda -lcudart
+NVCCFLAGS+= -arch=sm_100a -DKITTENS_HOPPER -DKITTENS_BLACKWELL -lcuda -lcudart
 endif
 
 # Target binary name

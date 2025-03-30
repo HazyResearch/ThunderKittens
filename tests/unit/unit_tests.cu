@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
     if(fails == 0) std::cout << "ALL TESTS PASSED!\n";
     std::cout << std::endl;
 
-    std::cout << invalids << " test template configurations deemed invalid (this is normal.)\n";
+    std::cout << invalids << " test template configurations deemed invalid (this is normal)\n";
     std::cout << passes   << " tests passed\n";
     std::cout << fails    << " tests failed\n";
 

@@ -25,7 +25,7 @@ struct test_mma_AB {
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
         kittens::zero(c);
-        kittens::mma_AB(c, a, b, c);
+        kittens::warp::mma_AB(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
@@ -55,7 +55,7 @@ struct test_mma_ABt {
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
         kittens::zero(c);
-        kittens::mma_ABt(c, a, b, c);
+        kittens::warp::mma_ABt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*H, 16*K::value>;
@@ -85,7 +85,7 @@ struct test_mma_AtB {
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
         kittens::zero(c);
-        kittens::mma_AtB(c, a, b, c);
+        kittens::warp::mma_AtB(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
@@ -115,7 +115,7 @@ struct test_mma_AtBt {
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
         kittens::zero(c);
-        kittens::mma_AtBt(c, a, b, c);
+        kittens::warp::mma_AtBt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<kittens::bf16, 1, 1, 16*K::value, 16*H>;
@@ -166,7 +166,7 @@ struct test_mma_ABt_fp8 {
         kittens::copy(a, a_fl);
         kittens::copy(b, b_fl);
         kittens::zero(c);
-        kittens::mma_ABt(c, a, b, c);
+        kittens::warp::mma_ABt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
     template<int H, int W, typename K> using make_a_layout = typename kittens::gl<float, 1, 1, 16*H, 16*K::value>;

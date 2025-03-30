@@ -726,14 +726,14 @@ __device__ static inline void mma_AB(crt_hf<N, M, ducks::rt_layout::row> &d,
     KITTENS_CHECK_WARP
     
     // Copy data from input accumulate register into output
-    copy(d.real, c.real);
-    copy(d.imag, c.imag);
+    ::kittens::copy(d.real, c.real);
+    ::kittens::copy(d.imag, c.imag);
 
     // Negative on B matrix so we can use single accum register
     rt_hf<N, K, ducks::rt_layout::row> tmp;
     // Hex value for -1 in float16
     constexpr half factor = std::bit_cast<__half>(uint16_t(0xFB80));
-    mul(tmp, a.imag, factor);
+    ::kittens::mul(tmp, a.imag, factor);
     mma_AB(d.real, a.real, b.real, d.real);
     mma_AB(d.real, tmp, b.imag, d.real);
 
@@ -762,14 +762,14 @@ __device__ static inline void mma_AB(crt_fl<N, M, ducks::rt_layout::row> &d,
     KITTENS_CHECK_WARP
     
     // Copy data from input accumulate register into output
-    copy(d.real, c.real);
-    copy(d.imag, c.imag);
+    ::kittens::copy(d.real, c.real);
+    ::kittens::copy(d.imag, c.imag);
 
     // Negative on B matrix so we can use single accum register
     kittens::rt_bf<N, K, ducks::rt_layout::row> tmp;
     // Hex value for -1 in bf16
     constexpr bf16 factor = std::bit_cast<__nv_bfloat16>(uint16_t(0xBF80));
-    mul(tmp, a.imag, factor);
+    ::kittens::mul(tmp, a.imag, factor);
     mma_AB(d.real, a.real, b.real, d.real);
     mma_AB(d.real, tmp, b.imag, d.real);
 
