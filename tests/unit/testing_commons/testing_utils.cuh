@@ -2,10 +2,13 @@
 
 #include <vector>
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <random>
 #include <type_traits>
 #include "kittens.cuh"
+
+#define FIXED_FORMAT std::fixed << std::setprecision(6) << std::setw(10)
 
 /* --------------------  CUDA ERROR UTILS  -------------------- */
 
@@ -206,8 +209,8 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         std::ofstream reffile("outputs/"+test_name+"_ref.txt");
         std::ofstream outfile("outputs/"+test_name+"_out.txt");
         for(int i = 0; i < output_size; i++) {
-            reffile << o_ref[i] << ' ';
-            outfile << o[i] << ' ';
+            reffile << FIXED_FORMAT << o_ref[i] << ' ';
+            outfile << FIXED_FORMAT << o[i] << ' ';
             if(i%cols == cols-1) {
                 reffile << '\n';
                 outfile << '\n';
@@ -215,7 +218,7 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         }
         reffile << "\n\n\nINPUTS:\n\n";
         for(int i = 0; i < input_size; i++) {
-            reffile << i_ref[i] << ' ';
+            reffile << FIXED_FORMAT << i_ref[i] << ' ';
             if(i%cols == cols-1) {
                 reffile << '\n';
             }

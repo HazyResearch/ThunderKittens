@@ -82,6 +82,45 @@ __device__ static inline void bin_op(T &dst, const T &src, const typename base_t
     bin_op<op, T>(dst, src, base_types::packing<typename T::dtype>::pack(param));
 }
 
+
+template<ducks::rv::all RV, typename Lambda>
+__device__ static inline void apply(RV &dst, const RV &src, Lambda &&lambda) {
+    static_assert(sizeof(RV::T) != 1, "Cannot apply lambda to 8-bit types");
+    if constexpr (ducks::rv::ortho_layout<RV>) {
+        #pragma unroll
+        for(int i = 0; i < dst.outer_dim; i++) {
+            int base_idx = i*16 + ::kittens::laneid()/4;
+            dst[i][0].x = lambda(base_idx+0, src[i][0].x);
+            dst[i][0].y = lambda(base_idx+8, src[i][0].y);
+        }
+    }
+    else if constexpr (ducks::rv::align_layout<RV>) {
+        #pragma unroll
+        for(int i = 0; i < dst.outer_dim; i++) {
+            int base_idx = i*16 + 2*(::kittens::laneid()%4);
+            dst[i][0].x = lambda(base_idx+0, src[i][0].x);
+            dst[i][0].y = lambda(base_idx+1, src[i][0].y);
+            dst[i][1].x = lambda(base_idx+8, src[i][1].x);
+            dst[i][1].y = lambda(base_idx+9, src[i][1].y);
+        }
+    }
+    else {
+        #pragma unroll
+        for(int i = 0; i < dst.outer_dim; i++) {
+            int base_idx = i*32 + ::kittens::laneid();
+            if (i < dst.outer_dim-1 || dst.length%32 == 0 || ::kittens::laneid()<16) {
+                dst[i][0] = lambda(base_idx, src[i][0]);
+            }
+        }
+    }
+}
+template<ducks::rv::all RV, typename Lambda>
+__device__ static inline RV apply(const RV &src, Lambda &&lambda) {
+    RV dst;
+    apply<RV, Lambda>(dst, src, std::forward<Lambda>(lambda));
+    return dst;
+}
+
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // ---- const ops ----

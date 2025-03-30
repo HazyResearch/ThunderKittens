@@ -93,6 +93,47 @@ __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
     }
 }
 
+template<ducks::rt::all RT, typename Lambda>
+__device__ static inline void apply(RT &dst, const RT &src, Lambda &&lambda) {
+    static_assert(sizeof(RT::T) != 1, "Cannot apply lambda to 8-bit types");
+    if constexpr (ducks::rt::row_layout<RT>) {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    int row = i*TILE_ROW_DIM<typename RT::T> + (k%2) * (TILE_ROW_DIM<typename RT::T>/2) + ::kittens::laneid()/4;
+                    int col = j*TILE_COL_DIM<typename RT::T> + (k/2) * (TILE_COL_DIM<typename RT::T>/2) + (::kittens::laneid()%4)*2;
+                    dst.tiles[i][j].data[k].x = lambda(row, col+0, src.tiles[i][j].data[k].x);
+                    dst.tiles[i][j].data[k].y = lambda(row, col+1, src.tiles[i][j].data[k].y);
+                }
+            }
+        }
+    }
+    else {
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    int row = i*TILE_ROW_DIM<typename RT::T> + (k/2) * (TILE_ROW_DIM<typename RT::T>/2) + (::kittens::laneid()%4)*2;
+                    int col = j*TILE_COL_DIM<typename RT::T> + (k%2) * (TILE_COL_DIM<typename RT::T>/2) + ::kittens::laneid()/4;
+                    dst.tiles[i][j].data[k].x = lambda(row+0, col, src.tiles[i][j].data[k].x);
+                    dst.tiles[i][j].data[k].y = lambda(row+1, col, src.tiles[i][j].data[k].y);
+                }
+            }
+        }
+    }
+}
+template<ducks::rt::all RT, typename Lambda>
+__device__ static inline RT apply(const RT &src, Lambda &&lambda) {
+    RT dst;
+    apply<RT, Lambda>(dst, src, std::forward<Lambda>(lambda));
+    return dst;
+}
+
 /* ----------  Row tile maps  ----------*/
 
 /**

@@ -8,7 +8,7 @@ COMP_LEVEL=fast
 
 # Compiler
 NVCC?=nvcc
-NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
+NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include --extended-lambda
 
 # At what level to run tests?
 # Level 1 takes 15 seconds to compile 1,000 tests.
@@ -20,7 +20,7 @@ NVCCFLAGS+= -DTEST_INTENSITY=2
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY
 # Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
-NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
+NVCCFLAGS+= -DTEST_WARP_REGISTER_VEC_MAPS
 # NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
 
 ifeq ($(COMP_LEVEL),fast)
