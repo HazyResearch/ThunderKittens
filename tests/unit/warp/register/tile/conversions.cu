@@ -271,7 +271,7 @@ struct test_upper_fill {
 };
 
 void warp::reg::tile::conversions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/register/tile/conversions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/register/tile/conversions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -325,6 +325,7 @@ void warp::reg::tile::conversions::tests(test_data &results) {
 
     sweep_size_2d_warp<test_make_causal, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
     // sweep_size_2d_warp<test_make_causal, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results); NOT YET SUPPORTED
+    std::cout << std::endl;
 }
 
 #endif

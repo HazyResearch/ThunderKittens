@@ -1,4 +1,4 @@
-#include "mma_fp32_fp8.cuh"
+#include "fp32_fp8.cuh"
 
 #ifdef TEST_GROUP_MMA_WARPGROUP_FP32_FP8
 
@@ -156,7 +156,7 @@ using I2_t = std::integral_constant<int, 2>;
 using I4_t = std::integral_constant<int, 4>;
 using I6_t = std::integral_constant<int, 6>;
 void group::mma::warpgroup::fp32_fp8::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/mma/warpgroup/fp32_fp8 tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/mma/warpgroup/fp32_fp8 tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2 :
                          INTENSITY_2 ? 4 : 
                          INTENSITY_3 ? 8 :
@@ -171,6 +171,7 @@ void group::mma::warpgroup::fp32_fp8::tests(test_data &results) {
     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I2_t>::run(results);
     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I4_t>::run(results);
     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_fp8, SIZE, I6_t>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

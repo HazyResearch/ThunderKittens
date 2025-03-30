@@ -1,4 +1,4 @@
-#include "mma_fp32_bf16.cuh"
+#include "fp32_bf16.cuh"
 
 #ifdef TEST_GROUP_MMA_WARPGROUP_FP32_BF16
 
@@ -282,7 +282,7 @@ using I1_t = std::integral_constant<int, 1>;
 using I3_t = std::integral_constant<int, 3>;
 using I5_t = std::integral_constant<int, 5>;
 void group::mma::warpgroup::fp32_bf16::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/mma/warpgroup/fp32_bf16 tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/mma/warpgroup/fp32_bf16 tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2 :
                          INTENSITY_2 ? 4 : 
                          INTENSITY_3 ? 8 :
@@ -321,6 +321,7 @@ void group::mma::warpgroup::fp32_bf16::tests(test_data &results) {
     mma_sweep_width_warpgroup<reg_test_mma_ABt_fp32_bf16, SIZE, I5_t>::run(results);
     mma_sweep_width_warpgroup_doubleheight<reg_test_mma_AB_fp32_bf16, SIZE, I5_t>::run(results);
     mma_sweep_width_warpgroup_doubleheight<reg_test_mma_ABt_fp32_bf16, SIZE, I5_t>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

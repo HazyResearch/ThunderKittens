@@ -49,13 +49,14 @@ struct vec_norm {
 };
 
 void group::shared::vec::reductions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/shared/vec/reductions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/shared/vec/reductions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
     sweep_gmem_type_1d_warp<vec_norm, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

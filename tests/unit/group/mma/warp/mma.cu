@@ -267,7 +267,7 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using mma_sw
 #endif
 
 void group::mma::warp::mma::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/mma/warp/mma tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/mma/warp/mma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -298,6 +298,7 @@ void group::mma::warp::mma::tests(test_data &results) {
     mma_sweep_size_warp_fp8<test_mma_ABt_fp8, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
 #endif
 
+    std::cout << std::endl;
 }
 
 #endif

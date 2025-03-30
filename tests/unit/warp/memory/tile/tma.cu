@@ -300,7 +300,7 @@ template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename...
 
 
 void warp::memory::tile::tma::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/memory/tile/tma tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/memory/tile/tma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -312,6 +312,7 @@ void warp::memory::tile::tma::tests(test_data &results) {
     tma_sweep_gmem_type_2d<test_store_add_reduce, SIZE, SIZE>::run(results);
     tma_sweep_gmem_type_2d<test_store_min_reduce, SIZE, SIZE>::run(results);
     tma_sweep_gmem_type_2d<test_store_max_reduce, SIZE, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

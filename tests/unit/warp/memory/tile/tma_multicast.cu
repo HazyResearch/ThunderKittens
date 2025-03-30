@@ -97,13 +97,14 @@ struct tmamulti_sweep_gmem_type_2d {
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using tmamulti_sweep_gmem_type_2d_warp = tmamulti_sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;
 
 void warp::memory::tile::tma_multicast::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/memory/tile/tma_multicast tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/memory/tile/tma_multicast tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
     tmamulti_sweep_gmem_type_2d_warp<test_load_multicast, SIZE, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

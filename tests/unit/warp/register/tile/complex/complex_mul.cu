@@ -110,12 +110,13 @@ template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename...
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using cmplx_mul_sweep_size_warp = cmplx_mul_sweep_size<test, MAX_H, MAX_W, 1, args...>;
 
 void warp::reg::tile::complex::mul::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/register/tile/complex/mul tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/register/tile/complex/mul tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  : 
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  : 
                          INTENSITY_4 ? 16 : -1;
     cmplx_mul_sweep_size_warp<test_mul, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

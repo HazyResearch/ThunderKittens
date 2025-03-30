@@ -21,7 +21,7 @@ struct vec_copy_convert {
 };
 
 void warp::reg::vec::conversions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/register/vec/conversions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/register/vec/conversions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -36,6 +36,7 @@ void warp::reg::vec::conversions::tests(test_data &results) {
     sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::align_l>::run(results);
     sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::ortho_l>::run(results);
     sweep_size_1d_warp<vec_copy_convert, SIZE, kittens::naive_l, kittens::naive_l>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

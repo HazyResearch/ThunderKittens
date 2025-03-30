@@ -66,7 +66,7 @@ struct test_subtile {
 };
 
 void group::shared::tile::conversions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/shared/conversions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/shared/conversions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -101,6 +101,7 @@ void group::shared::tile::conversions::tests(test_data &results) {
     sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 4>, std::integral_constant<int, 2>>::run(results);
     sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 4>, std::integral_constant<int, 3>>::run(results);
     sweep_gmem_type_2d_warp<test_subtile, SIZE, SIZE, std::integral_constant<int, 4>, std::integral_constant<int, 4>>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

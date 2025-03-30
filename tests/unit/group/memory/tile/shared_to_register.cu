@@ -38,7 +38,7 @@ struct group_shared_reg_load_store {
 };
 
 void group::memory::tile::shared_to_register::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/memory/tile/shared_to_register tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/memory/tile/shared_to_register tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -82,6 +82,7 @@ void group::memory::tile::shared_to_register::tests(test_data &results) {
     sweep_size_2d<group_shared_reg_load_store<kittens::fp8e5m2>, SIZE, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_shared_reg_load_store<kittens::fp8e5m2>, SIZE, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     #endif
+    std::cout << std::endl;
 }
 
 #endif

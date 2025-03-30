@@ -132,7 +132,7 @@ struct group_broadcast_col {
 };
 
 void group::shared::tile::reductions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/shared/tile/reductions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/shared/tile/reductions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -165,6 +165,7 @@ void group::shared::tile::reductions::tests(test_data &results) {
 
         }
     }
+    std::cout << std::endl;
 }
 
 #endif

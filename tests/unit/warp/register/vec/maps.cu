@@ -38,7 +38,7 @@ struct vec_polynomial_test {
 };
 
 void warp::reg::vec::maps::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/register/vec/maps tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/register/vec/maps tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -51,6 +51,7 @@ void warp::reg::vec::maps::tests(test_data &results) {
     sweep_size_1d_warp<vec_polynomial_test, SIZE, kittens::ducks::rv_layout::naive>::run(results);
     sweep_size_1d_warp<vec_polynomial_test, SIZE, kittens::ducks::rv_layout::align>::run(results);
     sweep_size_1d_warp<vec_polynomial_test, SIZE, kittens::ducks::rv_layout::ortho>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

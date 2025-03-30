@@ -21,7 +21,7 @@ struct vec_load_store {
 };
 
 void group::memory::vec::global_to_register::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/memory/vec/global_to_register tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/memory/vec/global_to_register tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -51,6 +51,7 @@ void group::memory::vec::global_to_register::tests(test_data &results) {
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

@@ -1,4 +1,4 @@
-#include "complex_mma.cuh"
+#include "mma.cuh"
 
 #ifdef TEST_GROUP_MMA_WARP_COMPLEX_MMA
 
@@ -138,7 +138,7 @@ template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using cmplx_
 
 
 void group::mma::warp::complex::mma::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/mma/warp/complex/mma tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/mma/warp/complex/mma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -147,6 +147,7 @@ void group::mma::warp::complex::mma::tests(test_data &results) {
     cmplx_mma_sweep_size_warp<test_cmplx_mma_AB, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);
     cmplx_mma_sweep_size_warp<test_cmplx_mma_AB, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
     cmplx_mma_sweep_size_warp<test_cmplx_mma_AB, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

@@ -83,7 +83,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
     }
     else {
         static_assert(src.length == dst.length*GROUP_WARPS);// confirm size correct
-        auto &_src = subvec_inplace<dst.length>(src, warpid()); // pretend it's smaller and do warp-level load
+        auto &_src = src.template subvec<dst.length>(warpid()); // pretend it's smaller and do warp-level load
 
         ::kittens::group<1>::load(dst, _src); // warp-level
     }
@@ -152,7 +152,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
     }
     else {
         static_assert(dst.length == src.length*GROUP_WARPS);// confirm size correct
-        auto &_dst = subvec_inplace<src.length>(dst, warpid()); // pretend it's smaller and do warp-level load
+        auto &_dst = dst.template subvec<src.length>(warpid()); // pretend it's smaller and do warp-level load
 
         ::kittens::group<1>::store(_dst, src); // warp-level
     }

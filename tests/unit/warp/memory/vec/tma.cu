@@ -203,7 +203,7 @@ struct tma_sweep_gmem_type_1d {
 template<template<typename> typename test, int MAX_S=8, typename... args> using tma_sweep_gmem_type_1d_warp = tma_sweep_gmem_type_1d<test, MAX_S, 1, args...>;
 
 void warp::memory::vec::tma::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/memory/vec/tma tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/memory/vec/tma tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 8  : 
                          INTENSITY_3 ? 32  :
@@ -214,6 +214,7 @@ void warp::memory::vec::tma::tests(test_data &results) {
     // tma_sweep_gmem_type_1d_warp<test_store_add_reduce, SIZE>::run(results);
     // tma_sweep_gmem_type_1d_warp<test_store_min_reduce, SIZE>::run(results);
     // tma_sweep_gmem_type_1d_warp<test_store_max_reduce, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

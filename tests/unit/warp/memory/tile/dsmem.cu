@@ -91,13 +91,14 @@ template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename...
 
 
 void warp::memory::tile::dsmem::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/memory/tile/dsmem tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/memory/tile/dsmem tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
     dsmem_sweep_gmem_type_2d_warp<test_dsmem, SIZE, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

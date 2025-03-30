@@ -98,13 +98,14 @@ struct tmamulti_sweep_gmem_type_1d {
 template<template<typename> typename test, int MAX_S=8, typename... args> using tmamulti_sweep_gmem_type_1d_warp = tmamulti_sweep_gmem_type_1d<test, MAX_S, 1, args...>;
 
 void warp::memory::vec::tma_multicast::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/warp/memory/vec/tma_multicast tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/warp/memory/vec/tma_multicast tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
 
     tmamulti_sweep_gmem_type_1d_warp<test_load_multicast, SIZE>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

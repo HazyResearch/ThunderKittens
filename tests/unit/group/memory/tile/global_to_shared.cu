@@ -134,7 +134,7 @@ using I0_t = std::integral_constant<int, 0>;
 using I1_t = std::integral_constant<int, 1>;
 using I2_t = std::integral_constant<int, 2>;
 void group::memory::tile::global_to_shared::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/memory/tile/global_to_shared tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/memory/tile/global_to_shared tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -169,6 +169,7 @@ void group::memory::tile::global_to_shared::tests(test_data &results) {
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 2, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, SIZE, 4, I2_t>::run(results);
     g2s_sweep_gmem_type_2d<group_shared_load_store_async, SIZE, 4, 12, I2_t>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

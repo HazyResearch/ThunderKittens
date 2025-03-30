@@ -80,7 +80,12 @@ struct KITTENS_DEFAULT_ALIGN sv {
     __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
     __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
 
-    template<size_t sub_length> using subvec = sv<dtype, sub_length>; ///< A subvector which allows warpgroups and blocks to work cooperatively.
+    template<int sub_length> __device__ inline sv<_T, sub_length> &subvec(int idx) {
+        return *(sv<dtype, sub_length>*)&data[idx * sub_length];
+    }
+    template<int sub_length> __device__ inline const sv<_T, sub_length> &subvec(int idx) const {
+        return *(sv<dtype, sub_length>*)&data[idx * sub_length];
+    }
 
     __device__ inline void operator=(const dtype &value) { // runs at warp scope by default
         #pragma unroll
