@@ -237,8 +237,8 @@ struct p2r_sweep_size_2d_warp_axes_ops {
         int device_ids[NUM_DEVICES];
         for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) device_ids[dev_idx] = dev_idx;
         T *d_arr[NUM_DEVICES] = {}; // nullptrs (create dummy GLs)
-        shared_layout::input_pgl = new shared_layout::PGL(device_ids, d_arr, 16*MAX_H*B, 16*MAX_H*D, 16*MAX_H*R, 16*MAX_W*C);
-        shared_layout::output_pgl = new shared_layout::PGL(device_ids, d_arr, 16*MAX_H*B, 16*MAX_H*D, 16*MAX_H*R, 16*MAX_W*C);
+        shared_layout::input_pgl = new shared_layout::PGL(device_ids, d_arr, B, D, 16*MAX_H*R, 16*MAX_W*C); // dummy dimensions, only used for mc allocation
+        shared_layout::output_pgl = new shared_layout::PGL(device_ids, d_arr, B, D, 16*MAX_H*R, 16*MAX_W*C);
         shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
         shared_layout::output_pgl->multicast_init();
 
