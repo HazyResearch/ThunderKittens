@@ -50,7 +50,7 @@ struct group_p2s_test_wrapper_2d {
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                group_p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...><<<1, NUM_WORKERS*32>>>(*shared_layout::input_pgl, *shared_layout::output_pgl, dev_idx);
+                group_p2s_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(*shared_layout::input_pgl, *shared_layout::output_pgl, dev_idx);
             }
 
             // fill in correct results on cpu
@@ -100,23 +100,25 @@ struct group_p2s_all_reduce_test {
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using G = kittens::group<NW>;
-        using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
-        RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? (int)input[dev_idx].batch()/(reg_tile.rows*NW) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? (int)input[dev_idx].depth()/(reg_tile.rows*NW) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? (int)input[dev_idx].rows()/(reg_tile.rows*NW) : (int)input[dev_idx].rows();
+        extern __shared__ kittens::alignment_dummy __shm[]; // smem
+        kittens::shared_allocator<1024> al((int*)&__shm[0]);
+        using ST = kittens::st<T, 16*H, 16*W>;
+        ST &shared_tile = al.allocate<ST>();
+        int num_batches = axis::value==0 ? (int)input[dev_idx].batch()/shared_tile.rows : (int)input[dev_idx].batch();
+        int num_depths = axis::value==1 ? (int)input[dev_idx].depth()/shared_tile.rows : (int)input[dev_idx].depth();
+        int num_rows = axis::value==2 ? (int)input[dev_idx].rows()/shared_tile.rows : (int)input[dev_idx].rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
+                    for(int l = 0; l < input[dev_idx].cols()/shared_tile.cols; l++) {
                         if constexpr (op == kittens::ReduceOp::ADD) {
-                            G::template all_reduce_add<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_add<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
                         } else if constexpr (op == kittens::ReduceOp::MIN) {
-                            G::template all_reduce_min<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_min<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
                         } else if constexpr (op == kittens::ReduceOp::MAX) {
-                            G::template all_reduce_max<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_max<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
                         }
-                        G::template store<axis::value>(output[dev_idx], reg_tile, {i, j, k, l});
+                        G::template store<axis::value, false>(output[dev_idx], shared_tile, {i, j, k, l});
                     }
                 }
             }
@@ -153,17 +155,19 @@ struct group_p2s_atomic_add_test {
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using G = kittens::group<NW>;
-        using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
-        RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/(reg_tile.rows*NW)) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/(reg_tile.rows*NW)) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/(reg_tile.rows*NW)) : (int)input[dev_idx].rows();
+        extern __shared__ kittens::alignment_dummy __shm[]; // smem
+        kittens::shared_allocator<1024> al((int*)&__shm[0]);
+        using ST = kittens::st<T, 16*H, 16*W>;
+        ST &shared_tile = al.allocate<ST>();
+        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/shared_tile.rows) : (int)input[dev_idx].batch();
+        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/shared_tile.rows) : (int)input[dev_idx].depth();
+        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/shared_tile.rows) : (int)input[dev_idx].rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
-                        G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
-                        G::template atomic_add<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
+                    for(int l = 0; l < input[dev_idx].cols()/shared_tile.cols; l++) {
+                        G::template load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
+                        G::template atomic_add<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
                     }
                 }
             }
@@ -193,17 +197,19 @@ struct group_p2s_broadcast_test {
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using G = kittens::group<NW>;
-        using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
-        RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/(reg_tile.rows*NW)) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/(reg_tile.rows*NW)) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/(reg_tile.rows*NW)) : (int)input[dev_idx].rows();
+        extern __shared__ kittens::alignment_dummy __shm[]; // smem
+        kittens::shared_allocator<1024> al((int*)&__shm[0]);
+        using ST = kittens::st<T, 16*H, 16*W>;
+        ST &shared_tile = al.allocate<ST>();
+        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/shared_tile.rows) : (int)input[dev_idx].batch();
+        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/shared_tile.rows) : (int)input[dev_idx].depth();
+        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/shared_tile.rows) : (int)input[dev_idx].rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
-                        G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
-                        G::template broadcast<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
+                    for(int l = 0; l < input[dev_idx].cols()/shared_tile.cols; l++) {
+                        G::template load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
+                        G::template broadcast<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
                     }
                 }
             }
@@ -220,7 +226,7 @@ struct group_p2s_sweep_size_2d_group_axes {
     using I1_t = std::integral_constant<int, 1>;
     using I2_t = std::integral_constant<int, 2>;
 
-    static void run(test_data &results) {    
+    static void run(test_data &results) {
         group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I2_t>::run(results);
         group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I1_t>::run(results);
         group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I0_t>::run(results);
