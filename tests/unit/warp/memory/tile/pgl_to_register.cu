@@ -56,7 +56,7 @@ struct p2r_test_wrapper_2d {
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, typename shared_layout::PGL, axis>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate<NUM_DEVICES, typename shared_layout::PGL, dtype>(*shared_layout::input_pgl, *shared_layout::output_pgl, i_ref, o_ref, this_result.label, W * 16, 2e-1); // high due to half-precision all-reduce ops
+            this_result.result = validate<NUM_DEVICES, typename shared_layout::PGL, dtype>(*shared_layout::input_pgl, *shared_layout::output_pgl, i_ref, o_ref, this_result.label, W * 16);
 
             shared_layout::input_pgl->multicast_unbind();
             shared_layout::output_pgl->multicast_unbind();
@@ -84,8 +84,8 @@ struct p2r_all_reduce_test {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
             for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
-                o_ref[dev_idx][i] = 0;
-                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                o_ref[dev_idx][i] = i_ref[0][i];
+                for (int other_dev_idx = 1; other_dev_idx < i_ref.size(); ++other_dev_idx) {
                     if constexpr (op == kittens::ReduceOp::ADD) {
                         o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
                     } else if constexpr (op == kittens::ReduceOp::MIN) {

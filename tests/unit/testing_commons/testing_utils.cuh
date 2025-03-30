@@ -301,7 +301,7 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
 
 // Validation for multi-gpu tests
 template<int NUM_DEVICES, kittens::ducks::pgl::all PGL, typename T>
-test_result validate(PGL &input, PGL &output, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=5e-2) { // default eps has to be fairly high due to lots of different types
+test_result validate(PGL &input, PGL &output, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=1e-1) { // default eps even higher due to multiple GPUs parallelizing
     const int input_size  = i_ref[0].size();
     const int output_size = o_ref[0].size();
 
