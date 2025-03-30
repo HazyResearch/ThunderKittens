@@ -13,6 +13,9 @@ void group::memory::tile::tests(test_data &results) {
 #ifdef TEST_GROUP_MEMORY_TILE_PGL_TO_REGISTER
     group::memory::tile::pgl_to_register::tests(results);
 #endif
+#ifdef TEST_GROUP_MEMORY_TILE_PGL_TO_SHARED
+    group::memory::tile::pgl_to_shared::tests(results);
+#endif
 #ifdef TEST_GROUP_MEMORY_TILE_SHARED_TO_REGISTER
     group::memory::tile::shared_to_register::tests(results);
 #endif
