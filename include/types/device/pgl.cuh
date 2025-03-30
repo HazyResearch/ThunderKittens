@@ -57,7 +57,11 @@ struct pgl {
     int device_ids[NUM_DEVICES];
     static constexpr int num_devices = NUM_DEVICES;
 
-    __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; } 
+    __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; }
+    __device__ inline T* mc_ptr_at(const coord<ducks::default_type> &idx, int dev_idx) const {
+        const GL &gl = gls[dev_idx];
+        return &mc_vas[dev_idx][((idx.b*gl.depth() + idx.d)*gl.rows() + idx.r)*gl.cols() + idx.c];
+    }
 
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
                         T **_data,         // an array of NUM_DEVS pointers
