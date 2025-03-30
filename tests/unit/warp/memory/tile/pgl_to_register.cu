@@ -109,13 +109,13 @@ struct p2r_all_reduce_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
                         if constexpr (op == kittens::ReduceOp::ADD) {
-                            kittens::all_reduce_add<axis::value, RT, PGL, kittens::coord<RT>>(reg_tile, input, dev_idx, {i, j, k, l});
+                            kittens::all_reduce_add<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
                         } else if constexpr (op == kittens::ReduceOp::MIN) {
-                            kittens::all_reduce_min<axis::value, RT, PGL, kittens::coord<RT>>(reg_tile, input, dev_idx, {i, j, k, l});
+                            kittens::all_reduce_min<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
                         } else if constexpr (op == kittens::ReduceOp::MAX) {
-                            kittens::all_reduce_max<axis::value, RT, PGL, kittens::coord<RT>>(reg_tile, input, dev_idx, {i, j, k, l});
+                            kittens::all_reduce_max<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
                         }
-                        kittens::store<axis::value, RT, PGL::_GL, kittens::coord<RT>>(output[dev_idx], reg_tile, {i, j, k, l});
+                        kittens::store<axis::value>(output[dev_idx], reg_tile, {i, j, k, l});
                     }
                 }
             }
@@ -160,8 +160,8 @@ struct p2r_atomic_add_test {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
-                        kittens::load(reg_tile, input[dev_idx], {i, j, k, l});
-                        kittens::atomic_add<axis::value, RT, PGL, kittens::coord<RT>>(output, reg_tile, dev_idx, {i, j, k, l});
+                        kittens::load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
+                        kittens::atomic_add<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
                     }
                 }
             }
@@ -199,8 +199,8 @@ struct p2r_broadcast_test {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
-                        kittens::load(reg_tile, input[dev_idx], {i, j, k, l});
-                        kittens::broadcast<axis::value, RT, PGL, kittens::coord<RT>>(output, reg_tile, dev_idx, {i, j, k, l});
+                        kittens::load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
+                        kittens::broadcast<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
                     }
                 }
             }
