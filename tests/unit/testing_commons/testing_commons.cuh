@@ -254,7 +254,7 @@ template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename...
 
 template<typename T> concept gl_t = kittens::ducks::gl::all<T>;
 
-// ----- PGL Wrappers -----
+// ----- Multi-GPU Test Wrappers -----
 
 template<typename T, int NUM_DEVICES>
 struct shared_layouts {
@@ -266,7 +266,7 @@ struct shared_layouts {
 };
 
 template<typename T, int NUM_DEVICES>
-void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICES], int B, int D, int R, int C) {
+inline void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICES], int B, int D, int R, int C) {
     using shared_layout = shared_layouts<T, NUM_DEVICES>;
 
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
@@ -283,4 +283,20 @@ void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICES], int
         shared_layout::input_pgl->gls[dev_idx].cols_internal.v = C;
         shared_layout::output_pgl->gls[dev_idx].cols_internal.v = C;
     }
+}
+
+inline int check_multi_gpus() {
+#if NUM_GPUS > 1
+    int num_devices;
+    cudaGetDeviceCount(&num_devices);
+    if (num_devices < 2) {
+        std::cerr << "Multi-GPU tests require at least 2 GPUs, found " << num_devices << "." << std::endl;
+        std::cerr << "Please set the testing flag NUM_GPUS to 1 if your system does not have multiple GPUs." << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    return 1;
+#else
+    std::cout << "Skipping because the testing flag NUM_GPUS is less than 2." << std::endl;
+    return 0;
+#endif
 }

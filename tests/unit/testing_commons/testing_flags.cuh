@@ -163,6 +163,7 @@
 
 /* ----------  MULTI_GPU TEST MACROS  ---------- */
 
+// For fast testing, set it to 2~4
 #define NUM_GPUS 8
 
 #if defined(TEST_ALL_MULTI_GPU) && NUM_GPUS > 1

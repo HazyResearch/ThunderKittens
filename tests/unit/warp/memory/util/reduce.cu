@@ -239,9 +239,11 @@ struct multimem_sweep_op {
 void warp::memory::util::reduce::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/memory/util/reduce tests! -----\n" << std::endl;
 
-    multimem_sweep_op<float, NUM_GPUS>::run(results);
-    multimem_sweep_op<kittens::bf16, NUM_GPUS>::run(results);
-    multimem_sweep_op<kittens::half, NUM_GPUS>::run(results);
+    if (check_multi_gpus()) {
+        multimem_sweep_op<float, NUM_GPUS>::run(results);
+        multimem_sweep_op<kittens::bf16, NUM_GPUS>::run(results);
+        multimem_sweep_op<kittens::half, NUM_GPUS>::run(results);
+    }
 }
 
 #endif
