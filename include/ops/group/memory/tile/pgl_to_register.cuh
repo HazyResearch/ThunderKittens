@@ -97,9 +97,9 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
             dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[0]);
             dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)], &dst_buf[0]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)], &dst_buf[1]);
         }
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
@@ -108,9 +108,9 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
             dst_buf[0] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
             dst_buf[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)], &dst_buf[0]);
             multimem_reduce_op<U2, OP>::apply(
-                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)], dst_buf);
+                (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)], &dst_buf[1]);
         }
     }
 }
