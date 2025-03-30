@@ -19,7 +19,7 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
 
-    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_id);
+    U *src_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_id);
     const int row_stride = src[dev_id].template stride<axis>();
     int laneid = kittens::laneid();
     int warphalf = (laneid & 16) > 0;
@@ -33,9 +33,9 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
             int col = j*dst.tile_size_col + warphalf*8 + 2*(laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row_0to3+0)*row_stride + col]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row_0to3+0)*row_stride + col]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row_0to3+4)*row_stride + col]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row_0to3+4)*row_stride + col]);
             dst_buf[1-warphalf] = packed_shfl_sync(MASK_ALL, dst_buf[1-warphalf], laneid^16);
             dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
@@ -45,9 +45,9 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
             int col = j*dst.tile_size_col + warphalf*8 + 2*(laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row_0to3+8)*row_stride + col]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row_0to3+8)*row_stride + col]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row_0to3+12)*row_stride + col]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row_0to3+12)*row_stride + col]);
             dst_buf[1-warphalf] = packed_shfl_sync(MASK_ALL, dst_buf[1-warphalf], laneid^16);
             dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
