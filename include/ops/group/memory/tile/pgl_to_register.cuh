@@ -9,7 +9,7 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
 
-    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
     
     auto coord = idx.template unit_coord<axis, 3>();
@@ -83,7 +83,7 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
 
-    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || !std::is_same_v<U, float>, 
+    static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for reduce_op");
     
     auto coord = idx.template unit_coord<axis, 3>();
@@ -121,12 +121,12 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template<int axis, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
     reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template<ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
@@ -135,6 +135,7 @@ template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::
 __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
+    using U2 = base_types::packing<U>::packed_type;
 
     #ifdef KITTENS_HOPPER
     static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for load/store");
@@ -145,7 +146,6 @@ __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_i
     U *mc_ptr = dst.mc_vas[dev_id] + index;
 
     const int row_stride = dst[dev_id].template stride<axis>();
-    using U2 = base_types::packing<U>::packed_type;
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = src.rows*warpid();
     #pragma unroll
