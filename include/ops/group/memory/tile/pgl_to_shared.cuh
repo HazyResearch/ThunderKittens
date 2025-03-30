@@ -35,7 +35,7 @@ __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id
 
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
-    kittens::reduce_op<axis, assume_aligned, ReduceOp::ADD, false, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
+    kittens::reduce_op<axis, assume_aligned, ReduceOp::ADD, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
@@ -45,7 +45,7 @@ __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_
 
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
-    kittens::broadcast<axis, assume_aligned, false, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
+    kittens::broadcast<axis, assume_aligned, ST, PGL, COORD, GROUP_THREADS>(dst, src, dev_id, idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
