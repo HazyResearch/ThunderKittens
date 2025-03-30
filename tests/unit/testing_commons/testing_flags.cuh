@@ -6,6 +6,7 @@
 #ifdef TEST_ALL
 #define TEST_ALL_WARP
 #define TEST_ALL_GROUP
+#define TEST_ALL_GANG
 #endif
 
 /* -----  DEPTH 1 MACROS  ----- */
@@ -175,6 +176,7 @@
 #define TEST_WARP_MEMORY_UTIL_REDUCE
 #define TEST_GROUP_MEMORY_TILE_PGL_TO_REGISTER
 #define TEST_GROUP_MEMORY_TILE_PGL_TO_SHARED
+#define TEST_ALL_GANG
 #endif
 
 // Now we need to go back up the tree and make sure all dependent flags are defined.
@@ -294,6 +296,10 @@
 
 #if defined(TEST_GROUP_MEMORY) || defined(TEST_GROUP_SHARED) || defined(TEST_GROUP_WGMMA)
 #define TEST_GROUP
+#endif
+
+#if defined(TEST_ALL_GANG)
+#define TEST_GANG
 #endif
 
 /* ----------  TEST INTENSITY MACROS  ---------- */
