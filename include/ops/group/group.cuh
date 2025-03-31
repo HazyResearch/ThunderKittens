@@ -88,7 +88,7 @@ __device__ static inline void sync() {
 
 };
 
-using warp = group<1>;      // scope used by most pre-Hopper GPUs
+using warp = group<1>;      // scope used by most pre-Hopper GPUs, and also for most register operations.
 using warpgroup = group<4>; // special scope commonly used by Hopper and later.
 
 }

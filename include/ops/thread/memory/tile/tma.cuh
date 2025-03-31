@@ -59,7 +59,7 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx)
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
-    prefetch<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
+    prefetch<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
@@ -107,7 +107,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
+    store_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 
 /* ----------   Async reduction + store data from gmem/smem  ---------- */
@@ -160,7 +160,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_add_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
+    store_add_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 
 /**
@@ -212,7 +212,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_min_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
+    store_min_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 
 /**
@@ -264,7 +264,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_max_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx);
+    store_max_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 
 /**
@@ -310,7 +310,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
-    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx, bar);
 }
 
 namespace cluster {
@@ -396,12 +396,12 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 #ifdef KITTENS_BLACKWELL
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
-    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx, bar, cluster_mask, dst_mbar_cta);
 }
 #else
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
-    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD, true>(dst, src, idx, bar, cluster_mask);
+    load_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx, bar, cluster_mask);
 }
 #endif
 

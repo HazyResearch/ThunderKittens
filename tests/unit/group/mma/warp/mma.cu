@@ -24,7 +24,7 @@ struct test_mma_AB {
         kittens::rt_fl<16*H, 16*W> c;
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
-        kittens::zero(c);
+        kittens::warp::zero(c);
         kittens::warp::mma_AB(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
@@ -54,7 +54,7 @@ struct test_mma_ABt {
         kittens::rt_fl<16*H, 16*W> c;
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
-        kittens::zero(c);
+        kittens::warp::zero(c);
         kittens::warp::mma_ABt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
@@ -84,7 +84,7 @@ struct test_mma_AtB {
         kittens::rt_fl<16*H, 16*W> c;
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
-        kittens::zero(c);
+        kittens::warp::zero(c);
         kittens::warp::mma_AtB(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
@@ -114,7 +114,7 @@ struct test_mma_AtBt {
         kittens::rt_fl<16*H, 16*W> c;
         kittens::warp::load(a, a_input, {});
         kittens::warp::load(b, b_input, {});
-        kittens::zero(c);
+        kittens::warp::zero(c);
         kittens::warp::mma_AtBt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }
@@ -163,9 +163,9 @@ struct test_mma_ABt_fp8 {
         kittens::warp::load(b_st, b_input, {});
         kittens::warp::load(a_fl, a_st);
         kittens::warp::load(b_fl, b_st);
-        kittens::copy(a, a_fl);
-        kittens::copy(b, b_fl);
-        kittens::zero(c);
+        kittens::warp::copy(a, a_fl);
+        kittens::warp::copy(b, b_fl);
+        kittens::warp::zero(c);
         kittens::warp::mma_ABt(c, a, b, c);
         kittens::warp::store(c_output, c, {});
     }

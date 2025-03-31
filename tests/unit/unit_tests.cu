@@ -1,8 +1,8 @@
 #include "testing_flags.cuh"
 #include "testing_commons.cuh"
 
-#ifdef TEST_WARP
-#include "warp/warp.cuh"
+#ifdef TEST_THREAD
+#include "thread/thread.cuh"
 #endif
 #ifdef TEST_GROUP
 #include "group/group.cuh"
@@ -14,10 +14,10 @@ int main(int argc, char **argv) {
 
     test_data data;
 
-#ifdef TEST_WARP
-    warp::tests(data);
+#ifdef TEST_THREAD
+    thread::tests(data);
 #else
-    std::cout << "INFO: Skipping ops/warp tests!\n" << std::endl;
+    std::cout << "INFO: Skipping ops/thread tests!\n" << std::endl;
 #endif
 #ifdef TEST_GROUP
     group::tests(data);

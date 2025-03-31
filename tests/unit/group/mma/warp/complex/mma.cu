@@ -67,7 +67,7 @@ struct test_cmplx_mma_AB {
         kittens::crt_fl<16*H, 16*W> c;
         kittens::warp::load(a, A, {});
         kittens::warp::load(b, B, {});
-        kittens::zero(c);
+        kittens::warp::zero(c);
         kittens::warp::mma_AB(c, a, b, c);
         kittens::warp::store(C, c, {});
     }

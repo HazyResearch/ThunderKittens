@@ -21,7 +21,7 @@ struct vec_load_store {
         G::load(shared_vec, input, {});
         __syncthreads();
         G::load(reg_vec, shared_vec);
-        kittens::add(reg_vec, reg_vec, dtype(1.)); // TODO: CHANGE HOST TOO
+        kittens::warp::add(reg_vec, reg_vec, dtype(1.)); // TODO: CHANGE HOST TOO
         G::store(shared_vec, reg_vec);
         __syncthreads();
         G::store(output, shared_vec, {});

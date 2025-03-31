@@ -217,7 +217,6 @@ template<cache_policy policy> __device__ static inline void vec_load_async_tma_i
 } // namespace tma
 } // namespace detail
 
-namespace thread {
 namespace tma {
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
@@ -326,5 +325,4 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
 __KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC_(load_async)
 } // namespace cluster
 } // namespace tma
-} // namespace thread
 } // namespace kittens

@@ -55,8 +55,8 @@ struct test_subtile {
                 auto ref = t.template subtile<16*ST_H, 16*ST_W>({i, j});
                 kittens::rt_fl<16*ST_H, 16*ST_W> reg;
                 kittens::warp::load(reg, ref);
-                kittens::mul(reg, reg, float(i));
-                kittens::add(reg, reg, float(j));
+                kittens::warp::mul(reg, reg, float(i));
+                kittens::warp::add(reg, reg, float(j));
                 kittens::warp::store(ref, reg);
             }
         }
