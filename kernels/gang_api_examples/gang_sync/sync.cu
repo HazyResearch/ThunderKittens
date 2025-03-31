@@ -53,7 +53,8 @@ int main() {
     /*
     Run kernel to profile barrier 
     */
-    dim3 grid(256, 256, 1);
+    constexpr int num_blocks = 256 * 256;
+    dim3 grid(num_blocks, 1, 1);
     dim3 block(256, 1, 1);
     
     int device_ids[NUM_DEVICES];
@@ -63,8 +64,8 @@ int main() {
     
     const int PROFILE_ITERS = 50;
 
-    sync_manager sm = sync_manager<NUM_DEVICES>::create(device_ids);
-    
+    sync_manager sm = sync_manager<NUM_DEVICES, num_blocks, 16>::create(device_ids);
+
     auto start = std::chrono::high_resolution_clock::now();
     for (int iter = 0; iter < PROFILE_ITERS; iter++) {
         club.execute([&](int dev_idx) {
