@@ -208,7 +208,10 @@ struct pgl {
 
     // We make this a function because users can change the underlying GL
     __host__ inline size_t gl_size() {
-        return gls[0].batch() * gls[0].depth() * gls[0].rows() * gls[0].cols() * sizeof(T);
+        return static_cast<size_t>(gls[0].batch()) *
+               static_cast<size_t>(gls[0].depth()) * 
+               static_cast<size_t>(gls[0].rows()) *
+               static_cast<size_t>(gls[0].cols()) * sizeof(T);
     }
 
     __host__ inline size_t mem_handle_size(size_t size) {
