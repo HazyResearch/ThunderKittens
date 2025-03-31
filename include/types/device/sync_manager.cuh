@@ -37,9 +37,11 @@ template<typename T> concept all = requires {
 template <int NUM_DEVICES, int NUM_SYNC_POINTS = 16>
 struct sync_manager {
     using identifier = ducks::sync_manager::identifier;
-
+    
+    static constexpr int sync_point_size = 3; // we need 3 points to sync (refer to gang::sync() for explanation)
+    static constexpr int sync_space_size = NUM_SYNC_POINTS * sync_point_size;
     using SYNC_SPACE_DTYPE = int;
-    using SYNC_SPACE_T = pgl<gl<SYNC_SPACE_DTYPE, 1, 1, 1, NUM_SYNC_POINTS>, NUM_DEVICES, true>;
+    using SYNC_SPACE_T = pgl<gl<SYNC_SPACE_DTYPE, 1, 1, 1, sync_space_size>, NUM_DEVICES, true>;
     SYNC_SPACE_T sync_space;
 
     // It is recommended to call the sync_manager.create() method instead of direct construction
@@ -52,7 +54,7 @@ struct sync_manager {
         for (int i = 0; i < NUM_DEVICES; ++i) {
             int dev_idx = device_ids[i];
             cudaSetDevice(dev_idx);
-            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_sync_spaces[dev_idx], NUM_SYNC_POINTS * sizeof(SYNC_SPACE_DTYPE));
+            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_sync_spaces[dev_idx], sync_space_size * sizeof(SYNC_SPACE_DTYPE));
         }
 
         return sync_manager(device_ids, d_sync_spaces);
@@ -62,13 +64,16 @@ struct sync_manager {
         for (int i = 0; i < NUM_DEVICES; ++i) {
             int dev_idx = sync_space.device_ids[i];
             cudaSetDevice(dev_idx);
-            pglCudaFree(dev_idx, sync_space[i].raw_ptr, NUM_SYNC_POINTS * sizeof(SYNC_SPACE_DTYPE));
+            pglCudaFree(dev_idx, sync_space[i].raw_ptr, sync_space_size * sizeof(SYNC_SPACE_DTYPE));
         }
         pglFree(sync_space);
     }
 
     __device__ inline sync_point<SYNC_SPACE_DTYPE> get_sync_point(int sync_id, int dev_idx) const {
-        return sync_point{sync_space.mc_vas[dev_idx] + sync_id, sync_space[dev_idx].raw_ptr + sync_id};
+        return sync_point{
+            sync_space.mc_vas[dev_idx] + sync_id * sync_point_size,
+            sync_space[dev_idx].raw_ptr + sync_id * sync_point_size
+        };
     }
 };
 
