@@ -91,12 +91,17 @@ struct gang_test {
         const int sync_id, 
         const int dev_idx
     ) {
+        using gang = kittens::gang<NUM_DEVICES>;
+        
         // This should be run on a single warp
         int index = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
 
         // pgl is purely used for convenient multicast/unicast generation up to this point
         buffer1[dev_idx].raw_ptr[index] = input[dev_idx].raw_ptr[index];
         buffer1[dev_idx].raw_ptr[index + 1] = input[dev_idx].raw_ptr[index + 1];
+
+        // Check that multiple syncing works
+        gang::sync(sm, sync_id, dev_idx);
 
         // Stall odd threads && even blocks && odd devices for half a second
         // With this, it should be extremely unlikely for the test to pass without sync'ing
@@ -105,7 +110,6 @@ struct gang_test {
         buffer2[dev_idx].raw_ptr[index] = buffer1[dev_idx].raw_ptr[index];
         buffer2[dev_idx].raw_ptr[index + 1] = buffer1[dev_idx].raw_ptr[index + 1];
 
-        using gang = kittens::gang<NUM_DEVICES>;
         gang::sync(sm, sync_id, dev_idx);
 
         kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
