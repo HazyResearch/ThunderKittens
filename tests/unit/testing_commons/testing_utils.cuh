@@ -306,8 +306,8 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
     const int output_size = o_ref[0].size();
 
     // copy back
-    T* o_t = new T[output_size];
-    float *o = new float[output_size];
+    T* o_t = new T[NUM_DEVICES * output_size];
+    float *o = new float[NUM_DEVICES * output_size];
 
     std::cout << "test `" << test_name << "`";
     bool good = true;
@@ -316,29 +316,30 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
         cudaSetDevice(dev_idx);
         cudaDeviceSynchronize();
         CudaCheckError();
-        cudaMemcpy(o_t, output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&o_t[dev_idx * output_size], output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
         CudaCheckError();
 
         for(int idx = 0; idx < output_size; idx++) {
+            int unit_idx = dev_idx * output_size + idx;
             if constexpr (std::is_same_v<T, kittens::bf16>) {
-                o[idx] = __bfloat162float(o_t[idx]);
+                o[unit_idx] = __bfloat162float(o_t[unit_idx]);
                 o_ref[dev_idx][idx] = __bfloat162float(__float2bfloat16(o_ref[dev_idx][idx]));
             }
             else if constexpr (std::is_same_v<T, kittens::half>) {
-                o[idx] = __half2float(o_t[idx]);
+                o[unit_idx] = __half2float(o_t[unit_idx]);
                 o_ref[dev_idx][idx] = __half2float(__float2half(o_ref[dev_idx][idx]));
             }
             else if constexpr(std::is_same_v<T, float>) {
-                o[idx] = o_t[idx];
+                o[unit_idx] = o_t[unit_idx];
                 o_ref[dev_idx][idx] = o_ref[dev_idx][idx];
             }
             #ifdef KITTENS_HOPPER
             else if constexpr(std::is_same_v<T, kittens::fp8e4m3>) {
-                o[idx] = float(o_t[idx]);
+                o[unit_idx] = float(o_t[unit_idx]);
                 o_ref[dev_idx][idx] = float(__nv_fp8_e4m3(o_ref[dev_idx][idx])); 
             }
             else if constexpr(std::is_same_v<T, kittens::fp8e5m2>) {
-                o[idx] = float(o_t[idx]);
+                o[unit_idx] = float(o_t[unit_idx]);
                 o_ref[dev_idx][idx] = float(__nv_fp8_e5m2(o_ref[dev_idx][idx])); 
             }
             #endif
@@ -349,13 +350,13 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
 
         // check
         for(int i = 0; i < output_size; i++) {
-            if(abs(o_ref[dev_idx][i] - o[i]) > eps) {
+            if(abs(o_ref[dev_idx][i] - o[dev_idx * output_size + i]) > eps) {
                 good = false;
                 break;
             }
         }
 
-        if (!good) break;
+        // Even if we failed, continue so we can print all the results in the output file
     }
 
     if(good) std::cout << " -- PASSED" << std::endl;
@@ -369,7 +370,7 @@ test_result validate(PGL &input, PGL &output, const std::vector<std::vector<floa
             reffile << "Device " << dev_idx << ":\n\n";
             for(int i = 0; i < output_size; i++) {
                 reffile << o_ref[dev_idx][i] << ' ';
-                outfile << o[i] << ' ';
+                outfile << o[dev_idx * output_size + i] << ' ';
                 if(i%cols == cols-1) {
                     reffile << '\n';
                     outfile << '\n';
