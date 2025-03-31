@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cuda.h>
 #include "../util/reduce.cuh"
-
 
 namespace kittens {
 
@@ -103,7 +101,6 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
         int load_idx = i * N_THREADS + laneid;
         int row = load_idx / memcpy_per_row;
         int col = (load_idx*elem_per_memcpy) % src.cols;
-
 
         if constexpr (needs_bounds_check) {
             if (row >= src.rows) continue;

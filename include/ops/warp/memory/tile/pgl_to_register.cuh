@@ -4,9 +4,7 @@
  */
 #pragma once
 
-#include <cuda.h>
 #include "../util/reduce.cuh"
-
 
 namespace kittens {
 

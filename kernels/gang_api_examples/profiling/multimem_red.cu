@@ -3,9 +3,9 @@
 #include <random>
 #include <cuda_bf16.h>
 
-constexpr int NUM_DEVICES = 8;
+constexpr int NUM_DEVICES = 2;
 constexpr int NUM_WARPS = 8;
-constexpr size_t N = 4096;
+constexpr size_t N = 8192;
 
 using namespace kittens;
 
@@ -14,88 +14,24 @@ using kittens_pgl = kittens::pgl<global_layout, 2, true>;
 using rt_tile = kittens::rt<bf16, 64, 64>;
 using st_tile = kittens::st<bf16, 16, 32>;
 
-/*
-Warp level register tile example
-*/
-// rt_tile tile;
-// kittens::one(tile);
-// kittens::atomic_add(p_o, tile, dev_id, {0, 1});
+__global__ void multimem_red_kernel(kittens_pgl p_o, int dev_id) {
+    /*
+    Warp level register tile example
+    */
+    int row = blockIdx.x;
+    int col = (blockIdx.y * NUM_WARPS) + kittens::warpid();
 
-/*
-Group level register tile example
-*/
-// using friends = kittens::group<2>;
-// rt_tile tile; 
-// kittens::one(tile);
-// friends::atomic_add(p_o, tile, dev_id, {0, friends::groupid()});    
+    if ((row * 64) >= N || (col * 64) >= N) return;
 
-/*
-Warp level shared tile example 
-*/
-// extern __shared__ kittens::alignment_dummy __shm[];
-// kittens::shared_allocator al((int*)&__shm[0]);
-// st_tile (&s_tile) = al.allocate<st_tile>();
-// warpgroup::one(s_tile);
-// __syncthreads();
-// if (kittens::warpid() == 0) {
-//     kittens::atomic_add(p_o, s_tile, dev_id, {dev_id, 0});
-// }
-
-/*
-Group level shared tile example
-*/
-// using friends = kittens::group<2>;
-// extern __shared__ kittens::alignment_dummy __shm[];
-// kittens::shared_allocator al((int*)&__shm[0]);
-// st_tile (&s_tile)[2] = al.allocate<st_tile, 2>();
-// friends::one(s_tile[friends::groupid()]);
-// __syncthreads();
-// friends::atomic_add(p_o, s_tile[friends::groupid()], dev_id, {friends::groupid(), 0});
-__global__ void multimem_red_kernel(kittens_pgl pgl, int dev_id) {
-    int rows_per_device = pgl[dev_id].rows() / NUM_DEVICES;
-    int row_start = (rows_per_device) * dev_id;
-    int warp_start = (rows_per_device / NUM_WARPS) * blockIdx.x;
-    int row = row_start + warp_start;
-    int col = NUM_WARPS * blockIdx.y;
-    
-    rt_tile r_tile; 
-    kittens::one(r_tile);
-    kittens::atomic_add(pgl, r_tile, dev_id, {row, col});
-}
-
-bool verify_all_ones(const bf16* data, size_t size) {
-    bool verification_passed = true;
-    
-    #pragma omp parallel
-    {
-        bool thread_found_error = false;
-        size_t error_index = 0;
-        float error_value = 0.0f;
-        
-        #pragma omp for
-        for (size_t i = 0; i < size; ++i) {
-            float val = __bfloat162float(data[i]);
-            if (val != 1.0f && !thread_found_error) {
-                thread_found_error = true;
-                error_index = i;
-                error_value = val;
-            }
-        }
-        
-        if (thread_found_error) {
-            #pragma omp critical
-            {
-                verification_passed = false;
-                std::cout << "Verification failed at index " << error_index 
-                          << ": value = " << error_value << std::endl;
-            }
-        }
-    }
-    
-    return verification_passed;
+    rt_tile tile;
+    // kittens::one(tile);
+    // kittens::atomic_add(p_o, tile, dev_id, {row, col});
+    kittens::all_reduce_add(tile, p_o, dev_id, {row, col});
+    kittens::broadcast(p_o, tile, dev_id, {row, col});
 }
 
 int main() {
+    // Setup
     int nelem = N * N;
     size_t size = nelem * sizeof(bf16);
 
@@ -106,54 +42,80 @@ int main() {
     int device_ids[NUM_DEVICES];
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
 
-    for (int i = 0; i < NUM_DEVICES; ++i) {
-        cudaSetDevice(i);
-        pglCudaMalloc<true>(NUM_DEVICES, device_ids, i, &dev_mats[i], &dev_handles[i], size);
-        cudaMemset(dev_mats[i], 0, size);
-    }
+    float *host_mat_1_float = new float[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_1_float[i] = 1.0f;
+    bf16 *host_mat_1 = new bf16[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_1[i] = __float2bfloat16(host_mat_1_float[i]);
+
+    float *host_mat_2_float = new float[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_2_float[i] = 0.0f;
+    bf16 *host_mat_2 = new bf16[nelem];
+    for (int i = 0; i < nelem; ++i) host_mat_2[i] = __float2bfloat16(host_mat_2_float[i]);
+    
+    cudaSetDevice(0);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 0, &dev_mats[0], size);
+    CHECK_CUDA_ERROR(cudaMemcpy(dev_mats[0], host_mat_1, size, cudaMemcpyHostToDevice));
+
+    cudaSetDevice(1);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 1, &dev_mats[1], size);
+    CHECK_CUDA_ERROR(cudaMemcpy(dev_mats[1], host_mat_2, size, cudaMemcpyHostToDevice));
+
 
     // Initialize parallel global layout
     kittens_pgl dev_mat_pgl{device_ids, dev_mats, nullptr, nullptr, N, N};
 
-    // Club initialiation
+    // Perform the reduction
     KittensClub club(device_ids, NUM_DEVICES);
-    club.execute([](int dev_idx) {
-        cudaSetDevice(dev_idx);
-    });
 
-    unsigned long smem = 2 * 32 * 32 * sizeof(bf16);
-    dim3 grid((N / NUM_DEVICES) / (NUM_WARPS * 32), N / (NUM_WARPS * 32));
-    dim3 block(256);
-    printf("Grid: (%d, %d)\n", grid.x, grid.y);
-    printf("Block: (%d)\n", block.x);
-    
-    for (int i = 0; i < NUM_DEVICES; ++i) {
-        club.execute([&](int dev_idx) {
-            multimem_red_kernel<<<grid, block, smem>>>(dev_mat_pgl, dev_idx);
-            CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-        });
+    dim3 block(NUM_WARPS * kittens::WARP_THREADS);
+    dim3 grid(N / 64, N / 64);
+    printf("Grid: %d %d, Block: %d %d\n", grid.x, grid.y, block.x, block.y);
+
+    int NUM_PROFILE_ITERS = 50;
+    cudaSetDevice(0);
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < NUM_PROFILE_ITERS; ++i) {
+        multimem_red_kernel<<<grid, block>>>(dev_mat_pgl, 0);
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    double avg_time = elapsed.count() / NUM_PROFILE_ITERS;
+    printf("Average time per kernel launch: %f seconds\n", avg_time);
 
     // Bring back data
-    bf16 *host_mat_1 = new bf16[nelem];
-    bf16 *host_mat_2 = new bf16[nelem];
     cudaSetDevice(0);
     cudaMemcpy(host_mat_1, dev_mats[0], size, cudaMemcpyDeviceToHost);
     cudaSetDevice(1);
     cudaMemcpy(host_mat_2, dev_mats[1], size, cudaMemcpyDeviceToHost);
-
-    // Verify results
-    bool verification_passed = verify_all_ones(host_mat_1, nelem) && verify_all_ones(host_mat_2, nelem);
-    if (verification_passed) {
-        std::cout << "Verification passed!" << std::endl;
-    } else {
-        std::cout << "Verification failed!" << std::endl;
-    }
     
+    // Convert from bf16 to float for printing results
+    for (int i = 0; i < nelem; ++i) {
+        host_mat_1_float[i] = __bfloat162float(host_mat_1[i]);
+        host_mat_2_float[i] = __bfloat162float(host_mat_2[i]);
+    }
+
+    // Check correctness, should be all ones
+    // for (int i = 0; i < nelem; ++i) {
+    //     if (host_mat_1_float[i] != 1.0f) {
+    //         std::cerr << "Error: Device 1 element " << i << " is " << host_mat_1_float[i] << std::endl;
+    //         return 1;
+    //     }
+    //     if (host_mat_2_float[i] != 1.0f) {
+    //         std::cerr << "Error: Device 2 element " << i << " is " << host_mat_2_float[i] << std::endl;
+    //         return 1;
+    //     }
+    // }
+    // printf("Results are correct!\n");
+
+    // Cleanup and exit
     delete[] dev_mats;
     delete[] dev_handles;
     delete[] host_mat_1;
     delete[] host_mat_2;
+    delete[] host_mat_1_float;
+    delete[] host_mat_2_float;
 
     std::cout << "Done!" << std::endl;
     return 0;

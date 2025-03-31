@@ -104,11 +104,11 @@ int main() {
     for (int i = 0; i < NUM_DEVICES; ++i) device_ids[i] = i;
     
     cudaSetDevice(0);
-    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 0, &dev_mats[0], &dev_handles[0], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 0, &dev_mats[0], size);
     cudaMemcpy(dev_mats[0], host_mat_1, size, cudaMemcpyHostToDevice);
 
     cudaSetDevice(1);
-    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 1, &dev_mats[1], &dev_handles[1], size);
+    pglCudaMalloc<true>(NUM_DEVICES, device_ids, 1, &dev_mats[1], size);
     cudaMemcpy(dev_mats[1], host_mat_2, size, cudaMemcpyHostToDevice);
 
     // Initialize parallel global layout
