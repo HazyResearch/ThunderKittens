@@ -38,10 +38,17 @@ template<typename T> concept all = requires {
 } // namespace pgl
 } // namespace ducks
 
-// INIT_MC: whether to initialize the multicast handle inside the constructor
-//         if false, the user must manually initialize the multicast handle
-//         in order to use collective operations
-template<kittens::ducks::gl::all GL, int NUM_DEVICES = 8, bool INIT_MC = true>
+/**
+ * @brief Parallel global layouts. Represents a region of data spread across multiple devices.
+ * @tparam GL The underlying global layout on each device.
+ * @tparam NUM_DEVICES The number of GPU devices to use.
+ * @tparam INIT_MC Whether to initialize the multicast handle inside the constructor.
+ *             If false, the user must manually initialize the multicast handle. 
+ * @tparam INIT_TMA Whether to initialize TMA descriptors for the PGL object (does not affect 
+ *             TMA creation for underlying GLs). If false, the user can manually initialize later.
+ * @tparam TMA_Types The types of TMA descriptors to use for the PGL object.
+ */
+template<kittens::ducks::gl::all GL, int NUM_DEVICES = 8, bool INIT_MC = true, bool INIT_TMA = false, typename... TMA_Types>
 struct pgl {
     using identifier = ducks::pgl::identifier;
     using _GL = GL;
@@ -56,6 +63,8 @@ struct pgl {
 
     int device_ids[NUM_DEVICES];
     static constexpr int num_devices = NUM_DEVICES;
+
+    detail::descriptor_dict<TMA_Types...> tma_descs[NUM_DEVICES];
 
     __host__ __device__ const GL &operator[](int idx) const { return gls[idx]; }
     __device__ inline T* mc_ptr_at(const coord<ducks::default_type> &idx, int dev_idx) const {
@@ -80,10 +89,8 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
             gls{GL(_data[I], _batch, _depth, _rows, _cols)...}, mc_handle(0), mc_vas{} {
-        if constexpr (NUM_DEVICES <= 1) {
-            std::cerr << "SKILL ISSUE: No point in using pgl with a single device." << std::endl;
-            std::exit(EXIT_FAILURE);
-        }
+        static_assert(NUM_DEVICES > 1, 
+            "SKILL ISSUE: No point in using pgl with a single device (CUDA doesn't allow it).");
 
         for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
@@ -94,6 +101,10 @@ struct pgl {
             multicast_init(); // should be called only once
             multicast_bind();
         }
+
+        static_assert(INIT_MC || !INIT_TMA, 
+            "Cannot auto-initialize TMA without auto-initializing multicast handle.");
+        if constexpr (INIT_MC && INIT_TMA) tma_init();
     }
 
     // This should be only called once in the lifetime of the pgl object
@@ -162,6 +173,18 @@ struct pgl {
         }
     }
 
+    __host__ inline void tma_init() {
+        if (!mc_handle) {
+            std::cerr << "Multicast handle is uninitialized or destroyed." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+        for (int i = 0; i < NUM_DEVICES; ++i) {
+            CUDACHECK(cudaSetDevice(device_ids[i]));
+            tma_descs[i] = detail::descriptor_dict<TMA_Types...>(
+                mc_vas[i], gls[i].batch_internal, gls[i].depth_internal, gls[i].rows_internal, gls[i].cols_internal);
+        }
+    }
+
     __host__ inline void multicast_unbind() {
         if (!mc_handle) {
             std::cerr << "Multicast handle is uninitialized or destroyed." << std::endl;
@@ -226,6 +249,11 @@ struct pgl {
             size = ((size + mem_granularity - 1) / mem_granularity) * mem_granularity;
 
         return size;
+    }
+
+    template<typename U, int axis> 
+    __device__ inline const CUtensorMap* get_tma(int dev_idx) const {
+        return tma_descs[dev_idx].template get<U, axis>();
     }
 };
 
