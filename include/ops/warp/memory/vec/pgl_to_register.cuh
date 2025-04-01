@@ -105,8 +105,7 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_ptr = (U*)&dst[(idx.template unit_coord<-1, 3>())];
-    U *dst_mc_ptr = src.mc_ptr_at(idx.template unit_coord<-1, 3>(), 0);
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), 0);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -115,8 +114,6 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
             int idx = w*64 + (laneid/4)*8 + 2*(laneid%4);
             int o_dim = w*4 + (laneid/4) / 2;
             int i_dim = (laneid/4) % 2;
-            if(idx < src.outer_dim*16)
-                *(U2*)&dst_ptr[idx] = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
             
             if(idx < src.outer_dim*16) {
                 U2 dst_buf = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
@@ -135,7 +132,6 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
                 dst_buf.x = base_types::convertor<U, T>::convert(src[o_dim][0].x);
                 dst_buf.y = base_types::convertor<U, T>::convert(src[o_dim][0].y);
                 
-                *(U2*)&dst_ptr[idx] = dst_buf;
                 multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &dst_buf);
             }
         }
@@ -155,7 +151,6 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
                     dst_buf = base_types::convertor<U2, T2>::convert(src[w*2][0]);
                 }
                 
-                *(U2*)&dst_ptr[idx] = dst_buf;
                 multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &dst_buf);
             }
         }
@@ -192,7 +187,6 @@ __device__ inline static void broadcast(const PGL &dst, const RV &src, const COO
         for(auto w = 0; w < (src.outer_dim+1)/2; w++) {
             int idx = w*32 + (laneid%4)*8 + (laneid/4);
             int o_dim = w*2 + (laneid%4) / 2;
-            // this should be a maximally coalesced load.
             if(idx < src.outer_dim*16) {
                 U tmp;
                 if(laneid%2==0) tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
