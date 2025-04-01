@@ -5,9 +5,12 @@
 #include "prototype.cuh"
 #include <cuda_bf16.h>
 
-constexpr int N = 16384;
+constexpr int N = 65536;
+constexpr int NUM_WARMUPS = 2; // number of warpups
 constexpr int NUM_ITERS = 10; // number of iterations for benchmarking
-constexpr int NUM_DEVICES = 8; // number of GPUs
+constexpr int NUM_DEVICES = 2; // number of GPUs
+
+constexpr bool CHECK = NUM_ITERS == 1 && NUM_WARMUPS == 0;
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -17,7 +20,7 @@ template<int M_BLOCK, int N_BLOCK>
 struct matmul_layout {
     using  base_tile      = st_bf<64, 64>;
     using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile>;
-    using  pglobal_layout = pgl<global_layout, NUM_DEVICES, true>;
+    using  pglobal_layout = pgl<global_layout, NUM_DEVICES, true, true, base_tile>;
     struct globals        { pglobal_layout A, B, C; int dev_idx; };
     struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
     struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
@@ -93,10 +96,10 @@ struct matmul_template {
             warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
-                tma::store_async(args.globals.C[dev_idx], args.finish.c[warpgroup::groupid()][i],
-                                             {args.common.coord.x, args.common.coord.y+i});
-                // tma::store_add_async(args.globals.C  MC MC MC, args.finish.c[warpgroup::groupid()][i],
+                // tma::store_async(args.globals.C[dev_idx], args.finish.c[warpgroup::groupid()][i],
                 //                              {args.common.coord.x, args.common.coord.y+i});
+                tma::store_add_async(args.globals.C/*PGL*/, args.finish.c[warpgroup::groupid()][i],
+                                             {args.common.coord.x, args.common.coord.y+i}, dev_idx);
                 tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
             }
             zero(args.state.accum);
@@ -115,7 +118,7 @@ void run(size_t M, size_t N, size_t K) {
     // Host-side matrices
     float *host_A = new float[M * K];
     float *host_B = new float[K * N];
-    float *host_C = new float[M * N];
+    float *host_C = new float[NUM_DEVICES * M * N];
     float *host_C_ref = new float[M * N];
 
     // Device ID array
@@ -194,6 +197,11 @@ void run(size_t M, size_t N, size_t K) {
     pglobal_layout pgl_B(device_ids, device_B_sh, nullptr, nullptr, K_sh, N);
     pglobal_layout pgl_C(device_ids, device_C, nullptr, nullptr, M, N);
 
+    // Because gl doesn't have a default constructor and I don't want
+    // the timing to include constructor calls
+    globals* G = static_cast<globals*>(::operator new[](sizeof(globals) * N));
+    for (int dev_idx = 0; dev_idx < N; ++dev_idx) new (&G[dev_idx]) globals{pgl_A, pgl_B, pgl_C, dev_idx};
+
     // Prepare kernel launch
     KittensClub club(device_ids, NUM_DEVICES);
     unsigned long smem_size = kittens::MAX_SHARED_MEMORY - 1024; // MAX_SHARED_MEMORY = 227KB for Hopper
@@ -204,10 +212,9 @@ void run(size_t M, size_t N, size_t K) {
     });
     dim3 grid(mmt::grid(M, N, K_sh)); // use sharded K
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
-    for (int i = 0; i < 2; ++i) { // warmup
+    for (int i = 0; i < NUM_WARMUPS; ++i) { // warmup
         club.execute([&](int dev_idx) { // warmup
-            globals G{pgl_A, pgl_B, pgl_C, dev_idx};
-            kittens::prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY - 1024>>>(G);
+            kittens::prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY - 1024>>>(G[dev_idx]);
             CUDACHECK(cudaDeviceSynchronize());
         });
     }
@@ -219,8 +226,7 @@ void run(size_t M, size_t N, size_t K) {
     // Launch!
     for (int i = 0; i < NUM_ITERS; ++i) {
         club.execute([&](int dev_idx) {
-            globals G{pgl_A, pgl_B, pgl_C, dev_idx};
-            kittens::prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY - 1024>>>(G);
+            kittens::prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY - 1024>>>(G[dev_idx]);
             CUDACHECK(cudaDeviceSynchronize());
         });
     }
@@ -233,14 +239,18 @@ void run(size_t M, size_t N, size_t K) {
 
     // Copy & convert back to host
     __nv_bfloat16 *host_C_bf16 = new __nv_bfloat16[M * N];
-    for (int i = 0; i < M * N; ++i) host_C[i] = 0.f;
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         CUDACHECK(cudaSetDevice(dev_idx));
-        CUDACHECK(cudaMemcpy(host_C_bf16, device_C[dev_idx], M * N * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
-        for (int i = 0; i < M * N; ++i) host_C[i] += __bfloat162float(host_C_bf16[i]);
+        if (CHECK) {
+            CUDACHECK(cudaMemcpy(host_C_bf16, device_C[dev_idx], M * N * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
+            for (int i = 0; i < M * N; ++i) host_C[dev_idx * M * N + i] += __bfloat162float(host_C_bf16[i]);
+        } else {
+            CUDACHECK(cudaMemcpy(host_C_bf16, device_C[dev_idx], 10 * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
+            for (int i = 0; i < 10; ++i) host_C[dev_idx * M * N + i] += __bfloat162float(host_C_bf16[i]);
+        }
 
         std::cout << "  Matrix C (Host " << dev_idx << "): ";
-        for (int i = 0; i < 10; ++i) std::cout << __bfloat162float(host_C_bf16[i]) << " ";
+        for (int i = 0; i < 10; ++i) std::cout << host_C[dev_idx * M * N + i] << " ";
         std::cout << "\n";
     }
     std::cout << "  Matrix C (M x N): ";
@@ -250,19 +260,23 @@ void run(size_t M, size_t N, size_t K) {
     std::cout << "\n";
 
     // Verify result (just do first 10x10 tile)
-    float max_error = 0.f;
-    int n_error = 0;
-    for (int i = 0; i < 10; ++i) {
-        for (int j = 0; j < 10; j++) {
-            float error = std::abs(host_C[i * N + j] - host_C_ref[i * N + j]);
-            if (error > 3e-1) { // large due to bf16 <-> fp32 conversion
-                ++n_error;
+    if (CHECK) {
+        float max_error = 0.f;
+        int n_error = 0;
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+            for (int i = 0; i < 10; ++i) {
+                for (int j = 0; j < 10; j++) {
+                    float error = std::abs(host_C[dev_idx * M * N + i * N + j] - host_C_ref[i * N + j]);
+                    if (error > 3e-1) { // large due to bf16 <-> fp32 conversion
+                        ++n_error;
+                    }
+                    max_error = std::max(max_error, error);
+                }
             }
-            max_error = std::max(max_error, error);
         }
+        std::cout << "    Maximum error: " << max_error << "\n";
+        std::cout << "    Error count (out of 10x10): " << n_error << "\n";
     }
-    std::cout << "    Maximum error: " << max_error << "\n";
-    std::cout << "    Error count (out of 10x10): " << n_error << "\n";
     std::cout << "-------------------------------------------------------------\n";
 
     // Clean up
@@ -277,7 +291,9 @@ void run(size_t M, size_t N, size_t K) {
         pglCudaFree(dev_idx, device_A_sh[dev_idx], M * K_sh * sizeof(__nv_bfloat16));
         pglCudaFree(dev_idx, device_B_sh[dev_idx], K_sh * N * sizeof(__nv_bfloat16));
         pglCudaFree(dev_idx, device_C[dev_idx], M * N * sizeof(__nv_bfloat16));
+        G[dev_idx].~globals();
     }
+    ::operator delete[](G);
 }
 
 int main() {
