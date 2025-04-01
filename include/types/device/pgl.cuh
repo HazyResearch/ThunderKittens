@@ -235,7 +235,7 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
 
     // Create memory handle prop
 
-    CUmulticastObjectProp mem_prop = {}; 
+    CUmemAllocationProp mem_prop = {}; 
     detail::init_mem_prop(&mem_prop, device_id);
 
     // Query for granularity
@@ -270,7 +270,7 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
 
     // Query for granularity
-    CUmulticastObjectProp mem_prop = {}; 
+    CUmemAllocationProp mem_prop = {}; 
     detail::init_mem_prop(&mem_prop, device_id);
     size_t mem_granularity;
     CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
