@@ -108,8 +108,9 @@ struct pgl {
         }
 
         // Create MC handle props (once for all devices)
-        CUmulticastObjectProp mc_prop; 
-        mc_size = detail::init_mc_prop(&mc_prop, NUM_DEVICES, gl_size());
+        CUmulticastObjectProp mc_prop = {}; 
+        detail::init_mc_prop(&mc_prop, NUM_DEVICES, gl_size());
+        mc_size = mc_prop.size;
         
         // Create MC handle (once for all devices)
         CUCHECK(cuMulticastCreate(&mc_handle, &mc_prop));
@@ -132,7 +133,8 @@ struct pgl {
             CUCHECK(cuMemMap((CUdeviceptr)mc_vas[i], mc_size, 0, mc_handle, 0));
 
             // Set access permissions
-            CUmemAccessDesc desc = detail::create_mem_desc(device_ids[i]);
+            CUmemAccessDesc desc = {};
+            detail::init_mem_desc(&desc, device_ids[i]);
             CUCHECK(cuMemSetAccess((CUdeviceptr)mc_vas[i], mc_size, &desc, 1));
         }
     }
@@ -216,7 +218,7 @@ struct pgl {
 
     __host__ inline size_t mem_handle_size(size_t size) {
         size_t mem_granularity;
-        CUmemAllocationProp mem_prop;
+        CUmemAllocationProp mem_prop = {};
         CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
 
         // This should be the size that was actually allocated to the handle
@@ -232,7 +234,9 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
     CUDACHECK(cudaSetDevice(device_id));
 
     // Create memory handle prop
-    CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
+
+    CUmulticastObjectProp mem_prop = {}; 
+    detail::init_mem_prop(&mem_prop, device_id);
 
     // Query for granularity
     size_t mem_granularity;
@@ -255,10 +259,9 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
     CUCHECK(cuMemMap((CUdeviceptr)*ptr, size, 0, mem_handle, 0));
 
     // Set access
-    CUmemAccessDesc desc_list[num_devices];
-    for (int i = 0; i < num_devices; i++) {
-        desc_list[i] = detail::create_mem_desc(device_ids[i]);
-    }
+    CUmemAccessDesc desc_list[num_devices] = {};
+    for (int i = 0; i < num_devices; i++)
+        detail::init_mem_desc(&desc_list[i], device_ids[i]);
     CUCHECK(cuMemSetAccess((CUdeviceptr)*ptr, size, desc_list, num_devices));
 }
 
@@ -267,8 +270,9 @@ __host__ inline void pglCudaFree(int device_id, T *ptr, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
 
     // Query for granularity
+    CUmulticastObjectProp mem_prop = {}; 
+    detail::init_mem_prop(&mem_prop, device_id);
     size_t mem_granularity;
-    CUmemAllocationProp mem_prop = detail::create_mem_prop(device_id);
     CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
 
     // This should be the size that was actually allocated to the handle
