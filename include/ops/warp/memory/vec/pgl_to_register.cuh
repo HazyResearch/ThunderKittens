@@ -36,31 +36,26 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
     else if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         #pragma unroll
         for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
-            int idx = w*16 + (laneid/4)*2 + (laneid%4)/2;
-            int o_dim = w*2 + (laneid%4);
+            int idx = w*16 + (laneid%4)*4 + (laneid/4)/2;
+            int o_dim = w*2 + (laneid%4) / 2;
             
-            if(o_dim < dst.outer_dim) {
+            if(idx < dst.outer_dim*8) {
                 U2 dst_buf;
                 multimem_ld_reduce_op<U2, OP>::apply(&dst_buf, (U2*)&src_mc_ptr[idx]);
                 
-                T tmp_x = base_types::convertor<T, U>::convert(dst_buf.x);
-                T tmp_y = base_types::convertor<T, U>::convert(dst_buf.y);
-                
                 if(laneid%2 == 0) {
-                    dst[o_dim][0].x = tmp_x;
-                    if(laneid/2%2 == 0) dst[o_dim][0].y = tmp_y;
-                } else if(laneid%2 == 1 && laneid/2%2 == 1) {
-                    dst[o_dim][0].y = tmp_x;
+                    dst[o_dim][0].x = base_types::convertor<T, U>::convert(dst_buf.x);
+                } else {
+                    dst[o_dim][0].y = base_types::convertor<T, U>::convert(dst_buf.y);
                 }
             }
         }
         
         #pragma unroll
         for(auto w = 0; w < dst.outer_dim; w++) {
-            int leader_x = (laneid/4)*4 + 2*(w%2);
-            int leader_y = (laneid/4)*4 + 2*(w%2) + 1;
-            dst[w][0].x = __shfl_sync(MASK_ALL, dst[w][0].x, leader_x);
-            dst[w][0].y = __shfl_sync(MASK_ALL, dst[w][0].y, leader_y);
+            int leader = (laneid/4)*4 + 2*(w%2);
+            dst[w][0].x = __shfl_sync(MASK_ALL, dst[w][0].x, leader);
+            dst[w][0].y = __shfl_sync(MASK_ALL, dst[w][0].y, leader+1);
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
@@ -74,7 +69,7 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
                 
                 if(w == dst.outer_dim/2 && dst.length % 32 != 0 && laneid >= dst.length % 16) {
                     // load single element for last item if needed
-                    dst[w*2][0] = base_types::convertor<T, U>::convert(dst_buf[0]);
+                    dst[w*2][0] = base_types::convertor<T, U>::convert(dst_buf.x);
                 } else {
                     dst[w*2][0] = base_types::convertor<T2, U2>::convert(dst_buf);
                 }
@@ -136,22 +131,20 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
             }
         }
     }
-    else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
+    else if constexpr (std::is_same_v<typename RV::layout, ducks::rv_layout::naive>) {
         #pragma unroll
-        for(auto w = 0; w < (src.outer_dim+1)/2; w++) {
-            int idx = w*16 + laneid;
-            
-            if(idx < (src.length+1)/2) {
+        for(auto w = 0; w < src.outer_dim; w++) {
+            if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
                 U2 dst_buf;
+                dst_buf.x = base_types::convertor<U, T>::convert(src[w][0]);
                 
-                if(w == src.outer_dim/2 && src.length % 32 != 0 && laneid >= src.length % 16) {
-                    dst_buf.x = base_types::convertor<U, T>::convert(src[w*2][0]);
-                    dst_buf.y = 0;
+                if(laneid+16 < 32 && (w < src.outer_dim-1 || src.length%32 == 0 || laneid+16<src.length%32)) {
+                    dst_buf.y = base_types::convertor<U, T>::convert(src[w][0]);
                 } else {
-                    dst_buf = base_types::convertor<U2, T2>::convert(src[w*2][0]);
+                    dst_buf.y = 0; // Padding for edge cases
                 }
                 
-                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &dst_buf);
+                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[w*16 + laneid/2], &dst_buf);
             }
         }
     }
