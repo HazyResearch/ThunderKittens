@@ -109,15 +109,15 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
-            multimem_reduce_op<U, OP>::apply_vec(ptr, (U*)&tmp);
+            U* dst_ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
+            multimem_reduce_op<U, OP>::apply_vec(dst_ptr, (U*)&tmp);
         }
         else {
             if (row + unit_coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-                U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
-                multimem_reduce_op<U, OP>::apply_vec(ptr, (U*)&tmp);
+                U* dst_ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
+                multimem_reduce_op<U, OP>::apply_vec(dst_ptr, (U*)&tmp);
             }
         }
     }
@@ -162,15 +162,15 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
-            move<float4>::stg((float4*)ptr, tmp);
+            U* dst_ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
+            move<float4>::stg((float4*)dst_ptr, tmp);
         }
         else {
             if (row + unit_coord.template dim<axis>() < dst[dev_id].template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-                U* ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
-                move<float4>::stg((float4*)ptr, tmp);
+                U* dst_ptr = static_cast<U*>(dst_mc_ptr) + row*row_stride + col;
+                move<float4>::stg((float4*)dst_ptr, tmp);
             }
         }
     }
