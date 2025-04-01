@@ -63,6 +63,14 @@ struct multimem_reduce_op<half, ReduceOp::ADD> {
 
 template<>
 struct multimem_reduce_op<float, ReduceOp::ADD> {
+    __device__ static inline void apply(float *dst, float *src) {
+        asm volatile(
+            "multimem.red.relaxed.sys.global.add.f32 [%0], %1;"
+            :
+            : "l"(dst), "f"(src[0])
+            : "memory"
+        );
+    }
     __device__ static inline void apply_vec(float* dst, float* src) {
         asm volatile(
             "multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1, %2, %3, %4};"

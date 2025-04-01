@@ -6,8 +6,8 @@ namespace kittens {
 
 template<ReduceOp OP, ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
 __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    using T2 = RV::dtype;
-    using U = typename PGL::dtype;
+    using T2 = base_types::packing<typename RV::dtype>::packed_type;
+    using U = base_types::packing<typename PGL::dtype>::unpacked_type;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
@@ -60,22 +60,29 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
         #pragma unroll
-        for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
-            int idx = w*16 + laneid;
-            
-            if(idx < (dst.length+1)/2) { 
-                U2 dst_buf;
-                multimem_ld_reduce_op<U2, OP>::apply(&dst_buf, (U2*)&src_mc_ptr[idx]);
+        for(auto w = 0; w < dst.outer_dim; w++) {
+            if(w < dst.outer_dim-1 || dst.length%32 == 0 || laneid<16) {
+                U2 packed_value;
                 
-                if(w == dst.outer_dim/2 && dst.length % 32 != 0 && laneid >= dst.length % 16) {
-                    // load single element for last item if needed
-                    dst[w*2][0] = base_types::convertor<T, U>::convert(dst_buf.x);
+                // Only even lanes perform the load
+                if (laneid % 2 == 0) {
+                    multimem_ld_reduce_op<U2, OP>::apply(&packed_value, (U2*)&src_mc_ptr[w*32 + laneid]);
+                    
+                    // Store the x component directly
+                    dst[w][0] = base_types::convertor<T, U>::convert(packed_value.x);
+                    
+                    // Explicitly send the y component using the correct type
+                    U y_value = packed_value.y;
+                    y_value = __shfl_sync(0xFFFFFFFF, y_value, laneid + 1);
                 } else {
-                    dst[w*2][0] = base_types::convertor<T2, U2>::convert(dst_buf);
+                    // Odd lanes get value from the previous lane, using the same type U
+                    U received_val = __shfl_sync(0xFFFFFFFF, U{}, laneid - 1);
+                    dst[w][0] = base_types::convertor<T, U>::convert(received_val);
                 }
             }
         }
     }
+   
 }
 
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
@@ -94,13 +101,13 @@ __device__ static inline void all_reduce_max(RV &dst, const PGL &src, int dev_id
 }
 
 template<ReduceOp OP, ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ inline static void reduce_op(const PGL &dst, const RV &src, const COORD &idx) {
+__device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), 0);
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_id);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -111,8 +118,8 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
             int i_dim = (laneid/4) % 2;
             
             if(idx < src.outer_dim*16) {
-                U2 dst_buf = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
-                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &dst_buf);
+                U2 tmp = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
+                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &tmp);
             }
         }
     }
@@ -131,20 +138,20 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const COO
             }
         }
     }
-    else if constexpr (std::is_same_v<typename RV::layout, ducks::rv_layout::naive>) {
+    else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
         #pragma unroll
         for(auto w = 0; w < src.outer_dim; w++) {
             if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
-                U2 dst_buf;
-                dst_buf.x = base_types::convertor<U, T>::convert(src[w][0]);
+                T value = base_types::convertor<U, T>::convert(src[w][0]);
+                U neighbor_value = __shfl_sync(MASK_ALL, value, 
+                                   (laneid % 2 == 0) ? laneid + 1 : laneid - 1);
                 
-                if(laneid+16 < 32 && (w < src.outer_dim-1 || src.length%32 == 0 || laneid+16<src.length%32)) {
-                    dst_buf.y = base_types::convertor<U, T>::convert(src[w][0]);
-                } else {
-                    dst_buf.y = 0; // Padding for edge cases
-                }
-                
-                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[w*16 + laneid/2], &dst_buf);
+                if (laneid % 2 == 0) {
+                    U2 tmp;
+                    tmp.x = value;
+                    tmp.y = neighbor_value;
+                    multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[w*32 + laneid], &tmp);
+                } 
             }
         }
     }
@@ -155,14 +162,14 @@ __device__ static inline void atomic_add(const PGL &dst, const RV &src, int dev_
     reduce_op<ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
-template<ReduceOp OP, ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ inline static void broadcast(const PGL &dst, const RV &src, const COORD &idx) {
+template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
+__device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_mc_ptr = src.mc_ptr_at(idx.template unit_coord<-1, 3>(), 0);
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_id);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
