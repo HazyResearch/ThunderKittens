@@ -36,26 +36,22 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
     else if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         #pragma unroll
         for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
-            int idx = w*16 + (laneid%4)*4 + (laneid/4)/2;
+            int idx = w*32 + (laneid%4)*8 + (laneid/4);
             int o_dim = w*2 + (laneid%4) / 2;
             
-            if(idx < dst.outer_dim*8) {
-                U2 dst_buf;
-                multimem_ld_reduce_op<U2, OP>::apply(&dst_buf, (U2*)&src_mc_ptr[idx]);
-                
-                if(laneid%2 == 0) {
-                    dst[o_dim][0].x = base_types::convertor<T, U>::convert(dst_buf.x);
+            if(idx < dst.outer_dim*16) {
+                U2 packed_val;
+                if (((laneid % 8) < 4)) {
+                    multimem_ld_reduce_op<U2, OP>::apply(&packed_val, (U2*)&src_mc_ptr[idx]);
+                    __shfl_sync(MASK_ALL, packed_val.y, laneid + 4);
+                    if (laneid%2==0) dst[o_dim][0].x = base_types::convertor<T, U>::convert(packed_val.x);
+                    else dst[o_dim][0].y = base_types::convertor<T, U>::convert(packed_val.x);
                 } else {
-                    dst[o_dim][0].y = base_types::convertor<T, U>::convert(dst_buf.y);
+                    U val_y = __shfl_sync(MASK_ALL, U{}, laneid - 4);
+                    if (laneid%2==0) dst[o_dim][0].x = base_types::convertor<T, U>::convert(val_y);
+                    else dst[o_dim][0].y = base_types::convertor<T, U>::convert(val_y);
                 }
             }
-        }
-        
-        #pragma unroll
-        for(auto w = 0; w < dst.outer_dim; w++) {
-            int leader = (laneid/4)*4 + 2*(w%2);
-            dst[w][0].x = __shfl_sync(MASK_ALL, dst[w][0].x, leader);
-            dst[w][0].y = __shfl_sync(MASK_ALL, dst[w][0].y, leader+1);
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
@@ -68,7 +64,8 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
                     dst[w][0] = base_types::convertor<T, U>::convert(packed_value.x);                    
                     __shfl_sync(MASK_ALL, packed_value.y, laneid + 1);
                 } else {
-                    dst[w][0] = base_types::convertor<T, U>::convert(__shfl_sync(MASK_ALL, U{}, laneid - 1));
+                    U val_y = __shfl_sync(MASK_ALL, U{}, laneid - 1);
+                    dst[w][0] = base_types::convertor<T, U>::convert(val_y);
                 }
             }
         }
@@ -122,12 +119,8 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_i
             
             if(idx < src.outer_dim*16) {
                 U tmp;
-                if(laneid%2==0){
-                    tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
-                } 
-                else {
-                    tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
-                }
+                if (laneid%2==0) tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
+                else tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
                 
                 U2 packed_val;                
                 if (((laneid % 8) < 4)) {
