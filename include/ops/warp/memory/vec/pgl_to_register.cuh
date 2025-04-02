@@ -121,11 +121,22 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_i
             int o_dim = w*2 + (laneid%4) / 2;
             
             if(idx < src.outer_dim*16) {
-                U2 dst_buf;
-                dst_buf.x = base_types::convertor<U, T>::convert(src[o_dim][0].x);
-                dst_buf.y = base_types::convertor<U, T>::convert(src[o_dim][0].y);
+                U tmp;
+                if(laneid%2==0){
+                    tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
+                } 
+                else {
+                    tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
+                }
                 
-                multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &dst_buf);
+                U2 packed_val;                
+                if (((laneid % 8) < 4)) {
+                    packed_val.x = tmp;
+                    packed_val.y = __shfl_sync(MASK_ALL, tmp, laneid + 4);
+                    multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[idx], &packed_val);
+                } else {
+                    __shfl_sync(MASK_ALL, tmp, laneid - 4);
+                }
             }
         }
     }
