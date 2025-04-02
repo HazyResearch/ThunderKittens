@@ -10,6 +10,9 @@ void warp::memory::tests(test_data &results) {
 #ifdef TEST_WARP_MEMORY_VEC
     warp::memory::vec::tests(results);
 #endif
+#ifdef TEST_WARP_MEMORY_UTIL
+    warp::memory::util::tests(results);
+#endif
 }
 
 #endif

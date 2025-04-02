@@ -253,3 +253,50 @@ struct sweep_gmem_type_2d {
 template<template<typename> typename test, int MAX_H=8, int MAX_W=8, typename... args> using sweep_gmem_type_2d_warp = sweep_gmem_type_2d<test, MAX_H, MAX_W, 1, args...>;
 
 template<typename T> concept gl_t = kittens::ducks::gl::all<T>;
+
+// ----- Multi-GPU Test Wrappers -----
+
+template<typename T, int NUM_DEVICES>
+struct shared_layouts {
+    // Do not initialize MC (we initialize with dummy GLs), and
+    // make all dims runtime, so we can create one big PGL and share it across tests
+    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false>; 
+    inline static PGL *input_pgl = nullptr;
+    inline static PGL *output_pgl = nullptr;
+};
+
+template<typename T, int NUM_DEVICES>
+inline void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICES], int B, int D, int R, int C) {
+    using shared_layout = shared_layouts<T, NUM_DEVICES>;
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        // This is super hacky, but I think there is no clean way to do this, and 
+        // this sort of situation with hundreds of pgls of different dims is specific to testing
+        shared_layout::input_pgl->gls[dev_idx].raw_ptr = d_i_arr[dev_idx];
+        shared_layout::output_pgl->gls[dev_idx].raw_ptr = d_o_arr[dev_idx];
+        shared_layout::input_pgl->gls[dev_idx].batch_internal.v = B;
+        shared_layout::output_pgl->gls[dev_idx].batch_internal.v = B;
+        shared_layout::input_pgl->gls[dev_idx].depth_internal.v = D;
+        shared_layout::output_pgl->gls[dev_idx].depth_internal.v = D;
+        shared_layout::input_pgl->gls[dev_idx].rows_internal.v = R;
+        shared_layout::output_pgl->gls[dev_idx].rows_internal.v = R;
+        shared_layout::input_pgl->gls[dev_idx].cols_internal.v = C;
+        shared_layout::output_pgl->gls[dev_idx].cols_internal.v = C;
+    }
+}
+
+inline int check_multi_gpus() {
+#if NUM_GPUS > 1
+    int num_devices;
+    cudaGetDeviceCount(&num_devices);
+    if (num_devices < 2) {
+        std::cerr << "Multi-GPU tests require at least 2 GPUs, found " << num_devices << "." << std::endl;
+        std::cerr << "Please set the testing flag NUM_GPUS to 1 if your system does not have multiple GPUs." << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    return 1;
+#else
+    std::cout << "Skipping because the testing flag NUM_GPUS is less than 2." << std::endl;
+    return 0;
+#endif
+}
