@@ -63,21 +63,12 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
         for(auto w = 0; w < dst.outer_dim; w++) {
             if(w < dst.outer_dim-1 || dst.length%32 == 0 || laneid<16) {
                 U2 packed_value;
-                
-                // Only even lanes perform the load
                 if (laneid % 2 == 0) {
                     multimem_ld_reduce_op<U2, OP>::apply(&packed_value, (U2*)&src_mc_ptr[w*32 + laneid]);
-                    
-                    // Store the x component directly
-                    dst[w][0] = base_types::convertor<T, U>::convert(packed_value.x);
-                    
-                    // Explicitly send the y component using the correct type
-                    U y_value = packed_value.y;
-                    y_value = __shfl_sync(0xFFFFFFFF, y_value, laneid + 1);
+                    dst[w][0] = base_types::convertor<T, U>::convert(packed_value.x);                    
+                    __shfl_sync(MASK_ALL, packed_value.y, laneid + 1);
                 } else {
-                    // Odd lanes get value from the previous lane, using the same type U
-                    U received_val = __shfl_sync(0xFFFFFFFF, U{}, laneid - 1);
-                    dst[w][0] = base_types::convertor<T, U>::convert(received_val);
+                    dst[w][0] = base_types::convertor<T, U>::convert(__shfl_sync(MASK_ALL, U{}, laneid - 1));
                 }
             }
         }
@@ -143,15 +134,14 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_i
         for(auto w = 0; w < src.outer_dim; w++) {
             if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
                 T value = base_types::convertor<U, T>::convert(src[w][0]);
-                U neighbor_value = __shfl_sync(MASK_ALL, value, 
-                                   (laneid % 2 == 0) ? laneid + 1 : laneid - 1);
                 
                 if (laneid % 2 == 0) {
-                    U2 tmp;
-                    tmp.x = value;
-                    tmp.y = neighbor_value;
+                    U neighbor_value = __shfl_sync(MASK_ALL, value, laneid + 1);
+                    U2 tmp{value, neighbor_value};
                     multimem_reduce_op<U2, OP>::apply((U2*)&dst_mc_ptr[w*32 + laneid], &tmp);
-                } 
+                } else {
+                    __shfl_sync(MASK_ALL, value, laneid - 1);
+                }
             }
         }
     }
