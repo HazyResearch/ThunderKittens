@@ -116,12 +116,12 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
 }
 
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+__device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
 template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void atomic_add(const PGL &dst, const RT &src,int dev_id, const COORD &idx) {
+__device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 

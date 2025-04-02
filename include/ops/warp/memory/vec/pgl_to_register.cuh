@@ -198,7 +198,4 @@ __device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_i
         }
     }
 }
-
-
-
 } // namespace kittens
