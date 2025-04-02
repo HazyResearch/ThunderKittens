@@ -86,6 +86,17 @@ struct loop_h {
     }
 };
 
+// 1D wrapper for multi-gpu tests
+template<template<typename,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, int S, typename... args>
+struct mg_loop_s {
+    static void run(test_data& results) {
+        if constexpr (S > 1) {
+            mg_loop_s<base, test, NUM_DEVICES, MAX_S, NUM_WORKERS, S-1, args...>::run(results);
+        }
+        base<test, NUM_DEVICES, S, NUM_WORKERS, args...>::run(results);
+    }
+};
+
 // 2D wrappers for multi-gpu tests
 template<template<typename,int,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, int H, int W, typename... args>
 struct mg_loop_w {
