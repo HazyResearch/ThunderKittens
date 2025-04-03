@@ -3,9 +3,6 @@
  * @brief Functions for a group to collaboratively perform operations between pgls and register tiles 
  */
 
-/**
- * @brief Helper function for all_reduce operations
- */
 template<int axis, ReduceOp OP, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
@@ -54,7 +51,7 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
  * @tparam PGL The parallel global layout type.
  * @tparam COORD The coordinate tile type
  * @param dst The destination register tile to store the result.
- * @param src The source PGL in global memory.
+ * @param src The source PGL to load data across devices from
  */
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -73,7 +70,7 @@ __device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_id
  * @tparam PGL The parallel global layout type.
  * @tparam COORD The coordinate tile type
  * @param dst The destination register tile to store the result.
- * @param src The source PGL in global memory.
+ * @param src The source PGL to load data across devices from
  */
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -92,7 +89,7 @@ __device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_id
  * @tparam PGL The parallel global layout type.
  * @tparam COORD The coordinate tile type
  * @param dst The destination register tile to store the result.
- * @param src The source PGL in global memory.
+ * @param src The source PGL to load data across devices from
  */
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -104,9 +101,6 @@ __device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_id
     ld_reduce_op<2, ReduceOp::MAX>(dst, src, dev_id, idx);
 }
 
-/**
- * @brief Helper function for multimem.red operations
- */
 template<int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
@@ -155,7 +149,7 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
  * @tparam PGL The parallel global layout type.
  * @tparam COORD The coordinate tile type
  * @param dst The destination PGL to store the result.
- * @param src The source register tile to add data from.
+ * @param src The source RT to load data from
  */
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
@@ -174,7 +168,7 @@ __device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_
  * @tparam PGL The parallel global layout type.
  * @tparam COORD The coordinate tile type
  * @param dst The destination PGL to store the result.
- * @param src The source register tile to add data from.
+ * @param src The source RT to load data from
  */
 template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {

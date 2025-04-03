@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Functions for performing operations between PGLs and shared register tiles.
+ * @brief Functions for performing operations between PGLs and shared tiles.
  */
 #pragma once
 
@@ -60,7 +60,7 @@ __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_id, 
  * @tparam ST The shared tile type.
  * @tparam PGL The parallel global layout type.
  * @param[out] dst The destination shared tile to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -78,7 +78,7 @@ __device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_id
  * @tparam ST The shared tile type.
  * @tparam PGL The parallel global layout type.
  * @param[out] dst The destination shared tile to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -96,7 +96,7 @@ __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id
  * @tparam ST The shared tile type.
  * @tparam PGL The parallel global layout type.
  * @param[out] dst The destination shared tile to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -156,8 +156,8 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
  * 
  * @tparam ST The shared tile type.
  * @tparam PGL The parallel global layout type.
- * @param[out] dst The destination shared tile to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[out] dst The destination PGL to store the result.
+ * @param[in] src The source shared tile to load data from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {
@@ -174,8 +174,8 @@ __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_
  * 
  * @tparam ST The shared tile type.
  * @tparam PGL The parallel global layout type.
- * @param[out] dst The destination shared tile to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[out] dst The destination PGL to store the result.
+ * @param[in] src The source shared tile to load data from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>, int N_THREADS=WARP_THREADS>
 __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_id, const COORD &idx) {

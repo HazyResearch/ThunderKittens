@@ -31,9 +31,8 @@ __device__ static inline void ld_reduce_op(SV &dst, const PGL &src, int dev_id, 
  *
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
- * @tparam COORD The coordinate vector type, defaulted to a register vector coordinate.
- * @param[out] dst The destination register vector to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[out] dst The destination shared vector to store the result.
+ * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void all_reduce_add(SV &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -45,9 +44,8 @@ __device__ static inline void all_reduce_add(SV &dst, const PGL &src, int dev_id
  *
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
- * @tparam COORD The coordinate vector type, defaulted to a register vector coordinate.
- * @param[out] dst The destination register vector to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[out] dst The destination shared vector to store the result.
+ * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void all_reduce_min(SV &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -59,9 +57,8 @@ __device__ static inline void all_reduce_min(SV &dst, const PGL &src, int dev_id
  *
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
- * @tparam COORD The coordinate vector type, defaulted to a register vector coordinate.
- * @param[out] dst The destination register vector to store the result.
- * @param[in] src The source PGL in global memory.
+ * @param[out] dst The destination shared vector to store the result.
+ * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void all_reduce_max(SV &dst, const PGL &src, int dev_id, const COORD &idx) {
@@ -94,9 +91,8 @@ __device__ static inline void reduce_op(const PGL &dst, const SV &src, int dev_i
  *
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
- * @tparam COORD The coordinate vector type, defaulted to a register vector coordinate.
  * @param[out] dst The destination PGL to store the result.
- * @param[in] src The source shared vector to add data from.
+ * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_id, const COORD &idx) {
@@ -108,9 +104,8 @@ __device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_
  *
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
- * @tparam COORD The coordinate vector type, defaulted to a register vector coordinate.
  * @param[out] dst The destination PGL to store the result.
- * @param[in] src The source shared vector to add data from.
+ * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void broadcast(const PGL &dst, const SV &src, int dev_id, const COORD &idx) {

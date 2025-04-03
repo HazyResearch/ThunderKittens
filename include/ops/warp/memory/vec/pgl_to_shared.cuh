@@ -86,12 +86,12 @@ __device__ static inline void reduce_op(const PGL &dst, const SV &src, int dev_i
 }
 
 /**
- * @brief Add data from a register vector to global memory for all devices in a PGL
+ * @brief Add data from a shared vector to global memory for all devices in a PGL
  * 
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
  * @param[out] dst The destination PGL to store the result.
- * @param[in] src The source register vector to add data from.
+ * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_id, const COORD &idx) {
@@ -99,12 +99,12 @@ __device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_
 }
 
 /**
- * @brief Store data from a register vector to global memory for all devices in a PGL
+ * @brief Store data from a shared vector to global memory for all devices in a PGL
  * 
  * @tparam SV The shared vector type.
  * @tparam PGL The parallel global layout type.
  * @param[out] dst The destination PGL to store the result.
- * @param[in] src The source register vector to add data from.
+ * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void broadcast(const PGL &dst, const SV &src, int dev_id, const COORD &idx) {
