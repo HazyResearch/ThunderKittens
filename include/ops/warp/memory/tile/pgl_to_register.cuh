@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Functions for reduction operations called by a single device
+ * @brief Functions for performing operations between PGLs and register tiles.
  */
 #pragma once
 
@@ -53,6 +53,14 @@ __device__ static inline void ld_reduce_op(RT &dst, const PGL &src, int dev_id, 
     }
 }
 
+/**
+ * @brief Add data together across all devices in a PGL and store the result in a register tile.
+ * 
+ * @tparam RT The register tile layout type.
+ * @tparam PGL The parallel global layout type.
+ * @param[out] dst The destination tile to store the result.
+ * @param[in] src The source PGL to load data across devices from
+ */
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_add(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
@@ -63,6 +71,14 @@ __device__ static inline void all_reduce_add(RT &dst, const PGL &src, int dev_id
     ld_reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
+/**
+ * @brief Store the minimum value across all devices in a PGL into a register tile.
+ * 
+ * @tparam RT The register tile layout type.
+ * @tparam PGL The parallel global layout type.
+ * @param[out] dst The destination tile to store the result.
+ * @param[in] src The source PGL to load data across devices from
+ */
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_min(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<axis, ReduceOp::MIN>(dst, src, dev_id, idx);
@@ -73,6 +89,14 @@ __device__ static inline void all_reduce_min(RT &dst, const PGL &src, int dev_id
     ld_reduce_op<2, ReduceOp::MIN>(dst, src, dev_id, idx);
 }
 
+/**
+ * @brief Store the maximum value across all devices in a PGL into a register tile.
+ * 
+ * @tparam RT The register tile layout type.
+ * @tparam PGL The parallel global layout type.
+ * @param[out] dst The destination tile to store the result.
+ * @param[in] src The source PGL to load data across devices from
+ */
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void all_reduce_max(RT &dst, const PGL &src, int dev_id, const COORD &idx) {
     ld_reduce_op<axis, ReduceOp::MAX>(dst, src, dev_id, idx);
@@ -130,6 +154,14 @@ __device__ static inline void reduce_op(const PGL &dst, const RT &src, int dev_i
     }
 }
 
+/**
+ * @brief Add data from a register tile to global memory for all devices in a PGL
+ * 
+ * @tparam RT The register tile layout type.
+ * @tparam PGL The parallel global layout type.
+ * @param[out] dst The destination tile to store the result.
+ * @param[in] src The source PGL to load data across devices from
+ */
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void atomic_add(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     reduce_op<axis, ReduceOp::ADD>(dst, src, dev_id, idx);
@@ -140,6 +172,14 @@ __device__ static inline void atomic_add(const PGL &dst, const RT &src, int dev_
     reduce_op<2, ReduceOp::ADD>(dst, src, dev_id, idx);
 }
 
+/**
+ * @brief Store data from a register tile to global memory for all devices in a PGL
+ * 
+ * @tparam RT The register tile layout type.
+ * @tparam PGL The parallel global layout type.
+ * @param[out] dst The destination tile to store the result.
+ * @param[in] src The source PGL to load data across devices from
+ */
 template <int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<RT>>
 __device__ static inline void broadcast(const PGL &dst, const RT &src, int dev_id, const COORD &idx) {
     using T2 = RT::dtype;
