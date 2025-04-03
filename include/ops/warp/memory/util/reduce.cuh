@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Implementations for multimem_reduce operations
+ * @brief Implementations for multimem.red and multimem.ld_reduce operations
  */
 
 #pragma once
