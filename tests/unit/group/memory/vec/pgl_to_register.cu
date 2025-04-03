@@ -98,7 +98,7 @@ struct group_vec_p2r_all_reduce_test {
         using G = kittens::group<NW>;
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             if constexpr (OP == kittens::ReduceOp::ADD) {
                 G::template all_reduce_add(reg_vec, input, dev_idx, {i});
@@ -143,7 +143,7 @@ struct group_vec_p2r_atomic_add_test {
         using G = kittens::group<NW>;
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             G::template load(reg_vec, input[dev_idx], {i});
             G::template atomic_add(output, reg_vec, dev_idx, {i});
@@ -175,7 +175,7 @@ struct group_vec_p2r_broadcast_test {
         using G = kittens::group<NW>;
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             G::template load(reg_vec, input[dev_idx], {i});
             G::template broadcast(output, reg_vec, dev_idx, {i});

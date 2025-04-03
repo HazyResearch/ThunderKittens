@@ -99,7 +99,7 @@ struct p2s_all_reduce_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             if constexpr (OP == kittens::ReduceOp::ADD) {
                 kittens::all_reduce_add(s_vec, input, dev_idx, {i});
@@ -145,7 +145,7 @@ struct p2s_atomic_add_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             kittens::load(s_vec, input[dev_idx], {i});
             kittens::atomic_add(output, s_vec, dev_idx, {i});
@@ -178,7 +178,7 @@ struct p2s_broadcast_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             kittens::load(s_vec, input[dev_idx], {i});
             kittens::broadcast(output, s_vec, dev_idx, {i});

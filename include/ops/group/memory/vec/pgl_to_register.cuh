@@ -12,8 +12,8 @@
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>>>
-__device__ inline static void all_reduce_add(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ::kittens::ld_reduce_op<ReduceOp::ADD>(dst, src, dev_id, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
+__device__ inline static void all_reduce_add(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ::kittens::ld_reduce_op<ReduceOp::ADD>(dst, src, dev_idx, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }
 
 /**
@@ -25,8 +25,8 @@ __device__ inline static void all_reduce_add(RV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>>>
-__device__ inline static void all_reduce_min(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ::kittens::ld_reduce_op<ReduceOp::MIN>(dst, src, dev_id, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
+__device__ inline static void all_reduce_min(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ::kittens::ld_reduce_op<ReduceOp::MIN>(dst, src, dev_idx, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }
 
 /**
@@ -38,8 +38,8 @@ __device__ inline static void all_reduce_min(RV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>>>
-__device__ inline static void all_reduce_max(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ::kittens::ld_reduce_op<ReduceOp::MAX>(dst, src, dev_id, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
+__device__ inline static void all_reduce_max(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ::kittens::ld_reduce_op<ReduceOp::MAX>(dst, src, dev_idx, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }
 
 /**
@@ -52,8 +52,8 @@ __device__ inline static void all_reduce_max(RV &dst, const PGL &src, int dev_id
  * @param[in] src The source register vector to load data from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>>>
-__device__ inline static void atomic_add(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
-    ::kittens::reduce_op<ReduceOp::ADD>(dst, src, dev_id, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
+__device__ inline static void atomic_add(const PGL &dst, const RV &src, int dev_idx, const COORD &idx) {
+    ::kittens::reduce_op<ReduceOp::ADD>(dst, src, dev_idx, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }
 
 /**
@@ -66,6 +66,6 @@ __device__ inline static void atomic_add(const PGL &dst, const RV &src, int dev_
  * @param[in] src The source register vector to load data from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<rv<typename RV::T, N_WARPS*RV::length, typename RV::layout>>>
-__device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
-    ::kittens::broadcast(dst, src, dev_id, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
+__device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_idx, const COORD &idx) {
+    ::kittens::broadcast(dst, src, dev_idx, coord<RV>(idx.b, idx.d, idx.r, idx.c*N_WARPS+warpid()));
 }

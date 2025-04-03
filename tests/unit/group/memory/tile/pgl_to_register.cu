@@ -102,13 +102,13 @@ struct group_p2r_all_reduce_test {
         using G = kittens::group<NW>;
         using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
         RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? (int)input[dev_idx].batch()/(reg_tile.rows*NW) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? (int)input[dev_idx].depth()/(reg_tile.rows*NW) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? (int)input[dev_idx].rows()/(reg_tile.rows*NW) : (int)input[dev_idx].rows();
+        int num_batches = axis::value==0 ? (int)input.batch()/(reg_tile.rows*NW) : (int)input.batch();
+        int num_depths = axis::value==1 ? (int)input.depth()/(reg_tile.rows*NW) : (int)input.depth();
+        int num_rows = axis::value==2 ? (int)input.rows()/(reg_tile.rows*NW) : (int)input.rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
+                    for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         if constexpr (op == kittens::ReduceOp::ADD) {
                             G::template all_reduce_add<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
                         } else if constexpr (op == kittens::ReduceOp::MIN) {
@@ -155,13 +155,13 @@ struct group_p2r_atomic_add_test {
         using G = kittens::group<NW>;
         using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
         RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/(reg_tile.rows*NW)) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/(reg_tile.rows*NW)) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/(reg_tile.rows*NW)) : (int)input[dev_idx].rows();
+        int num_batches = axis::value==0 ? ((int)input.batch()/(reg_tile.rows*NW)) : (int)input.batch();
+        int num_depths = axis::value==1 ? ((int)input.depth()/(reg_tile.rows*NW)) : (int)input.depth();
+        int num_rows = axis::value==2 ? ((int)input.rows()/(reg_tile.rows*NW)) : (int)input.rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
+                    for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
                         G::template atomic_add<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
                     }
@@ -195,13 +195,13 @@ struct group_p2r_broadcast_test {
         using G = kittens::group<NW>;
         using RT = kittens::rt<dtype, 16*H/NW, 16*W, kittens::ducks::rt_layout::row>;
         RT reg_tile; // currently only row-major layout is supported
-        int num_batches = axis::value==0 ? ((int)input[dev_idx].batch()/(reg_tile.rows*NW)) : (int)input[dev_idx].batch();
-        int num_depths = axis::value==1 ? ((int)input[dev_idx].depth()/(reg_tile.rows*NW)) : (int)input[dev_idx].depth();
-        int num_rows = axis::value==2 ? ((int)input[dev_idx].rows()/(reg_tile.rows*NW)) : (int)input[dev_idx].rows();
+        int num_batches = axis::value==0 ? ((int)input.batch()/(reg_tile.rows*NW)) : (int)input.batch();
+        int num_depths = axis::value==1 ? ((int)input.depth()/(reg_tile.rows*NW)) : (int)input.depth();
+        int num_rows = axis::value==2 ? ((int)input.rows()/(reg_tile.rows*NW)) : (int)input.rows();
         for(int i = 0; i < num_batches; i++) {
             for(int j = 0; j < num_depths; j++) {
                 for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input[dev_idx].cols()/reg_tile.cols; l++) {
+                    for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
                         G::template broadcast<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
                     }

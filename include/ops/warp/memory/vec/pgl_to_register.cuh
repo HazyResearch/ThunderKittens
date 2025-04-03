@@ -10,13 +10,13 @@
 namespace kittens {
 
 template<ReduceOp OP, ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
+__device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
     using T2 = base_types::packing<typename RV::dtype>::packed_type;
     using U = base_types::packing<typename PGL::dtype>::unpacked_type;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    U *src_mc_ptr = src.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_id);
+    U *src_mc_ptr = src.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_idx);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -87,8 +87,8 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, int dev_id, 
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ static inline void all_reduce_add(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<ReduceOp::ADD>(dst, src, dev_id, idx);
+__device__ static inline void all_reduce_add(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ld_reduce_op<ReduceOp::ADD>(dst, src, dev_idx, idx);
 }
 
 /**
@@ -100,8 +100,8 @@ __device__ static inline void all_reduce_add(RV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ static inline void all_reduce_min(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<ReduceOp::MIN>(dst, src, dev_id, idx);
+__device__ static inline void all_reduce_min(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ld_reduce_op<ReduceOp::MIN>(dst, src, dev_idx, idx);
 }
 
 /**
@@ -113,18 +113,18 @@ __device__ static inline void all_reduce_min(RV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ static inline void all_reduce_max(RV &dst, const PGL &src, int dev_id, const COORD &idx) {
-    ld_reduce_op<ReduceOp::MAX>(dst, src, dev_id, idx);
+__device__ static inline void all_reduce_max(RV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+    ld_reduce_op<ReduceOp::MAX>(dst, src, dev_idx, idx);
 }
 
 template<ReduceOp OP, ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
+__device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_idx, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_id);
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_idx);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
@@ -189,8 +189,8 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, int dev_i
  * @param[in] src The source register vector to add data from.
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ static inline void atomic_add(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
-    reduce_op<ReduceOp::ADD>(dst, src, dev_id, idx);
+__device__ static inline void atomic_add(const PGL &dst, const RV &src, int dev_idx, const COORD &idx) {
+    reduce_op<ReduceOp::ADD>(dst, src, dev_idx, idx);
 }
 
 /**
@@ -202,13 +202,13 @@ __device__ static inline void atomic_add(const PGL &dst, const RV &src, int dev_
  * @param[in] src The source register vector to store data from.
  */
 template<ducks::rv::all RV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<RV>>
-__device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_id, const COORD &idx) {
+__device__ inline static void broadcast(const PGL &dst, const RV &src, int dev_idx, const COORD &idx) {
     using T2 = RV::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     
-    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_id);
+    U *dst_mc_ptr = dst.mc_ptr_at(idx.template unit_coord<-1, 3>(), dev_idx);
     int laneid = ::kittens::laneid();
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
