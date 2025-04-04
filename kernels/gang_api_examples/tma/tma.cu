@@ -5,7 +5,7 @@
 #include "prototype.cuh"
 #include <cuda_bf16.h>
 
-constexpr int N = 65536;
+constexpr size_t N = 65536;
 constexpr int NUM_WARMUPS = 2; // number of warpups
 constexpr int NUM_ITERS = 10; // number of iterations for benchmarking
 constexpr int NUM_DEVICES = 2; // number of GPUs
@@ -129,13 +129,13 @@ void run(size_t M, size_t N, size_t K) {
     std::mt19937 prng(42);
     std::uniform_real_distribution<> random(-0.5, 0.5);
     std::cout << "\n  Matrix A (M x K): ";
-    for (int i = 0; i < M * K; ++i) {
+    for (size_t i = 0; i < M * K; ++i) {
         host_A[i] = random(prng);
         if (i < 10)
             std::cout << host_A[i] << " ";
     }
     std::cout << "\n  Matrix B (K x N): ";
-    for (int i = 0; i < K * N; ++i) {
+    for (size_t i = 0; i < K * N; ++i) {
         host_B[i] = random(prng);
         if (i < 10)
             std::cout << host_B[i] << " ";
@@ -165,7 +165,7 @@ void run(size_t M, size_t N, size_t K) {
     for (size_t i = 0; i < K * N; ++i) host_B_bf16[i] = __float2bfloat16(host_B[i]);
 
     // Allocate device-side matrices
-    int K_sh = K / NUM_DEVICES;
+    size_t K_sh = K / NUM_DEVICES;
     __nv_bfloat16 *device_A_sh[NUM_DEVICES], *device_B_sh[NUM_DEVICES], *device_C[NUM_DEVICES];
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         pglCudaMalloc(NUM_DEVICES, device_ids, dev_idx, &device_A_sh[dev_idx], M * K_sh * sizeof(__nv_bfloat16));
@@ -174,9 +174,9 @@ void run(size_t M, size_t N, size_t K) {
     }
 
     // Copy to device matrices
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+    for (size_t dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         CUDACHECK(cudaSetDevice(dev_idx));
-        for (int i = 0; i < M; ++i) {
+        for (size_t i = 0; i < M; ++i) {
             CUDACHECK(cudaMemcpy(device_A_sh[dev_idx] + i * K_sh,      // i-th row of device A
                                  host_A_bf16 + i * K + dev_idx * K_sh, // i-th row, dev_idx-th block of host A
                                  K_sh * sizeof(__nv_bfloat16), 
