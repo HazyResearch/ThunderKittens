@@ -52,9 +52,9 @@ struct sync_manager {
         SYNC_SPACE_DTYPE *d_sync_spaces[NUM_DEVICES]; 
 
         for (int i = 0; i < NUM_DEVICES; ++i) {
-            int dev_idx = device_ids[i];
-            cudaSetDevice(dev_idx);
-            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_sync_spaces[dev_idx], sync_space_size * sizeof(SYNC_SPACE_DTYPE));
+            int dev_id = device_ids[i];
+            cudaSetDevice(dev_id);
+            pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_id, &d_sync_spaces[i], sync_space_size * sizeof(SYNC_SPACE_DTYPE));
         }
 
         return sync_manager(device_ids, d_sync_spaces);
@@ -62,9 +62,9 @@ struct sync_manager {
 
     inline __host__ void free() {
         for (int i = 0; i < NUM_DEVICES; ++i) {
-            int dev_idx = sync_space.device_ids[i];
-            cudaSetDevice(dev_idx);
-            pglCudaFree(dev_idx, sync_space[i].raw_ptr, sync_space_size * sizeof(SYNC_SPACE_DTYPE));
+            int dev_id = sync_space.device_ids[i];
+            cudaSetDevice(dev_id);
+            pglCudaFree(dev_id, sync_space[i].raw_ptr, sync_space_size * sizeof(SYNC_SPACE_DTYPE));
         }
         pglFree(sync_space);
     }
