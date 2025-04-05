@@ -168,7 +168,6 @@ template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
     store_add_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
 }
-
 template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_add_async(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
 
