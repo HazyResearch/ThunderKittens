@@ -8,7 +8,7 @@
 constexpr size_t N = 65536;
 constexpr int NUM_WARMUPS = 2; // number of warpups
 constexpr int NUM_ITERS = 10; // number of iterations for benchmarking
-constexpr int NUM_DEVICES = 2; // number of GPUs
+constexpr int NUM_DEVICES = 8; // number of GPUs
 
 constexpr bool CHECK = NUM_ITERS == 1 && NUM_WARMUPS == 0;
 
