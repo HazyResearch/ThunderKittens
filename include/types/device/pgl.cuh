@@ -152,7 +152,7 @@ struct pgl {
 
     // This can be called multiple times to share the pgl objects across different kernels. 
     // However, participating devices cannot be changed and the size must be less than or 
-    // equal to the original size. GL dimensions can change
+    // equal to the original size. GL dimensions can change (but must be the same across devices).
     // If you are calling this manually after constructor call, you should:
     //   1. Allocate device memory with pglCudaMalloc
     //   2. Create GL objects with the above device memory
