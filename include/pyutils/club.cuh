@@ -52,9 +52,9 @@ private:
 };
     
 __host__ inline KittensClub::KittensClub(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
-    for (size_t i = 0; i < num_devices; ++i) {
+    for (size_t dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
         task_available.push_back(false);
-        workers.emplace_back([this, i, device_ids] { worker(i, device_ids[i]); });
+        workers.emplace_back([this, dev_idx, device_ids] { worker(dev_idx, device_ids[dev_idx]); });
     }
 }
     

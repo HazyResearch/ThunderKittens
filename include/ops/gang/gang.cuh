@@ -26,7 +26,7 @@ struct gang {
  *        two GPU devices schedule completely different set of blocks.
  */
 template <ducks::sync_manager::all SyncManager>
-__device__ static inline void sync(const SyncManager &sm, const int sync_id, const int dev_id) {
+__device__ static inline void sync(const SyncManager &sm, const int sync_id, const int dev_idx) {
     #if defined(__CUDA_ARCH__)
         static_assert(__CUDA_ARCH__ >= 900, 
             "Using gang::sync() requires CUDA compute capability >= 9.0 (Hopper or newer)");
@@ -35,7 +35,7 @@ __device__ static inline void sync(const SyncManager &sm, const int sync_id, con
         "Number of devices in the gang cannot be greater than that in the sync manager");
 
     // TODO: support a subset of devices
-    if (dev_id >= NUM_DEVICES) return;
+    if (dev_idx >= NUM_DEVICES) return;
 
     int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
     if (block_idx >= SyncManager::max_blocks) return; // ignore blocks that are not in the sync_manager
@@ -47,7 +47,7 @@ __device__ static inline void sync(const SyncManager &sm, const int sync_id, con
     __syncthreads();
 
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-        sync_point sp = sm.get_sync_point(sync_id, dev_id, block_idx);
+        sync_point sp = sm.get_sync_point(sync_id, dev_idx, block_idx);
         cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_device> uc(*sp.uc);
 
         // Block-level gang sync

@@ -231,12 +231,18 @@ struct pgl {
         }
     }
 
+    __host__ __device__ inline auto batch() const { return gls[0].batch(); }
+    __host__ __device__ inline auto depth() const { return gls[0].depth(); }
+    __host__ __device__ inline auto rows() const { return gls[0].rows(); }
+    __host__ __device__ inline auto cols() const { return gls[0].cols(); }
+    
+    template<int axis> __device__ inline size_t shape() const { return gls[0].template shape<axis>(); }
+    template<int axis> __device__ inline size_t stride() const { return gls[0].template stride<axis>(); }
+
     // We make this a function because users can change the underlying GL
-    __host__ inline size_t gl_size() {
-        return static_cast<size_t>(gls[0].batch()) *
-               static_cast<size_t>(gls[0].depth()) * 
-               static_cast<size_t>(gls[0].rows()) *
-               static_cast<size_t>(gls[0].cols()) * sizeof(T);
+    __host__ __device__ inline size_t gl_size() const {
+        return static_cast<size_t>(this->batch()) * static_cast<size_t>(this->depth()) * 
+               static_cast<size_t>(this->rows()) * static_cast<size_t>(this->cols()) * sizeof(T);
     }
 
     __host__ inline size_t mem_handle_size(size_t size) {
