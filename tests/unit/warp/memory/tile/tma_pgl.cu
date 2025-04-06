@@ -131,6 +131,51 @@ struct tma_pgl_store_add_async_test {
     }
 };
 
+template<typename T>
+struct tma_pgl_store_min_async_test {
+    using dtype = T;
+    template<int H, int W, int NW> using valid = std::bool_constant
+        <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_min_async=bf16" :
+                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_min_async=half" :
+                                                      #ifdef KITTENS_HOPPER
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_min_async=fp8e4m3" :
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_min_async=fp8e5m2" :
+                                                      #endif
+                                                                                            "tma_pgl_store_min_async=float";
+    static inline const bool single_run = true; // run on device 0 vs all devices
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i)
+                o_ref[dev_idx][i] = std::min(i_ref[0][i], o_ref[0][i]); // because mc object always reads from the lowest dev id
+        }
+    }
+    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
+    __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
+        extern __shared__ kittens::alignment_dummy __shm[]; // smem
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
+        __syncwarp();
+        for(int a = 0; a < B; a++) {
+            for(int b = 0; b < D; b++) {
+                for(int i = 0; i < R; i++) {
+                    for(int j = 0; j < C; j++) {
+                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
+                    }
+                }
+                __syncwarp(); // mem must be visible before store
+                for(int i = 0; i < R; i++) {
+                    for(int j = 0; j < C; j++) {
+                        kittens::tma::store_min_async<axis::value, kittens::cache_policy::NORMAL>(output, shared_tile[i][j], {a, b, i, j}, dev_idx);
+                    }
+                }
+            }
+        }
+    }
+};
+
 template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, typename... args> 
 using tma_pgl_sweep_size_2d = mg_loop_h<tma_pgl_test_wrapper_2d, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 
@@ -169,6 +214,9 @@ struct tma_pgl_sweep_size_2d_warp_axes_ops {
 
         // Run tests
         tma_pgl_sweep_size_2d_warp_axes<tma_pgl_store_add_async_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        if constexpr (!std::is_same<T, float>::value) {
+            tma_pgl_sweep_size_2d_warp_axes<tma_pgl_store_min_async_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        }
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
