@@ -260,7 +260,8 @@ template<typename T, int NUM_DEVICES>
 struct shared_layouts {
     // Do not initialize MC (we initialize with dummy GLs), and
     // make all dims runtime, so we can create one big PGL and share it across tests
-    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false>; 
+    // The TMA type here is a dummy; we initialize TMA descriptors manually later if needed
+    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::st<T, 16, 16>>; 
     inline static PGL *input_pgl = nullptr;
     inline static PGL *output_pgl = nullptr;
 };
@@ -282,6 +283,32 @@ inline void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICE
         shared_layout::output_pgl->gls[dev_idx].rows_internal.v = R;
         shared_layout::input_pgl->gls[dev_idx].cols_internal.v = C;
         shared_layout::output_pgl->gls[dev_idx].cols_internal.v = C;
+    }
+}
+
+template<typename T, int NUM_DEVICES, typename tma_dtype>
+inline void shared_pgl_replace_tma_desc() {
+    using shared_layout = shared_layouts<T, NUM_DEVICES>;
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        // Another hack to replace tma descriptors in-place
+        // this is required since we cannot (1) create many pgls as we wish, (2) pass 256 tma descriptors to the kernel
+        CUDACHECK(cudaSetDevice(shared_layout::input_pgl->device_ids[dev_idx]));
+        shared_layout::input_pgl->tma_descs[dev_idx] = kittens::detail::descriptor_dict<tma_dtype>(
+            shared_layout::input_pgl->mc_vas[dev_idx], 
+            shared_layout::input_pgl->batch_internal, 
+            shared_layout::input_pgl->depth_internal, 
+            shared_layout::input_pgl->rows_internal, 
+            shared_layout::input_pgl->cols_internal
+        );
+        CUDACHECK(cudaSetDevice(shared_layout::output_pgl->device_ids[dev_idx]));
+        shared_layout::output_pgl->tma_descs[dev_idx] = kittens::detail::descriptor_dict<tma_dtype>(
+            shared_layout::output_pgl->mc_vas[dev_idx], 
+            shared_layout::output_pgl->batch_internal, 
+            shared_layout::output_pgl->depth_internal, 
+            shared_layout::output_pgl->rows_internal, 
+            shared_layout::output_pgl->cols_internal
+        );
     }
 }
 

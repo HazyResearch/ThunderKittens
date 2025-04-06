@@ -7,7 +7,8 @@ static __global__ void tma_pgl_global_wrapper_2d(const __grid_constant__ PGL inp
     Ker::template device_func<H, W, NW, PGL, args...>(input, output, dev_idx);
 }
 
-constexpr static int B = 3, D = 1, R = 4, C = 5; // arbitrary mix of prime/composite numbers
+constexpr static int B = 3, D = 5; // Arbitrary, can change
+constexpr static int R = 2, C = 2; // Fixed, must change the test code to change these
 
 template<typename test, int NUM_DEVICES, int H, int W, int NUM_WORKERS, typename axis, typename... args>
 struct tma_pgl_test_wrapper_2d {
@@ -15,10 +16,12 @@ struct tma_pgl_test_wrapper_2d {
 
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
     using shared_layout = shared_layouts<dtype, NUM_DEVICES>;
+    using PGL = kittens::pgl<kittens::gl<dtype, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::st<dtype, 16*H, 16*W>>;
 
     static void run(test_data& results) {
         int device_count;
         cudaGetDeviceCount(&device_count);
+        CudaCheckError();
         if (device_count < NUM_DEVICES) {
             std::cerr << "Warning: Not enough GPU devices to run test " << test::test_identifier << std::endl;
             return;
@@ -42,19 +45,25 @@ struct tma_pgl_test_wrapper_2d {
             shared_layout::input_pgl->multicast_bind();
             shared_layout::output_pgl->multicast_bind();
 
+            // set tma descs (another hack here is that we statically retrieve TMA desc dict that fit the H & W through type casting)
+            PGL input = *reinterpret_cast<PGL*>(shared_layout::input_pgl);
+            PGL output = *reinterpret_cast<PGL*>(shared_layout::output_pgl);
+            input.tma_init();
+            output.tma_init();
+
             // run kernel
             for (int dev_idx = 0; dev_idx < (test::single_run ? 1 : NUM_DEVICES); ++dev_idx) {
                 cudaSetDevice(dev_idx);
                 cudaFuncSetAttribute(
-                    tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...>,
+                    tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, typename shared_layout::PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(*shared_layout::input_pgl, *shared_layout::output_pgl, dev_idx);
+                tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output, dev_idx);
             }
-            
+
             // fill in correct results on cpu
-            test::template host_func<H, W, NUM_WORKERS, typename shared_layout::PGL, axis>(i_ref, o_ref);
+            test::template host_func(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate<NUM_DEVICES, typename shared_layout::PGL, dtype>(*shared_layout::input_pgl, *shared_layout::output_pgl, i_ref, o_ref, this_result.label, W * 16);
 
@@ -65,78 +74,23 @@ struct tma_pgl_test_wrapper_2d {
             this_result.result = test_result::INVALID;
         }
         results.push_back(this_result);
+        CudaCheckError();
     }
 };
-
-template<typename T, kittens::ReduceOp op>
-struct tma_pgl_all_reduce_test {
-    using dtype = T;
-    using _valid_type = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
-    template<int H, int W, int NW> using _valid_dims = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
-    template<int H, int W, int NW> using valid = std::bool_constant<_valid_type::value && _valid_dims<H, W, NW>::value>;
-    static inline const bool single_run = false;
-    static inline const std::string op_identifier = op == kittens::ReduceOp::ADD ? "ADD" : op == kittens::ReduceOp::MIN ? "MIN" : "MAX";
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_all_reduce=bf16,op=" + op_identifier :
-                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_all_reduce=half,op=" + op_identifier :
-                                                                                         "tma_pgl_all_reduce=float,op=" + op_identifier;
-    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
-    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
-        // each vector represents a GPU device holding the data
-        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
-            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
-                o_ref[dev_idx][i] = i_ref[0][i];
-                for (int other_dev_idx = 1; other_dev_idx < i_ref.size(); ++other_dev_idx) {
-                    if constexpr (op == kittens::ReduceOp::ADD) {
-                        o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
-                    } else if constexpr (op == kittens::ReduceOp::MIN) {
-                        o_ref[dev_idx][i] = std::min(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-                    } else if constexpr (op == kittens::ReduceOp::MAX) {
-                        o_ref[dev_idx][i] = std::max(o_ref[dev_idx][i], i_ref[other_dev_idx][i]);
-                    }
-                }
-            }
-        }
-    }
-    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
-    __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
-        extern __shared__ kittens::alignment_dummy __shm[]; // smem
-        kittens::shared_allocator<1024> al((int*)&__shm[0]);
-        using ST = kittens::st<T, 16*H, 16*W>;
-        ST &shared_tile = al.allocate<ST>();
-        int num_batches = axis::value==0 ? ((int)input.batch()/shared_tile.rows) : (int)input.batch();
-        int num_depths = axis::value==1 ? ((int)input.depth()/shared_tile.rows) : (int)input.depth();
-        int num_rows = axis::value==2 ? ((int)input.rows()/shared_tile.rows) : (int)input.rows();
-        for(int i = 0; i < num_batches; i++) {
-            for(int j = 0; j < num_depths; j++) {
-                for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
-                        if constexpr (op == kittens::ReduceOp::ADD) {
-                            kittens::all_reduce_add<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
-                        } else if constexpr (op == kittens::ReduceOp::MIN) {
-                            kittens::all_reduce_min<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
-                        } else if constexpr (op == kittens::ReduceOp::MAX) {
-                            kittens::all_reduce_max<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
-                        }
-                        kittens::store<axis::value, false>(output[dev_idx], shared_tile, {i, j, k, l});
-                    }
-                }
-            }
-        }
-    }
-};
-
 
 template<typename T>
-struct tma_pgl_atomic_add_test {
+struct tma_pgl_store_add_async_test {
     using dtype = T;
-    using _valid_type = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
-    template<int H, int W, int NW> using _valid_dims = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
-    template<int H, int W, int NW> using valid = std::bool_constant<_valid_type::value && _valid_dims<H, W, NW>::value>;
-    static inline const bool single_run = false;
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_atomic_add=bf16" :
-                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_atomic_add=half" :
-                                                                                         "tma_pgl_atomic_add=float";
-    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
+    template<int H, int W, int NW> using valid = std::bool_constant
+        <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_add_async=bf16" :
+                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_add_async=half" :
+                                                      #ifdef KITTENS_HOPPER
+                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_add_async=fp8e4m3" :
+                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_add_async=fp8e5m2" :
+                                                      #endif
+                                                                                            "tma_pgl_store_add_async=float";
+    static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
@@ -155,18 +109,21 @@ struct tma_pgl_atomic_add_test {
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         extern __shared__ kittens::alignment_dummy __shm[]; // smem
-        kittens::shared_allocator<1024> al((int*)&__shm[0]);
-        using ST = kittens::st<T, 16*H, 16*W>;
-        ST &shared_tile = al.allocate<ST>();
-        int num_batches = axis::value==0 ? ((int)input.batch()/shared_tile.rows) : (int)input.batch();
-        int num_depths = axis::value==1 ? ((int)input.depth()/shared_tile.rows) : (int)input.depth();
-        int num_rows = axis::value==2 ? ((int)input.rows()/shared_tile.rows) : (int)input.rows();
-        for(int i = 0; i < num_batches; i++) {
-            for(int j = 0; j < num_depths; j++) {
-                for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
-                        kittens::load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
-                        kittens::atomic_add<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
+        kittens::tma_swizzle_allocator al((int*)&__shm[0]);
+        kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
+        __syncwarp();
+        for(int a = 0; a < input.batch(); a++) {
+            for(int b = 0; b < input.depth(); b++) {
+                for(int i = 0; i < 2; i++) {
+                    for(int j = 0; j < 2; j++) {
+                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::load(shared_tile[i][j], input[dev_idx], {a, b, i, j});
+                    }
+                }
+                __syncwarp(); // mem must be visible before store
+                for(int i = 0; i < 2; i++) {
+                    for(int j = 0; j < 2; j++) {
+                        kittens::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j}, dev_idx);
                     }
                 }
             }
@@ -174,54 +131,13 @@ struct tma_pgl_atomic_add_test {
     }
 };
 
-template<typename T>
-struct tma_pgl_broadcast_test {
-    using dtype = T;
-    using _valid_type = std::bool_constant<std::is_same_v<T, float> || std::is_same_v<T, kittens::bf16> || std::is_same_v<T, kittens::half>>;
-    template<int H, int W, int NW> using _valid_dims = std::bool_constant<NW == 1 && W*H<=64>; // this is warp-level
-    template<int H, int W, int NW> using valid = std::bool_constant<_valid_type::value && _valid_dims<H, W, NW>::value>;
-    static inline const bool single_run = true;
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_broadcast=bf16" :
-                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_broadcast=half" :
-                                                                                         "tma_pgl_broadcast=float";
-    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
-    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
-        // each vector represents a GPU device holding the data
-        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
-            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
-                o_ref[dev_idx][i] = i_ref[0][i];
-            }
-        }
-    }
-    template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
-    __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
-        extern __shared__ kittens::alignment_dummy __shm[]; // smem
-        kittens::shared_allocator<1024> al((int*)&__shm[0]);
-        using ST = kittens::st<T, 16*H, 16*W>;
-        ST &shared_tile = al.allocate<ST>();
-        int num_batches = axis::value==0 ? ((int)input.batch()/shared_tile.rows) : (int)input.batch();
-        int num_depths = axis::value==1 ? ((int)input.depth()/shared_tile.rows) : (int)input.depth();
-        int num_rows = axis::value==2 ? ((int)input.rows()/shared_tile.rows) : (int)input.rows();
-        for(int i = 0; i < num_batches; i++) {
-            for(int j = 0; j < num_depths; j++) {
-                for(int k = 0; k < num_rows; k++) {
-                    for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
-                        kittens::load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
-                        kittens::broadcast<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
-                    }
-                }
-            }
-        }
-    }
-};
-
-template<typename test, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename... args> 
+template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, typename... args> 
 using tma_pgl_sweep_size_2d = mg_loop_h<tma_pgl_test_wrapper_2d, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 
-template<typename test, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args> 
+template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, typename... args> 
 using tma_pgl_sweep_size_2d_warp = tma_pgl_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 1, args...>;
 
-template<typename test, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args>
+template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, typename... args>
 struct tma_pgl_sweep_size_2d_warp_axes {
     using I0_t = std::integral_constant<int, 0>;
     using I1_t = std::integral_constant<int, 1>;
@@ -229,13 +145,13 @@ struct tma_pgl_sweep_size_2d_warp_axes {
 
     static void run(test_data &results) {
         tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I2_t>::run(results);
-        tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I1_t>::run(results);
-        tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I0_t>::run(results);
+        // tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I1_t>::run(results);
+        // tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I0_t>::run(results);
     }
 };
 
 // This might seem like an overkill, but is needed to minimize the number of PGL instantiations
-template<typename T, int NUM_DEVICES, int MAX_H=8, int MAX_W=8, typename... args>
+template<typename T, int NUM_DEVICES, int MAX_H, int MAX_W, typename... args>
 struct tma_pgl_sweep_size_2d_warp_axes_ops {
     static void run(test_data &results) {    
         using shared_layout = shared_layouts<T, NUM_DEVICES>;
@@ -249,14 +165,8 @@ struct tma_pgl_sweep_size_2d_warp_axes_ops {
         shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
         shared_layout::output_pgl->multicast_init();
 
-        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        if constexpr (!std::is_same<T, float>::value) {
-            tma_pgl_sweep_size_2d_warp_axes<tma_pgl_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-            tma_pgl_sweep_size_2d_warp_axes<tma_pgl_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        }
-
-        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_atomic_add_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
-        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_broadcast_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        // Run tests
+        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_store_add_async_test<T>, NUM_DEVICES, 1, 2>::run(results);
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
@@ -275,8 +185,12 @@ void warp::memory::tile::tma_pgl::tests(test_data &results) {
 
     if (check_multi_gpus()) {
         tma_pgl_sweep_size_2d_warp_axes_ops<float, NUM_GPUS, SIZE, SIZE>::run(results);
-        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
-        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
+        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
+        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
+        #ifdef KITTENS_HOPPER
+        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e4m3, NUM_GPUS, SIZE, SIZE>::run(results);
+        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e5m2, NUM_GPUS, SIZE, SIZE>::run(results);
+        #endif
     }
 }
 
