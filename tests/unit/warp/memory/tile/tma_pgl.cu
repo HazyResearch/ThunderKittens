@@ -112,18 +112,18 @@ struct tma_pgl_store_add_async_test {
         kittens::tma_swizzle_allocator al((int*)&__shm[0]);
         kittens::st<T, 16*H, 16*W> (&shared_tile)[2][2] = al.allocate<kittens::st<T, 16*H, 16*W>, 2, 2>();
         __syncwarp();
-        for(int a = 0; a < input.batch(); a++) {
-            for(int b = 0; b < input.depth(); b++) {
-                for(int i = 0; i < 2; i++) {
-                    for(int j = 0; j < 2; j++) {
+        for(int a = 0; a < B; a++) {
+            for(int b = 0; b < D; b++) {
+                for(int i = 0; i < R; i++) {
+                    for(int j = 0; j < C; j++) {
                         kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
-                        kittens::load(shared_tile[i][j], input[dev_idx], {a, b, i, j});
+                        kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
                     }
                 }
                 __syncwarp(); // mem must be visible before store
-                for(int i = 0; i < 2; i++) {
-                    for(int j = 0; j < 2; j++) {
-                        kittens::tma::store_add_async(output, shared_tile[i][j], {a, b, i, j}, dev_idx);
+                for(int i = 0; i < R; i++) {
+                    for(int j = 0; j < C; j++) {
+                        kittens::tma::store_add_async<axis::value, kittens::cache_policy::NORMAL>(output, shared_tile[i][j], {a, b, i, j}, dev_idx);
                     }
                 }
             }
@@ -145,6 +145,8 @@ struct tma_pgl_sweep_size_2d_warp_axes {
 
     static void run(test_data &results) {
         tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I2_t>::run(results);
+
+        // Only axis = 2 is supported for now
         // tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I1_t>::run(results);
         // tma_pgl_sweep_size_2d_warp<test, NUM_DEVICES, MAX_H, MAX_W, I0_t>::run(results);
     }
@@ -166,7 +168,7 @@ struct tma_pgl_sweep_size_2d_warp_axes_ops {
         shared_layout::output_pgl->multicast_init();
 
         // Run tests
-        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_store_add_async_test<T>, NUM_DEVICES, 1, 2>::run(results);
+        tma_pgl_sweep_size_2d_warp_axes<tma_pgl_store_add_async_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
@@ -185,11 +187,11 @@ void warp::memory::tile::tma_pgl::tests(test_data &results) {
 
     if (check_multi_gpus()) {
         tma_pgl_sweep_size_2d_warp_axes_ops<float, NUM_GPUS, SIZE, SIZE>::run(results);
-        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
-        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
+        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
+        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
         #ifdef KITTENS_HOPPER
-        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e4m3, NUM_GPUS, SIZE, SIZE>::run(results);
-        // tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e5m2, NUM_GPUS, SIZE, SIZE>::run(results);
+        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e4m3, NUM_GPUS, SIZE, SIZE>::run(results);
+        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e5m2, NUM_GPUS, SIZE, SIZE>::run(results);
         #endif
     }
 }

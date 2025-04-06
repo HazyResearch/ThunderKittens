@@ -261,7 +261,7 @@ struct shared_layouts {
     // Do not initialize MC (we initialize with dummy GLs), and
     // make all dims runtime, so we can create one big PGL and share it across tests
     // The TMA type here is a dummy; we initialize TMA descriptors manually later if needed
-    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::st<T, 16, 16>>; 
+    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::st<T, 32, 32>>; 
     inline static PGL *input_pgl = nullptr;
     inline static PGL *output_pgl = nullptr;
 };
