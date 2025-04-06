@@ -189,12 +189,15 @@ struct tma_pgl_store_min_async_test {
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_min_async=fp8e5m2" :
                                                       #endif
                                                                                             "tma_pgl_store_min_async=float";
-    static inline const bool single_run = true; // run on device 0 vs all devices
+    static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
-            for (int i = 0; i < i_ref[dev_idx].size(); ++i)
-                o_ref[dev_idx][i] = std::min(i_ref[0][i], o_ref[0][i]); // because mc object always reads from the lowest dev id & we are doing single run
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                    o_ref[dev_idx][i] = std::min(i_ref[other_dev_idx][i], o_ref[dev_idx][i]); // should work as tma reduction is atomic
+                }
+            }
         }
     }
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
@@ -234,12 +237,15 @@ struct tma_pgl_store_max_async_test {
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_max_async=fp8e5m2" :
                                                       #endif
                                                                                             "tma_pgl_store_max_async=float";
-    static inline const bool single_run = true; // run on device 0 vs all devices
+    static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
-            for (int i = 0; i < i_ref[dev_idx].size(); ++i)
-                o_ref[dev_idx][i] = std::max(i_ref[0][i], o_ref[0][i]); // because mc object always reads from the lowest dev id & we are doing single run
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                    o_ref[dev_idx][i] = std::max(i_ref[other_dev_idx][i], o_ref[dev_idx][i]); // should work as tma reduction is atomic
+                }
+            }
         }
     }
     template<int H, int W, int NW, kittens::ducks::pgl::all PGL, typename axis>
