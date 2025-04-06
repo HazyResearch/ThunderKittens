@@ -97,7 +97,7 @@ struct p2r_all_reduce_test {
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             if constexpr (OP == kittens::ReduceOp::ADD) {
                 kittens::all_reduce_add(reg_vec, input, dev_idx, {i});
@@ -141,7 +141,7 @@ struct p2r_atomic_add_test {
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             kittens::load(reg_vec, input[dev_idx], {i});
             kittens::atomic_add(output, reg_vec, dev_idx, {i});
@@ -172,7 +172,7 @@ struct p2r_broadcast_test {
     __device__ static void device_func(const PGL &input, const PGL &output, const int dev_idx) {
         using RV = kittens::rv<dtype, 16*S, L>;
         RV reg_vec;
-        int num_iters = (input.gl_size(dev_idx) + reg_vec.length - 1) / reg_vec.length;
+        int num_iters = (input.gl_size() + reg_vec.length - 1) / reg_vec.length;
         for (int i = 0; i < num_iters; i++) {
             kittens::load(reg_vec, input[dev_idx], {i});
             kittens::broadcast(output, reg_vec, dev_idx, {i});

@@ -1,6 +1,6 @@
 #include "pgl_to_shared.cuh"
 
-#ifdef TEST_GROUP_MEMORY_VEC_PGL_TO_REGISTER
+#ifdef TEST_GROUP_MEMORY_VEC_PGL_TO_SHARED
 
 template<typename Ker, int S, int NW, kittens::ducks::pgl::all PGL, typename... args>
 static __global__ void group_vec_p2s_global_wrapper_1d(const __grid_constant__ PGL input, const __grid_constant__ PGL output, const __grid_constant__ int dev_idx) {
@@ -100,7 +100,7 @@ struct group_vec_p2s_all_reduce_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             if constexpr (OP == kittens::ReduceOp::ADD) {
                 G::template all_reduce_add(s_vec, input, dev_idx, {i});
@@ -147,7 +147,7 @@ struct group_vec_p2s_atomic_add_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             G::template load(s_vec, input[dev_idx], {i});
             G::template atomic_add(output, s_vec, dev_idx, {i});
@@ -181,7 +181,7 @@ struct group_vec_p2s_broadcast_test {
         kittens::shared_allocator<1024> al((int*)&__shm[0]);
         using SV = kittens::sv<dtype, 16*S>;
         SV &s_vec = al.allocate<SV>();
-        int num_iters = (input.gl_size(dev_idx) + s_vec.length - 1) / s_vec.length;
+        int num_iters = (input.gl_size() + s_vec.length - 1) / s_vec.length;
         for (int i = 0; i < num_iters; i++) {
             G::template load(s_vec, input[dev_idx], {i});
             G::template broadcast(output, s_vec, dev_idx, {i});
@@ -195,8 +195,6 @@ using group_p2s_sweep_size_1d = mg_loop_s<group_vec_p2s_test_wrapper_1d, test, N
 template<typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, typename... args>
 struct group_p2s_sweep_size_1d_warp_layouts {
     static void run(test_data &results) {    
-        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
-        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
         group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
     }
 };
