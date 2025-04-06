@@ -286,32 +286,6 @@ inline void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICE
     }
 }
 
-template<typename T, int NUM_DEVICES, typename tma_dtype>
-inline void shared_pgl_replace_tma_desc() {
-    using shared_layout = shared_layouts<T, NUM_DEVICES>;
-
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        // Another hack to replace tma descriptors in-place
-        // this is required since we cannot (1) create many pgls as we wish, (2) pass 256 tma descriptors to the kernel
-        CUDACHECK(cudaSetDevice(shared_layout::input_pgl->device_ids[dev_idx]));
-        shared_layout::input_pgl->tma_descs[dev_idx] = kittens::detail::descriptor_dict<tma_dtype>(
-            shared_layout::input_pgl->mc_vas[dev_idx], 
-            shared_layout::input_pgl->batch_internal, 
-            shared_layout::input_pgl->depth_internal, 
-            shared_layout::input_pgl->rows_internal, 
-            shared_layout::input_pgl->cols_internal
-        );
-        CUDACHECK(cudaSetDevice(shared_layout::output_pgl->device_ids[dev_idx]));
-        shared_layout::output_pgl->tma_descs[dev_idx] = kittens::detail::descriptor_dict<tma_dtype>(
-            shared_layout::output_pgl->mc_vas[dev_idx], 
-            shared_layout::output_pgl->batch_internal, 
-            shared_layout::output_pgl->depth_internal, 
-            shared_layout::output_pgl->rows_internal, 
-            shared_layout::output_pgl->cols_internal
-        );
-    }
-}
-
 inline int check_multi_gpus() {
 #if NUM_GPUS > 1
     int num_devices;
