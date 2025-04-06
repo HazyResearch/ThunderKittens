@@ -1,6 +1,6 @@
 #include "pgl_to_shared.cuh"
 
-#ifdef TEST_WARP_MEMORY_VEC_PGL_TO_REGISTER
+#ifdef TEST_WARP_MEMORY_VEC_PGL_TO_SHARED
 
 template<typename Ker, int S, int NW, kittens::ducks::pgl::all PGL, typename... args>
 static __global__ void p2s_global_wrapper_1d(const __grid_constant__ PGL input, const __grid_constant__ PGL output, const __grid_constant__ int dev_idx) {
