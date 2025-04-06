@@ -196,8 +196,6 @@ template<typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, typename...
 struct group_p2s_sweep_size_1d_warp_layouts {
     static void run(test_data &results) {    
         group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
-        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
-        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
     }
 };
 
