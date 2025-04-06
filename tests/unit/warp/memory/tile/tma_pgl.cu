@@ -105,7 +105,7 @@ struct tma_pgl_store_async_test {
             for(int b = 0; b < D; b++) {
                 for(int i = 0; i < R; i++) {
                     for(int j = 0; j < C; j++) {
-                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::tma::store_async_read_wait(); // make sure next tile is ready for write
                         kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
                     }
                 }
@@ -154,7 +154,7 @@ struct tma_pgl_store_add_async_test {
             for(int b = 0; b < D; b++) {
                 for(int i = 0; i < R; i++) {
                     for(int j = 0; j < C; j++) {
-                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::tma::store_async_read_wait(); // make sure next tile is ready for write
                         kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
                     }
                 }
@@ -198,7 +198,7 @@ struct tma_pgl_store_min_async_test {
             for(int b = 0; b < D; b++) {
                 for(int i = 0; i < R; i++) {
                     for(int j = 0; j < C; j++) {
-                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::tma::store_async_read_wait(); // make sure next tile is ready for write
                         kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
                     }
                 }
@@ -242,7 +242,7 @@ struct tma_pgl_store_max_async_test {
             for(int b = 0; b < D; b++) {
                 for(int i = 0; i < R; i++) {
                     for(int j = 0; j < C; j++) {
-                        kittens::tma::store_async_read_wait<6>(); // make sure next tile is ready for write
+                        kittens::tma::store_async_read_wait(); // make sure next tile is ready for write
                         kittens::load<axis::value, false>(shared_tile[i][j], input[dev_idx], {a, b, i, j});
                     }
                 }
