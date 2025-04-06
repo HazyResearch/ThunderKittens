@@ -4,13 +4,14 @@
 
 #include "testing_commons.cuh"
 
-#include "pgl_to_register.cuh"
-#include "pgl_to_shared.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
+#include "pgl_to_register.cuh"
+#include "pgl_to_shared.cuh"
 #include "shared_to_register.cuh"
 #include "tma.cuh"
 #include "tma_multicast.cuh"
+#include "tma_pgl.cuh"
 #include "dsmem.cuh"
 
 namespace warp {

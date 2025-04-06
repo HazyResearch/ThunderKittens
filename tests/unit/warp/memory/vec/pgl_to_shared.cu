@@ -1,6 +1,6 @@
 #include "pgl_to_shared.cuh"
 
-#ifdef TEST_WARP_MEMORY_VEC_PGL_TO_REGISTER
+#ifdef TEST_WARP_MEMORY_VEC_PGL_TO_SHARED
 
 template<typename Ker, int S, int NW, kittens::ducks::pgl::all PGL, typename... args>
 static __global__ void p2s_global_wrapper_1d(const __grid_constant__ PGL input, const __grid_constant__ PGL output, const __grid_constant__ int dev_idx) {
@@ -195,8 +195,6 @@ using p2s_sweep_size_1d_warp = p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, 1, ar
 template<typename test, int NUM_DEVICES, int MAX_S=8, typename... args>
 struct p2s_sweep_size_1d_warp_layouts {
     static void run(test_data &results) {    
-        p2s_sweep_size_1d_warp<test, NUM_DEVICES, MAX_S>::run(results);
-        p2s_sweep_size_1d_warp<test, NUM_DEVICES, MAX_S>::run(results);
         p2s_sweep_size_1d_warp<test, NUM_DEVICES, MAX_S>::run(results);
     }
 };

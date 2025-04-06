@@ -25,6 +25,9 @@ void warp::memory::vec::tests(test_data &results) {
 #ifdef TEST_WARP_MEMORY_VEC_TMA_MULTICAST
     warp::memory::vec::tma_multicast::tests(results);
 #endif
+#ifdef TEST_WARP_MEMORY_VEC_TMA_PGL
+    warp::memory::vec::tma_pgl::tests(results);
+#endif
 #ifdef TEST_WARP_MEMORY_VEC_DSMEM
     warp::memory::vec::dsmem::tests(results);
 #endif
