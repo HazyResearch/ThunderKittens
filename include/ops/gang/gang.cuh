@@ -34,6 +34,7 @@ __device__ static inline void block_sync(const SyncManager &sm, const int sync_i
     #endif
     static_assert(NUM_DEVICES <= SyncManager::SYNC_SPACE_T::num_devices, 
         "Number of devices in the gang cannot be greater than that in the sync manager");
+    static_assert(!SyncManager::is_grid_sync, "gang::block_sync() cannot be used with grid-level sync manager");
 
     // TODO: support a subset of devices
     if (dev_idx >= NUM_DEVICES) return;
