@@ -85,10 +85,6 @@ struct tma_pgl_store_async_test {
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_async=bf16" :
                                                       std::is_same_v<T, kittens::half>    ? "tma_pgl_store_async=half" :
-                                                      #ifdef KITTENS_HOPPER
-                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_async=fp8e4m3" :
-                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_async=fp8e5m2" :
-                                                      #endif
                                                                                             "tma_pgl_store_async=float";
     static inline const bool single_run = true; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
@@ -131,10 +127,6 @@ struct tma_pgl_store_add_async_test {
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_add_async=bf16" :
                                                       std::is_same_v<T, kittens::half>    ? "tma_pgl_store_add_async=half" :
-                                                      #ifdef KITTENS_HOPPER
-                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_add_async=fp8e4m3" :
-                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_add_async=fp8e5m2" :
-                                                      #endif
                                                                                             "tma_pgl_store_add_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
@@ -184,10 +176,6 @@ struct tma_pgl_store_min_async_test {
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_min_async=bf16" :
                                                       std::is_same_v<T, kittens::half>    ? "tma_pgl_store_min_async=half" :
-                                                      #ifdef KITTENS_HOPPER
-                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_min_async=fp8e4m3" :
-                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_min_async=fp8e5m2" :
-                                                      #endif
                                                                                             "tma_pgl_store_min_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
@@ -232,10 +220,6 @@ struct tma_pgl_store_max_async_test {
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_max_async=bf16" :
                                                       std::is_same_v<T, kittens::half>    ? "tma_pgl_store_max_async=half" :
-                                                      #ifdef KITTENS_HOPPER
-                                                      std::is_same_v<T, kittens::fp8e4m3> ? "tma_pgl_store_max_async=fp8e4m3" :
-                                                      std::is_same_v<T, kittens::fp8e5m2> ? "tma_pgl_store_max_async=fp8e5m2" :
-                                                      #endif
                                                                                             "tma_pgl_store_max_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
@@ -336,10 +320,6 @@ void warp::memory::tile::tma_pgl::tests(test_data &results) {
         tma_pgl_sweep_size_2d_warp_axes_ops<float, NUM_GPUS, SIZE, SIZE>::run(results);
         tma_pgl_sweep_size_2d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
         tma_pgl_sweep_size_2d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
-        #ifdef KITTENS_HOPPER
-        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e4m3, NUM_GPUS, SIZE, SIZE>::run(results);
-        tma_pgl_sweep_size_2d_warp_axes_ops<kittens::fp8e5m2, NUM_GPUS, SIZE, SIZE>::run(results);
-        #endif
     }
 }
 
