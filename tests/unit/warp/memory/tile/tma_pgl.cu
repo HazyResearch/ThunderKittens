@@ -83,9 +83,9 @@ struct tma_pgl_store_async_test {
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_async=bf16" :
-                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_async=half" :
-                                                                                            "tma_pgl_store_async=float";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_store_async=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_store_async=half" :
+                                                                                         "tma_pgl_store_async=float";
     static inline const bool single_run = true; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
@@ -125,9 +125,9 @@ struct tma_pgl_store_add_async_test {
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_add_async=bf16" :
-                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_add_async=half" :
-                                                                                            "tma_pgl_store_add_async=float";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_store_add_async=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_store_add_async=half" :
+                                                                                         "tma_pgl_store_add_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
@@ -174,9 +174,9 @@ struct tma_pgl_store_min_async_test {
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_min_async=bf16" :
-                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_min_async=half" :
-                                                                                            "tma_pgl_store_min_async=float";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_store_min_async=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_store_min_async=half" :
+                                                                                         "tma_pgl_store_min_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
@@ -218,9 +218,9 @@ struct tma_pgl_store_max_async_test {
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant
         <( NW == 1 && W*H*sizeof(dtype)*256*4<=kittens::MAX_SHARED_MEMORY-1024 )  && ( sizeof(T) != 1 )>; // not supported for fp8 
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16>    ? "tma_pgl_store_max_async=bf16" :
-                                                      std::is_same_v<T, kittens::half>    ? "tma_pgl_store_max_async=half" :
-                                                                                            "tma_pgl_store_max_async=float";
+    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_pgl_store_max_async=bf16" :
+                                                      std::is_same_v<T, kittens::half> ? "tma_pgl_store_max_async=half" :
+                                                                                         "tma_pgl_store_max_async=float";
     static inline const bool single_run = false; // run on device 0 vs all devices
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
