@@ -135,7 +135,7 @@ __device__ static inline void store_async(const PGL &dst, const SV &src, const C
 }
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
-    store_async<cache_policy::NORMAL>(dst, src, idx);
+    store_async<cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -217,7 +217,7 @@ __device__ static inline void store_add_async(const PGL &dst, const SV &src, con
 }
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_add_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
-    store_add_async<cache_policy::NORMAL>(dst, src, idx);
+    store_add_async<cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -302,7 +302,7 @@ __device__ static inline void store_min_async(const PGL &dst, const SV &src, con
 }
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_min_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
-    store_min_async<cache_policy::NORMAL>(dst, src, idx);
+    store_min_async<cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -387,7 +387,7 @@ __device__ static inline void store_max_async(const PGL &dst, const SV &src, con
 }
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_max_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
-    store_max_async<cache_policy::NORMAL>(dst, src, idx);
+    store_max_async<cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**

@@ -147,7 +147,7 @@ __device__ static inline void store_async(const PGL &dst, const ST &src, const C
 }
 template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
-    store_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /* ----------   Async reduction + store data from gmem/smem  ---------- */
@@ -339,7 +339,7 @@ __device__ static inline void store_min_async(const PGL &dst, const ST &src, con
 }
 template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_min_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
-    store_min_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_min_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -435,7 +435,7 @@ __device__ static inline void store_max_async(const PGL &dst, const ST &src, con
 }
 template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_max_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
-    store_max_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+    store_max_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
