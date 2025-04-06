@@ -63,39 +63,6 @@ template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
     prefetch<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
 }
-template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void prefetch(ST &dst, const PGL &src, const COORD &idx, const int dev_idx) {
-    if (::kittens::laneid()) {
-        uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>(dev_idx));
-        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
-        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
-
-        if constexpr (policy == cache_policy::NORMAL) {
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
-                " [%0, {%1, %2, %3, %4, %5}];"
-                :
-                : "l"(tma_ptr),
-                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-                : "memory"
-            );
-        }
-        else {
-            asm volatile (
-                "cp.async.bulk.prefetch.tensor.5d.L2.global.tile.L2::cache_hint"
-                " [%0, {%1, %2, %3, %4, %5}], %6;"
-                :
-                : "l"(tma_ptr),
-                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
-                : "memory"
-            );
-        }
-    }
-}
-template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void prefetch(ST &dst, const PGL &src, const COORD &idx, const int dev_idx) {
-    prefetch<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
-}
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
 
