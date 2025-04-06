@@ -183,7 +183,8 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_add_async(const GL &dst, const SV &src, const COORD &idx) {
     store_add_async<cache_policy::NORMAL>(dst, src, idx);
-}template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
+}
+template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_add_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
     coord<> unit_coord = idx.template unit_coord<-1, 3>();
     uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>(dev_idx));
@@ -191,7 +192,7 @@ __device__ static inline void store_add_async(const PGL &dst, const SV &src, con
     for(int i = ::kittens::laneid(); i < detail::sv_tma_dim2<SV>; i += WARP_THREADS) {
         coord<> tma_coord = unit_coord;
         tma_coord.c += i * detail::sv_tma_dim1<SV>;
-        uint32_t src_tma_ptr = tma_ptr + i*detail::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        uint32_t src_tma_ptr = src_ptr + i*detail::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
         
         asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         if constexpr (policy == cache_policy::NORMAL) {
