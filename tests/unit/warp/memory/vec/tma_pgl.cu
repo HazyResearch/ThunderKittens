@@ -15,7 +15,7 @@ struct tma_pgl_vec_test_wrapper_1d {
     constexpr static int SIZE = S*16 * B*D*R*C;
 
     using dtype = gmem_dtype<test>; // defaults to bf16 in global memory if the test doesn't specify.
-    using shared_layout = shared_layouts<dtype, NUM_DEVICES, false>;
+    using shared_layout = shared_layouts<dtype, NUM_DEVICES>;
     using PGL = kittens::pgl<kittens::gl<dtype, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::sv<dtype, 16*S>>;
 
     static void run(test_data& results) {
@@ -40,7 +40,7 @@ struct tma_pgl_vec_test_wrapper_1d {
             initialize<NUM_DEVICES>(device_ids, d_i_arr, d_o_arr, i_ref, o_ref);
 
             // set parralel global layouts
-            shared_pgl_replace_gl<dtype, NUM_DEVICES, false>(d_i_arr, d_o_arr, B, D, R, 16*S*C);
+            shared_pgl_replace_gl<dtype, NUM_DEVICES>(d_i_arr, d_o_arr, B, D, R, 16*S*C);
             shared_layout::input_pgl->multicast_bind();
             shared_layout::output_pgl->multicast_bind();
 
@@ -266,7 +266,7 @@ struct tma_pgl_vec_sweep_size_1d_warp_axes {
 template<typename T, int NUM_DEVICES, int MAX_S, typename... args>
 struct tma_pgl_vec_sweep_size_1d_warp_axes_ops {
     static void run(test_data &results) {
-        using shared_layout = shared_layouts<T, NUM_DEVICES, false>;
+        using shared_layout = shared_layouts<T, NUM_DEVICES>;
 
         // Initialize shared PGLs
         int device_ids[NUM_DEVICES];

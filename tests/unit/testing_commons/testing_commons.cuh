@@ -256,20 +256,19 @@ template<typename T> concept gl_t = kittens::ducks::gl::all<T>;
 
 // ----- Multi-GPU Test Wrappers -----
 
-template<typename T, int NUM_DEVICES, bool TILE = true>
+template<typename T, int NUM_DEVICES>
 struct shared_layouts {
     // Do not initialize MC (we initialize with dummy GLs), and
     // make all dims runtime, so we can create one big PGL and share it across tests
     // The TMA type here is a dummy; we initialize TMA descriptors manually later if needed
-    using TMAType = std::conditional_t<TILE, kittens::st<T, 32, 32>, kittens::sv<T, 32>>;
-    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false, false, TMAType>; 
+    using PGL = kittens::pgl<kittens::gl<T, -1, -1, -1, -1>, NUM_DEVICES, false, false, kittens::st<T, 32, 32>>; 
     inline static PGL *input_pgl = nullptr;
     inline static PGL *output_pgl = nullptr;
 };
 
-template<typename T, int NUM_DEVICES, bool TILE = true>
+template<typename T, int NUM_DEVICES>
 inline void shared_pgl_replace_gl(T *d_i_arr[NUM_DEVICES], T *d_o_arr[NUM_DEVICES], int B, int D, int R, int C) {
-    using shared_layout = shared_layouts<T, NUM_DEVICES, TILE>;
+    using shared_layout = shared_layouts<T, NUM_DEVICES>;
 
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         // This is super hacky, but I think there is no clean way to do this, and 
