@@ -86,6 +86,36 @@ struct loop_h {
     }
 };
 
+// 1D wrapper for multi-gpu tests
+template<template<typename,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, int S, typename... args>
+struct mg_loop_s {
+    static void run(test_data& results) {
+        if constexpr (S > 1) {
+            mg_loop_s<base, test, NUM_DEVICES, MAX_S, NUM_WORKERS, S-1, args...>::run(results);
+        }
+        base<test, NUM_DEVICES, S, NUM_WORKERS, args...>::run(results);
+    }
+};
+
+// 2D wrappers for multi-gpu tests
+template<template<typename,int,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, int H, int W, typename... args>
+struct mg_loop_w {
+    static void run(test_data& results) {
+        if constexpr (W > 1) {
+            mg_loop_w<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H, W-1, args...>::run(results);
+        }
+        base<test, NUM_DEVICES, H, W, NUM_WORKERS, args...>::run(results);
+    }
+};
+template<template<typename,int,int,int,int,typename...> typename base, typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, int H, typename... args>
+struct mg_loop_h {
+    static void run(test_data& results) {
+        if constexpr (H > 1) {
+            mg_loop_h<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H-1, args...>::run(results);
+        }
+        mg_loop_w<base, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, H, MAX_W, args...>::run(results);
+    }
+};
 
 /* --------------------  TEST INITIALIZE+VALIDATE FUNCS  -------------------- */
 
@@ -151,6 +181,56 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
     cudaMemcpy(*d_i, i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
     CudaCheckError();
 }
+
+// Initializer for multi-gpu tests
+template<int NUM_DEVICES, typename T, initializers initializer=initializers::RANDOM, int SEED=42>
+static void initialize(int *device_ids, T **d_i_arr, T **d_o_arr, std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+
+    const int input_size  = i_ref[0].size();
+    const int output_size = o_ref[0].size();
+
+    // Initialize matrices
+    std::vector<T> i_t(input_size);
+
+    std::mt19937 gen(SEED); // Standard mersenne_twister_engine
+    std::uniform_real_distribution<float> dis(-1.0, 1.0);
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        for(int idx = 0; idx < input_size; idx++) {
+            float f;
+            if constexpr (initializer == initializers::RANDOM) {
+                f = dis(gen);
+            }
+            else if constexpr (initializer == initializers::ARANGE) {
+                f = float(idx);
+            }
+            else {
+                f = i_ref[dev_idx][idx];
+            }
+            if constexpr (std::is_same_v<T, kittens::bf16>) {
+                i_t[idx] = __float2bfloat16(f); // fill in for transfer to device
+                i_ref[dev_idx][idx] = __bfloat162float(i_t[idx]); // ensure lossiness of fp16 is captured on cpu
+            }
+            else if constexpr (std::is_same_v<T, float>) {
+                i_t[idx] = f;
+                i_ref[dev_idx][idx] = f;
+            }
+            else if constexpr (std::is_same_v<T, kittens::half>) {
+                i_t[idx] = __float2half(f);
+                i_ref[dev_idx][idx] = __half2float(i_t[idx]);
+            }
+            else {
+                assert(false && "Unsupported data type");
+            }
+        }
+
+        cudaSetDevice(dev_idx);
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_i_arr[dev_idx], input_size * sizeof(T));
+        kittens::pglCudaMalloc<true>(NUM_DEVICES, device_ids, dev_idx, &d_o_arr[dev_idx], output_size * sizeof(T));
+        cudaMemcpy(d_i_arr[dev_idx], i_t.data(), input_size * sizeof(T), cudaMemcpyHostToDevice);
+        CudaCheckError();
+    }
+}
+
 extern int should_write_outputs;
 template<typename T>
 test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vector<float> &o_ref, std::string test_name, int cols, float eps=5e-2) { // default eps has to be fairly high due to lots of different types
@@ -225,6 +305,107 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
     }
     cudaFree(d_i);
     cudaFree(d_o);
+    delete[] o_t, o;
+    CudaCheckError();
+    return good ? test_result::PASSED : test_result::FAILED;
+}
+
+// Validation for multi-gpu tests
+template<int NUM_DEVICES, kittens::ducks::pgl::all PGL, typename T>
+test_result validate(PGL &input, PGL &output, const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref, std::string test_name, int cols=16, float eps=1e-1) { // default eps even higher due to multiple GPUs parallelizing
+    const int input_size  = i_ref[0].size();
+    const int output_size = o_ref[0].size();
+
+    // copy back
+    T* o_t = new T[NUM_DEVICES * output_size];
+    float *o = new float[NUM_DEVICES * output_size];
+
+    std::cout << "test `" << test_name << "`";
+    bool good = true;
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        cudaSetDevice(dev_idx);
+        cudaDeviceSynchronize();
+        CudaCheckError();
+        cudaMemcpy(&o_t[dev_idx * output_size], output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
+        CudaCheckError();
+
+        for(int idx = 0; idx < output_size; idx++) {
+            int unit_idx = dev_idx * output_size + idx;
+            if constexpr (std::is_same_v<T, kittens::bf16>) {
+                o[unit_idx] = __bfloat162float(o_t[unit_idx]);
+                o_ref[dev_idx][idx] = __bfloat162float(__float2bfloat16(o_ref[dev_idx][idx]));
+            }
+            else if constexpr (std::is_same_v<T, kittens::half>) {
+                o[unit_idx] = __half2float(o_t[unit_idx]);
+                o_ref[dev_idx][idx] = __half2float(__float2half(o_ref[dev_idx][idx]));
+            }
+            else if constexpr(std::is_same_v<T, float>) {
+                o[unit_idx] = o_t[unit_idx];
+                o_ref[dev_idx][idx] = o_ref[dev_idx][idx];
+            }
+            #ifdef KITTENS_HOPPER
+            else if constexpr(std::is_same_v<T, kittens::fp8e4m3>) {
+                o[unit_idx] = float(o_t[unit_idx]);
+                o_ref[dev_idx][idx] = float(__nv_fp8_e4m3(o_ref[dev_idx][idx])); 
+            }
+            else if constexpr(std::is_same_v<T, kittens::fp8e5m2>) {
+                o[unit_idx] = float(o_t[unit_idx]);
+                o_ref[dev_idx][idx] = float(__nv_fp8_e5m2(o_ref[dev_idx][idx])); 
+            }
+            #endif
+            else {
+                assert(false && "Unsupported data type");
+            }
+        }
+
+        // check
+        for(int i = 0; i < output_size; i++) {
+            if(abs(o_ref[dev_idx][i] - o[dev_idx * output_size + i]) > eps) {
+                good = false;
+                break;
+            }
+        }
+
+        // Even if we failed, continue so we can print all the results in the output file
+    }
+
+    if(good) std::cout << " -- PASSED" << std::endl;
+    else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
+
+    if(should_write_outputs && !good) {
+        std::ofstream reffile("outputs/"+test_name+"_ref.txt");
+        std::ofstream outfile("outputs/"+test_name+"_out.txt");
+        for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+            outfile << "Device " << dev_idx << ":\n\n";
+            reffile << "Device " << dev_idx << ":\n\n";
+            for(int i = 0; i < output_size; i++) {
+                reffile << o_ref[dev_idx][i] << ' ';
+                outfile << o[dev_idx * output_size + i] << ' ';
+                if(i%cols == cols-1) {
+                    reffile << '\n';
+                    outfile << '\n';
+                }
+            }
+            reffile << "\n\n\nINPUTS:\n\n";
+            for(int i = 0; i < input_size; i++) {
+                reffile << i_ref[dev_idx][i] << ' ';
+                if(i%cols == cols-1) {
+                    reffile << '\n';
+                }
+            }
+            outfile << "\n\n\n\n";
+            reffile << "\n\n\n\n";
+        }
+        reffile.close();
+        outfile.close();
+    }
+
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        cudaSetDevice(dev_idx);
+        kittens::pglCudaFree(dev_idx, input[dev_idx].raw_ptr, input_size * sizeof(T));
+        kittens::pglCudaFree(dev_idx, output[dev_idx].raw_ptr, output_size * sizeof(T));
+    }
     delete[] o_t, o;
     CudaCheckError();
     return good ? test_result::PASSED : test_result::FAILED;

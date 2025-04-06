@@ -7,94 +7,64 @@
 
 #include <array>
 #include <stdexcept>
-#include "../../types/device/hood.cuh"
+#include "../../types/device/sync_manager.cuh"
 
 namespace kittens {
 
 /**
  * @brief Gang template represents a collection of GPUs working together
- * @tparam GPUS Compile-time list of GPU device IDs in the gang
  */
-template <int... GPUS>
+template <int NUM_DEVICES>
 struct gang {
-static constexpr int GANG_SIZE = sizeof...(GPUS);
-static constexpr std::array<int, sizeof...(GPUS)> gpu_ids{GPUS...};
 
 /**
- * @brief Synchronize all GPUs in a gang at a specific sync point
- * @tparam DEVICE_ID The device ID of the calling GPU
- * @param hood_obj A kittens::hood object
- * @param sync_id Identifier for this synchronization point
+ * @brief Synchronize all GPUs in a gang at a specific sync point. 
+ *        This is a block-level sync (i.e., only thread blocks with
+ *        the same block ID across all GPUs will be synchronized).
+ *        Be warned that if the number of thread blocks is too large 
+ *        (more than 2x the HW maximum), there might be a deadlock if
+ *        two GPU devices schedule completely different set of blocks.
  */
-template <int DEVICE_ID, int HOOD_SIZE>
-__device__ static inline void sync(hood<HOOD_SIZE> hood, int sync_id) {
+template <ducks::sync_manager::all SyncManager>
+__device__ static inline void sync(const SyncManager &sm, const int sync_id, const int dev_idx) {
     #if defined(__CUDA_ARCH__)
         static_assert(__CUDA_ARCH__ >= 900, 
             "Using gang::sync() requires CUDA compute capability >= 9.0 (Hopper or newer)");
     #endif
+    static_assert(NUM_DEVICES <= SyncManager::SYNC_SPACE_T::num_devices, 
+        "Number of devices in the gang cannot be greater than that in the sync manager");
 
-    // Compile-time check if device is part of the gang using fold expression
-    if constexpr (!((DEVICE_ID == GPUS) || ...)) return;
+    // TODO: support a subset of devices
+    if (dev_idx >= NUM_DEVICES) return;
 
-    if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0 ||
-        blockIdx.x != 0 || blockIdx.y != 0 || blockIdx.z != 0) {
-        return;
+    int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
+    if (block_idx >= SyncManager::max_blocks) return; // ignore blocks that are not in the sync_manager
+
+    // It is important to set threadfence & syncthreads here, as there is no guarantee on the order of
+    // operations on the same blocks on different devices after the multimem.red operation below.
+    // If we do this at the end of this function, following multigpu operations may not observe data properly
+    __threadfence_system();
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+        sync_point sp = sm.get_sync_point(sync_id, dev_idx, block_idx);
+        cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_device> uc(*sp.uc);
+
+        // Block-level gang sync
+        asm volatile ("{multimem.red.release.sys.global.add.u32 [%0], %1;}" 
+            :: "l"(sp.mc), "n"(1) : "memory");
+        asm volatile ("{fence.proxy.alias;}" ::: "memory"); // nvidia says this is needed
+        while (uc.load(cuda::memory_order_acquire) < NUM_DEVICES);
+
+        // All devices synced. Now clean up and proceed
+        uc.store(0, cuda::memory_order_release);
     }
 
-    size_t gang_addr = hood.get_address(sync_id);
-    unsigned int *mc_addr = reinterpret_cast<unsigned int*>(
-    hood.mc_ptrs[DEVICE_ID]) + gang_addr;
-    unsigned int *uc_addr = reinterpret_cast<unsigned int*>(
-    hood.uc_ptrs[DEVICE_ID]) + gang_addr;
-
-    asm volatile ("multimem.red.release.sys.global.add.u32 [%0], %1;" 
-                : : "l"(mc_addr), "n"(1) : "memory");
-    
-    asm volatile ("fence.proxy.alias;" ::: "memory");
-    
-    cuda::atomic_ref<unsigned int, cuda::thread_scope_system> ac(*uc_addr);
-    while (GANG_SIZE > ac.load(cuda::memory_order_acquire));
+    // Must block all threads until thread 0 completes the sync
+    // Very certain that the two syncthreads are both needed
+    __syncthreads();
 }
 
-__device__ static inline bool is_in_gang(int dev_idx) {
-    return ((dev_idx == GPUS) || ...);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void all_reduce_add(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::all_reduce_add(pgl, dev_idx);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void all_reduce_min(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::all_reduce_min(pgl, dev_idx);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void all_reduce_max(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::all_reduce_max(pgl, dev_idx);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void atomic_add(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::atomic_add(pgl, dev_idx);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void atomic_min(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::atomic_min(pgl, dev_idx);
-}
-
-template <ducks::pgl::all PGL>
-__device__ static inline void atomic_max(PGL &pgl, int dev_idx) {
-    if (!is_in_gang(dev_idx)) return;
-    kittens::atomic_max(pgl, dev_idx);
-}
 };
 
 } // namespace kittens

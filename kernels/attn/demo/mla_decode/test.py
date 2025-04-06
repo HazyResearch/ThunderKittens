@@ -61,7 +61,7 @@ def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
             break
     num_processors = [None for _ in seq_lengths]
     for _, p, s, i in processor_assignments:
-        num_processors[i] = min(p, s//128)
+        num_processors[i] = max(min(p, s//128), 1)
     # Create schedule
     start_processors = [sum(num_processors[:i]) for i in range(len(num_processors))]
     scheduled_tasks = []
@@ -159,6 +159,9 @@ def main(seq_lengths, new_tokens, q_heads=16):
     # save_gantt_chart(Timings, Instructions, name='new')
 
 if __name__ == "__main__":
+    main([1], 1, 16)
+    main([32], 1, 16)
+    main([64], 1, 16)
     main([4641,45118,1730,1696], 4, 16)
     main([65536], 1, 16)
     main([512]*64, 2, 16)

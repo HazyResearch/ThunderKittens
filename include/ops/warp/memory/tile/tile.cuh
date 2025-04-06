@@ -8,6 +8,8 @@
 #include "shared_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
+#include "pgl_to_register.cuh"
+#include "pgl_to_shared.cuh"
 
 #include "complex/complex_shared_to_register.cuh"
 #include "complex/complex_global_to_register.cuh"

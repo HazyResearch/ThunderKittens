@@ -3,52 +3,34 @@
 #include <cuda.h>
 
 namespace kittens {
+
+// We must ensure that we use the same granularity type for all functions
+constexpr CUmemAllocationGranularity_flags_enum MEM_GRAN_TYPE = CU_MEM_ALLOC_GRANULARITY_RECOMMENDED;
+constexpr CUmulticastGranularity_flags_enum MC_GRAN_TYPE = CU_MULTICAST_GRANULARITY_RECOMMENDED;
+
 namespace detail {
     // Returns size of the multicast granularity
-    size_t init_mc_prop(CUmulticastObjectProp *mc_prop, int num_devices, int size = -1) {
+    __host__ inline void init_mc_prop(CUmulticastObjectProp *mc_prop, int num_devices, size_t size) {
         mc_prop->numDevices = num_devices;
         mc_prop->handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR; // single node
         mc_prop->flags = 0; // SBZ
-        
-        // If size is not provided, return the recommended granularity
-        size_t mc_size = 0;
-        cuMulticastGetGranularity(&mc_size, mc_prop, CU_MULTICAST_GRANULARITY_RECOMMENDED);
-        if (size != -1) mc_size = ((size + mc_size - 1) / mc_size) * mc_size;
-        
-        mc_prop->size = mc_size;
-        return mc_size;
+
+        size_t granularity = 0;
+        cuMulticastGetGranularity(&granularity, mc_prop, kittens::MC_GRAN_TYPE);
+        mc_prop->size = ((size + granularity - 1) / granularity) * granularity;
     }
 
-    CUmemAllocationProp create_mem_prop(int device_id) {
-        CUmemAllocationProp memProp = {};
-        memProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-        memProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        memProp.location.id = device_id;
-        memProp.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-        return memProp;
+    __host__ inline void init_mem_prop(CUmemAllocationProp *mem_prop, int device_id) {
+        mem_prop->type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        mem_prop->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        mem_prop->location.id = device_id;
+        mem_prop->requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     }
 
-    CUmemAccessDesc create_mem_desc(int device_id) {
-        CUmemAccessDesc desc = {}; 
-        desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        desc.location.id = device_id;
-        desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        return desc;
-    }
-
-    template <typename T>
-    void init_vas_for_handle(CUmemGenericAllocationHandle mc_handle, int *device_ids,
-                        int num_devices, T **uc_ptrs, size_t size) {
-        for (int dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
-            cudaSetDevice(device_ids[dev_idx]);
-            
-            // Direct reinterpret_cast for the pointer types
-            cuMemAddressReserve(reinterpret_cast<CUdeviceptr*>(&uc_ptrs[dev_idx]), size, size, 0, 0);
-            cuMemMap(reinterpret_cast<CUdeviceptr>(uc_ptrs[dev_idx]), size, 0, mc_handle, 0);
-            
-            CUmemAccessDesc desc = create_mem_desc(device_ids[dev_idx]);
-            cuMemSetAccess(reinterpret_cast<CUdeviceptr>(uc_ptrs[dev_idx]), size, &desc, 1);
-        }
+    __host__ inline void init_mem_desc(CUmemAccessDesc *desc, int device_id) {
+        desc->flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        desc->location.id = device_id;
+        desc->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     }
 } // namespace detail
 } // namespace kittens

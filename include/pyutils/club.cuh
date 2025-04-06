@@ -24,11 +24,11 @@
 */
 class KittensClub {
 public:
-    KittensClub(const int *device_ids, const int num_devices);
-    ~KittensClub();
+    __host__ inline KittensClub(const int *device_ids, const int num_devices);
+    __host__ inline ~KittensClub();
 
     // Dispatches `task` to all threads, and waits for all threads to finish (using cv)
-    void execute(std::function<void(int)> task);
+    __host__ inline void execute(std::function<void(int)> task);
 
 private:
     // Condition indicators
@@ -40,7 +40,7 @@ private:
     std::vector<std::thread> workers;
     
     // Main entry point for each thread
-    void worker(int worker_id, int device_id);
+    __host__ inline void worker(int worker_id, int device_id);
 
     // Used to dispatch work to all threads
     std::function<void(int)> current_task;
@@ -51,14 +51,14 @@ private:
     std::condition_variable cond_task_done;
 };
     
-KittensClub::KittensClub(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
-    for (size_t i = 0; i < num_devices; ++i) {
+__host__ inline KittensClub::KittensClub(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
+    for (size_t dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
         task_available.push_back(false);
-        workers.emplace_back([this, i, device_ids] { worker(i, device_ids[i]); });
+        workers.emplace_back([this, dev_idx, device_ids] { worker(dev_idx, device_ids[dev_idx]); });
     }
 }
     
-KittensClub::~KittensClub() {
+__host__ inline KittensClub::~KittensClub() {
     {
         std::lock_guard<std::mutex> lock(mutex);
         stop = true;
@@ -69,7 +69,7 @@ KittensClub::~KittensClub() {
     }
 }
     
-void KittensClub::execute(std::function<void(int)> task) {
+__host__ inline void KittensClub::execute(std::function<void(int)> task) {
     {
         std::lock_guard<std::mutex> lock(mutex);
         current_task = task;
@@ -84,7 +84,7 @@ void KittensClub::execute(std::function<void(int)> task) {
     }
 }
 
-void KittensClub::worker(int worker_id, int device_id) {
+__host__ inline void KittensClub::worker(int worker_id, int device_id) {
     cudaSetDevice(device_id); // done once and never again! This saves a LOT of time
     while (true) {
         std::function<void(int)> task;
