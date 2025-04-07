@@ -101,6 +101,51 @@ __device__ static inline void sync(const SyncManager &sm, const int sync_id, con
     __syncthreads();
 }
 
+template <sync_level LEVEL, ducks::sync_manager::all SyncManager>
+__device__ static inline void new_sync(const SyncManager &sm, const int sync_id, const int expected_arrivals, const int dev_idx) {
+    #if defined(__CUDA_ARCH__)
+        static_assert(__CUDA_ARCH__ >= 900, 
+            "Using gang::sync() requires CUDA compute capability >= 9.0 (Hopper or newer)");
+    #endif
+    static_assert(NUM_DEVICES <= SyncManager::SYNC_SPACE_T::num_devices, 
+        "Number of devices in the gang cannot be greater than that in the sync manager");
+    static_assert(LEVEL == SyncManager::level, "Gang sync level must match the sync manager sync level");
+
+    // TODO: support a subset of devices
+    if (dev_idx >= NUM_DEVICES) return;
+
+    // Must do threadfence & syncthreads here, as there is no guarantee on the order of 
+    // function exit after the synchronization.
+    __threadfence_system();
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+        sync_point sp = sm.get_sync_point(sync_id, dev_idx);
+        cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_system> gang_uc(*sp.gang_uc);
+
+        typename SyncManager::SYNC_SPACE_DTYPE expected = 0; // atomic api requires pass by reference
+        if (gang_uc.compare_exchange_strong(expected, 1, cuda::memory_order_acquire)) {
+
+            // Wait for the number of block arrivals across all devices to reach the expected number
+            uint32_t num_arrivals = 0;
+            do {
+                asm volatile ("{multimem.ld_reduce.relaxed.sys.global.add.u32 %0, [%1];}": 
+                    "=r"(num_arrivals) : "l"(sp.gang_mc) : "memory");
+            } while (num_arrivals < expected_arrivals);
+
+            // Clean up & release all blocks
+            gang_uc.store(0, cuda::memory_order_release); 
+
+        } else { // other block took the leadership and initiated the sync
+            ++gang_uc; // check-in
+            while (gang_uc.load(cuda::memory_order_acquire) != 0); // Wait for the leader to finish the sync
+        }
+    }
+
+    // Must block all threads until thread 0 completes the sync
+    __syncthreads();
+}
+
 };
 
 } // namespace kittens
