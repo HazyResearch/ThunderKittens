@@ -30,7 +30,7 @@ enum sync_level {
 
 template <typename SYNC_SPACE_DTYPE, sync_level LEVEL>
 struct sync_point {
-    static_assert(always_false<LEVEL>::value, "Must specify a valid sync level.");
+    static_assert(std::is_same_v<SYNC_SPACE_DTYPE, std::true_type>, "Invalid sync level.");
 };
 template <typename SYNC_SPACE_DTYPE>
 struct sync_point<SYNC_SPACE_DTYPE, sync_level::BLOCK> {
@@ -100,19 +100,18 @@ struct sync_manager {
      */
     __device__ inline sync_point<SYNC_SPACE_DTYPE, LEVEL> get_sync_point(const int sync_id, const int dev_idx, const int block_idx = -1) const {
         if constexpr (LEVEL == sync_level::GRID) {
-            return sync_point{
+            return sync_point<SYNC_SPACE_DTYPE, LEVEL>{
                 sync_space.mc_vas[dev_idx] + sync_id * sync_point_size,
                 sync_space[dev_idx].raw_ptr + sync_id * sync_point_size,
                 sync_space[dev_idx].raw_ptr + sync_id * sync_point_size + 1,
             };
         } else if constexpr (LEVEL == sync_level::BLOCK) {
-            return sync_point{
+            return sync_point<SYNC_SPACE_DTYPE, LEVEL>{
                 sync_space.mc_vas[dev_idx] + sync_id * sync_point_size + block_idx,
                 sync_space[dev_idx].raw_ptr + sync_id * sync_point_size + block_idx,
             };
         } else {
-            static_assert(std::is_same_v<LEVEL, std::true_type> && std::is_same_v<LEVEL, std::false_type>, "Invalid sync level.");
-            return sync_point{}; // prevent compiler warning
+            return sync_point<SYNC_SPACE_DTYPE, LEVEL>{}; // this will raise a compile-time error
         }
     }
 };
