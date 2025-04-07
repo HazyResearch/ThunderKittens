@@ -156,7 +156,7 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
     for(int i = ::kittens::laneid(); i < detail::sv_tma_dim2<SV>; i += WARP_THREADS) {
         coord<> tma_coord = unit_coord;
         tma_coord.c += i * detail::sv_tma_dim1<SV>;
-        uint32_t src_tma_ptr = tma_ptr + i*detail::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        uint32_t src_tma_ptr = src_ptr + i*detail::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
         
         asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
         if constexpr (policy == cache_policy::NORMAL) {
