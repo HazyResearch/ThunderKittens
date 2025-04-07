@@ -36,7 +36,7 @@ using namespace kittens;
 template <ducks::sync_manager::all SyncManager>
 __global__ void test_barrier_kernel(SyncManager sm, int sync_id, int dev_id) {
     using gang = kittens::gang<4>;
-    gang::sync(sm, sync_id, dev_id); 
+    gang::sync<sync_level::GRID>(sm, sync_id, dev_id); 
 }
 
 int main() {
@@ -53,7 +53,7 @@ int main() {
     /*
     Run kernel to profile barrier 
     */
-    constexpr int num_blocks = 256 * 256;
+    constexpr int num_blocks = 1000;
     dim3 grid(num_blocks, 1, 1);
     dim3 block(256, 1, 1);
     
@@ -64,16 +64,12 @@ int main() {
     
     const int PROFILE_ITERS = 50;
 
-    sync_manager sm = sync_manager<NUM_DEVICES, num_blocks, 16>::create(device_ids);
+    sync_manager sm = sync_manager<NUM_DEVICES, sync_level::GRID, 16, num_blocks>::create(device_ids);
 
     auto start = std::chrono::high_resolution_clock::now();
     for (int iter = 0; iter < PROFILE_ITERS; iter++) {
         club.execute([&](int dev_idx) {
             test_barrier_kernel<<<grid, block, 0, streams[dev_idx]>>>(sm, 0, dev_idx);
-        });
-
-        // Synchronize streams
-        club.execute([&](int dev_idx) {
             CUDACHECK(cudaStreamSynchronize(streams[dev_idx]));
         });
     }
