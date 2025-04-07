@@ -58,6 +58,20 @@ template<> struct move<float> {
         asm volatile("st.global.f32 [%1], %0;\n" : : "f"(src), "l"(dst));
     }
 };
+template<> struct move<int> {
+    __device__ static inline void lds(int& dst, uint32_t src) {
+        asm volatile("ld.shared.u32 %0, [%1];\n" : "=r"(dst) : "r"(src));
+    }
+    __device__ static inline void sts(uint32_t dst, const int& src) {
+        asm volatile("st.shared.u32 [%1], %0;\n" : : "r"(src), "r"(dst));
+    }
+    __device__ static inline void ldg(int& dst, int* src) {
+        asm volatile("ld.global.u32 %0, [%1];\n" : "=r"(dst) : "l"(src));
+    }
+    __device__ static inline void stg(int* dst, const int& src) {
+        asm volatile("st.global.u32 [%1], %0;\n" : : "r"(src), "l"(dst));
+    }
+};
 // packed types
 template<> struct move<bf16_2> {
     __device__ static inline void lds(bf16_2& dst, uint32_t src) {
