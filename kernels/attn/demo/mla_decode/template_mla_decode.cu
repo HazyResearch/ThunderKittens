@@ -8,7 +8,7 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 
-static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 256;
+static constexpr int QKRot_D = 64, QVO_D = 512, QVO_Dd2 = QVO_D/2, NUM_ROWS = 32, PAGE_SIZE = 64;
 using qrot_tile           = st_bf<64, QKRot_D>;
 using qvo_tile            = st_bf<64, QVO_D>;
 using q_global            = kittens::gl<bf16, -1, -1, -1, QKRot_D, qrot_tile>; // B * R * H * D_QKRot_D
@@ -523,6 +523,23 @@ PYBIND11_MODULE(mla_decode, m) {
         &config<8>::globals::tic
 #ifdef KITTENS_TIMINGS
         , &config<8>::globals::timings
+#endif
+    );
+    kittens::py::bind_kernel<interpreter::kernel<config<128>, partial_template<128>, reduction_template<128>>>(m, "mla_decode_128_heads",
+        &config<128>::globals::instructions,
+        &config<128>::globals::Q,
+        &config<128>::globals::QV,
+        &config<128>::globals::K_cache,
+        &config<128>::globals::V_cache,
+        &config<128>::globals::Table,
+        &config<128>::globals::O,
+        &config<128>::globals::O_scratch,
+        &config<128>::globals::Lvec_scratch,
+        &config<128>::globals::semaphore,
+        &config<128>::globals::Softmax_scale,
+        &config<128>::globals::tic
+#ifdef KITTENS_TIMINGS
+        , &config<128>::globals::timings
 #endif
     );
     m.def("__get_quality__", &get_quality, 
