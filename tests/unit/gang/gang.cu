@@ -28,7 +28,7 @@ struct gang_test_wrapper {
 
     using dtype = float;
     using PGL = kittens::pgl<kittens::gl<dtype, 1, 1, 1, SIZE>, NUM_DEVICES, true>;
-    using SyncManager = test::SyncManager;
+    using SyncManager = kittens::sync_manager<NUM_DEVICES, NUM_BLOCKS>;
 
     static void run(test_data& results) {
 
@@ -75,9 +75,8 @@ struct gang_test_wrapper {
 };
 
 template <int NUM_DEVICES>
-struct gang_grid_sync_test {
-    using SyncManager = kittens::sync_manager<NUM_DEVICES, kittens::sync_level::GRID, 2, -1>;
-    static inline const std::string test_identifier = "gang_grid_sync";
+struct gang_everyone_sync_test {
+    static inline const std::string test_identifier = "gang_everyone_sync";
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
@@ -98,7 +97,6 @@ struct gang_grid_sync_test {
         const int sync_id, 
         const int dev_idx
     ) {
-        static_assert(SyncManager::level == kittens::sync_level::GRID, "Gang sync level must be GRID");
         using gang = kittens::gang<NUM_DEVICES>;
 
         int index = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
@@ -111,13 +109,13 @@ struct gang_grid_sync_test {
         buffer1[dev_idx].raw_ptr[next_index] = input[dev_idx].raw_ptr[index];
         buffer1[dev_idx].raw_ptr[next_index + 1] = input[dev_idx].raw_ptr[index + 1];
 
-        gang::sync<kittens::sync_level::GRID>(sm, sync_id, dev_idx);
+        gang::everyone::sync(sm, dev_idx);
 
         stall(500 * (dev_idx % 2) * ((blockIdx.x + 1) % 2) * (threadIdx.x % 2));
         buffer2[dev_idx].raw_ptr[next_next_index] = buffer1[dev_idx].raw_ptr[next_index];
         buffer2[dev_idx].raw_ptr[next_next_index + 1] = buffer1[dev_idx].raw_ptr[next_index + 1];
 
-        gang::sync<kittens::sync_level::GRID>(sm, sync_id, dev_idx);
+        gang::everyone::sync(sm, dev_idx);
 
         kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
             reinterpret_cast<float2*>(&output[dev_idx].raw_ptr[index]), 
@@ -127,9 +125,8 @@ struct gang_grid_sync_test {
 };
 
 template <int NUM_DEVICES>
-struct gang_block_sync_test {
-    using SyncManager = kittens::sync_manager<NUM_DEVICES, kittens::sync_level::BLOCK, 2, NUM_BLOCKS>;
-    static inline const std::string test_identifier = "gang_block_sync";
+struct gang_blockwise_sync_test {
+    static inline const std::string test_identifier = "gang_blockwise_sync";
     __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
@@ -150,7 +147,6 @@ struct gang_block_sync_test {
         const int sync_id, 
         const int dev_idx
     ) {
-        static_assert(SyncManager::level == kittens::sync_level::BLOCK, "Gang sync level must be BLOCK");
         using gang = kittens::gang<NUM_DEVICES>;
 
         int index = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
@@ -159,7 +155,7 @@ struct gang_block_sync_test {
         buffer1[dev_idx].raw_ptr[index + 1] = input[dev_idx].raw_ptr[index + 1];
 
         // Check that multiple syncing works
-        gang::sync<kittens::sync_level::BLOCK>(sm, sync_id, dev_idx);
+        gang::blockwise::sync(sm, dev_idx);
 
         // Stall odd threads && even blocks && odd devices for half a second
         // With this, it should be extremely unlikely for the test to pass without sync'ing
@@ -168,7 +164,107 @@ struct gang_block_sync_test {
         buffer2[dev_idx].raw_ptr[index] = buffer1[dev_idx].raw_ptr[index];
         buffer2[dev_idx].raw_ptr[index + 1] = buffer1[dev_idx].raw_ptr[index + 1];
 
-        gang::sync<kittens::sync_level::BLOCK>(sm, sync_id, dev_idx);
+        gang::blockwise::sync(sm, dev_idx);
+
+        kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
+            reinterpret_cast<float2*>(&output[dev_idx].raw_ptr[index]), 
+            reinterpret_cast<float2*>(&buffer2.mc_vas[dev_idx][index])
+        );
+    }
+};
+
+template <int NUM_DEVICES>
+struct gang_blockgroup_sync_test_1 {
+    static inline const std::string test_identifier = "gang_blockgroup_sync_1";
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx)
+                    o_ref[dev_idx][i] += i_ref[other_dev_idx][(i + i_ref[dev_idx].size() - 4) % i_ref[dev_idx].size()];
+            }
+        }
+    }
+    template <kittens::ducks::pgl::all PGL, kittens::ducks::sync_manager::all SyncManager>
+    __device__ static void device_func(
+        const PGL &input, 
+        const PGL &buffer1, 
+        const PGL &buffer2, 
+        const PGL &output,
+        const SyncManager &sm,
+        const int sync_id, 
+        const int dev_idx
+    ) {
+        using gang = kittens::gang<NUM_DEVICES>;
+
+        int index = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
+        int next_index = (index + 2) % SIZE;
+        int next_next_index = (next_index + 2) % SIZE;
+
+        // Stall odd threads && even blocks && odd devices for half a second
+        // With this, it should be extremely unlikely for the test to pass without sync'ing
+        stall(500 * (dev_idx % 2) * ((blockIdx.x + 1) % 2) * (threadIdx.x % 2));
+        buffer1[dev_idx].raw_ptr[next_index] = input[dev_idx].raw_ptr[index];
+        buffer1[dev_idx].raw_ptr[next_index + 1] = input[dev_idx].raw_ptr[index + 1];
+
+        gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES);
+
+        stall(500 * (dev_idx % 2) * ((blockIdx.x + 1) % 2) * (threadIdx.x % 2));
+        buffer2[dev_idx].raw_ptr[next_next_index] = buffer1[dev_idx].raw_ptr[next_index];
+        buffer2[dev_idx].raw_ptr[next_next_index + 1] = buffer1[dev_idx].raw_ptr[next_index + 1];
+
+        gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES);
+
+        kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
+            reinterpret_cast<float2*>(&output[dev_idx].raw_ptr[index]), 
+            reinterpret_cast<float2*>(&buffer2.mc_vas[dev_idx][index])
+        );
+    }
+};
+
+template <int NUM_DEVICES>
+struct gang_blockgroup_sync_test_2 {
+    static inline const std::string test_identifier = "gang_blockgroup_sync_2";
+    __host__ static void host_func(const std::vector<std::vector<float>> &i_ref, std::vector<std::vector<float>> &o_ref) {
+        // each vector represents a GPU device holding the data
+        for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
+            for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
+                o_ref[dev_idx][i] = 0;
+                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx)
+                    o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
+            }
+        }
+    }
+    template <kittens::ducks::pgl::all PGL, kittens::ducks::sync_manager::all SyncManager>
+    __device__ static void device_func(
+        const PGL &input, 
+        const PGL &buffer1, 
+        const PGL &buffer2, 
+        const PGL &output,
+        const SyncManager &sm,
+        const int sync_id, 
+        const int dev_idx
+    ) {
+        using gang = kittens::gang<NUM_DEVICES>;
+
+        int index = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
+        int block_idx = blockIdx.x;
+
+        buffer1[dev_idx].raw_ptr[index] = input[dev_idx].raw_ptr[index];
+        buffer1[dev_idx].raw_ptr[index + 1] = input[dev_idx].raw_ptr[index + 1];
+
+        // Check that multiple syncing works
+        gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES);
+
+        // Make sure we do NOT stall the last block
+        if (block_idx < NUM_BLOCKS - 1 && block_idx % 2 == 1) stall(1000);
+
+        buffer2[dev_idx].raw_ptr[index] = buffer1[dev_idx].raw_ptr[index];
+        buffer2[dev_idx].raw_ptr[index + 1] = buffer1[dev_idx].raw_ptr[index + 1];
+
+        if (block_idx < NUM_BLOCKS - 1) 
+            gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES - 1); // sync all but the last block
 
         kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
             reinterpret_cast<float2*>(&output[dev_idx].raw_ptr[index]), 
@@ -181,8 +277,10 @@ void gang::tests(test_data &results) {
     std::cout << "\n ------------------------------     Starting ops/gang tests!     ------------------------------\n" << std::endl;
 
     if (check_multi_gpus()) {
-        gang_test_wrapper<gang_grid_sync_test<NUM_GPUS>, NUM_GPUS>::run(results);
-        gang_test_wrapper<gang_block_sync_test<NUM_GPUS>, NUM_GPUS>::run(results);
+        gang_test_wrapper<gang_everyone_sync_test<NUM_GPUS>, NUM_GPUS>::run(results);
+        gang_test_wrapper<gang_blockwise_sync_test<NUM_GPUS>, NUM_GPUS>::run(results);
+        gang_test_wrapper<gang_blockgroup_sync_test_1<NUM_GPUS>, NUM_GPUS>::run(results);
+        gang_test_wrapper<gang_blockgroup_sync_test_2<NUM_GPUS>, NUM_GPUS>::run(results);
     }
 }
 
