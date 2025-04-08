@@ -19,7 +19,7 @@ struct gang {
 
 struct everyone {
     /**
-     * @brief Synchronizes all threads running in all GPUs in a gang.
+     * @brief Synchronizes all threads in all blocks in all GPUs in the gang.
      * 
      * Caution: if not all thread blocks are active on a GPU device, a deadlock will occur.
      */
@@ -79,10 +79,13 @@ struct everyone {
 
 struct blockwise {
     /**
-     * @brief Synchronizes the blocks running in all GPUs in a gang with the same block index.
+     * @brief Synchronizes the blocks with the same block index running in all GPUs in the gang.
      * 
-     * Caution: if the total number of active thread blocks on a GPU device 
-     * exceeds approximately twice the hardware limit, a deadlock may occur.
+     * Ex. block idx N on all GPUs will be synchronized with respect to each other.
+     *     But block idx N on one device will not be synchronized with block idx N + 1 on any device.
+     * 
+     * Caution: if the total number of active thread blocks on a GPU device exceeds approximately 
+     *          twice the hardware limit, a deadlock may occur.
      */
     template <ducks::sync_manager::all SyncManager>
     __device__ static inline void sync(const SyncManager &sm, const int dev_idx) {
@@ -98,9 +101,7 @@ struct blockwise {
     
         int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
         if (block_idx >= SyncManager::max_blocks) return; // ignore blocks that are not in the sync_manager
-    
-        // Must do threadfence & syncthreads here, as there is no guarantee on the order of 
-        // function exit after the synchronization.
+
         __threadfence_system();
         __syncthreads();
 
@@ -117,18 +118,20 @@ struct blockwise {
             // All devices synced. Now clean up and proceed
             sys_uc.store(0, cuda::memory_order_release);
         }
-        
-        // Must block all threads until thread 0 completes the sync
+
         __syncthreads();
     }
 };
 
 struct blockgroup {
     /**
-     * @brief Synchronizes the given number of blocks running in all GPUs in a gang.
+     * @brief Synchronizes the given number of blocks running in all GPUs in the gang.
      * 
-     * Caution: if you use the same sync ID for multiple syncs across different set of
-     * blocks, the behavior is undefined. A deadlock may occur for incorrect usage.
+     * Ex. to synchronize blocks 2, 3, 4 on dev 0, and blocks 111, 112 on dev 1, call this 
+     *     function on those blocks with the same sync_id and expected_arrivals = 5
+     * 
+     * Caution: if you use the same sync ID for multiple syncs across different set of blocks, 
+     *          the behavior is undefined. A deadlock may occur for incorrect usage.
      */
     template <ducks::sync_manager::all SyncManager>
     __device__ static inline void sync(const SyncManager &sm, const int dev_idx, const int sync_id, const int expected_arrivals) {
@@ -143,9 +146,7 @@ struct blockgroup {
         if (dev_idx >= NUM_DEVICES) return;
     
         int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
-    
-        // Must do threadfence & syncthreads here, as there is no guarantee on the order of 
-        // function exit after the synchronization.
+
         __threadfence_system();
         __syncthreads();
 
@@ -170,7 +171,6 @@ struct blockgroup {
             }
         }
 
-        // Must block all threads until thread 0 completes the sync
         __syncthreads();
     }
 };
