@@ -230,9 +230,14 @@ struct gang_blockgroup_sync_test_2 {
         // each vector represents a GPU device holding the data
         for (int dev_idx = 0; dev_idx < i_ref.size(); ++dev_idx) {
             for (int i = 0; i < i_ref[dev_idx].size(); ++i) {
-                o_ref[dev_idx][i] = 0;
-                for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx)
-                    o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
+                if (dev_idx == 0 && i >= (NUM_BLOCKS - 1) * NUM_THREADS * 2) {
+                    o_ref[dev_idx][i] = i_ref[dev_idx][i]; // last in block in dev 0 only sees itself and all others as 0s
+                } else {
+                    o_ref[dev_idx][i] = 0;
+                    for (int other_dev_idx = 0; other_dev_idx < i_ref.size(); ++other_dev_idx) {
+                        o_ref[dev_idx][i] += i_ref[other_dev_idx][i];
+                    }
+                }
             }
         }
     }
@@ -257,14 +262,15 @@ struct gang_blockgroup_sync_test_2 {
         // Check that multiple syncing works
         gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES);
 
-        // Make sure we do NOT stall the last block
-        if (block_idx < NUM_BLOCKS - 1 && block_idx % 2 == 1) stall(1000);
+        // Do NOT stall the last block in dev 0
+        // Stall the last block in all other devices
+        if (dev_idx != 0 && block_idx == NUM_BLOCKS - 1) stall(1000);
 
         buffer2[dev_idx].raw_ptr[index] = buffer1[dev_idx].raw_ptr[index];
         buffer2[dev_idx].raw_ptr[index + 1] = buffer1[dev_idx].raw_ptr[index + 1];
 
-        if (block_idx < NUM_BLOCKS - 1) 
-            gang::blockgroup::sync(sm, dev_idx, 3, NUM_BLOCKS * NUM_DEVICES - 1); // sync all but the last block
+        if (dev_idx != 0 || block_idx < NUM_BLOCKS - 1) // sync all but the last block in dev 0
+            gang::blockgroup::sync(sm, dev_idx, 1, NUM_BLOCKS * NUM_DEVICES - 1);
 
         kittens::multimem_ld_reduce_op<float2, kittens::ReduceOp::ADD>::apply(
             reinterpret_cast<float2*>(&output[dev_idx].raw_ptr[index]), 
