@@ -34,22 +34,20 @@ struct everyone {
 
         // TODO: support a subset of devices
         if (dev_idx >= NUM_DEVICES) return;
-    
-        int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
-    
+
         // Must do threadfence & syncthreads here, as there is no guarantee on the order of 
         // function exit after the synchronization.
         __threadfence_system();
         __syncthreads();
 
         if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-            sync_point sp = sm.get_sync_point(sync_id, dev_idx);
+            sync_point sp = sm.get_all_sync_point(dev_idx);
             cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_system> sys_uc(*sp.sys_uc);
-            cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_device> grid_uc(*sp.grid_uc);
+            cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_device> dev_uc(*sp.dev_uc);
     
-            if (block_idx == 0) { // Block 0 is the leader block
+            if (blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y == 0) { // Block 0 is the leader block
                 size_t nblocks = gridDim.x * gridDim.y * gridDim.z;
-                while (grid_uc.load(cuda::memory_order_acquire) < nblocks - 1); // Wait for all non-leader blocks to check in
+                while (dev_uc.load(cuda::memory_order_acquire) < nblocks - 1); // Wait for all non-leader blocks to check in
     
                 // At this point, all threads across all blocks on the current device have now reached 
                 // gang::grid_sync() and are waiting.
@@ -65,13 +63,13 @@ struct everyone {
     
                 // Release all blocks
                 sys_uc.store(0, cuda::memory_order_release); // Do this before releasing non-leader blocks
-                grid_uc.store(0, cuda::memory_order_release); // Release non-leader blocks
+                dev_uc.store(0, cuda::memory_order_release); // Release non-leader blocks
             } else {
-                grid_uc++; // "check-in"
-                while (grid_uc.load(cuda::memory_order_acquire) > 0);
+                dev_uc++; // "check-in"
+                while (dev_uc.load(cuda::memory_order_acquire) > 0);
             }
         }
-        
+
         // Must block all threads until thread 0 completes the sync
         __syncthreads();
     }
@@ -106,9 +104,9 @@ struct blockwise {
         __syncthreads();
 
         if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-            sync_point sp = sm.get_sync_point(sync_id, dev_idx, block_idx);
-            cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_device> sys_uc(*sp.sys_uc);
-    
+            sync_point sp = sm.get_blockwise_sync_point(dev_idx, block_idx);
+            cuda::atomic_ref<typename SyncManager::SYNC_SPACE_DTYPE, cuda::thread_scope_system> sys_uc(*sp.sys_uc);
+
             // Block-level gang sync
             asm volatile ("{multimem.red.release.sys.global.add.u32 [%0], %1;}" 
                 :: "l"(sp.sys_mc), "n"(1) : "memory");
@@ -144,8 +142,6 @@ struct blockgroup {
         static_assert(SyncManager::max_sync_points > 0, "gang::blockgroup::sync() requires a sync manager with MAX_SYNC_POINTS > 0");
 
         if (dev_idx >= NUM_DEVICES) return;
-    
-        int block_idx = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
 
         __threadfence_system();
         __syncthreads();
