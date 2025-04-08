@@ -42,15 +42,17 @@ struct sync_point {
 template <int NUM_DEVICES, int MAX_BLOCKS = 256, int MAX_SYNC_POINTS = 16>
 struct sync_manager {
     static_assert(NUM_DEVICES > 0, "NUM_DEVICES must be greater than 0");
+    static_assert(MAX_BLOCKS >= 0, "MAX_BLOCKS must be greater than or equal to 0");
+    static_assert(MAX_SYNC_POINTS >= 0, "MAX_SYNC_POINTS must be greater than or equal to 0");
 
     using identifier = ducks::sync_manager::identifier;
     static constexpr int num_devices = NUM_DEVICES;
     static constexpr int all_sync_point_size = 2;
     static constexpr int max_blocks = MAX_BLOCKS;
     static constexpr int max_sync_points = MAX_SYNC_POINTS;
-    static constexpr int sync_space_size = all_sync_point_size /* sync::all */ + 
-                                           MAX_BLOCKS /* sync::blockwise */ + 
-                                           MAX_SYNC_POINTS /* sync::blockgroup */;
+    static constexpr int sync_space_size = all_sync_point_size /* gang::everyone::sync()   */ + 
+                                           MAX_BLOCKS          /* gang::blockwise::sync()  */ + 
+                                           MAX_SYNC_POINTS     /* gang::blockgroup::sync() */;
 
     using SYNC_SPACE_DTYPE = int;
     using SYNC_SPACE_T = pgl<gl<SYNC_SPACE_DTYPE, 1, 1, 1, sync_space_size>, NUM_DEVICES, true>;
@@ -81,6 +83,7 @@ struct sync_manager {
         pglFree(sync_space);
     }
 
+    // For gang::everyone::sync()
     __device__ inline auto get_all_sync_point(const int dev_idx) const {
         return sync_point<SYNC_SPACE_DTYPE>{
             sync_space.mc_vas[dev_idx],
@@ -89,6 +92,7 @@ struct sync_manager {
         };
     }
 
+    // For gang::blockwise::sync()
     __device__ inline auto get_blockwise_sync_point(const int dev_idx, const int block_idx) const {
         return sync_point<SYNC_SPACE_DTYPE>{
             sync_space.mc_vas[dev_idx] + all_sync_point_size + block_idx,
@@ -96,7 +100,8 @@ struct sync_manager {
             nullptr // unused
         };
     }
-    
+
+    // For gang::blockgroup::sync()
     __device__ inline auto get_blockgroup_sync_point(const int dev_idx, const int sync_id) const {
         return sync_point<SYNC_SPACE_DTYPE>{
             sync_space.mc_vas[dev_idx] + all_sync_point_size + max_blocks + sync_id,
