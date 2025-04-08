@@ -192,15 +192,17 @@ struct group_vec_p2s_broadcast_test {
 template<typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, typename... args> 
 using group_p2s_sweep_size_1d = mg_loop_s<group_vec_p2s_test_wrapper_1d, test, NUM_DEVICES, MAX_S, NUM_WORKERS, MAX_S, args...>;
 
-template<typename test, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, typename... args>
-struct group_p2s_sweep_size_1d_warp_layouts {
+template<typename test, int NUM_DEVICES, int MAX_S, typename... args>
+struct group_p2s_sweep_size_1d_warp_nw {
     static void run(test_data &results) {    
-        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
+        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, 2>::run(results);
+        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, 4>::run(results);
+        group_p2s_sweep_size_1d<test, NUM_DEVICES, MAX_S, 12>::run(results);
     }
 };
 
 // This might seem like an overkill, but is needed to minimize the number of PGL instantiations
-template<typename T, int NUM_DEVICES, int MAX_S, int NUM_WORKERS, typename... args>
+template<typename T, int NUM_DEVICES, int MAX_S, typename... args>
 struct group_vec_p2s_sweep_size_1d_warp_axes_ops {
     static void run(test_data &results) {    
         using shared_layout = shared_layouts<T, NUM_DEVICES>;
@@ -214,14 +216,14 @@ struct group_vec_p2s_sweep_size_1d_warp_axes_ops {
         shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
         shared_layout::output_pgl->multicast_init();
 
-        group_p2s_sweep_size_1d_warp_layouts<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
+        group_p2s_sweep_size_1d_warp_nw<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_S>::run(results);
         if constexpr (!std::is_same<T, float>::value) {
-            group_p2s_sweep_size_1d_warp_layouts<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
-            group_p2s_sweep_size_1d_warp_layouts<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
+            group_p2s_sweep_size_1d_warp_nw<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_S>::run(results);
+            group_p2s_sweep_size_1d_warp_nw<group_vec_p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_S>::run(results);
         }
 
-        group_p2s_sweep_size_1d_warp_layouts<group_vec_p2s_atomic_add_test<T>, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
-        group_p2s_sweep_size_1d_warp_layouts<group_vec_p2s_broadcast_test<T>, NUM_DEVICES, MAX_S, NUM_WORKERS>::run(results);
+        group_p2s_sweep_size_1d_warp_nw<group_vec_p2s_atomic_add_test<T>, NUM_DEVICES, MAX_S>::run(results);
+        group_p2s_sweep_size_1d_warp_nw<group_vec_p2s_broadcast_test<T>, NUM_DEVICES, MAX_S>::run(results);
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
@@ -239,17 +241,9 @@ void group::memory::vec::pgl_to_shared::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     if (check_multi_gpus()) {
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<float, NUM_GPUS, SIZE, 2>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<float, NUM_GPUS, SIZE, 4>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<float, NUM_GPUS, SIZE, 12>::run(results);
-    
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, 2>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, 4>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE, 12>::run(results);
-        
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, 2>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, 4>::run(results);
-        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE, 12>::run(results);
+        group_vec_p2s_sweep_size_1d_warp_axes_ops<float, NUM_GPUS, SIZE>::run(results);
+        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::bf16, NUM_GPUS, SIZE>::run(results);
+        group_vec_p2s_sweep_size_1d_warp_axes_ops<kittens::half, NUM_GPUS, SIZE>::run(results);
     }
 }
 

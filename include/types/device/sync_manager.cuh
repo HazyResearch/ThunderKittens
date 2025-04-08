@@ -23,23 +23,37 @@ template<typename T> concept all = requires {
 } // namespace sync_manager
 } // namespace ducks
 
-template <typename SYNC_SPACE_DTYPE = int>
+template <typename SYNC_SPACE_DTYPE>
 struct sync_point {
-    SYNC_SPACE_DTYPE *mc;
-    SYNC_SPACE_DTYPE *uc;
+    SYNC_SPACE_DTYPE *sys_mc;
+    SYNC_SPACE_DTYPE *sys_uc;
+    SYNC_SPACE_DTYPE *dev_uc = nullptr;
 };
 
 /**
  * @brief The sync_manager struct manages multicast memory spaces across 
  * multiple GPUs for synchronization. It is just a named PGL under the hood.
+ * 
+ * This struct is meant to be passed to functions under the gang::sync namespace.
+ * You can pass it to gang::sync::all(...) by default
+ * You can pass it to gang::sync::blockwise(...) if MAX_BLOCKS > 0
+ * You can pass it to gang::sync::blockgroup(...) if MAX_SYNC_POINTS > 0
  */
-template <int NUM_DEVICES, int MAX_BLOCKS = 256, int MAX_SYNC_POINTS = 4>
+template <int NUM_DEVICES, int MAX_BLOCKS = 256, int MAX_SYNC_POINTS = 16>
 struct sync_manager {
-    using identifier = ducks::sync_manager::identifier;
+    static_assert(NUM_DEVICES > 0, "NUM_DEVICES must be greater than 0");
+    static_assert(MAX_BLOCKS >= 0, "MAX_BLOCKS must be greater than or equal to 0");
+    static_assert(MAX_SYNC_POINTS >= 0, "MAX_SYNC_POINTS must be greater than or equal to 0");
 
+    using identifier = ducks::sync_manager::identifier;
+    static constexpr int num_devices = NUM_DEVICES;
+    static constexpr int all_sync_point_size = 2;
     static constexpr int max_blocks = MAX_BLOCKS;
     static constexpr int max_sync_points = MAX_SYNC_POINTS;
-    static constexpr int sync_space_size = max_blocks * max_sync_points;
+    static constexpr int sync_space_size = all_sync_point_size /* gang::everyone::sync()   */ + 
+                                           MAX_BLOCKS          /* gang::blockwise::sync()  */ + 
+                                           MAX_SYNC_POINTS     /* gang::blockgroup::sync() */;
+
     using SYNC_SPACE_DTYPE = int;
     using SYNC_SPACE_T = pgl<gl<SYNC_SPACE_DTYPE, 1, 1, 1, sync_space_size>, NUM_DEVICES, true>;
     SYNC_SPACE_T sync_space;
@@ -69,10 +83,30 @@ struct sync_manager {
         pglFree(sync_space);
     }
 
-    __device__ inline sync_point<SYNC_SPACE_DTYPE> get_sync_point(const int sync_id, const int dev_idx, const int block_idx) const {
-        return sync_point{
-            sync_space.mc_vas[dev_idx] + sync_id * max_blocks + block_idx,
-            sync_space[dev_idx].raw_ptr + sync_id * max_blocks + block_idx,
+    // For gang::everyone::sync()
+    __device__ inline auto get_all_sync_point(const int dev_idx) const {
+        return sync_point<SYNC_SPACE_DTYPE>{
+            sync_space.mc_vas[dev_idx],
+            sync_space[dev_idx].raw_ptr,
+            sync_space[dev_idx].raw_ptr + 1
+        };
+    }
+
+    // For gang::blockwise::sync()
+    __device__ inline auto get_blockwise_sync_point(const int dev_idx, const int block_idx) const {
+        return sync_point<SYNC_SPACE_DTYPE>{
+            sync_space.mc_vas[dev_idx] + all_sync_point_size + block_idx,
+            sync_space[dev_idx].raw_ptr + all_sync_point_size + block_idx,
+            nullptr // unused
+        };
+    }
+
+    // For gang::blockgroup::sync()
+    __device__ inline auto get_blockgroup_sync_point(const int dev_idx, const int sync_id) const {
+        return sync_point<SYNC_SPACE_DTYPE>{
+            sync_space.mc_vas[dev_idx] + all_sync_point_size + max_blocks + sync_id,
+            sync_space[dev_idx].raw_ptr + all_sync_point_size + max_blocks + sync_id,
+            nullptr // unused
         };
     }
 };

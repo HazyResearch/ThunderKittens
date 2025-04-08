@@ -220,21 +220,27 @@ struct group_p2s_broadcast_test {
 template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, typename... args> 
 using group_p2s_sweep_size_2d = mg_loop_h<group_p2s_test_wrapper_2d, test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, MAX_H, args...>;
 
-template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, typename... args>
-struct group_p2s_sweep_size_2d_group_axes {
+template<typename test, int NUM_DEVICES, int MAX_H, int MAX_W, typename... args>
+struct group_p2s_sweep_size_2d_group_axes_nw {
     using I0_t = std::integral_constant<int, 0>;
     using I1_t = std::integral_constant<int, 1>;
     using I2_t = std::integral_constant<int, 2>;
 
     static void run(test_data &results) {
-        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I2_t>::run(results);
-        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I1_t>::run(results);
-        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS, I0_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 2, I2_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 4, I2_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 12, I2_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 2, I1_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 4, I1_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 12, I1_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 2, I0_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 4, I0_t>::run(results);
+        group_p2s_sweep_size_2d<test, NUM_DEVICES, MAX_H, MAX_W, 12, I0_t>::run(results);
     }
 };
 
 // This might seem like an overkill, but is needed to minimize the number of PGL instantiations
-template<typename T, int NUM_DEVICES, int MAX_H, int MAX_W, int NUM_WORKERS, typename... args>
+template<typename T, int NUM_DEVICES, int MAX_H, int MAX_W, typename... args>
 struct group_p2s_sweep_size_2d_group_axes_ops {
     static void run(test_data &results) {    
         using shared_layout = shared_layouts<T, NUM_DEVICES>;
@@ -248,14 +254,14 @@ struct group_p2s_sweep_size_2d_group_axes_ops {
         shared_layout::input_pgl->multicast_init(); // can't to bind, but init is fine with just the dimensions
         shared_layout::output_pgl->multicast_init();
 
-        group_p2s_sweep_size_2d_group_axes<group_p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS>::run(results);
+        group_p2s_sweep_size_2d_group_axes_nw<group_p2s_all_reduce_test<T, kittens::ReduceOp::ADD>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
         if constexpr (!std::is_same<T, float>::value) {
-            group_p2s_sweep_size_2d_group_axes<group_p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS>::run(results);
-            group_p2s_sweep_size_2d_group_axes<group_p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS>::run(results);
+            group_p2s_sweep_size_2d_group_axes_nw<group_p2s_all_reduce_test<T, kittens::ReduceOp::MIN>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+            group_p2s_sweep_size_2d_group_axes_nw<group_p2s_all_reduce_test<T, kittens::ReduceOp::MAX>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
         }
 
-        group_p2s_sweep_size_2d_group_axes<group_p2s_atomic_add_test<T>, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS>::run(results);
-        group_p2s_sweep_size_2d_group_axes<group_p2s_broadcast_test<T>, NUM_DEVICES, MAX_H, MAX_W, NUM_WORKERS>::run(results);
+        group_p2s_sweep_size_2d_group_axes_nw<group_p2s_atomic_add_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
+        group_p2s_sweep_size_2d_group_axes_nw<group_p2s_broadcast_test<T>, NUM_DEVICES, MAX_H, MAX_W>::run(results);
 
         // Delete shared PGLs
         shared_layout::input_pgl->multicast_destroy();
@@ -273,15 +279,9 @@ void group::memory::tile::pgl_to_shared::tests(test_data &results) {
                          INTENSITY_4 ? 16 : -1;
 
     if (check_multi_gpus()) {
-        group_p2s_sweep_size_2d_group_axes_ops<float, NUM_GPUS, SIZE, SIZE, 2>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<float, NUM_GPUS, SIZE, SIZE, 4>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<float, NUM_GPUS, SIZE, SIZE, 12>::run(results); // skipped unless INTENSITY = 4
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE, 2>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE, 4>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE, 12>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE, 2>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE, 4>::run(results);
-        group_p2s_sweep_size_2d_group_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE, 12>::run(results);
+        group_p2s_sweep_size_2d_group_axes_ops<float, NUM_GPUS, SIZE, SIZE>::run(results);
+        group_p2s_sweep_size_2d_group_axes_ops<kittens::bf16, NUM_GPUS, SIZE, SIZE>::run(results);
+        group_p2s_sweep_size_2d_group_axes_ops<kittens::half, NUM_GPUS, SIZE, SIZE>::run(results);
     }
 }
 
