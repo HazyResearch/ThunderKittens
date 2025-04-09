@@ -16,16 +16,30 @@ struct page_allocator_op_dispatcher {
         template<int PAGE_COUNT> __device__ static inline int try_assign(::kittens::prototype::vm::state<config> &kvms, semaphore *arrived, semaphore *finished, int (&assignment)[config::PAGE_RING_SIZE], int assignment_ring, uint32_t assignment_counter, int &local_assignment_counter) {
             constexpr int membermask = 0xFFFFFFFF >> (32-PAGE_COUNT);
             int available = test_wait(finished[laneid()], 1); // managed_phase);
+            uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&finished[laneid()]));
             uint32_t ballot;
-            asm volatile("vote.sync.ballot.b32 %0, %1, %2;\n" : "=r"(ballot) : "r"(available), "r"(membermask));
+            asm volatile(
+                "{\n"
+                ".reg .pred P1;\n"
+                "mbarrier.test_wait.parity.shared::cta.b64 P1, [%1], %2;\n"
+                "vote.sync.ballot.b32 %0, P1, %3;\n"
+                "}\n"
+                : "=r"(ballot)
+                : "r"(mbar_ptr), "n"(1), "r"(available), "r"(membermask)
+            );
             if(ballot != 0) {
-                int next_assignment = __ffs(ballot);
-                if(next_assignment == laneid()) {
-                    assignment[assignment_ring] = next_assignment;
+                int page_to_assign;
+                asm volatile("bfind.u32 %0, %1;\n" : "=r"(page_to_assign) : "r"(ballot));
+                // page_to_assign = (PAGE_COUNT-1)-page_to_assign;
+                if(page_to_assign == laneid()) {
+                    printf("Thread %d (page allocator): assigning page %d for page ring %d, from ballot %x\n", threadIdx.x, page_to_assign, assignment_ring, ballot);
+                    assignment[assignment_ring] = page_to_assign;
                     kittens::arrive(finished[laneid()], config::NUM_CONSUMER_WARPS); // Flip the phase so we can't use it again until another thread has marked it.
                     kittens::arrive(arrived[laneid()], config::NUM_CONSUMER_WARPS); // Flip the phase so we can't use it again until another thread has marked it.
-                    asm volatile("atom.release.cta.shared::cta.inc.u32 _, [%0];\n" :: "r"(assignment_counter) : "memory");
+                    uint32_t _;
+                    asm volatile("atom.release.cta.shared::cta.inc.u32 %0, [%1], %2;\n" : "=r"(_) : "r"(assignment_counter), "n"(1u<<31) : "memory");
                 }
+                asm volatile("bar.warp.sync %0;\n" :: "n"(membermask)); // need to sync so that the arrival on that semaphore is visible to all threads.
                 local_assignment_counter++;
                 return 1;
             }
@@ -39,7 +53,9 @@ struct page_allocator_op_dispatcher {
             int num_mini_pages_to_allocate = op::num_mini_pages(g, kvms);
             int pages_allocated = 0, mini_pages_allocated = 0;
             constexpr int MAX_PAGES = config::NUM_PAGES > config::NUM_MINI_PAGES ? config::NUM_PAGES : config::NUM_MINI_PAGES;
-            while(pages_allocated < num_pages_to_allocate || mini_pages_allocated < num_mini_pages_to_allocate) {
+            int must_continue = 2;
+            while(must_continue) {
+                must_continue = 2; // reset
                 if(mini_pages_allocated < num_mini_pages_to_allocate && (MAX_PAGES == config::NUM_MINI_PAGES || laneid() < config::NUM_MINI_PAGES)) {
                     mini_pages_allocated += try_assign<config::NUM_MINI_PAGES>(
                         kvms,
@@ -51,6 +67,7 @@ struct page_allocator_op_dispatcher {
                         kvms.mini_page_iter
                     );
                 }
+                else must_continue--;
                 if (pages_allocated < num_pages_to_allocate && (MAX_PAGES == config::NUM_PAGES || laneid() < config::NUM_PAGES)) {
                     pages_allocated += try_assign<config::NUM_PAGES>(
                         kvms,
@@ -62,6 +79,7 @@ struct page_allocator_op_dispatcher {
                         kvms.page_iter
                     );
                 }
+                else must_continue--;
                 __nanosleep(20);
             }
         }

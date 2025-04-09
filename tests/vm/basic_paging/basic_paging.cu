@@ -1,6 +1,6 @@
 #include "kittens.cuh"
-// #define KVM_DEBUG
-#include "vm.cuh"
+#define KVM_DEBUG
+#include "vm/vm.cuh"
 #include <iostream>
 
 using namespace kittens;
@@ -17,8 +17,8 @@ struct globals {
 
 template<typename config=config> struct TestOp {
     static constexpr int opcode = 1;
-    static __device__ inline int num_pages(const globals &g, state<config> &s) { return 0; }
-    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return 0; }
+    static __device__ inline int num_pages(const globals &g, state<config> &s) { return config::NUM_PAGES; }
+    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return config::NUM_MINI_PAGES; }
     struct launcher {
         static __device__ void run(const globals &g, state<config> &s) {}
     };
@@ -26,7 +26,22 @@ template<typename config=config> struct TestOp {
         static __device__ void run(const globals &g, state<config> &s) {}
     };
     struct loader {
-        static __device__ void run(const globals &g, state<config> &s) {}
+        static __device__ void run(const globals &g, state<config> &s) {
+            for(int i = 0; i < config::NUM_PAGES; i++) s.get_page();
+            for(int i = 0; i < config::NUM_MINI_PAGES; i++) s.get_mini_page();
+            if(laneid() == 0) {
+                printf("Pages allocated:\n");
+                for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
+                    printf("%d ", s.page_assignment[i]);
+                }
+                printf("\n");
+                printf("Mini pages allocated:\n");
+                for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
+                    printf("%d ", s.mini_page_assignment[i]);
+                }
+                printf("\n");
+            }
+        }
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {}

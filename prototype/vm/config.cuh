@@ -22,7 +22,7 @@ struct default_config {
     static constexpr int NUM_PAGES = (MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY) / PAGE_SIZE;
     static constexpr int MINI_PAGE_SIZE = 512;
     static constexpr int NUM_MINI_PAGES = ((MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY) % PAGE_SIZE) / MINI_PAGE_SIZE;
-    static constexpr int PAGE_RING_SIZE = 16;
+    static constexpr int PAGE_RING_SIZE = 32;
 
     // Instruction pipeline
     static constexpr int INSTRUCTION_PIPELINE_STAGES = 2; // This is currently hardcoded, do not change.
