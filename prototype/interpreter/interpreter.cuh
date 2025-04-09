@@ -363,7 +363,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     }
     if(warpid() == 0) init_semaphore(finish_finished, NUM_CONSUMER_WARPS, 0);
     if(detail::CLUSTER_BLOCKS_v<config> == 1) group<NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
-    else tma::cluster::sync();
+    else everyone::tma::cluster::sync();
     if(warpid() < NUM_CONSUMER_WARPS) { // CONSUMER WARPS
         warpgroup::increase_registers<232>();
         for(ps.task_iter = 0; ps.task_iter < globals.instructions.rows(); ps.task_iter++) {
@@ -409,7 +409,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
-    if(detail::CLUSTER_BLOCKS_v<config> > 1) tma::cluster::sync();
+    if(detail::CLUSTER_BLOCKS_v<config> > 1) everyone::tma::cluster::sync();
     else group<NUM_WARPS>::sync(15);
 }
 template<typename config, typename... ops>

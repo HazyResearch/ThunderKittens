@@ -112,7 +112,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
             init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // consumer warps must say they are done with the finish block
         }
         // all warps must arrive here, confirming semaphore initialization is visible to all threads.
-        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) everyone::tma::cluster::sync();
         else everyone::sync(15);
         producer_state p_state;
         for(int task_iter = 0; true; task_iter++) {
@@ -146,7 +146,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
         // all warps must arrive here, confirming semaphore initialization is visible to all threads.
-        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+        if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) everyone::tma::cluster::sync();
         else everyone::sync(15);
         consumer_state c_state;
         for(int task_iter = 0; true; task_iter++) {
@@ -175,7 +175,7 @@ void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
         } // task iter loop
     } // consumer warpgroup
     // all warps must arrive here, confirming semaphore initialization is visible to all threads.
-    if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) tma::cluster::sync();
+    if constexpr (detail::CLUSTER_BLOCKS_v<lcft> > 1) everyone::tma::cluster::sync();
 #ifdef KITTENS_BLACKWELL
     else everyone::sync(15);
 #endif

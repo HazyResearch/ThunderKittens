@@ -75,7 +75,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     b_tile (&b_smem)[PIPE_DEPTH]                = al.allocate<b_tile, PIPE_DEPTH>();
     d_tile (&d_smem)                            = al.allocate<d_tile>();
 
-    tma::cluster::sync();
+    everyone::tma::cluster::sync();
     tensor_allocator<1, 2> tm_alloc{};
     using d_tt_t = tt<float, Mb, Nb>;
 
@@ -93,7 +93,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
         }
     }
 
-    tma::cluster::sync();
+    everyone::tma::cluster::sync();
     
     if(warpgroupid == NUM_CONSUMERS) {
         warpgroup::decrease_registers<56>();
@@ -176,7 +176,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             group<8>::sync(15); // All consumers sync here.
         }
     }
-    tma::cluster::sync();
+    everyone::tma::cluster::sync();
 }
 
 

@@ -162,7 +162,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
     }
 
-    tma::cluster::sync();
+    everyone::tma::cluster::sync();
     
     if(warpgroupid == NUM_CONSUMERS*WARPGROUPS_PER_CONSUMER) {
         warpgroup::decrease_registers<64>();
@@ -327,7 +327,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             consumer::sync(consumerid);
         }
     }
-    tma::cluster::sync();
+    everyone::tma::cluster::sync();
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@ namespace prototype {
 namespace vm {
 
 struct persistent_state {
-    int task_iter;
+    int instruction_index;
     int *shmem;
     int max_finish_offset;
     kittens::semaphore *inputs_arrived, *outputs_arrived, *inputs_finished, *outputs_finished, *finish_finished;
@@ -22,7 +22,7 @@ struct persistent_state {
 template<kittens_layout T> struct uniform_args {
     using CKL = complete_kittens_layout<T>;
     typename CKL::common_state_t & common; // scratch for the coordinates of the task.
-    int & task_iter; // which task are we on?
+    int & instruction_index; // which task are we on?
     int & num_iters; // how many iters are there for this task?
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
@@ -32,13 +32,13 @@ template<kittens_layout T> struct uniform_args {
 #endif
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
-        int & _task_iter,
+        int & _instruction_index,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch,
         int * _instruction
     ) : common(_common),
-        task_iter(_task_iter),
+        instruction_index(_instruction_index),
         num_iters(_num_iters),
         globals(_globals),
         scratch(_scratch),
@@ -46,7 +46,7 @@ template<kittens_layout T> struct uniform_args {
     {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
-        task_iter(_args.task_iter),
+        instruction_index(_args.instruction_index),
         num_iters(_args.num_iters),
         globals(_args.globals),
         scratch(_args.scratch),
