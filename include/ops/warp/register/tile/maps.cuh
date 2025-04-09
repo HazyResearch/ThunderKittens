@@ -482,7 +482,23 @@ __device__ static inline T log2(const T &src) {
     log2(dst, src);
     return dst;
 }
-
+/**
+ * @brief Applies the hyperbolic tangent function to each element of a tile.
+ *
+ * @tparam T Tile type.
+ * @param dst[out] Destination tile where the result is stored.
+ * @param src[in] Source tile to apply the hyperbolic tangent function on.
+ */
+template<ducks::rt::all T>
+__device__ static inline void tanh(T &dst, const T &src) {
+    unary_map<base_ops::tanh, T>(dst, src);
+}
+template<ducks::rt::all T>
+__device__ static inline T tanh(const T &src) {
+    T dst;
+    tanh(dst, src);
+    return dst;
+}
 /**
  * @brief Applies the absolute value function to each element of a tile.
  *
