@@ -1,5 +1,5 @@
 #include "kittens.cuh"
-#define KVM_DEBUG
+// #define KVM_DEBUG
 #include "vm/vm.cuh"
 #include <iostream>
 
@@ -18,7 +18,7 @@ struct globals {
 template<typename config=config> struct TestOp {
     static constexpr int opcode = 1;
     static __device__ inline int num_pages(const globals &g, state<config> &s) { return config::NUM_PAGES; }
-    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return config::NUM_MINI_PAGES; }
+    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return 1; } // config::NUM_MINI_PAGES; }
     struct launcher {
         static __device__ void run(const globals &g, state<config> &s) {}
     };
@@ -27,24 +27,31 @@ template<typename config=config> struct TestOp {
     };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
-            for(int i = 0; i < config::NUM_PAGES; i++) s.get_page();
-            for(int i = 0; i < config::NUM_MINI_PAGES; i++) s.get_mini_page();
-            if(laneid() == 0) {
-                printf("Pages allocated:\n");
-                for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
-                    printf("%d ", s.page_assignment[i]);
-                }
-                printf("\n");
-                printf("Mini pages allocated:\n");
-                for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
-                    printf("%d ", s.mini_page_assignment[i]);
-                }
-                printf("\n");
+            for(int i = 0; i < config::NUM_PAGES; i++) {
+                s.get_page();
+                s.record(32+i);
             }
+            // if(laneid() == 0) {
+            //     printf("Pages allocated:\n");
+            //     for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
+            //         printf("%d ", s.page_assignment[i]);
+            //     }
+            //     printf("\n");
+            //     printf("Mini pages allocated:\n");
+            //     for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
+            //         printf("%d ", s.mini_page_assignment[i]);
+            //     }
+            //     printf("\n");
+            // }
         }
     };
     struct consumer {
-        static __device__ void run(const globals &g, state<config> &s) {}
+        static __device__ void run(const globals &g, state<config> &s) {
+            // for(int i = 0; i < config::NUM_MINI_PAGES; i++) {
+            //     s.get_mini_page();
+            //     s.record(64+i);
+            // }
+        }
     };
 };
 
@@ -85,9 +92,21 @@ int main() {
         return 1;
     }
 
+    // Copy timing data back to host
+    int h_timing[config::TIMING_WIDTH];
+    cudaMemcpy(h_timing, d_timing, config::TIMING_WIDTH * sizeof(int), cudaMemcpyDeviceToHost);
+    
+    // Print all timing data
+    std::cout << "Timing data:" << std::endl;
+    for (int i = 0; i < config::TIMING_WIDTH; i++) {
+        std::cout << "timing[" << i << "] = " << h_timing[i] << std::endl;
+    }
+
     // Clean up
     cudaFree(d_instruction);
     cudaFree(d_timing);
+
+    std::cout << "Test passed!" << std::endl;
 
     return 0;
 }

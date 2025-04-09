@@ -32,7 +32,9 @@ struct page_allocator_op_dispatcher {
                 asm volatile("bfind.u32 %0, %1;\n" : "=r"(page_to_assign) : "r"(ballot));
                 // page_to_assign = (PAGE_COUNT-1)-page_to_assign;
                 if(page_to_assign == laneid()) {
+#ifdef KVM_DEBUG
                     printf("Thread %d (page allocator): assigning page %d for page ring %d, from ballot %x\n", threadIdx.x, page_to_assign, assignment_ring, ballot);
+#endif
                     assignment[assignment_ring] = page_to_assign;
                     kittens::arrive(finished[laneid()], config::NUM_CONSUMER_WARPS); // Flip the phase so we can't use it again until another thread has marked it.
                     kittens::arrive(arrived[laneid()], config::NUM_CONSUMER_WARPS); // Flip the phase so we can't use it again until another thread has marked it.
