@@ -32,7 +32,8 @@ __global__ void kernel(const __grid_constant__ globals g) {
                                   mini_page_arrived[config::NUM_MINI_PAGES],
                                   mini_page_finished[config::NUM_MINI_PAGES],
                                   instruction_arrived[config::INSTRUCTION_PIPELINE_STAGES],
-                                  instruction_finished[config::INSTRUCTION_PIPELINE_STAGES];
+                                  instruction_finished[config::INSTRUCTION_PIPELINE_STAGES],
+                                  cleanup;
     extern __shared__ int __shm[];
     void *aligned_shm_addr = (void*)((1023 + (uint64_t)&__shm[0]) & ~(uint64_t)1023);
     typename state<config>::page_array_t &pages = *reinterpret_cast<typename state<config>::page_array_t*>(aligned_shm_addr);
@@ -57,7 +58,8 @@ __global__ void kernel(const __grid_constant__ globals g) {
         0, 0,
         base_page_assignment_counter,
         (uint64_t)clock64(),
-        tensor_alloc
+        tensor_alloc,
+        cleanup
     }; // kittens virtual machine state
 
 #ifdef KVM_DEBUG
@@ -79,17 +81,24 @@ __global__ void kernel(const __grid_constant__ globals g) {
         page_assignment[threadIdx.x] = 0;
         mini_page_assignment[threadIdx.x] = 0;
     }
+    if(threadIdx.x == 0) {
+        init_semaphore(cleanup, config::NUM_WARPS-1);
+    }
     if(threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES) {
-        init_semaphore(instruction_arrived[threadIdx.x], 0, 2); // One arrival for instruction arriving, one for timing writeout finishing.
-        init_semaphore(instruction_finished[threadIdx.x], 0, config::NUM_WARPS);
+        init_semaphore(instruction_arrived[threadIdx.x], 2); // One arrival for instruction arriving, one for timing writeout finishing.
+        init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS);
     }
     if(threadIdx.x < config::NUM_PAGES) {
-        init_semaphore(page_arrived[threadIdx.x], 0, config::NUM_CONSUMER_WARPS);
-        init_semaphore(page_finished[threadIdx.x], 0, config::NUM_CONSUMER_WARPS);
+        init_semaphore(page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS);
+        init_semaphore(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
+        arrive(page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
+        arrive(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
     }
     if(threadIdx.x < config::NUM_MINI_PAGES) {
-        init_semaphore(mini_page_arrived[threadIdx.x], 0, config::NUM_CONSUMER_WARPS);
-        init_semaphore(mini_page_finished[threadIdx.x], 0, config::NUM_CONSUMER_WARPS);
+        init_semaphore(mini_page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS);
+        init_semaphore(mini_page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
+        arrive(mini_page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
+        arrive(mini_page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
     }
 
     if(config::CLUSTER_BLOCKS == 1) group<config::NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
@@ -130,7 +139,6 @@ __global__ void kernel(const __grid_constant__ globals g) {
     if(config::CLUSTER_BLOCKS > 1) everyone::tma::cluster::sync();
     else group<config::NUM_WARPS>::sync(15);
 }
-
 
 
 } // namespace vm

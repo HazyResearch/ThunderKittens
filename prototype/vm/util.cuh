@@ -22,6 +22,20 @@ struct dispatch_op<config, globals, state_type, op_dispatcher, op, ops...> {
 
 template<typename config> struct page {
     int data[config::PAGE_SIZE / sizeof(int)];
+    template<typename dtype=fp8e4m3> __device__ inline auto &as_st() {
+        if constexpr(std::is_same_v<dtype, fp8e4m3>) {
+            return *reinterpret_cast<st_fl8_e4m3<128, 128>*>(data);
+        }
+        else if constexpr(std::is_same_v<dtype, fp8e5m2>) {
+            return *reinterpret_cast<st_fl8_e5m2<128, 128>*>(data);
+        }
+        else if constexpr(std::is_same_v<dtype, float>) {
+            return *reinterpret_cast<st_fl<64, 64>*>(data);
+        }
+        else {
+            static_assert(always_false_v<dtype>, "Unsupported dtype for automatic cast. Please run your own reinterpret_cast!");
+        }
+    }
 };
 template<typename config> struct mini_page {
     int data[config::MINI_PAGE_SIZE / sizeof(int)];
@@ -95,6 +109,9 @@ template<typename config> struct state {
         page_iter++;
         return next_page;
     }
+    __device__ inline void advance_page(int distance=1) {
+        page_iter += distance;
+    }
     template<int distance=1> __device__ inline int get_mini_page() {
         mini_page_iter += distance;
         while(true) {
@@ -107,11 +124,14 @@ template<typename config> struct state {
         next_mini_page = mini_page_assignment[mini_page_ring()];
         return next_mini_page;
     }
+    __device__ inline void advance_mini_page(int distance=1) {
+        mini_page_iter += distance;
+    }
     __device__ inline void wait_page_arrived(int id) {
-        wait(page_arrived[id], 1);
+        wait(page_arrived[id], 0);
     }
     __device__ inline void wait_mini_page_arrived(int id) {
-        wait(mini_page_arrived[id], 1);
+        wait(mini_page_arrived[id], 0);
     }
 
     uint64_t start_clock;
@@ -125,6 +145,8 @@ template<typename config> struct state {
     static constexpr int NCTA_TENSOR_ALLOC = config::CLUSTER_BLOCKS > 1 ? 2 : 1;
     using tensor_allocator_t = ::kittens::tensor_allocator<1, NCTA_TENSOR_ALLOC>;
     tensor_allocator_t &tensor_alloc;
+
+    kittens::semaphore &cleanup;
 
     __device__ inline void print() {
         printf("Kittens Virtual Machine State being printed by thread %d, block %d\n", threadIdx.x, blockIdx.x);
@@ -167,6 +189,8 @@ template<typename config, typename globals, typename... ops> __device__ void mai
         kvms.await_instruction(); \
         dispatch_op<config, globals, ::kittens::prototype::vm::state<config>, name##_op_dispatcher<config, globals>::dispatcher, ops...>::run(kvms.instruction()[0], g, kvms); \
     } \
+    __syncwarp(); \
+    ::kittens::warp::arrive(kvms.cleanup); \
 } \
 \
 } \
