@@ -39,6 +39,7 @@ template<typename config, int PAGE_COUNT> __device__ static inline void try_assi
         int num_pages_assigned = __popc(page_ballot);
         local_assignment_counter += num_pages_assigned;
         if(laneid() == 0) {
+            // if(blockIdx.x == 0) printf("%d, page allocator writing %u to assignment counter at %u\n", threadIdx.x, local_assignment_counter, assignment_counter);
             asm volatile("st.shared.u32 [%0], %1;\n" : : "r"(assignment_counter), "r"(local_assignment_counter) : "memory");
         }
     }
@@ -80,7 +81,7 @@ template<typename config, typename globals, int end_thread, typename... ops> __d
                     shift_mask
                 );
             }
-            __nanosleep(20);
+            __nanosleep(50);
         }
     }
     asm volatile("bar.warp.sync %0;\n" :: "n"(membermask));

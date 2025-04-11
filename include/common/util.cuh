@@ -47,9 +47,10 @@ constexpr int WARPGROUP_WARPS{4};
  * @return The warp ID.
  */
 __device__ __forceinline__ int warpid() {
-    uint32_t wid;
-    asm volatile("mov.u32 %0, %warpid;" : "=r"(wid));
-    return wid;
+    // uint32_t wid;
+    // asm volatile("mov.u32 %0, %warpid;" : "=r"(wid));
+    // return wid;
+    return threadIdx.x >> 5;
 }
 /**
  * @brief Get the warpgroup ID of the current thread.
@@ -61,9 +62,10 @@ __device__ __forceinline__ int warpgroupid() { return warpid() >> 2; }
  * @return The lane ID.
  */
 __device__ __forceinline__ int laneid() {
-    uint32_t lid;
-    asm volatile("mov.u32 %0, %laneid;" : "=r"(lid));
-    return lid;
+    // uint32_t lid;
+    // asm volatile("mov.u32 %0, %laneid;" : "=r"(lid));
+    // return lid;
+    return threadIdx.x & 31;
 }
 
 #if defined(KITTENS_HOPPER)

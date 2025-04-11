@@ -131,8 +131,11 @@ __global__ void kernel(const __grid_constant__ globals g) {
                 asm volatile("trap;");
         }
     }
-    if (warpid() < config::NUM_WARPS-1) {
-        warp::arrive(cleanup);
+    if (warpid() < config::NUM_WARPS-1 && laneid() == 0) {
+#ifdef KVM_DEBUG
+        printf("Warp %d arriving at cleanup barrier\n", warpid());
+#endif
+        arrive(cleanup);
     }
 
 #ifdef KVM_DEBUG
