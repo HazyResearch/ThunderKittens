@@ -18,10 +18,11 @@ struct default_config {
 
     static constexpr int MAX_SHARED_MEMORY = kittens::MAX_SHARED_MEMORY;
     static constexpr int STATIC_SHARED_MEMORY = 3000;
+    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
     static constexpr int PAGE_SIZE = 16384;
-    static constexpr int NUM_PAGES = (MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY) / PAGE_SIZE;
+    static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
     static constexpr int MINI_PAGE_SIZE = 512;
-    static constexpr int NUM_MINI_PAGES = ((MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY) % PAGE_SIZE) / MINI_PAGE_SIZE;
+    static constexpr int NUM_MINI_PAGES = (DYNAMIC_SHARED_MEMORY % PAGE_SIZE) / MINI_PAGE_SIZE;
     static constexpr int PAGE_RING_SIZE = 32;
 
     // Instruction pipeline

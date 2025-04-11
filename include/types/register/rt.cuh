@@ -146,7 +146,7 @@ template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> usi
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16,  _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half,  _r, _c, layout>;
 #ifdef KITTENS_HOPPER
-template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl8_e4m3 = rt<fp8e4m3,  _r, _c, layout>;
-template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl8_e5m2 = rt<fp8e5m2,  _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e4m3 = rt<fp8e4m3,  _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e5m2 = rt<fp8e5m2,  _r, _c, layout>;
 #endif
 } // namespace kittens

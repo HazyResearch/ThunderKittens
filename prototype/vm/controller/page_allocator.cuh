@@ -83,15 +83,7 @@ template<typename config, typename globals, int end_thread, typename... ops> __d
             __nanosleep(20);
         }
     }
-    // We need to sync before we can mark this instruction as finished.
     asm volatile("bar.warp.sync %0;\n" :: "n"(membermask));
-    // Wait for the instruction to be finished.
-    if(laneid() == 0) {
-#ifdef KVM_DEBUG
-        printf("Thread %d (page allocator): arriving at instruction finished %d\n", threadIdx.x, kvms.instruction_ring);
-#endif
-        kittens::arrive(kvms.instruction_finished[kvms.instruction_ring]); // Single thread needs to arrive.
-    }
 }
 
 } // namespace controller

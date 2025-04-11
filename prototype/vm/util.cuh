@@ -22,18 +22,16 @@ struct dispatch_op<config, globals, state_type, op_dispatcher, op, ops...> {
 
 template<typename config> struct page {
     int data[config::PAGE_SIZE / sizeof(int)];
-    template<typename dtype=fp8e4m3> __device__ inline auto &as_st() {
-        if constexpr(std::is_same_v<dtype, fp8e4m3>) {
-            return *reinterpret_cast<st_fl8_e4m3<128, 128>*>(data);
+    template<typename T=fp8e4m3> __device__ inline auto &as_st() {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>, "Unsupported dtype for automatic cast. Please run your own reinterpret_cast!");
+        if constexpr(std::is_same_v<T, fp8e4m3>) {
+            return *reinterpret_cast<st_fp8e4m3<128, 128>*>(data);
         }
-        else if constexpr(std::is_same_v<dtype, fp8e5m2>) {
-            return *reinterpret_cast<st_fl8_e5m2<128, 128>*>(data);
+        else if constexpr(std::is_same_v<T, fp8e5m2>) {
+            return *reinterpret_cast<st_fp8e5m2<128, 128>*>(data);
         }
-        else if constexpr(std::is_same_v<dtype, float>) {
+        else if constexpr(std::is_same_v<T, float>) {
             return *reinterpret_cast<st_fl<64, 64>*>(data);
-        }
-        else {
-            static_assert(always_false_v<dtype>, "Unsupported dtype for automatic cast. Please run your own reinterpret_cast!");
         }
     }
 };
@@ -107,13 +105,15 @@ template<typename config> struct state {
         int next_page;
         next_page = page_assignment[page_ring()];
         page_iter++;
+        // printf("Thread %d: next page: %d\n", threadIdx.x, next_page);
+        // __nanosleep(1000);
         return next_page;
     }
     __device__ inline void advance_page(int distance=1) {
         page_iter += distance;
     }
     template<int distance=1> __device__ inline int get_mini_page() {
-        mini_page_iter += distance;
+        mini_page_iter += (distance-1);
         while(true) {
             int counter;
             move<int>::lds(counter, mini_page_assignment_counter());
@@ -122,6 +122,9 @@ template<typename config> struct state {
         }
         int next_mini_page;
         next_mini_page = mini_page_assignment[mini_page_ring()];
+        mini_page_iter++;
+        // printf("Thread %d: next mini page: %d\n", threadIdx.x, next_mini_page);
+        // __nanosleep(1000);
         return next_mini_page;
     }
     __device__ inline void advance_mini_page(int distance=1) {
@@ -160,9 +163,11 @@ template<typename config> struct state {
 } // namespace kittens
 
 #ifdef KVM_DEBUG
-#define KVM_DEBUG_PRINT(msg) printf("Thread %d: starting main loop for %s\n", threadIdx.x, msg);
+#define KVM_DEBUG_PRINT_START(msg) printf("Thread %d: starting main loop for %s\n", threadIdx.x, msg);
+#define KVM_DEBUG_PRINT_END(msg) printf("Thread %d: exiting main loop for %s\n", threadIdx.x, msg);
 #else
-#define KVM_DEBUG_PRINT(msg)
+#define KVM_DEBUG_PRINT_START(msg)
+#define KVM_DEBUG_PRINT_END(msg)
 #endif
 
 
@@ -183,14 +188,14 @@ struct name##_op_dispatcher { \
 }; \
 \
 template<typename config, typename globals, typename... ops> __device__ void main_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms) { \
-    KVM_DEBUG_PRINT(#name); \
+    KVM_DEBUG_PRINT_START(#name); \
     int num_iters = g.instructions.rows(); \
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0; kvms.instruction_index < num_iters; kvms.next_instruction()) { \
         kvms.await_instruction(); \
         dispatch_op<config, globals, ::kittens::prototype::vm::state<config>, name##_op_dispatcher<config, globals>::dispatcher, ops...>::run(kvms.instruction()[0], g, kvms); \
     } \
     __syncwarp(); \
-    ::kittens::warp::arrive(kvms.cleanup); \
+    KVM_DEBUG_PRINT_END(#name); \
 } \
 \
 } \
