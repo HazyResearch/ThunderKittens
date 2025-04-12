@@ -5,7 +5,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
-from ringattention import ringattention, blockwise_feedforward # original authors' public implementation
+from ringattention import ring_attention # original authors' public implementation
 
 
 def generate_mha_inputs(B, H, N, D_h, dtype='bf16', num_devices=1):
@@ -104,18 +104,18 @@ out_torch = mha_pytorch(Q_torch, K_torch, V_torch, causal)
 out_jax = mha_jax(Q_jax, K_jax, V_jax, causal)
 
 # Ring Attention - Jax (original authors' implementation)
-mesh = jax.make_mesh((1, 1, 1, 8), ("dp", "fsdp", "sp", "tp")) # todo use num_devices
+mesh = jax.make_mesh((1, 1, 8, 1), ("dp", "fsdp", "sp", "tp")) # todo use num_devices
 QKVO_ps = PartitionSpec(("dp", "fsdp"), "sp", "tp", None)
 bias_ps = PartitionSpec(("dp", "fsdp"), None, None, None)
 seg_ids_ps = PartitionSpec(("dp", "fsdp"), None)
-ring_attn_sharded = shard_map(
+ring_attn_sharded = shard_map( # shard_map automatically JITs the function
     partial(
-        ringattention,
+        ring_attention,
         axis_name="sp",
         float32_logits=False,
         cache_idx=None,
         blockwise_kwargs=dict(
-            causal_block_size=1,
+            causal_block_size=None, # no causal mask
             deterministic=True, # or false
             dropout_rng=None, # or other value
             attn_pdrop=0.0, # or other value
@@ -147,7 +147,6 @@ attn_bias = jax.device_put(jnp.zeros((B, 1, 1, N)), NamedSharding(mesh, bias_ps)
 seg_ids = jax.device_put(jnp.zeros((B, N), dtype=jnp.int32), NamedSharding(mesh, seg_ids_ps))
 # Calculate
 out_ring_orig = ring_attn_sharded(Q, K, V, attn_bias, seg_ids)
-
 out_ring_orig = out_ring_orig.transpose(0, 2, 1, 3) # back to (batch, seq, head, feature)
 
 # Verify correctness. Output shape is (batch, seq, feature)
