@@ -27,7 +27,7 @@ cuda_flags = [
     f'-I{python_include}',
     '-DTORCH_COMPILE',
     '-DKITTENS_HOPPER', # assume H100 for ring attn
-    '-arch=sm_90a',
+    '-arch=sm_90a',     # assume H100 for ring attn
 ] + torch_include.split()
 cpp_flags = [
     '-std=c++20',
