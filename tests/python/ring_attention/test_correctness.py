@@ -5,7 +5,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
-from original import ring_attention # original authors' public implementation
+from original_ring_attention import ring_attention # original authors' public implementation
 
 
 def generate_mha_inputs(B, H, N, D_h, dtype='bf16', num_devices=1):
