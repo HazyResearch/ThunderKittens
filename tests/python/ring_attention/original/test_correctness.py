@@ -2,7 +2,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax.experimental.shard_map import shard_map
-from jax.sharding import PartitionSpec as PS
+from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
 from ringattention import ringattention, blockwise_feedforward # original authors' public implementation
@@ -44,7 +44,7 @@ def generate_mha_inputs(B, H, N, D_h, dtype='bf16', num_devices=1):
 
 
 def mha_pytorch(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, causal: bool):
-    '''Pytorch attention implementation. Q, K, V are already projected.
+    '''Pytorch MHA implementation. Q, K, V are already projected.
 
        Q: (batch, head, seq, feature)
        K: (batch, head, seq, feature)
@@ -66,7 +66,7 @@ def mha_pytorch(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, causal: bool)
 
 
 def mha_jax(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool):
-    '''JAX attention implementation. Q, K, V are already projected.
+    '''JAX MHA implementation. Q, K, V are already projected.
 
        Q: (batch, head, seq, feature)
        K: (batch, head, seq, feature)
@@ -88,73 +88,75 @@ def mha_jax(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool):
 
 # Parameters
 B = 8 # batch size
-S = 64 # sequence length
 H = 16 # number of heads
-D_h = 16 # head dimension
+N = 1024 # sequence length
+D_h = 32 # head dimension
 dtype = 'bf16'
 causal = False
 
 # Generate inputs
-q_torch, k_torch, v_torch, dL_torch, q_jax, k_jax, v_jax, dL_jax = generate_mha_inputs(
-    B, H, S, D_h, dtype=dtype
+Q_torch, K_torch, V_torch, dL_torch, Q_jax, K_jax, V_jax, dL_jax = generate_mha_inputs(
+    B, H, N, D_h, dtype=dtype
 )
 
 # Run MHAs
-out_torch = mha_pytorch(q_torch, k_torch, v_torch, causal)
-out_jax = mha_jax(q_jax, k_jax, v_jax, causal)
+out_torch = mha_pytorch(Q_torch, K_torch, V_torch, causal)
+out_jax = mha_jax(Q_jax, K_jax, V_jax, causal)
+
+# Ring Attention - Jax (original authors' implementation)
+mesh = jax.make_mesh((1, 1, 1, 8), ("dp", "fsdp", "sp", "tp")) # todo use num_devices
+QKVO_ps = PartitionSpec(("dp", "fsdp"), "sp", "tp", None)
+bias_ps = PartitionSpec(("dp", "fsdp"), None, None, None)
+seg_ids_ps = PartitionSpec(("dp", "fsdp"), None)
+ring_attn_sharded = shard_map(
+    partial(
+        ringattention,
+        axis_name="sp",
+        float32_logits=False,
+        cache_idx=None,
+        blockwise_kwargs=dict(
+            causal_block_size=1,
+            deterministic=True, # or false
+            dropout_rng=None, # or other value
+            attn_pdrop=0.0, # or other value
+            query_chunk_size=N//8, # or other value
+            key_chunk_size=N//8, # or other value
+            dtype=jax.numpy.bfloat16, # or other value
+            policy=jax.checkpoint_policies.nothing_saveable,
+            precision=None, # or other value
+            prevent_cse=True, # or other value
+        )
+    ),
+    mesh=mesh,
+    in_specs=(
+        QKVO_ps,
+        QKVO_ps,
+        QKVO_ps,
+        bias_ps,
+        seg_ids_ps,
+    ),
+    out_specs=QKVO_ps,
+    check_rep=False
+)
+# (batch, seq, head, feature)
+Q = jax.device_put(Q_jax.transpose(0, 2, 1, 3), NamedSharding(mesh, QKVO_ps))
+K = jax.device_put(K_jax.transpose(0, 2, 1, 3), NamedSharding(mesh, QKVO_ps))
+V = jax.device_put(V_jax.transpose(0, 2, 1, 3), NamedSharding(mesh, QKVO_ps))
+# we don't use bias / segments
+attn_bias = jax.device_put(jnp.zeros((B, 1, 1, N)), NamedSharding(mesh, bias_ps))
+seg_ids = jax.device_put(jnp.zeros((B, N), dtype=jnp.int32), NamedSharding(mesh, seg_ids_ps))
+# Calculate
+out_ring_orig = ring_attn_sharded(Q, K, V, attn_bias, seg_ids)
+
+out_ring_orig = out_ring_orig.transpose(0, 2, 1, 3) # back to (batch, seq, head, feature)
 
 # Verify correctness. Output shape is (batch, seq, feature)
 TOL = 1e-2 # large due to bf16
 out_torch = out_torch.detach().to(dtype=torch.float32, device='cpu').numpy()
 out_jax = np.array(jax.device_get(out_jax)).astype(np.float32)
-max_error = np.max(np.abs(out_torch - out_jax))
-num_errors = np.sum(np.abs(out_torch - out_jax) > TOL)
+out_ring_orig = np.array(jax.device_get(out_ring_orig)).astype(np.float32)
+max_error = np.max(np.abs(out_torch - out_ring_orig))
+num_errors = np.sum(np.abs(out_torch - out_ring_orig) > TOL)
 print(f'Max abs diff: {max_error}')
 print(f'Num errors: {num_errors} out of {out_torch.size} (TOL: {TOL})')
 
-# Sanity check
-# print('Torch output:')
-# print(out_torch[0, 0, 0, :10])
-# print('Jax output:')
-# print(out_jax[0, 0, 0, :10])
-
-# Ring Attention - Jax (original authors' implementation)
-# ring_attention_sharded = shard_map(
-#     partial(
-#         ringattention,
-#         axis_name="sp",
-#         float32_logits=True,
-#         cache_idx=None,
-#         blockwise_kwargs=dict(
-#             causal_block_size=1,
-#             deterministic=True, # or false
-#             dropout_rng=None, # or other value
-#             attn_pdrop=0.0, # or other value
-#             query_chunk_size=512, # or other value
-#             key_chunk_size=512, # or other value
-#             dtype=jax.numpy.float32, # or other value
-#             policy=jax.checkpoint_policies.nothing_saveable,
-#             precision=None, # or other value
-#             prevent_cse=True, # or other value
-#         )
-#     ),
-#     mesh=jax.make_mesh((1, 1, 1, 8), ("dp", "fsdp", "sp", "tp")),
-#     in_specs=(
-#         PS(("dp", "fsdp"), "sp", "tp", None),
-#         PS(("dp", "fsdp"), "sp", "tp", None),
-#         PS(("dp", "fsdp"), "sp", "tp", None),
-#         PS(("dp", "fsdp"), None, None, None),
-#         PS(("dp", "fsdp"), None),
-#     ),
-#     out_specs=PS(("dp", "fsdp"), "sp", "tp", None),
-#     check_rep=False
-# )
-
-# # Inputs (random, arbitrary values)
-# xq = jnp.ones((batch, seqlen, num_heads, head_dim))
-# xk = jnp.ones_like(xq)
-# xv = jnp.ones_like(xq)
-# attention_bias = jnp.zeros((batch, 1, 1, seqlen))
-# segment_ids = jnp.zeros((batch, seqlen), dtype=jnp.int32)
-
-# attn_output = ring_attention_sharded(xq, xk, xv, attention_bias, segment_ids)
