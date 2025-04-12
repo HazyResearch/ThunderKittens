@@ -86,7 +86,7 @@ def mha_jax(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool):
     return attn_out
 
 
-def mha_ring_orig(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool, num_devices: int):
+def ring_mha_orig(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool, num_devices: int):
     '''The original ring attention implementation. Q, K, V are already projected.
 
        Q: (batch, head, seq, feature)
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     # Run MHAs
     out_torch = mha_pytorch(Q_torch, K_torch, V_torch, causal)
     out_jax = mha_jax(Q_jax, K_jax, V_jax, causal)
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
 
     # Verify correctness. Output shape is (batch, seq, feature)
     TOL = 1e-2 # large due to bf16

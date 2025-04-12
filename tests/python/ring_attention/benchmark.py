@@ -88,7 +88,7 @@ def mha_jax(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool):
     return attn_out
 
 
-def mha_ring_orig(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool, num_devices: int):
+def ring_mha_orig(Q: jax.Array, K: jax.Array, V: jax.Array, causal: bool, num_devices: int):
     '''The original ring attention implementation. Q, K, V are already projected.
 
        Q: (batch, head, seq, feature)
@@ -190,8 +190,8 @@ if __name__ == '__main__':
     # end = time.time()
     # print(f"Time taken for JAX MHA: {(end - start) * 1000:.4f} ms")
 
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
-    out_ring_orig = mha_ring_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q_jax, K_jax, V_jax, causal, num_devices=NUM_DEVICES)
