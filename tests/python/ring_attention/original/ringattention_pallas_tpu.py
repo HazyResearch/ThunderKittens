@@ -11,7 +11,7 @@ import dataclasses
 import functools
 from typing import Any, NamedTuple, Optional
 
-from ringattention.ringattention_jax import below_or_on_diag
+from original.ringattention_jax import below_or_on_diag
 
 
 # Handle the arg re-order

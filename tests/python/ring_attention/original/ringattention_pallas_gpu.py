@@ -11,8 +11,8 @@ import dataclasses
 import functools
 from typing import Any, NamedTuple, Optional
 
-from ringattention.ringattention_jax import below_or_on_diag
-from ringattention.ringattention_jax import ring_attention
+from original.ringattention_jax import below_or_on_diag
+from original.ringattention_jax import ring_attention
 
 
 ring_flash_attention_gpu = ring_attention # TODO: fused implementation is not yet supported on GPU
