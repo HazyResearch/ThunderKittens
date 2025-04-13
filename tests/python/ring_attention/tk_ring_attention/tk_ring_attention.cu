@@ -192,6 +192,53 @@ std::vector<torch::Tensor> ring_attention_backward(
     return {q, k, v, o, l_vec, og};
 }
 
+struct pgl_tensor_context {
+    int device_id;
+    void *raw_ptr;
+    size_t size;
+};
+
+void _pgl_tensor_deleter(void* ptr) {
+    pgl_tensor_context *ctx = static_cast<pgl_tensor_context*>(ptr);
+    pglCudaFree(ctx->device_id, ctx->raw_ptr, ctx->size);
+    free(ctx);
+}
+
+torch::Tensor pgl_tensor(
+    const torch::Tensor &other, 
+    const std::vector<int> &device_ids, 
+    const int device_id
+) {
+    TORCH_CHECK(device_id >= 0 && device_id < static_cast<int>(device_ids.size()), "Invalid device ID");
+
+    bool on_gpu = other.device().is_cuda();
+    if (on_gpu) {
+        std::cerr << "WARNING (pgl_tensor): the given tensor is already on GPU. "
+                  << "This will result in a redundant memory allocation and copy.\n";
+    }
+    
+    // Allocate CUDA memory
+    pgl_tensor_context *ctx = new pgl_tensor_context;
+    ctx->device_id = device_id;
+    ctx->raw_ptr = nullptr;
+    ctx->size = other.nbytes();
+    pglCudaMalloc<true>(NUM_DEVICES, const_cast<int*>(device_ids.data()), device_id, &ctx->raw_ptr, ctx->size);
+
+    // Copy data
+    cudaMemcpyKind copy_kind = on_gpu ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice;
+    cudaMemcpy(ctx->raw_ptr, other.data_ptr(), ctx->size, copy_kind);
+
+    // Construct Tensor (this is required because data_ptr is a smart pointer)
+    c10::DataPtr data_ptr(ctx->raw_ptr, ctx, _pgl_tensor_deleter,
+        c10::Device(c10::DeviceType::CUDA, device_id));
+    at::TensorOptions options = other.options().device(torch::kCUDA, device_id); // includes dtype, device, layout
+    at::Storage storage = at::Storage({}, ctx->size, std::move(data_ptr), nullptr, false);
+    torch::Tensor tensor = at::empty(0, options).set_(storage, 0, other.sizes(), {});
+    if (other.requires_grad()) tensor.set_requires_grad(true);
+
+    return tensor;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Ring Attention Kernels";
     m.def(
@@ -203,6 +250,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "ring_mha_backward", 
         torch::wrap_pybind_function(ring_attention_backward), 
         "Backward ring MHA"
+    );
+    m.def(
+        "pgl_tensor", 
+        torch::wrap_pybind_function(pgl_tensor), 
+        "Create a PGL tensor"
     );
 }
 
