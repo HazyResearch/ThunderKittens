@@ -6,6 +6,7 @@ from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
 from original_ring_attention import ring_attention # original authors' public implementation
+from tk_ring_attention import ring_mha_forward, pgl_tensor # Thunderkittens implementation
 
 @cache # avoid recomputing inputs
 def __generate_mha_inputs(B, H, N, D_h):
@@ -67,17 +68,17 @@ def generate_mha_inputs(B, H, N, D_h, dtype='bf16', target='mha_torch', num_devi
         Ks = []
         Vs = []
         dLs = []
+        device_ids = [i for i in range(num_devices)]
         for i, (q, k, v, dl) in enumerate(zip(
             np.split(Q, num_devices, axis=2), 
             np.split(K, num_devices, axis=2), 
             np.split(V, num_devices, axis=2), 
             np.split(dL, num_devices, axis=2)
         )):
-            torch_device = torch.device(f'cuda:{i}')
-            Qs.append(torch.tensor(q, dtype=torch_dtype, device=torch_device, requires_grad=True))
-            Ks.append(torch.tensor(k, dtype=torch_dtype, device=torch_device, requires_grad=True))
-            Vs.append(torch.tensor(v, dtype=torch_dtype, device=torch_device, requires_grad=True))
-            dLs.append(torch.tensor(dl, dtype=torch_dtype, device=torch_device, requires_grad=False)) # no grad tracking for dL/dO
+            Qs.append(pgl_tensor(torch.tensor(q, dtype=torch_dtype, requires_grad=True), device_ids, i))
+            Ks.append(pgl_tensor(torch.tensor(k, dtype=torch_dtype, requires_grad=True), device_ids, i))
+            Vs.append(pgl_tensor(torch.tensor(v, dtype=torch_dtype, requires_grad=True), device_ids, i))
+            dLs.append(pgl_tensor(torch.tensor(dl, dtype=torch_dtype, requires_grad=False), device_ids, i)) # no grad tracking for dL/dO
         return Qs, Ks, Vs, dLs
 
     else:

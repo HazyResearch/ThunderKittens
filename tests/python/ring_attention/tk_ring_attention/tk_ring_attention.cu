@@ -2,6 +2,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
+namespace py = pybind11;
 
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
@@ -99,6 +100,26 @@ template <int SIZE> struct CHECK_INPUTS<SIZE, SIZE> {
                              const std::vector<torch::Tensor>&) {}
 };
 
+torch::Tensor pgl_tensor(
+    const std::vector<int64_t> &sizes,
+    const at::ScalarType dtype,
+    const std::vector<int> &device_ids,
+    const int device_id,
+    const bool requires_grad
+);
+torch::Tensor pgl_tensor(
+    const std::vector<int64_t> &sizes,
+    const at::ScalarType dtype,
+    const int *device_ids,
+    const int device_id,
+    const bool requires_grad
+);
+torch::Tensor pgl_tensor(
+    const torch::Tensor &other, 
+    const std::vector<int> &device_ids, 
+    const int device_id
+);
+
 // TODO: combine outputs before returning
 std::vector<torch::Tensor> ring_attention_forward(
     const std::vector<torch::Tensor> &Qs, 
@@ -142,11 +163,7 @@ std::vector<torch::Tensor> ring_attention_forward(
     bf16 *d_O[NUM_DEVICES];
     cudaStream_t streams[NUM_DEVICES];
     club.execute([&](int i) {
-        Os[i] = torch::empty({static_cast<const uint>(B), 
-                              static_cast<const uint>(H_qo), 
-                              static_cast<const uint>(N), 
-                              static_cast<const uint>(D_h)},
-                              Vs[i].options()); // put on device i
+        Os[i] = pgl_tensor({B, H_qo, N, D_h}, at::kBFloat16, device_ids, i, true);
         d_Q[i] = reinterpret_cast<bf16*>(Qs[i].data_ptr<c10::BFloat16>());
         d_K[i] = reinterpret_cast<bf16*>(Ks[i].data_ptr<c10::BFloat16>());
         d_V[i] = reinterpret_cast<bf16*>(Vs[i].data_ptr<c10::BFloat16>());
@@ -205,6 +222,54 @@ void _pgl_tensor_deleter(void* ptr) {
 }
 
 torch::Tensor pgl_tensor(
+    const std::vector<int64_t> &sizes,
+    const at::ScalarType dtype,
+    const int *device_ids,
+    const int device_id,
+    const bool requires_grad
+) {
+    TORCH_CHECK(device_id >= 0 && device_id < NUM_DEVICES, "Invalid device ID");
+
+    // Calculate number of elements and bytes
+    int64_t numel = 1;
+    for (auto s : sizes) {
+        TORCH_CHECK(s > 0, "Size dimensions must be positive");
+        numel *= s;
+    }
+
+    // Allocate CUDA memory
+    pgl_tensor_context *ctx = new pgl_tensor_context;
+    ctx->device_id = device_id;
+    ctx->raw_ptr = nullptr;
+    ctx->size = numel * c10::elementSize(dtype);
+    pglCudaMalloc<true>(NUM_DEVICES, const_cast<int*>(device_ids), device_id, &ctx->raw_ptr, ctx->size);
+
+    // Construct Tensor
+    c10::DataPtr data_ptr(ctx->raw_ptr, ctx, _pgl_tensor_deleter,
+        c10::Device(c10::DeviceType::CUDA, device_id));
+    at::TensorOptions options = at::TensorOptions().dtype(dtype).device(torch::kCUDA, device_id);
+    at::Storage storage = at::Storage({}, ctx->size, std::move(data_ptr), nullptr, false);
+    torch::Tensor tensor = at::empty(0, options).set_(storage, 0, at::IntArrayRef(sizes.data(), sizes.size()), {});
+    tensor.set_requires_grad(requires_grad);
+
+    // Sanity check. Can be removed in production code
+    TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
+
+    return tensor;
+}
+
+torch::Tensor pgl_tensor(
+    const std::vector<int64_t> &sizes,
+    const at::ScalarType dtype,
+    const std::vector<int> &device_ids,
+    const int device_id,
+    const bool requires_grad
+) {
+    TORCH_CHECK(device_id >= 0 && device_id < static_cast<int>(device_ids.size()), "Invalid device ID");
+    return pgl_tensor(sizes, dtype, device_ids.data(), device_id, requires_grad);
+}
+
+torch::Tensor pgl_tensor(
     const torch::Tensor &other, 
     const std::vector<int> &device_ids, 
     const int device_id
@@ -236,6 +301,9 @@ torch::Tensor pgl_tensor(
     torch::Tensor tensor = at::empty(0, options).set_(storage, 0, other.sizes(), {});
     if (other.requires_grad()) tensor.set_requires_grad(true);
 
+    // Sanity check. Can be removed in production code
+    TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
+
     return tensor;
 }
 
@@ -253,8 +321,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     );
     m.def(
         "pgl_tensor", 
-        torch::wrap_pybind_function(pgl_tensor), 
-        "Create a PGL tensor"
+        static_cast<torch::Tensor(*)(const torch::Tensor&, const std::vector<int>&, const int)>(&pgl_tensor),
+        "Create a PGL tensor from existing tensor"
+    );
+    m.def(
+        "pgl_tensor", 
+        static_cast<torch::Tensor(*)(const std::vector<int64_t>&, const at::ScalarType, const std::vector<int>&, const int, const bool)>(&pgl_tensor),
+        "Create a new PGL tensor from sizes and dtype"
     );
 }
 
