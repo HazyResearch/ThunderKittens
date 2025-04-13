@@ -60,20 +60,18 @@ __global__  __launch_bounds__(NUM_WORKERS * kittens::WARP_THREADS, 1)
 void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __grid_constant__ int dev_idx) {
     extern __shared__ int __shm[]; 
     tma_swizzle_allocator al((int*)&__shm[0]);
-    int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS;
+    int warpid = kittens::warpid();
+    int warpgroupid = warpid / kittens::WARPGROUP_WARPS;
 
     using K = fwd_tile_dims<D>;
-
-    using q_tile    =         st_bf<K::QO_height, K::tile_width>;
-    using k_tile    =         st_bf<K::KV_height, K::tile_width>;
-    using v_tile    =         st_bf<K::KV_height, K::tile_width>;
-    using l_col_vec = col_vec<st_fl<K::QO_height, K::tile_width>>;
-    using o_tile    =         st_bf<K::QO_height, K::tile_width>;
+    using q_tile = fwd_pglobals<D>::Q_tile;
+    using k_tile = fwd_pglobals<D>::K_tile;
+    using v_tile = fwd_pglobals<D>::V_tile;
+    using o_tile = fwd_pglobals<D>::O_tile;
     
     q_tile    (&q_smem)[CONSUMER_WARPGROUPS] = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
     k_tile    (&k_smem)[K::stages]           = al.allocate<k_tile, K::stages          >();
     v_tile    (&v_smem)[K::stages]           = al.allocate<v_tile, K::stages          >();
-    l_col_vec (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
     auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem);
     
     int kv_blocks   = p_G.N / (K::KV_height);
@@ -213,7 +211,7 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
 
         div_row(o_reg, o_reg, norm_vec);
         warpgroup::store(o_smem[warpgroupid], o_reg); 
-        warpgroup::sync(warpgroupid+4);
+        warpgroup::sync(warpgroupid + 4);
 
         if (warpid % 4 == 0) {
             coord<o_tile> o_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + warpgroupid, 0};
@@ -227,9 +225,7 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
         if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
         else                   { mul(norm_vec, norm_vec, -11.313708499f); }
     
-        warpgroup::store(l_smem[warpgroupid], norm_vec);
         warpgroup::sync(warpgroupid+4);
-
         tma::store_async_wait();
     }
 }

@@ -16,9 +16,9 @@ from tk_ring_attention import ring_mha_forward, ring_mha_backward, pgl_tensor
 
 # Parameters
 NUM_DEVICES = 8
-B = 8 # batch size
+B = 16 # batch size
 H = 16 # number of heads
-N = 192 * NUM_DEVICES # sequence length
+N = 4096 * NUM_DEVICES # sequence length
 D_h = 64 # head dimension
 dtype = 'bf16'
 causal = False
