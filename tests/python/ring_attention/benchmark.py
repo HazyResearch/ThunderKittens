@@ -18,8 +18,8 @@ from tk_ring_attention import ring_mha_forward, ring_mha_backward, pgl_tensor
 NUM_DEVICES = 8
 B = 16 # batch size
 H = 16 # number of heads
-N = 4096 * NUM_DEVICES # sequence length
-D_h = 64 # head dimension
+N = 768 * NUM_DEVICES # sequence length (must be 768 * (2**i))
+D_h = 64 # head dimension (DO NOT CHANGE)
 dtype = 'bf16'
 causal = False
 
@@ -49,7 +49,7 @@ for i in range(NUM_DEVICES):
     assert(normal_Os[i].device == ring_Os[i].device)
     normal_O = normal_Os[i].detach().to(dtype=torch.float32, device='cpu').numpy()
     ring_O = ring_Os[i].detach().to(dtype=torch.float32, device='cpu').numpy()
-    max_error = np.max(np.abs(normal_O - ring_O))
-    num_errors = np.sum(np.abs(normal_O - ring_O) > TOL)
+    max_error = np.max(np.abs(ring_O - normal_O))
+    num_errors = np.sum(np.abs(ring_O - normal_O) > TOL)
     print(f'  Max abs diff: {max_error}')
-    print(f'  Num errors: {num_errors} out of {normal_O.size} (TOL: {TOL})')
+    print(f'  Num errors: {num_errors} out of {ring_O.size} (TOL: {TOL})')
