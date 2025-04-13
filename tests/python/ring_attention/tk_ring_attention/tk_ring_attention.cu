@@ -1,4 +1,5 @@
 #include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
 
@@ -6,73 +7,111 @@
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
+#include <chrono>
 #include <iostream>
 #include <vector>
 
+#include "kittens.cuh"
+#include "pyutils/torch_helpers.cuh"
+
+constexpr int NUM_DEVICES = 8;
+
+using namespace kittens;
+
+using q_pgl = pgl<gl<bf16, -1, -1, -1, -1>, NUM_DEVICES, true>; 
+using k_pgl = pgl<gl<bf16, -1, -1, -1, -1>, NUM_DEVICES, true>; 
+using v_pgl = pgl<gl<bf16, -1, -1, -1, -1>, NUM_DEVICES, true>; 
+
 #ifdef TORCH_COMPILE
 
-std::vector<torch::Tensor> ring_attention_forward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
-) {
-    std::cout << "Ring Attention Forward" << std::endl;
-    std::cout << "Q: " << q.sizes() << std::endl;
-    std::cout << "K: " << k.sizes() << std::endl;
-    std::cout << "V: " << v.sizes() << std::endl;
-    std::cout << "Causal: " << causal << std::endl;
-    std::cout << "Q dtype: " << q.dtype() << std::endl;
-    std::cout << "K dtype: " << k.dtype() << std::endl;
-    std::cout << "V dtype: " << v.dtype() << std::endl;
-    std::cout << "Q device: " << q.device() << std::endl;
-    std::cout << "K device: " << k.device() << std::endl;
-    std::cout << "V device: " << v.device() << std::endl;
-    std::cout << "Q is contiguous: " << q.is_contiguous() << std::endl;
-    std::cout << "K is contiguous: " << k.is_contiguous() << std::endl;
-    std::cout << "V is contiguous: " << v.is_contiguous() << std::endl;
-    std::cout << "Q is pinned: " << q.is_pinned() << std::endl;
-    std::cout << "K is pinned: " << k.is_pinned() << std::endl;
-    std::cout << "V is pinned: " << v.is_pinned() << std::endl;
-    std::cout << "Q is on CUDA: " << q.is_cuda() << std::endl;
-    std::cout << "K is on CUDA: " << k.is_cuda() << std::endl;
-    std::cout << "V is on CUDA: " << v.is_cuda() << std::endl;
-    std::cout << "Q is on CPU: " << q.is_cpu() << std::endl;
-    std::cout << "K is on CPU: " << k.is_cpu() << std::endl;
-    std::cout << "V is on CPU: " << v.is_cpu() << std::endl;
+template <int I, int SIZE> struct CHECK_INPUTS {
+    static inline void apply(const int64_t B,
+                             const int64_t H_qo,
+                             const int64_t H_kv,
+                             const int64_t N,
+                             const int64_t D_h,
+                             const std::vector<torch::Tensor>& Qs,
+                             const std::vector<torch::Tensor>& Ks,
+                             const std::vector<torch::Tensor>& Vs) {
+        CHECK_INPUT(Qs[I]);
+        CHECK_INPUT(Ks[I]);
+        CHECK_INPUT(Vs[I]);
 
-    return {q, k, v};
-}
-std::vector<torch::Tensor> ring_attention_backward(
-    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
-    torch::Tensor l_vec, torch::Tensor og, 
+        TORCH_CHECK(Qs[I].size(0) == B, "Q batch dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Ks[I].size(0) == B, "K batch dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Vs[I].size(0) == B, "V batch dimension (device ", I, ") does not match with other inputs");
+
+        TORCH_CHECK(Qs[I].size(1) == H_qo, "QO head dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Ks[I].size(1) == H_kv, "KV head dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Vs[I].size(1) == H_kv, "KV head dimension (device ", I, ") does not match with other inputs");
+
+        TORCH_CHECK(Qs[I].size(2) == N, "Q sequence length dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Ks[I].size(2) == N, "K sequence length dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Vs[I].size(2) == N, "V sequence length dimension (device ", I, ") does not match with other inputs");
+
+        TORCH_CHECK(Qs[I].size(3) == D_h, "Q head dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Ks[I].size(3) == D_h, "K head dimension (device ", I, ") does not match with other inputs");
+        TORCH_CHECK(Vs[I].size(3) == D_h, "V head dimension (device ", I, ") does not match with other inputs");
+        
+        CHECK_INPUTS<I + 1, SIZE>::apply(B, H_qo, H_kv, N, D_h, Qs, Ks, Vs);  
+    }
+};
+template <int SIZE> struct CHECK_INPUTS<SIZE, SIZE> {
+    static inline void apply(const int64_t B,
+                             const int64_t H_qo,
+                             const int64_t H_kv,
+                             const int64_t N,
+                             const int64_t D_h,
+                             const std::vector<torch::Tensor>&, 
+                             const std::vector<torch::Tensor>&, 
+                             const std::vector<torch::Tensor>&) {}
+};
+
+std::vector<torch::Tensor> ring_attention_forward(
+    const std::vector<torch::Tensor> &Qs, 
+    const std::vector<torch::Tensor> &Ks, 
+    const std::vector<torch::Tensor> &Vs, 
     bool causal
 ) {
-    std::cout << "Ring Attention Backward" << std::endl;
-    std::cout << "Q: " << q.sizes() << std::endl;
-    std::cout << "K: " << k.sizes() << std::endl;
-    std::cout << "V: " << v.sizes() << std::endl;
-    std::cout << "O: " << o.sizes() << std::endl;
-    std::cout << "L: " << l_vec.sizes() << std::endl;
-    std::cout << "Og: " << og.sizes() << std::endl;
-    std::cout << "Causal: " << causal << std::endl;
-    std::cout << "Q dtype: " << q.dtype() << std::endl;
-    std::cout << "K dtype: " << k.dtype() << std::endl;
-    std::cout << "V dtype: " << v.dtype() << std::endl;
-    std::cout << "O dtype: " << o.dtype() << std::endl;
-    std::cout << "L dtype: " << l_vec.dtype() << std::endl;
-    std::cout << "Og dtype: " << og.dtype() << std::endl;
-    std::cout << "Q device: " << q.device() << std::endl;
-    std::cout << "K device: " << k.device() << std::endl;
-    std::cout << "V device: " << v.device() << std::endl;
-    std::cout << "O device: " << o.device() << std::endl;
-    std::cout << "L device: " << l_vec.device() << std::endl;
-    std::cout << "Og device: " << og.device() << std::endl;
+    // Input checking (up to CHECK_INPUTS) takes about 3us 
+    TORCH_CHECK(Qs.size() == NUM_DEVICES, "Qs must be of size ", NUM_DEVICES);
+    TORCH_CHECK(Ks.size() == NUM_DEVICES, "Ks must be of size ", NUM_DEVICES);
+    TORCH_CHECK(Vs.size() == NUM_DEVICES, "Vs must be of size ", NUM_DEVICES);
 
+    int64_t B    = Qs[0].size(0);
+    int64_t H_qo = Qs[0].size(1);
+    int64_t H_kv = Ks[0].size(1);
+    int64_t N    = Qs[0].size(2);
+    int64_t D_h  = Qs[0].size(3);
+
+    TORCH_CHECK(H_qo >= H_kv, "QO heads must be greater than or equal to KV heads");
+    TORCH_CHECK(H_qo % H_kv == 0, "QO heads must be divisible by KV heads");
+
+    CHECK_INPUTS<0, NUM_DEVICES>::apply(B, H_qo, H_kv, N, D_h, Qs, Ks, Vs);
+
+    return Qs;
+}
+
+std::vector<torch::Tensor> ring_attention_backward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
+    torch::Tensor l_vec, torch::Tensor og, bool causal
+) {
+    TORCH_CHECK(false, "Backward ring attention not implemented");
     return {q, k, v, o, l_vec, og};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Ring Attention Kernels";
-    m.def("ring_mha_forward",  torch::wrap_pybind_function(ring_attention_forward), "Bidirectional forward MHA. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
-    m.def("ring_mha_backward", torch::wrap_pybind_function(ring_attention_backward), "Bidirectional backward MHA. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
+    m.def(
+        "ring_mha_forward",  
+        torch::wrap_pybind_function(ring_attention_forward),
+        "Forward ring MHA"
+    );
+    m.def(
+        "ring_mha_backward", 
+        torch::wrap_pybind_function(ring_attention_backward), 
+        "Backward ring MHA"
+    );
 }
 
 #else
