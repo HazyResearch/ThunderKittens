@@ -37,10 +37,10 @@ def generate_mha_inputs(B, H, N, D_h, dtype='bf16', target='mha_torch', num_devi
 
     if target == 'mha_torch':
         torch_device = torch.device('cuda:0')
-        Q = torch.from_numpy(Q).to(device=torch_device, dtype=torch_dtype).requires_grad_(True)
-        K = torch.from_numpy(K).to(device=torch_device, dtype=torch_dtype).requires_grad_(True)
-        V = torch.from_numpy(V).to(device=torch_device, dtype=torch_dtype).requires_grad_(True)
-        dL = torch.from_numpy(dL).to(device=torch_device, dtype=torch_dtype) # no grad tracking for dL/dO
+        Q = torch.tensor(Q, dtype=torch_dtype, device=torch_device, requires_grad=True)
+        K = torch.tensor(K, dtype=torch_dtype, device=torch_device, requires_grad=True)
+        V = torch.tensor(V, dtype=torch_dtype, device=torch_device, requires_grad=True)
+        dL = torch.tensor(dL, dtype=torch_dtype, device=torch_device, requires_grad=False) # no grad tracking for dL/dO
         return Q, K, V, dL
 
     elif target == 'mha_jax': 
@@ -74,10 +74,10 @@ def generate_mha_inputs(B, H, N, D_h, dtype='bf16', target='mha_torch', num_devi
             np.split(dL, num_devices, axis=2)
         )):
             torch_device = torch.device(f'cuda:{i}')
-            Qs.append(torch.from_numpy(q).to(device=torch_device, dtype=torch_dtype).requires_grad_(True))
-            Ks.append(torch.from_numpy(k).to(device=torch_device, dtype=torch_dtype).requires_grad_(True))
-            Vs.append(torch.from_numpy(v).to(device=torch_device, dtype=torch_dtype).requires_grad_(True))
-            dLs.append(torch.from_numpy(dl).to(device=torch_device, dtype=torch_dtype)) # no grad tracking for dL/dO
+            Qs.append(torch.tensor(q, dtype=torch_dtype, device=torch_device, requires_grad=True))
+            Ks.append(torch.tensor(k, dtype=torch_dtype, device=torch_device, requires_grad=True))
+            Vs.append(torch.tensor(v, dtype=torch_dtype, device=torch_device, requires_grad=True))
+            dLs.append(torch.tensor(dl, dtype=torch_dtype, device=torch_device, requires_grad=False)) # no grad tracking for dL/dO
         return Qs, Ks, Vs, dLs
 
     else:
