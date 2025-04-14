@@ -209,7 +209,7 @@ seg_ids = jax.device_put(jnp.zeros((B, N), dtype=jnp.int32), NamedSharding(mesh,
 
 for _ in range(2):
     _out_orig_ring = ring_attn_sharded(Q, K, V, attn_bias, seg_ids) # warmup
-num_iters = 25
+num_iters = 10
 times = []
 for _ in range(num_iters):
     start = time()
