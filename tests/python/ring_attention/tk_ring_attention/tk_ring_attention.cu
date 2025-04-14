@@ -52,7 +52,7 @@ template<int D> struct fwd_pglobals {
     V_pgl V;
     O_pgl O;
 
-    const int N;
+    const int N_per_dev; // sequence length per device
 };
 
 template<int D, bool is_causal>
@@ -73,8 +73,9 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
     k_tile    (&k_smem)[K::stages]           = al.allocate<k_tile, K::stages          >();
     v_tile    (&v_smem)[K::stages]           = al.allocate<v_tile, K::stages          >();
     auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem);
-    
-    int kv_blocks   = p_G.N / (K::KV_height);
+
+    int kv_blocks_per_dev = p_G.N_per_dev / (K::KV_height);
+    int kv_blocks_total = kv_blocks_per_dev * NUM_DEVICES;
     // int kv_head_idx = blockIdx.y / g.hr;
     int kv_head_idx = blockIdx.y;
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
@@ -98,9 +99,9 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
         for (int j = 0; j < K::stages - 1; j++) {
             coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, j, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
-            tma::load_async(k_smem[j], p_G.K[dev_idx], kv_tile_idx, k_smem_arrived[j]);
+            tma::load_async(k_smem[j], p_G.K[0], kv_tile_idx, k_smem_arrived[j]);
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
-            tma::load_async(v_smem[j], p_G.V[dev_idx], kv_tile_idx, v_smem_arrived[j]);
+            tma::load_async(v_smem[j], p_G.V[0], kv_tile_idx, v_smem_arrived[j]);
         }
     }
     __syncthreads(); 
@@ -115,15 +116,17 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
             kv_iters = (seq_idx * (K::QO_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (CONSUMER_WARPGROUPS * (K::QO_height/kittens::TILE_ROW_DIM<bf16>)); 
             kv_iters = ((kv_iters / (K::KV_height/kittens::TILE_ROW_DIM<bf16>)) == 0) ? (0) : ((kv_iters / (K::KV_height/kittens::TILE_ROW_DIM<bf16>)) - 1);
         }
-        else { kv_iters = kv_blocks-2; }
+        else { kv_iters = kv_blocks_total - 2; }
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
-                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
+                int kv_dev_idx = (kv_idx + 1) / kv_blocks_per_dev;
+                int kv_local_idx = (kv_idx + 1) % kv_blocks_per_dev;
+                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_local_idx, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-                tma::load_async(k_smem[(kv_idx+1)%K::stages], p_G.K[dev_idx], kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async(k_smem[(kv_idx+1)%K::stages], p_G.K[kv_dev_idx], kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
                 tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async(v_smem[(kv_idx+1)%K::stages], p_G.V[dev_idx], kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async(v_smem[(kv_idx+1)%K::stages], p_G.V[kv_dev_idx], kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
                 
                 wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             }
@@ -147,13 +150,15 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
             kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4);
             kv_iters = (kv_iters/8);
         }
-        else { kv_iters = kv_blocks - 1; }
+        else { kv_iters = kv_blocks_total - 1; }
 
         wait(qsmem_semaphore, 0);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
         
             wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
+
+            // att_block = QK^T
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
             
             copy(max_vec_last_scaled, max_vec);
@@ -180,10 +185,16 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
                 }
             }
 
+            // max_vec = max(QK^t, dim=-1)
             row_max(max_vec, att_block, max_vec);
             
             if constexpr (D == 64) { 
+                // att_block = log2(e) * QK^T / sqrt(H_d)
+                // 0.125 = 1 / sqrt(64 = H_d)
+                // 1.44269504089 = log2(e)
                 mul(att_block, att_block,    1.44269504089f*0.125f); 
+
+                // max_vec_scaled = log2(e) * max(QK^T, dim=-1) / sqrt(H_d)
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
             }
             else                   { 
@@ -191,24 +202,39 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
                 mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             }
 
+            // att_block = (QK^T - max(QK^T, dim=-1).unsqueeze(-1))
             sub_row(att_block, att_block, max_vec_scaled);
+
+            // att_block = 2^(log2(e) * QK^T / sqrt(H_d)) --> exp_QiKj
             exp2(att_block, att_block);
+
+            // 2^(last_max - new_max) --> rescaler
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled,       max_vec_last_scaled);
+
+            // norm_vec = norm_vec * rescaler + sum(exp_QiKj, dim=-1)   --> denominator
             mul(norm_vec,            norm_vec,     max_vec_last_scaled);
             row_sum(norm_vec,  att_block, norm_vec);
-            add(att_block, att_block, 0.f);
+            
+            // ??
+            add(att_block, att_block, 0.f); 
+
+            // att_block_mma = exp_QiKj
             copy(att_block_mma, att_block); 
+
+            // numerator *= rescaler
             mul_row(o_reg, o_reg, max_vec_last_scaled); 
 
             wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); 
 
+            // O = exp_QiKij @ V --> numerator
             warpgroup::mma_AB(o_reg, att_block_mma, v_smem[(kv_idx)%K::stages]);
             warpgroup::mma_async_wait();
 
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
 
+        // O = numerator / denominator --> Ai
         div_row(o_reg, o_reg, norm_vec);
         warpgroup::store(o_smem[warpgroupid], o_reg); 
         warpgroup::sync(warpgroupid + 4);
@@ -217,13 +243,6 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
             coord<o_tile> o_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + warpgroupid, 0};
             tma::store_async(p_G.O[dev_idx], o_smem[warpgroupid], o_tile_idx);
         }
-
-        mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
-        log(norm_vec, norm_vec);
-        add(norm_vec, norm_vec, max_vec_scaled);
-
-        if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
-        else                   { mul(norm_vec, norm_vec, -11.313708499f); }
     
         warpgroup::sync(warpgroupid+4);
         tma::store_async_wait();

@@ -1,6 +1,7 @@
 # Proof of Concept
 # Step-by-step implementation of what should be calculated at each step of the ring attention
 
+from time import time
 import gc
 
 import numpy as np
@@ -116,3 +117,33 @@ del _out_ref, _out_torch_ring
 del Q, K, V, dL
 gc.collect()
 
+# Real ring attention on NUM_DEVICE devices with ThunderKittens
+print('Generating inputs for TK ring attention...')
+Qs, Ks, Vs, dLs = generate_mha_inputs(
+    B, H, N, D_h, dtype=dtype, target='ring_mha_tk', num_devices=NUM_DEVICES
+)
+
+print('Running TK ring attention...')
+for _ in range(2): _ = ring_mha_forward(Qs, Ks, Vs, causal) # warmup
+num_iters = 10
+start = time()
+for _ in range(num_iters): _ = ring_mha_forward(Qs, Ks, Vs, causal)
+end = time()
+print(f'Average time for TK ring attention: {1000 * (end - start) / num_iters:.4f} ms')
+
+# Average time for topology-unaware version: 345~349 ms
+# Average time for topology-aware version: ?
+
+_out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal)
+out_tk_ring = [t.detach().to(dtype=torch.float32, device='cpu').numpy() for t in _out_tk_ring]
+out_tk_ring = np.concatenate(out_tk_ring, axis=2) # (B, H, N * NUM_DEVICES, D_h)
+
+# Verify correctness
+TOL = 1e-2 # large due to bf16
+assert(out_ref.shape == out_tk_ring.shape)
+assert(out_ref.dtype == out_tk_ring.dtype)
+abs_diff = np.abs(out_tk_ring - out_ref)
+max_error = np.max(abs_diff)
+num_errors = np.sum(abs_diff > TOL)
+print(f'Max abs diff: {max_error}')
+print(f'Num errors: {num_errors} out of {out_tk_ring.size} (TOL: {TOL})')
