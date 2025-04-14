@@ -76,6 +76,7 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
 
     int kv_blocks_per_dev = p_G.N_per_dev / (K::KV_height);
     int kv_blocks_total = kv_blocks_per_dev * NUM_DEVICES;
+    int kv_block_idx_start = kv_blocks_per_dev * dev_idx;
     // int kv_head_idx = blockIdx.y / g.hr;
     int kv_head_idx = blockIdx.y;
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
@@ -97,11 +98,14 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
         }
 
         for (int j = 0; j < K::stages - 1; j++) {
-            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, j, 0};
+            int kv_blk_idx = (j + kv_block_idx_start) % kv_blocks_total;
+            int kv_blk_dev_idx = kv_blk_idx / kv_blocks_per_dev;
+            int kv_blk_local_idx = kv_blk_idx % kv_blocks_per_dev;
+            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_blk_local_idx, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
-            tma::load_async(k_smem[j], p_G.K[0], kv_tile_idx, k_smem_arrived[j]);
+            tma::load_async(k_smem[j], p_G.K[kv_blk_dev_idx], kv_tile_idx, k_smem_arrived[j]);
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
-            tma::load_async(v_smem[j], p_G.V[0], kv_tile_idx, v_smem_arrived[j]);
+            tma::load_async(v_smem[j], p_G.V[kv_blk_dev_idx], kv_tile_idx, v_smem_arrived[j]);
         }
     }
     __syncthreads(); 
@@ -120,13 +124,14 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
-                int kv_dev_idx = (kv_idx + 1) / kv_blocks_per_dev;
-                int kv_local_idx = (kv_idx + 1) % kv_blocks_per_dev;
-                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_local_idx, 0};
+                int kv_blk_idx = (kv_idx + 1 + kv_block_idx_start) % kv_blocks_total;
+                int kv_blk_dev_idx = kv_blk_idx / kv_blocks_per_dev;
+                int kv_blk_local_idx = kv_blk_idx % kv_blocks_per_dev;
+                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_blk_local_idx, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-                tma::load_async(k_smem[(kv_idx+1)%K::stages], p_G.K[kv_dev_idx], kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async(k_smem[(kv_idx+1)%K::stages], p_G.K[kv_blk_dev_idx], kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
                 tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async(v_smem[(kv_idx+1)%K::stages], p_G.V[kv_dev_idx], kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async(v_smem[(kv_idx+1)%K::stages], p_G.V[kv_blk_dev_idx], kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
                 
                 wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             }
