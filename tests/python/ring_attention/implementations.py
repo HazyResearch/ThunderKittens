@@ -6,7 +6,7 @@ from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
 from original_ring_attention import ring_attention # original authors' public implementation
-from tk_ring_attention import ring_mha_forward, pgl_tensor # Thunderkittens implementation
+from tk_ring_attention import pgl_tensor
 
 @cache # avoid recomputing inputs
 def __generate_mha_inputs(B, H, N, D_h):

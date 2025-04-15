@@ -1,6 +1,3 @@
-from functools import partial
-import gc
-
 import jax
 import numpy as np
 import torch
@@ -9,58 +6,66 @@ from implementations import (
     generate_mha_inputs,
     mha_torch,
     mha_jax,
+    ring_mha_torch,
     ring_mha_orig
 )
+from tk_ring_attention import ring_mha_forward
 
 
 # Parameters
 NUM_DEVICES = 8
-B = 8
-H = 16
-N = 1024
-D_h = 32
+B = 4
+H = 8
+N = 768 * NUM_DEVICES # sequence length (must be 768 * i)
+D_h = 64 # head dimension (do not change)
 dtype = 'bf16'
 causal = False
 
+assert NUM_DEVICES >= 1, 'NUM_DEVICES must be >= 1'
+assert N % NUM_DEVICES == 0, 'N must be divisible by NUM_DEVICES'
 
-def run_and_clean(fn, target):
 
-    print(f'Running {target}...')
+def check_correctness(A: np.ndarray, B: np.ndarray, TOL: float = 1e-2):
 
-    # Run
-    Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target=target, num_devices=NUM_DEVICES)
-    result = fn(Q, K, V, causal)
-
-    # Clean up
-    for i in range(NUM_DEVICES):
-        torch.cuda.synchronize(i)
-    del Q, K, V, dL
-    gc.collect() # this will do for jax
-    torch.cuda.empty_cache()
-
-    return result
+    assert(A.shape == B.shape)
+    assert(A.dtype == B.dtype)
+    abs_diff = np.abs(B - A)
+    max_error = np.max(abs_diff)
+    num_errors = np.sum(abs_diff > TOL)
+    print(f'Max abs diff: {max_error}')
+    print(f'Num errors: {num_errors} out of {B.size} (TOL: {TOL})')
 
 
 if __name__ == '__main__':
 
-    assert NUM_DEVICES >= 1, 'NUM_DEVICES must be >= 1'
-    assert N % NUM_DEVICES == 0, 'N must be divisible by NUM_DEVICES'
+    torch.cuda.set_device(0)
 
-    # Torch MHA, Single Device
-    out_torch = run_and_clean(mha_torch, 'mha_torch')
+    print('\nRunning Reference MHA...')
+    Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='mha_torch')
+    out_ref = mha_torch(Q, K, V, causal)
+    out_ref = out_ref.detach().to(dtype=torch.float32, device='cpu').numpy()
 
-    # Jax MHA, Single Device
-    out_jax = run_and_clean(mha_jax, 'mha_jax')
-
-    # Original Ring MHA
-    out_ring_orig = run_and_clean(partial(ring_mha_orig, num_devices=NUM_DEVICES), 'ring_mha_orig')
-
-    # Verify correctness. Output shape is (batch, seq, feature)
-    TOL = 1e-2 # large due to bf16
-    out_torch = out_torch.detach().to(dtype=torch.float32, device='cpu').numpy()
+    print('\nRunning Jax MHA...')
+    Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='mha_jax')
+    out_jax = mha_jax(Q, K, V, causal)
     out_jax = np.array(jax.device_get(out_jax)).astype(np.float32)
+    check_correctness(out_ref, out_jax)
+
+    print('\nRunning PyTorch Ring Attention...')
+    Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='mha_torch')
+    out_torch_ring = ring_mha_torch(Q, K, V, causal, num_devices=NUM_DEVICES)
+    out_torch_ring = out_torch_ring.detach().to(dtype=torch.float32, device='cpu').numpy()
+    check_correctness(out_ref, out_torch_ring)
+
+    print('\nRunning Original Ring Attention...')
+    Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='ring_mha_orig', num_devices=NUM_DEVICES)
+    out_ring_orig = ring_mha_orig(Q, K, V, causal, num_devices=NUM_DEVICES)
     out_ring_orig = np.array(jax.device_get(out_ring_orig)).astype(np.float32)
-    max_error = np.max(np.abs(out_torch - out_ring_orig))
-    num_errors = np.sum(np.abs(out_torch - out_ring_orig) > TOL)
-    print(f'Max abs diff: {max_error}')
-    print(f'Num errors: {num_errors} out of {out_torch.size} (TOL: {TOL})')
+    check_correctness(out_ref, out_ring_orig)
+
+    print('\nRunning ThunderKittens Ring Attention...')
+    Qs, Ks, Vs, dLs = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='ring_mha_tk', num_devices=NUM_DEVICES)
+    out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal)
+    out_tk_ring = [t.detach().to(dtype=torch.float32, device='cpu').numpy() for t in out_tk_ring]
+    out_tk_ring = np.concatenate(out_tk_ring, axis=2)
+    check_correctness(out_ref, out_tk_ring)
