@@ -10,8 +10,8 @@ using c_dtype = float;
 
 struct matmul_layout {
     // tiles for the quantized inputs
-    using  a_tile   = st_fl8_e4m3<64, 128>; 
-    using  b_tile   = st_fl8_e4m3<128, 128>;
+    using  a_tile   = st_fp8e4m3<64, 128>; 
+    using  b_tile   = st_fp8e4m3<128, 128>;
     using  c_tile   = st<c_dtype, 64, 128>;
     using  a_layout = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
     using  b_layout = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;

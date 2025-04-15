@@ -21,12 +21,12 @@ struct default_config {
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
     static constexpr int PAGE_SIZE = 16384;
     static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
-    static constexpr int MINI_PAGE_SIZE = 512;
+    static constexpr int MINI_PAGE_SIZE = 1024;
     static constexpr int NUM_MINI_PAGES = (DYNAMIC_SHARED_MEMORY % PAGE_SIZE) / MINI_PAGE_SIZE;
     static constexpr int PAGE_RING_SIZE = 32;
 
     // Instruction pipeline
-    static constexpr int INSTRUCTION_PIPELINE_STAGES = 2; // This is currently hardcoded, do not change.
+    static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
     static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
 
     // Timing info

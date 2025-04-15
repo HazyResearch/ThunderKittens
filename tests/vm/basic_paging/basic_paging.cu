@@ -1,3 +1,12 @@
+#define RED_TEXT "\033[31m"
+#define GREEN_TEXT "\033[32m"
+#define YELLOW_TEXT "\033[33m"
+#define BLUE_TEXT "\033[34m"
+#define MAGENTA_TEXT "\033[35m"
+#define CYAN_TEXT "\033[36m"
+#define WHITE_TEXT "\033[37m"
+#define RESET_TEXT "\033[0m"
+
 #include "kittens.cuh"
 // #define KVM_DEBUG
 #include "vm/vm.cuh"
@@ -16,9 +25,8 @@ struct globals {
 };
 
 template<typename config=config> struct TestOp {
+    static constexpr int PAGE_REQUESTS = 48;
     static constexpr int opcode = 1;
-    static __device__ inline int num_pages(const globals &g, state<config> &s) { return config::NUM_PAGES; }
-    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return 1; } // config::NUM_MINI_PAGES; }
     struct launcher {
         static __device__ void run(const globals &g, state<config> &s) {}
     };
@@ -27,30 +35,37 @@ template<typename config=config> struct TestOp {
     };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
-            for(int i = 0; i < config::NUM_PAGES; i++) {
-                s.get_page();
-                s.record(32+i);
+            s.record(0);
+            int pages_received[PAGE_REQUESTS];
+            for(int i = 0; i < PAGE_REQUESTS; i++) {
+                pages_received[i] = s.get_page();
+                // printf(BLUE_TEXT "Loader received page %d for iteration %d\n" RESET_TEXT, pages_received[i], i);
+                s.record(16+i);
+                if(laneid() == 0) {
+                    // printf(BLUE_TEXT "Loader setting page arrived for page %d\n" RESET_TEXT, pages_received[i]);
+                    // __nanosleep(10000);
+                    kittens::arrive(s.page_arrived[pages_received[i]], config::NUM_CONSUMER_WARPS);
+                }
+                warp::sync();
             }
-            // if(laneid() == 0) {
-            //     printf("Pages allocated:\n");
-            //     for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
-            //         printf("%d ", s.page_assignment[i]);
-            //     }
-            //     printf("\n");
-            //     printf("Mini pages allocated:\n");
-            //     for(int i = 0; i < config::PAGE_RING_SIZE; i++) {
-            //         printf("%d ", s.mini_page_assignment[i]);
-            //     }
-            //     printf("\n");
-            // }
         }
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
-            // for(int i = 0; i < config::NUM_MINI_PAGES; i++) {
-            //     s.get_mini_page();
-            //     s.record(64+i);
-            // }
+            for(int i = 0; i < PAGE_REQUESTS; i++) {
+                int page_id = s.get_page();
+                s.record(72+i);
+                s.wait_page_arrived(page_id);
+                if(threadIdx.x == 0) {
+                    // printf("Consumer setting page finished for page %d\n", page_id);
+                    // Let's simulate reserving the first 8 pages as persistent scratch.
+                    if(page_id >= 8) {
+                        printf(RED_TEXT "Consumer setting page finished for page %d\n" RESET_TEXT, page_id);
+                        kittens::arrive(s.page_finished[page_id], config::NUM_CONSUMER_WARPS);
+                    }
+                }
+                warp::sync();
+            }
         }
     };
 };

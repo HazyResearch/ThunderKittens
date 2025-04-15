@@ -12,8 +12,8 @@ static constexpr int Nb = 256;
 static constexpr int Kb = 128;
 
 struct matmul_globals {
-    using a_tile = st_fl8_e4m3<Mb,   Kb>;
-    using b_tile = st_fl8_e4m3<Nb/2, Kb>;
+    using a_tile = st_fp8e4m3<Mb,   Kb>;
+    using b_tile = st_fp8e4m3<Nb/2, Kb>;
     using d_tile = st_hf<Mb, 64>;
 
     using a_gl = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;

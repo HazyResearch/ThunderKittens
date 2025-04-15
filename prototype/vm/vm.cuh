@@ -57,6 +57,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
         page_assignment, mini_page_assignment,
         0, 0,
         base_page_assignment_counter,
+        0xFFFFFFFFu,
         (uint64_t)clock64(),
         tensor_alloc,
         cleanup
@@ -78,7 +79,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
         page_assignment_counter[threadIdx.x] = 0;
     }
     if(threadIdx.x < config::PAGE_RING_SIZE) {
-        page_assignment[threadIdx.x] = 0;
+        page_assignment[threadIdx.x] = 9999;
         mini_page_assignment[threadIdx.x] = 0;
     }
     if(threadIdx.x == 0) {
@@ -91,14 +92,10 @@ __global__ void kernel(const __grid_constant__ globals g) {
     if(threadIdx.x < config::NUM_PAGES) {
         init_semaphore(page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS);
         init_semaphore(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
-        arrive(page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
-        arrive(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
     }
     if(threadIdx.x < config::NUM_MINI_PAGES) {
         init_semaphore(mini_page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS);
         init_semaphore(mini_page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
-        arrive(mini_page_arrived[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
-        arrive(mini_page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Start in phase 0.
     }
 
     if(config::CLUSTER_BLOCKS == 1) group<config::NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
