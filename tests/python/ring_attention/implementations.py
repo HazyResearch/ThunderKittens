@@ -7,7 +7,7 @@ from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
 
-from original_ring_attention import ring_attention # original authors' public implementation
+from original_ring_attention import ring_attention # https://github.com/haoliuhl/ringattention/
 from tk_ring_attention import pgl_tensor
 
 @cache # avoid recomputing inputs

@@ -9,7 +9,7 @@ from jax.sharding import PartitionSpec, NamedSharding
 import torch
 
 from implementations import generate_mha_inputs
-from original_ring_attention import ring_attention # original authors' public implementation
+from original_ring_attention import ring_attention # https://github.com/haoliuhl/ringattention/
 from tk_ring_attention import ring_mha_forward
 
 
