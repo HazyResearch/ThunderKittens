@@ -42,17 +42,23 @@ template<int D> struct fwd_pglobals {
     using V_tile = st_bf<fwd_tile_dims<D>::KV_height, fwd_tile_dims<D>::tile_width>;
     using O_tile = st_bf<fwd_tile_dims<D>::QO_height, fwd_tile_dims<D>::tile_width>;
 
-    using Q_pgl = pgl<gl<bf16, -1, -1, -1, -1, Q_tile>, NUM_DEVICES, true>; 
-    using K_pgl = pgl<gl<bf16, -1, -1, -1, -1, K_tile>, NUM_DEVICES, true>; 
-    using V_pgl = pgl<gl<bf16, -1, -1, -1, -1, V_tile>, NUM_DEVICES, true>; 
-    using O_pgl = pgl<gl<bf16, -1, -1, -1, -1, O_tile>, NUM_DEVICES, true>;
+    using Q_gl = gl<bf16, -1, -1, -1, -1, Q_tile>;
+    using K_gl = gl<bf16, -1, -1, -1, -1, K_tile>;
+    using V_gl = gl<bf16, -1, -1, -1, -1, V_tile>;
+    using O_gl = gl<bf16, -1, -1, -1, -1, O_tile>;
 
-    Q_pgl Q;
-    K_pgl K;
-    V_pgl V;
-    O_pgl O;
+    Q_gl Q[NUM_DEVICES];
+    K_gl K[NUM_DEVICES];
+    V_gl V[NUM_DEVICES];
+    O_gl O[NUM_DEVICES];
 
     const int N_per_dev; // sequence length per device
+
+    fwd_pglobals(Q_gl* _Q, K_gl* _K, V_gl* _V, O_gl* _O, const int _N_per_dev) : 
+        fwd_pglobals(std::make_index_sequence<NUM_DEVICES>{}, _Q, _K, _V, _O, _N_per_dev) {}
+    template<std::size_t... I>
+    fwd_pglobals(std::index_sequence<I...>, Q_gl* _Q, K_gl* _K, V_gl* _V, O_gl* _O, const int _N_per_dev) :
+        Q{_Q[I]...}, K{_K[I]...}, V{_V[I]...}, O{_O[I]...}, N_per_dev(_N_per_dev) {}
 };
 
 template<int D, bool is_causal>
@@ -362,24 +368,31 @@ std::vector<torch::Tensor> ring_attention_forward(
     bf16 *d_O[NUM_DEVICES];
     cudaStream_t streams[NUM_DEVICES];
     club.execute([&](int i) {
-        Os[i] = pgl_tensor({B, H_qo, N, D_h}, at::kBFloat16, device_ids, i, true);
+        Os[i] = torch::empty({B, H_qo, N, D_h}, Vs[i].options());
         d_Q[i] = reinterpret_cast<bf16*>(Qs[i].data_ptr<c10::BFloat16>());
         d_K[i] = reinterpret_cast<bf16*>(Ks[i].data_ptr<c10::BFloat16>());
         d_V[i] = reinterpret_cast<bf16*>(Vs[i].data_ptr<c10::BFloat16>());
         d_O[i] = reinterpret_cast<bf16*>(Os[i].data_ptr<c10::BFloat16>());
         streams[i] = at::cuda::getCurrentCUDAStream().stream();
-        cudaStreamSynchronize(streams[i]);
-        CHECK_CUDA_ERROR(cudaGetLastError());
     });
 
     // Initialize the parallel global layouts
     using pglobals = fwd_pglobals<64>;
-
-    pglobals::Q_pgl p_Q(device_ids, d_Q, B, H_qo, N, D_h);
-    pglobals::K_pgl p_K(device_ids, d_K, B, H_kv, N, D_h);
-    pglobals::V_pgl p_V(device_ids, d_V, B, H_kv, N, D_h);
-    pglobals::O_pgl p_O(device_ids, d_O, B, H_qo, N, D_h);
-    pglobals p_G{p_Q, p_K, p_V, p_O, static_cast<int>(N)};
+    using Q_gl = typename fwd_pglobals<64>::Q_gl;
+    using K_gl = typename fwd_pglobals<64>::K_gl;
+    using V_gl = typename fwd_pglobals<64>::V_gl;
+    using O_gl = typename fwd_pglobals<64>::O_gl;
+    std::vector<Q_gl> g_Q;
+    std::vector<K_gl> g_K;
+    std::vector<V_gl> g_V;
+    std::vector<O_gl> g_O;
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
+        g_Q.push_back(Q_gl(d_Q[dev_idx], B, H_qo, N, D_h));
+        g_K.push_back(K_gl(d_K[dev_idx], B, H_kv, N, D_h));
+        g_V.push_back(V_gl(d_V[dev_idx], B, H_kv, N, D_h));
+        g_O.push_back(O_gl(d_O[dev_idx], B, H_qo, N, D_h));
+    }
+    pglobals p_G{g_Q.data(), g_K.data(), g_V.data(), g_O.data(), static_cast<int>(N)};
 
     // Initialize and run the kernel
     TORCH_CHECK(N % (CONSUMER_WARPGROUPS * kittens::TILE_ROW_DIM<bf16> * 4) == 0, "sequence length must be divisible by 192");
