@@ -1,5 +1,3 @@
-# Proof of Concept for the ring attention implementation
-
 from functools import partial
 from time import time
 import gc
@@ -11,45 +9,30 @@ from jax.sharding import PartitionSpec, NamedSharding
 import torch
 
 from implementations import generate_mha_inputs
-from original_ring_attention import ring_attention
+from original_ring_attention import ring_attention # original authors' public implementation
 from tk_ring_attention import ring_mha_forward
 
-def run(NUM_DEVICES, B, H, N, D_h, dtype='bf16', causal=False, num_iters=10):
 
-    assert NUM_DEVICES >= 1, 'NUM_DEVICES must be >= 1'
-    assert N % NUM_DEVICES == 0, 'N must be divisible by NUM_DEVICES'
+# Base Parameters
+NUM_DEVICES = 8
+B = 4
+H = 8
+N = 768 * NUM_DEVICES # sequence length (must be 768 * i)
+D_h = 64 # head dimension (do not change)
+dtype = 'bf16'
+causal = False
+num_iters = 10
 
-    print(f'\nBatch {B} X Head {H} X Seqlen {N} X Dim {D_h} (num_elem: {B * H * N * D_h}, Q size_per_dev: {B*H*N*D_h*2/(NUM_DEVICES*1024**3):.2f} GB)')
+assert NUM_DEVICES >= 1, 'NUM_DEVICES must be >= 1'
+assert N % NUM_DEVICES == 0, 'N must be divisible by NUM_DEVICES'
 
-    # Real ring attention on NUM_DEVICE devices with ThunderKittens
-    Qs, Ks, Vs, dLs = generate_mha_inputs(
-        B, H, N, D_h, dtype=dtype, target='ring_mha_tk', num_devices=NUM_DEVICES
-    )
-    for _ in range(2):
-        _out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal) # warmup
-    times = []
-    for _ in range(num_iters):
-        start = time()
-        _out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal)
-        end = time()
-        times.append(end - start)
 
-    # Average time for topology-unaware version: 345~349 ms
-    # Average time for topology-aware version: 344~346 ms
-    avg_ms = (sum(times) / num_iters) * 1000
-    print(f'    Average time for TK ring attention: {avg_ms:.4f} ms')
+def benchmark_orig_ring_attention(NUM_DEVICES, B, H, N, D_h, dtype='bf16', causal=False):
 
-    # Clean up
-    for i in range(NUM_DEVICES - 1, -1, -1):
-        torch.cuda.set_device(i)
-        torch.cuda.synchronize(i)
-        torch.cuda.empty_cache()
-        del Qs[i], Ks[i], Vs[i], dLs[i], _out_tk_ring[i]
-    del Qs, Ks, Vs, dLs, _out_tk_ring
-    gc.collect()
-
-    # Original ring attention on NUM_DEVICE devices
+    # Generate inputs
     Q, K, V, dL = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='ring_mha_orig', num_devices=NUM_DEVICES)
+
+    # Prepare the JIT'ed function and shard inputs
     mesh = jax.make_mesh((1, 1, NUM_DEVICES, 1), ("dp", "fsdp", "sp", "tp"))
     QKVO_ps = PartitionSpec(("dp", "fsdp"), "sp", "tp", None)
     bias_ps = PartitionSpec(("dp", "fsdp"), None, None, None)
@@ -90,31 +73,67 @@ def run(NUM_DEVICES, B, H, N, D_h, dtype='bf16', causal=False, num_iters=10):
     attn_bias = jax.device_put(jnp.zeros((B, 1, 1, N)), NamedSharding(mesh, bias_ps))
     seg_ids = jax.device_put(jnp.zeros((B, N), dtype=jnp.int32), NamedSharding(mesh, seg_ids_ps))
 
+    # Warmup
     for _ in range(2):
-        _out_orig_ring = ring_attn_sharded(Q, K, V, attn_bias, seg_ids) # warmup
+        _out_orig_ring = ring_attn_sharded(Q, K, V, attn_bias, seg_ids)
     times = []
+
+    # Benchmark
     for _ in range(num_iters):
         start = time()
         _out_orig_ring = ring_attn_sharded(Q, K, V, attn_bias, seg_ids)
         end = time()
         times.append(end - start)
-
     avg_ms = (sum(times) / num_iters) * 1000
-    print(f'    Average time for original ring attention: {avg_ms:.4f} ms\n')
+    print(f'    Average time for original ring attention: {avg_ms:.4f} ms')
 
     # Clean up
     del Q, K, V, dL
     del attn_bias, seg_ids, _out_orig_ring
     gc.collect()
 
-if __name__ == "__main__":
 
-    # Parameters
-    NUM_DEVICES = 8
-    B = 16 # batch size
-    H = 16 # number of heads
-    N = 768 * NUM_DEVICES # sequence length (must be 768 * (2**i))
-    D_h = 64 # head dimension (DO NOT CHANGE)
+def benchmark_tk_ring_attention(NUM_DEVICES, B, H, N, D_h, dtype='bf16', causal=False):
+
+    # Generate inputs
+    Qs, Ks, Vs, dLs = generate_mha_inputs(B, H, N, D_h, dtype=dtype, target='ring_mha_tk', num_devices=NUM_DEVICES)
+
+    # Warmup
+    for _ in range(2):
+        _out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal)
+
+    # Benchmark
+    times = []
+    for _ in range(num_iters):
+        start = time()
+        _out_tk_ring = ring_mha_forward(Qs, Ks, Vs, causal)
+        end = time()
+        times.append(end - start)
+    avg_ms = (sum(times) / num_iters) * 1000
+    print(f'    Average time for TK ring attention: {avg_ms:.4f} ms')
+
+    # Clean up
+    for i in range(NUM_DEVICES - 1, -1, -1):
+        torch.cuda.set_device(i)
+        torch.cuda.synchronize(i)
+        torch.cuda.empty_cache()
+        del Qs[i], Ks[i], Vs[i], dLs[i], _out_tk_ring[i]
+    del Qs, Ks, Vs, dLs, _out_tk_ring
+    gc.collect()
+
+
+def benchmark(NUM_DEVICES, B, H, N, D_h, dtype='bf16', causal=False):
+
+    print(f'\nBatch {B} X Head {H} X Seqlen {N} X Dim {D_h} (num_elem: {B * H * N * D_h}, Q size_per_dev: {B*H*N*D_h*2/(NUM_DEVICES*1024**3):.2f} GB)')
+
+    # Benchmark original ring attention
+    benchmark_orig_ring_attention(NUM_DEVICES, B, H, N, D_h, dtype=dtype, causal=causal)
+
+    # Benchmark TK ring attention
+    benchmark_tk_ring_attention(NUM_DEVICES, B, H, N, D_h, dtype=dtype, causal=causal)
+
+
+if __name__ == "__main__":
 
     # Experiment results (run on 8xH100):
     #
@@ -185,13 +204,13 @@ if __name__ == "__main__":
     # Batch 1 X Head 128 X Seqlen 393216 X Dim 64 (num_elem: 3221225472, Q size_per_dev: 0.75 GB)
     #     Average time for TK ring attention: 9771.9243 ms
 
-    run(NUM_DEVICES, B=B, H=16, N=N, D_h=D_h)
-    run(NUM_DEVICES, B=B, H=32, N=N, D_h=D_h)
-    run(NUM_DEVICES, B=B, H=64, N=N, D_h=D_h)
-    run(NUM_DEVICES, B=B, H=128, N=N, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*2, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*4, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*8, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*16, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*32, D_h=D_h)
-    run(NUM_DEVICES, B=1, H=128, N=N*64, D_h=D_h)
+    benchmark(NUM_DEVICES, B=B, H=16, N=N, D_h=D_h)
+    benchmark(NUM_DEVICES, B=B, H=32, N=N, D_h=D_h)
+    benchmark(NUM_DEVICES, B=B, H=64, N=N, D_h=D_h)
+    benchmark(NUM_DEVICES, B=B, H=128, N=N, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*2, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*4, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*8, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*16, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*32, D_h=D_h)
+    benchmark(NUM_DEVICES, B=1, H=128, N=N*64, D_h=D_h)
