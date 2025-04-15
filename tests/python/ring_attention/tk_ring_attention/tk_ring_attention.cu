@@ -83,7 +83,6 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
     int kv_blocks_per_dev = p_G.N_per_dev / (K::KV_height);
     int kv_blocks_total = kv_blocks_per_dev * NUM_DEVICES;
     int kv_block_idx_start = kv_blocks_per_dev * dev_idx;
-    // int kv_head_idx = blockIdx.y / g.hr;
     int kv_head_idx = blockIdx.y;
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
 
@@ -117,17 +116,10 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
     __syncthreads(); 
 
     int pipe_idx = K::stages - 1; 
-    
+
     if(warpgroupid == NUM_WARPGROUPS-1) {
         warpgroup::decrease_registers<32>();      
-        
-        int kv_iters; 
-        if constexpr (is_causal) {
-            kv_iters = (seq_idx * (K::QO_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (CONSUMER_WARPGROUPS * (K::QO_height/kittens::TILE_ROW_DIM<bf16>)); 
-            kv_iters = ((kv_iters / (K::KV_height/kittens::TILE_ROW_DIM<bf16>)) == 0) ? (0) : ((kv_iters / (K::KV_height/kittens::TILE_ROW_DIM<bf16>)) - 1);
-        }
-        else { kv_iters = kv_blocks_total - 2; }
-
+        int kv_iters = kv_blocks_total - 2;
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
                 int kv_blk_idx = (kv_idx + 1 + kv_block_idx_start) % kv_blocks_total;
@@ -156,96 +148,35 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
         zero(norm_vec);
         zero(o_reg);
 
-        int kv_iters; 
-        if constexpr (is_causal) {
-            kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4);
-            kv_iters = (kv_iters/8);
-        }
-        else { kv_iters = kv_blocks_total - 1; }
-
+        int kv_iters = kv_blocks_total - 1;
         wait(qsmem_semaphore, 0);
 
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
-        
             wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-
-            // att_block = QK^T
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
-            
             copy(max_vec_last_scaled, max_vec);
-            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
-            else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
-            
+            mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f);
             warpgroup::mma_async_wait();
-
-            if constexpr (is_causal) {
-                const int q_blk = (seq_idx * (K::QO_height/kittens::TILE_ROW_DIM<bf16>)) + warpid; 
-                      int k_blk = (kv_idx * (K::KV_height/kittens::TILE_ROW_DIM<bf16>)); 
-
-                #pragma unroll
-                for(int _ = 0; k_blk == (kv_iters-1)*(K::KV_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::KV_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
-                    #pragma unroll
-                    for (auto j = 0; j < (K::KV_height/kittens::TILE_ROW_DIM<bf16>); j++) {
-                        auto k_idx = k_blk + j;
-                        auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
-
-                        if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
-                        else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
-                        __syncwarp();
-                    }
-                }
-            }
-
-            // max_vec = max(QK^t, dim=-1)
             row_max(max_vec, att_block, max_vec);
-            
-            if constexpr (D == 64) { 
-                // att_block = log2(e) * QK^T / sqrt(H_d)
-                // 0.125 = 1 / sqrt(64 = H_d)
-                // 1.44269504089 = log2(e)
-                mul(att_block, att_block,    1.44269504089f*0.125f); 
-
-                // max_vec_scaled = log2(e) * max(QK^T, dim=-1) / sqrt(H_d)
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
-            }
-            else                   { 
-                mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
-            }
-
-            // att_block = (QK^T - max(QK^T, dim=-1).unsqueeze(-1))
+            mul(att_block, att_block,    1.44269504089f*0.125f);
+            mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
+            mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
+            mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             sub_row(att_block, att_block, max_vec_scaled);
-
-            // att_block = 2^(log2(e) * QK^T / sqrt(H_d)) --> exp_QiKj
             exp2(att_block, att_block);
-
-            // 2^(last_max - new_max) --> rescaler
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
             exp2(max_vec_last_scaled,       max_vec_last_scaled);
-
-            // norm_vec = norm_vec * rescaler + sum(exp_QiKj, dim=-1)   --> denominator
             mul(norm_vec,            norm_vec,     max_vec_last_scaled);
             row_sum(norm_vec,  att_block, norm_vec);
-            
-            // ??
             add(att_block, att_block, 0.f); 
-
-            // att_block_mma = exp_QiKj
             copy(att_block_mma, att_block); 
-
-            // numerator *= rescaler
             mul_row(o_reg, o_reg, max_vec_last_scaled); 
-
             wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); 
-
-            // O = exp_QiKij @ V --> numerator
             warpgroup::mma_AB(o_reg, att_block_mma, v_smem[(kv_idx)%K::stages]);
             warpgroup::mma_async_wait();
-
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
 
-        // O = numerator / denominator --> Ai
         div_row(o_reg, o_reg, norm_vec);
         warpgroup::store(o_smem[warpgroupid], o_reg); 
         warpgroup::sync(warpgroupid + 4);
@@ -325,7 +256,6 @@ torch::Tensor pgl_tensor(
     const int device_id
 );
 
-// TODO: combine outputs before returning
 std::vector<torch::Tensor> ring_attention_forward(
     const std::vector<torch::Tensor> &Qs, 
     const std::vector<torch::Tensor> &Ks, 
