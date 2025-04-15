@@ -131,7 +131,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
                 tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                 prototype::update_phasebit<0>(bitfield, input_ring);
-                mm2_ABt(d_tt, a_smem[0][warpgroup::warpid()], b_smem[0], inputs_finished[0]);
+                mm2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                 input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
