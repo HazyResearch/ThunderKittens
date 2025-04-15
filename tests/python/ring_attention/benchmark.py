@@ -162,6 +162,29 @@ if __name__ == "__main__":
     #     Original ring attention dies with OOM
     #     Average time for TK attention: 11311.1251 ms
 
+    # Experiment results on optimized ring attention (no pgl init overhead)
+    # 
+    # Batch 16 X Head 16 X Seqlen 6144 X Dim 64 (num_elem: 100663296, Q size_per_dev: 0.02 GB)
+    #     Average time for TK ring attention: 6.2441 ms
+    # Batch 16 X Head 32 X Seqlen 6144 X Dim 64 (num_elem: 201326592, Q size_per_dev: 0.05 GB)
+    #     Average time for TK ring attention: 10.9082 ms
+    # Batch 16 X Head 64 X Seqlen 6144 X Dim 64 (num_elem: 402653184, Q size_per_dev: 0.09 GB)
+    #     Average time for TK ring attention: 19.5219 ms
+    # Batch 16 X Head 128 X Seqlen 6144 X Dim 64 (num_elem: 805306368, Q size_per_dev: 0.19 GB)
+    #     Average time for TK ring attention: 37.4881 ms
+    # Batch 1 X Head 128 X Seqlen 12288 X Dim 64 (num_elem: 100663296, Q size_per_dev: 0.02 GB)
+    #     Average time for TK ring attention: 11.7452 ms
+    # Batch 1 X Head 128 X Seqlen 24576 X Dim 64 (num_elem: 201326592, Q size_per_dev: 0.05 GB)
+    #     Average time for TK ring attention: 47.1947 ms
+    # Batch 1 X Head 128 X Seqlen 49152 X Dim 64 (num_elem: 402653184, Q size_per_dev: 0.09 GB)
+    #     Average time for TK ring attention: 166.0664 ms
+    # Batch 1 X Head 128 X Seqlen 98304 X Dim 64 (num_elem: 805306368, Q size_per_dev: 0.19 GB)
+    #     Average time for TK ring attention: 621.9198 ms
+    # Batch 1 X Head 128 X Seqlen 196608 X Dim 64 (num_elem: 1610612736, Q size_per_dev: 0.38 GB)
+    #     Average time for TK ring attention: 2425.7548 ms
+    # Batch 1 X Head 128 X Seqlen 393216 X Dim 64 (num_elem: 3221225472, Q size_per_dev: 0.75 GB)
+    #     Average time for TK ring attention: 9771.9243 ms
+
     run(NUM_DEVICES, B=B, H=16, N=N, D_h=D_h)
     run(NUM_DEVICES, B=B, H=32, N=N, D_h=D_h)
     run(NUM_DEVICES, B=B, H=64, N=N, D_h=D_h)
