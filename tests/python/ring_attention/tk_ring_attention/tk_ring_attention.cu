@@ -160,8 +160,6 @@ void blockwise_attn_ker(const __grid_constant__ fwd_pglobals<D> p_G, const __gri
             row_max(max_vec, att_block, max_vec);
             mul(att_block, att_block,    1.44269504089f*0.125f);
             mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
-            mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
-            mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             sub_row(att_block, att_block, max_vec_scaled);
             exp2(att_block, att_block);
             sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
