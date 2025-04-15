@@ -1,10 +1,12 @@
 from functools import cache, partial
+
 import jax
 import jax.numpy as jnp
 from jax.experimental.shard_map import shard_map
 from jax.sharding import PartitionSpec, NamedSharding
 import numpy as np
 import torch
+
 from original_ring_attention import ring_attention # original authors' public implementation
 from tk_ring_attention import pgl_tensor
 
