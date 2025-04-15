@@ -4,11 +4,12 @@ import torch
 from matmul import matmul
 from make_instructions import make_instructions
 import sys
+import time
 
 torch.manual_seed(1)
 
-M, K, N = 256, 1024, 256
-# M, K, N = 2048, 256, 2048
+M, K, N = 3072, 8192, 3072
+# M, K, N = 256, 8192, 256
 
 print("Starting test...")
 
@@ -27,7 +28,7 @@ sys.stdout.flush()
 # Create instruction and timing tensors
 instructions, timings = make_instructions(M, K, N)
 
-print("Instruction and timing tensors created")
+print(f"Instruction and timing tensors created, of shapes {instructions.shape} and {timings.shape}")
 
 # Run the matmul kernel
 matmul(instructions, timings, A, B, C)
@@ -35,6 +36,18 @@ matmul(instructions, timings, A, B, C)
 print("Kernel launched")
 
 torch.cuda.synchronize()
+
+print('Starting timing loop...')
+
+t0 = time.time()
+for i in range(5):
+    matmul(instructions, timings, A, B, C)
+torch.cuda.synchronize()
+t1 = time.time()
+time_per_iter = ((t1-t0)*1e6)/5
+print(f'Time per iter: {time_per_iter} us')
+print(f'TFLOP/s: {(2*M*N*K*1e-12)/(time_per_iter*1e-6)}')
+
 
 print("Test completed successfully!")
 

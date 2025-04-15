@@ -34,22 +34,24 @@ template<typename config, int PAGE_COUNT> __device__ static inline void try_assi
             int local_assignment_ring = (assignment_ring + assignment_index) % config::PAGE_RING_SIZE;
             assignment[local_assignment_ring] = laneid();
             expected_phase = 1-expected_phase; // flip expected phase.
-            if constexpr (is_mini_page) {
-                if(blockIdx.x == 0) printf(GREEN_TEXT "%d, mini page allocator assigning mini page %u to slot %u\n" RESET_TEXT, threadIdx.x, laneid(), local_assignment_ring);
-            } else {
-                if(blockIdx.x == 0) printf(GREEN_TEXT "%d, page allocator assigning page %u to slot %u\n" RESET_TEXT, threadIdx.x, laneid(), local_assignment_ring);
-            }
+            // if constexpr (is_mini_page) {
+            //     if(blockIdx.x == 0) printf(GREEN_TEXT "%d, mini page allocator assigning mini page %u to slot %u\n" RESET_TEXT, threadIdx.x, laneid(), local_assignment_ring);
+            // } else {
+            //     if(blockIdx.x == 0) printf(GREEN_TEXT "%d, page allocator assigning page %u to slot %u\n" RESET_TEXT, threadIdx.x, laneid(), local_assignment_ring);
+            // }
+            arrive(arrived[laneid()], config::NUM_CONSUMER_WARPS); // Flip the phase to 1 so we can't use it again until another thread has marked it.
         }
         asm volatile("bar.warp.sync %0;\n" :: "n"(membermask)); // need to sync so that the arrival on that semaphore is visible to all threads.
         asm volatile("fence.acq_rel.cta;\n");
+        // asm volatile("bar.warp.sync %0;\n" :: "n"(membermask)); // need to sync so that the arrival on that semaphore is visible to all threads.
         int num_pages_assigned = __popc(page_ballot);
         local_assignment_counter += num_pages_assigned;
         if(laneid() == 0) {
-            if constexpr (is_mini_page) {
-                if(blockIdx.x == 0) printf("%d, mini page allocator writing %u to assignment counter at %u\n", threadIdx.x, local_assignment_counter, assignment_counter);
-            } else {
-                if(blockIdx.x == 0) printf("%d, page allocator writing %u to assignment counter at %u\n", threadIdx.x, local_assignment_counter, assignment_counter);
-            }
+            // if constexpr (is_mini_page) {
+            //     if(blockIdx.x == 0) printf("%d, mini page allocator writing %u to assignment counter at %u\n", threadIdx.x, local_assignment_counter, assignment_counter);
+            // } else {
+            //     if(blockIdx.x == 0) printf("%d, page allocator writing %u to assignment counter at %u\n", threadIdx.x, local_assignment_counter, assignment_counter);
+            // }
             asm volatile("st.shared.u32 [%0], %1;\n" : : "r"(assignment_counter), "r"(local_assignment_counter) : "memory");
         }
     }
@@ -69,17 +71,19 @@ template<typename config, typename globals, int end_thread, typename... ops> __d
         constexpr int CLEANUP_POLL_INTERVAL = 20;
         for(int i = 0; i < CLEANUP_POLL_INTERVAL; i++) {
             if(MAX_PAGES == config::NUM_MINI_PAGES || laneid() < config::NUM_MINI_PAGES) {
-                try_assign<config, config::NUM_MINI_PAGES>(
-                    kvms,
-                    &kvms.mini_page_arrived[0],
-                    &kvms.mini_page_finished[0],
-                    kvms.mini_page_assignment,
-                    kvms.mini_page_ring(),
-                    kvms.mini_page_assignment_counter(),
-                    kvms.mini_page_iter,
-                    shift_mask,
-                    mini_page_phase
-                );
+                if(i == 0) {
+                    try_assign<config, config::NUM_MINI_PAGES>(
+                        kvms,
+                        &kvms.mini_page_arrived[0],
+                        &kvms.mini_page_finished[0],
+                        kvms.mini_page_assignment,
+                        kvms.mini_page_ring(),
+                        kvms.mini_page_assignment_counter(),
+                        kvms.mini_page_iter,
+                        shift_mask,
+                        mini_page_phase
+                    );
+                }
             }
             if(MAX_PAGES == config::NUM_PAGES || laneid() < config::NUM_PAGES) {
                 try_assign<config, config::NUM_PAGES>(

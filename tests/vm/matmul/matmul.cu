@@ -1,3 +1,12 @@
+#define RED_TEXT "\033[31m"
+#define GREEN_TEXT "\033[32m"
+#define YELLOW_TEXT "\033[33m"
+#define BLUE_TEXT "\033[34m"
+#define MAGENTA_TEXT "\033[35m"
+#define CYAN_TEXT "\033[36m"
+#define WHITE_TEXT "\033[37m"
+#define RESET_TEXT "\033[0m"
+
 #include "kittens.cuh"
 // #define KVM_DEBUG
 #include "vm/vm.cuh"
@@ -28,7 +37,7 @@ struct globals {
     int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
 };
 
-template<typename config=config> struct TestOp {
+template<typename config=config> struct MatmulOp {
     static constexpr int opcode = 1;
     struct parsed_instruction {
         int row, col, iters;
@@ -40,26 +49,49 @@ template<typename config=config> struct TestOp {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst = parse_instruction(g, s);
             s.advance_mini_page(1);
-            for(int i = 0; i < inst.iters; i++) {
-                #pragma unroll
-                for(int j = 0; j < 2; j++) {
-                    int a_page = s.get_page();
-                    st_fp8e4m3<128, 128> &a = s.pages[a_page].template as_st<fp8e4m3>();
-                    warp::tma::expect(s.page_arrived[a_page], a);
-                    warp::tma::load_async(a, g.A, {inst.row+j, i}, s.page_arrived[a_page]);
-                    warp::arrive(s.page_arrived[a_page], config::NUM_CONSUMER_WARPS-1);
+            // for(int i = 0; i < inst.iters; i++) {
+            //     #pragma unroll
+            //     for(int j = 0; j < 2; j++) {
+            //         int a_page = s.get_page();
+            //         st_fp8e4m3<128, 128> &a = s.pages[a_page].template as_st<fp8e4m3>();
+            //         warp::tma::expect(s.page_arrived[a_page], a);
+            //         warp::tma::load_async(a, g.A, {inst.row+j, i}, s.page_arrived[a_page]);
+            //         warp::arrive(s.page_arrived[a_page], config::NUM_CONSUMER_WARPS-1);
+            //         // if(laneid() == 0) printf(RED_TEXT "A PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, a_page, config::NUM_CONSUMER_WARPS-1);
+            //     }
+            //     #pragma unroll
+            //     for(int j = 0; j < 2; j++) {
+            //         int b_page = s.get_page();
+            //         st_fp8e4m3<128, 128> &b = s.pages[b_page].template as_st<fp8e4m3>();
+            //         warp::tma::expect(s.page_arrived[b_page], b);
+            //         warp::tma::load_async(b, g.B, {inst.col+j, i}, s.page_arrived[b_page]);
+            //         // warp::tma::load_async(b, g.B, {i, inst.col+j}, s.page_arrived[b_page]);
+            //         warp::arrive(s.page_arrived[b_page], config::NUM_CONSUMER_WARPS-1);
+            //         // if(laneid() == 0) printf(RED_TEXT "B PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, b_page, config::NUM_CONSUMER_WARPS-1);
+            //     }
+            // }
+            if(laneid() < 4) {
+                s.advance_page(laneid());
+                for(int i = 0; i < inst.iters; i++) {
+                    // printf(BLUE_TEXT "Loader %d requesting page for iter %d\n" RESET_TEXT, laneid(), i);
+                    int load_page = s.get_page();
+                    st_fp8e4m3<128, 128> &load_buffer = s.pages[load_page].template as_st<fp8e4m3>();
+                    tma::expect(s.page_arrived[load_page], load_buffer);
+                    if(laneid() < 2) { // load a
+                        // printf(RED_TEXT "Loader %d loading A page %d for iter %d\n" RESET_TEXT, laneid(), load_page, i);
+                        tma::load_async(load_buffer, g.A, {inst.row+laneid(), i}, s.page_arrived[load_page]);
+                    }
+                    else { // load b
+                        // printf(RED_TEXT "Loader %d loading B page %d for iter %d\n" RESET_TEXT, laneid(), load_page, i);
+                        tma::load_async(load_buffer, g.B, {inst.col+laneid()-2, i}, s.page_arrived[load_page]);
+                    }
+                    arrive(s.page_arrived[load_page], config::NUM_CONSUMER_WARPS-1);
+                    s.advance_page(4-1); // -1 for the successful get_page
                 }
-                #pragma unroll
-                for(int j = 0; j < 2; j++) {
-                    int b_page = s.get_page();
-                    st_fp8e4m3<128, 128> &b = s.pages[b_page].template as_st<fp8e4m3>();
-                    warp::tma::expect(s.page_arrived[b_page], b);
-                    warp::tma::load_async(b, g.B, {inst.col+j, i}, s.page_arrived[b_page]);
-                    // warp::tma::load_async(b, g.B, {i, inst.col+j}, s.page_arrived[b_page]);
-                    warp::arrive(s.page_arrived[b_page], config::NUM_CONSUMER_WARPS-1);
-                }
+                s.advance_page(4-laneid()); // Advance 4 pages for the stores, minus how many over the end we are.
             }
-            s.advance_page(4); // Advance 4 pages for the stores.
+            else s.advance_page(4*inst.iters+4);
+            warp::sync();
         }
     };
     struct launcher { // launches mma's
@@ -88,29 +120,33 @@ template<typename config=config> struct TestOp {
                 // printf("launcher lane %d, iter %d, pages received: %d, %d, %d, %d\n", laneid(), i, p[0], p[1], p[2], p[3]);
                 int active_mma_lane = (base_mma_lane + 4*i)%32;
                 if(laneid() < 4) {
+                    // printf(YELLOW_TEXT "mma LAUNCHER lane %d, iter %d, waiting for semaphore %d\n" RESET_TEXT, base_mma_lane, i, active_mma_lane);
                     wait(mma_sems[active_mma_lane], 1);
-                    // printf("mma launcher lane %d, iter %d, waiting for A page %d\n", base_mma_lane, i, a_page);
+                    // printf(YELLOW_TEXT "mma LAUNCHER lane %d, iter %d, waiting for A page %d\n" RESET_TEXT, base_mma_lane, i, a_page);
                     s.wait_page_arrived(a_page);
-                    // printf("mma launcher lane %d, iter %d, waiting for B page %d\n", base_mma_lane, i, b_page);
+                    // printf(YELLOW_TEXT "mma LAUNCHER lane %d, iter %d, waiting for B page %d\n" RESET_TEXT, base_mma_lane, i, b_page);
                     s.wait_page_arrived(b_page);
                     st_fp8e4m3<128, 128> &a = s.pages[a_page].template as_st<fp8e4m3>();
                     st_fp8e4m3<128, 128> &b = s.pages[b_page].template as_st<fp8e4m3>();
-                    // printf("mma launcher lane %d, iter %d, launching matmul into lane %d\n", base_mma_lane, i, active_mma_lane);
+                    // printf(BLUE_TEXT "mma LAUNCHER lane %d, iter %d, launching matmul into lane %d\n" RESET_TEXT, base_mma_lane, i, active_mma_lane);
                     if(i == 0) mm<transpose::N, transpose::T>(accumulator, a, b, mma_sems[active_mma_lane]);
                     else mma<transpose::N, transpose::T>(accumulator, a, b, mma_sems[active_mma_lane]);
                 }
                 else if(laneid() < 8) {
+                    // printf(GREEN_TEXT "mma RECEIVER lane %d, iter %d, waiting for semaphore %d\n" RESET_TEXT, base_mma_lane, i, active_mma_lane);
                     wait(mma_sems[active_mma_lane], 0);
-                    // printf("mma receiver lane %d, iter %d, active lane %d, page barriers %d, %d\n", base_mma_lane, i, active_mma_lane, a_page, b_page);
+                    // printf(MAGENTA_TEXT "mma RECEIVER lane %d, iter %d, active lane %d, page barriers %d, %d\n" RESET_TEXT, base_mma_lane, i, active_mma_lane, a_page, b_page);
                     arrive(mma_sems[active_mma_lane]);
-                    // Arrive on the relevant page barriers
                     arrive(s.page_finished[a_page], config::NUM_CONSUMER_WARPS/2);
+                    // printf(MAGENTA_TEXT "PAGE %d received %d arrivals from lane %d\n" RESET_TEXT, a_page, config::NUM_CONSUMER_WARPS/2, base_mma_lane);
                     arrive(s.page_finished[b_page], config::NUM_CONSUMER_WARPS/2);
+                    // printf(MAGENTA_TEXT "PAGE %d received %d arrivals from lane %d\n" RESET_TEXT, b_page, config::NUM_CONSUMER_WARPS/2, base_mma_lane);
                 }
             }
             else s.advance_page(4*inst.iters);
             __syncwarp();
             invalidate_semaphore(mma_sems[laneid()]); // Clean up minipage
+            __syncwarp();
             // Mark minipage as arrived.
             warp::arrive(s.mini_page_arrived[semaphore_page], config::NUM_CONSUMER_WARPS);
 
@@ -122,6 +158,7 @@ template<typename config=config> struct TestOp {
             parsed_instruction inst = parse_instruction(g, s);
             int minipage = s.get_mini_page();
             s.advance_page(inst.iters*4);
+            s.wait_mini_page_arrived(minipage);
             int cons_id = warpgroup::groupid();
             int store_page;
             for(int i = 0; i < 4; i++) {
@@ -129,9 +166,8 @@ template<typename config=config> struct TestOp {
                 if(cons_id == i) store_page = p;
             }
             st_fp8e4m3<128, 128> &store_buffer = s.pages[store_page].template as_st<fp8e4m3>();
-            s.wait_mini_page_arrived(minipage);
-            __syncwarp();
-            warp::arrive(s.mini_page_finished[minipage]);
+            warpgroup::sync(warpgroup::groupid());
+            warpgroup::arrive(s.mini_page_finished[minipage]);
             // Great, now we can start the store.
             auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(cons_id*128);
             rt_fl<32, 128> acc_rt;
@@ -147,8 +183,10 @@ template<typename config=config> struct TestOp {
         // Uses 4 full pages for outputs.
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst = parse_instruction(g, s);
-            s.advance_mini_page(1);
+            int minipage = s.get_mini_page();
             s.advance_page(inst.iters*4);
+            s.wait_mini_page_arrived(minipage);
+            warp::arrive(s.mini_page_finished[minipage], config::NUM_CONSUMER_WARPS*3/4);
             int output_pages[4];
             for(int i = 0; i < 4; i++) {
                 output_pages[i] = s.get_page();
@@ -173,7 +211,7 @@ template<typename config=config> struct TestOp {
 
 PYBIND11_MODULE(matmul, m) {
     m.doc() = "matmul python module";
-    kittens::py::bind_kernel<kernel<config, globals, TestOp<config>>>(m, "matmul",
+    kittens::py::bind_kernel<kernel<config, globals, MatmulOp<config>>>(m, "matmul",
         &globals::instructions,
         &globals::timings,
         &globals::A,

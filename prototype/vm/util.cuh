@@ -93,24 +93,20 @@ template<typename config> struct state {
     uint32_t _page_assignment_counter; // this is a shared memory address incremented as pages are assigned.
     __device__ inline uint32_t page_assignment_counter() const { return _page_assignment_counter; }
     __device__ inline uint32_t mini_page_assignment_counter() const { return _page_assignment_counter+sizeof(uint32_t); }
-    uint32_t expected_phase; // track what state we're expecting to see next time we check the semaphore of a page.
+    // uint32_t expected_phase; // track what state we're expecting to see next time we check the semaphore of a page.
 
     template<int distance=1> __device__ inline int get_page() {
         // page_iter += (distance-1);
         if constexpr (distance > 1) get_page<distance-1>(); // now need to be updating the expected phase.
         while(true) {
             int counter;
-            move<int>::lds(counter, page_assignment_counter());
-            if(counter >= page_iter) break;
+            asm volatile("ld.shared::cta.u32 %0, [%1];\n" : "=r"(counter) : "r"(page_assignment_counter()) : "memory");
+            if(counter > page_iter) break;
             __nanosleep(20); // poll until the next page is assigned.
         }
         asm volatile("fence.acq_rel.cta;\n");
-        int next_page;
-        next_page = page_assignment[page_ring()];
-        expected_phase ^= 1<<(next_page);
+        int next_page = page_assignment[page_ring()];
         page_iter++;
-        printf(YELLOW_TEXT "Thread %d: page_iter %d retrieved as page: %d\n" RESET_TEXT, threadIdx.x, page_iter, next_page);
-        // __nanosleep(1000);
         return next_page;
     }
     __device__ inline void advance_page(int distance=1) {
@@ -126,22 +122,18 @@ template<typename config> struct state {
             __nanosleep(20); // poll until the next mini page is assigned.
         }
         asm volatile("fence.acq_rel.cta;\n");
-        int next_mini_page;
-        next_mini_page = mini_page_assignment[mini_page_ring()];
-        expected_phase ^= 1<<(next_mini_page+16);
+        int next_mini_page = mini_page_assignment[mini_page_ring()];
         mini_page_iter++;
-        // printf("Thread %d: next mini page: %d\n", threadIdx.x, next_mini_page);
-        // __nanosleep(1000);
         return next_mini_page;
     }
     __device__ inline void advance_mini_page(int distance=1) {
         mini_page_iter += distance;
     }
     __device__ inline void wait_page_arrived(int id) {
-        wait(page_arrived[id], (expected_phase>>id)&1);
+        wait(page_arrived[id], 0);
     }
     __device__ inline void wait_mini_page_arrived(int id) {
-        wait(mini_page_arrived[id], (expected_phase>>(id+16))&1);
+        wait(mini_page_arrived[id], 0);
     }
 
     uint64_t start_clock;
