@@ -217,7 +217,6 @@ __global__ void dispatch_kernel(const __grid_constant__ globals g, int dev_idx) 
                     // Get the number of tokens that have currently been sent to the expert
                     int index = tokenIndex.data[dst_expert];
 
-                    // Experiment with just using store here??
                     send_group::store(g.xBufferOut[dev_idx], tok_dst_data, 
                         {dev_idx, dst_expert_idx, index, 0});
                     if (warpid() == 0 && laneid() == 0) {
@@ -440,6 +439,10 @@ void run_benchmark(int max_num_tokens, int num_experts, int experts_per_token, i
     
     int *d_dpx_data[WORLD_SIZE], *d_expertx_data[WORLD_SIZE], *d_out_num_tokens_per_expert[WORLD_SIZE],
         *d_indices[WORLD_SIZE], *d_num_tokens_per_dev[WORLD_SIZE];
+    
+    // Create CUDA events for timing
+    cudaEvent_t start_events[WORLD_SIZE], stop_events[WORLD_SIZE];
+    
     for (int dev_idx = 0; dev_idx < WORLD_SIZE; ++dev_idx) {
         CUDACHECK(cudaSetDevice(dev_idx));
         CUDACHECK(cudaMalloc(&d_dpx_data[dev_idx], max_num_tokens * HIDDEN_DIM_SIZE));
@@ -447,6 +450,10 @@ void run_benchmark(int max_num_tokens, int num_experts, int experts_per_token, i
         CUDACHECK(cudaMalloc(&d_out_num_tokens_per_expert[dev_idx], num_local_experts * sizeof(int)));
         CUDACHECK(cudaMalloc(&d_indices[dev_idx], max_num_tokens * experts_per_token * sizeof(int)));
         CUDACHECK(cudaMalloc(&d_num_tokens_per_dev[dev_idx], num_local_experts * WORLD_SIZE * sizeof(int)));
+        
+        // Create CUDA events with timing
+        CUDACHECK(cudaEventCreate(&start_events[dev_idx]));
+        CUDACHECK(cudaEventCreate(&stop_events[dev_idx]));
     }
 
     for (int dev_idx = 0; dev_idx < WORLD_SIZE; ++dev_idx) {
@@ -473,12 +480,11 @@ void run_benchmark(int max_num_tokens, int num_experts, int experts_per_token, i
     );
     dim3 dimGrid(numBlocks, 1, 1);
     dim3 dimBlock(NUM_WARPS * 32, 1, 1);
-    
-    int NUM_PROFILE_ITERS = 20; 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < NUM_PROFILE_ITERS; ++i) {
+
+    int NUM_WARMUP_ITERS = 5;
+    // Warmup iterations
+    for (int i = 0; i < NUM_WARMUP_ITERS; ++i) {
         club.execute([&](int dev_idx) {
-            printf("Running dispatch kernel on device %d\n", dev_idx);
             inner_run(d_dpx_data[dev_idx], d_expertx_data[dev_idx],
                 num_tokens_pgl, num_recv_pgl, x_buffer_pgl, d_out_num_tokens_per_expert[dev_idx], 
                 d_indices[dev_idx], d_num_tokens_per_dev[dev_idx], max_num_tokens, NUM_EXPERTS, 
@@ -486,12 +492,64 @@ void run_benchmark(int max_num_tokens, int num_experts, int experts_per_token, i
             CUDACHECK(cudaDeviceSynchronize());
         });
     }
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::micro> elapsed = end - start;
-    double avg_time = elapsed.count() / NUM_PROFILE_ITERS;
-    printf("Avg time for dispatch kernel: %f microseconds\n", avg_time);
-}
+    
+    int NUM_PROFILE_ITERS = 20;
+    float total_time = 0.0f;
+    
+    // Timing iterations
+    for (int i = 0; i < NUM_PROFILE_ITERS; ++i) {
+        club.execute([&](int dev_idx) {
+            CUDACHECK(cudaEventRecord(start_events[dev_idx], 0));
+            inner_run(d_dpx_data[dev_idx], d_expertx_data[dev_idx],
+                num_tokens_pgl, num_recv_pgl, x_buffer_pgl, d_out_num_tokens_per_expert[dev_idx], 
+                d_indices[dev_idx], d_num_tokens_per_dev[dev_idx], max_num_tokens, NUM_EXPERTS, 
+                experts_per_token, dev_idx, dimGrid, dimBlock);                
+            CUDACHECK(cudaEventRecord(stop_events[dev_idx], 0));
+            
+            CUDACHECK(cudaDeviceSynchronize());
+        });
+        
+        float elapsed_time = 0.0f;
+        for (int dev_idx = 0; dev_idx < WORLD_SIZE; ++dev_idx) {
+            CUDACHECK(cudaSetDevice(dev_idx));
+            float ms = 0.0f;
+            CUDACHECK(cudaEventElapsedTime(&ms, start_events[dev_idx], stop_events[dev_idx]));
+            elapsed_time += ms;
+        }
+        elapsed_time /= WORLD_SIZE;
+        total_time += elapsed_time;
+    }
+    
+    // Calculate average kernel execution time
+    float avg_time = total_time / NUM_PROFILE_ITERS;
+    printf("Avg kernel execution time: %f microseconds\n", avg_time * 1000.0f);
 
+    // Cleanup
+    for (int dev_idx = 0; dev_idx < WORLD_SIZE; ++dev_idx) {
+        CUDACHECK(cudaSetDevice(dev_idx));
+        CUDACHECK(cudaFree(d_dpx_data[dev_idx]));
+        CUDACHECK(cudaFree(d_expertx_data[dev_idx]));
+        CUDACHECK(cudaFree(d_out_num_tokens_per_expert[dev_idx]));
+        CUDACHECK(cudaFree(d_indices[dev_idx]));
+        CUDACHECK(cudaFree(d_num_tokens_per_dev[dev_idx]));
+        
+        // Destroy CUDA events
+        CUDACHECK(cudaEventDestroy(start_events[dev_idx]));
+        CUDACHECK(cudaEventDestroy(stop_events[dev_idx]));
+    }
+    for (int dev_idx = 0; dev_idx < WORLD_SIZE; ++dev_idx) {
+        pglCudaFree(dev_idx, device_num_tokens_ptrs[dev_idx], num_tokens_size);
+        pglCudaFree(dev_idx, device_num_recv_ptrs[dev_idx], num_recv_size);
+        pglCudaFree(dev_idx, device_num_x_buffer_ptrs[dev_idx], num_x_buffer_size);
+    }
+    delete[] device_num_tokens_ptrs;
+    delete[] device_num_recv_ptrs;
+    delete[] device_num_x_buffer_ptrs;
+
+    pglFree(num_tokens_pgl);
+    pglFree(num_recv_pgl);
+    pglFree(x_buffer_pgl);
+}
 int main() {
     // max_num_tokens, num_experts, num experts per token, token dim, block size (hidden dim scale size)
     // run_benchmark(128, 16, 8, 7168, 128);
