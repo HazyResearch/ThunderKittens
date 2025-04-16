@@ -17,8 +17,11 @@ struct globals {
 
 template<typename config=config> struct TestOp {
     static constexpr int opcode = 1;
-    static __device__ inline int num_pages(const globals &g, state<config> &s) { return 0; }
-    static __device__ inline int num_mini_pages(const globals &g, state<config> &s) { return 0; }
+    struct release_lid {
+        static __device__ int run(const globals &g, typename config::instruction_t &instruction, int &query) {
+            return query;
+        }
+    };
     struct launcher {
         static __device__ void run(const globals &g, state<config> &s) {}
     };
@@ -38,21 +41,27 @@ int main() {
     vm::print_config<config>();
 
     // Initialize a vector of one 1 and 31 0's
-    int instruction[config::INSTRUCTION_WIDTH] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    constexpr int num_instructions = 200;
+    int instruction[num_instructions][config::INSTRUCTION_WIDTH];
+    for(int i = 0; i < num_instructions; i++) {
+        for(int j = 0; j < config::INSTRUCTION_WIDTH; j++) {
+            instruction[i][j] = j==0;
+        }
+    }
 
     // Create a device array for the instruction
     int *d_instruction;
-    cudaMalloc(&d_instruction, config::INSTRUCTION_WIDTH * sizeof(int));
-    cudaMemcpy(d_instruction, instruction, config::INSTRUCTION_WIDTH * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_instruction, num_instructions * config::INSTRUCTION_WIDTH * sizeof(int));
+    cudaMemcpy(d_instruction, instruction, num_instructions * config::INSTRUCTION_WIDTH * sizeof(int), cudaMemcpyHostToDevice);
 
     // Create a device array for timing data
     int *d_timing;
-    cudaMalloc(&d_timing, config::TIMING_WIDTH * sizeof(int));
-    cudaMemset(d_timing, 0, config::TIMING_WIDTH * sizeof(int));
+    cudaMalloc(&d_timing, num_instructions * config::TIMING_WIDTH * sizeof(int));
+    cudaMemset(d_timing, 0, num_instructions * config::TIMING_WIDTH * sizeof(int));
     
     // Use the device array
-    typename globals::instruction_layout instructions{d_instruction, nullptr, 1, 1, nullptr};
-    typename globals::timing_layout timings{d_timing, nullptr, 1, 1, nullptr};
+    typename globals::instruction_layout instructions{d_instruction, nullptr, 1, num_instructions, nullptr};
+    typename globals::timing_layout timings{d_timing, nullptr, 1, num_instructions, nullptr};
     globals g{instructions, timings};
     ::kittens::prototype::vm::kernel<config, globals, TestOp<config>><<<1, config::NUM_THREADS>>>(g);
     

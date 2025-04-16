@@ -45,52 +45,40 @@ template<typename config=config> struct MatmulOp {
     static __device__ inline parsed_instruction parse_instruction(const globals &g, state<config> &s) {
         return parsed_instruction{s.instruction()[1], s.instruction()[2], s.instruction()[3]};
     }
+    struct release_lid {
+        static __device__ int run(const globals &g, typename config::instruction_t &instruction, int &query) {
+            return query;
+        }
+    }
+    struct scratch_block {
+        semaphore inputs_arrived[3], inputs_finished[3];
+        semaphore outputs_arrived;
+    };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst = parse_instruction(g, s);
             s.advance_mini_page(1);
-            // for(int i = 0; i < inst.iters; i++) {
-            //     #pragma unroll
-            //     for(int j = 0; j < 2; j++) {
-            //         int a_page = s.get_page();
-            //         st_fp8e4m3<128, 128> &a = s.pages[a_page].template as_st<fp8e4m3>();
-            //         warp::tma::expect(s.page_arrived[a_page], a);
-            //         warp::tma::load_async(a, g.A, {inst.row+j, i}, s.page_arrived[a_page]);
-            //         warp::arrive(s.page_arrived[a_page], config::NUM_CONSUMER_WARPS-1);
-            //         // if(laneid() == 0) printf(RED_TEXT "A PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, a_page, config::NUM_CONSUMER_WARPS-1);
-            //     }
-            //     #pragma unroll
-            //     for(int j = 0; j < 2; j++) {
-            //         int b_page = s.get_page();
-            //         st_fp8e4m3<128, 128> &b = s.pages[b_page].template as_st<fp8e4m3>();
-            //         warp::tma::expect(s.page_arrived[b_page], b);
-            //         warp::tma::load_async(b, g.B, {inst.col+j, i}, s.page_arrived[b_page]);
-            //         // warp::tma::load_async(b, g.B, {i, inst.col+j}, s.page_arrived[b_page]);
-            //         warp::arrive(s.page_arrived[b_page], config::NUM_CONSUMER_WARPS-1);
-            //         // if(laneid() == 0) printf(RED_TEXT "B PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, b_page, config::NUM_CONSUMER_WARPS-1);
-            //     }
-            // }
-            if(laneid() < 4) {
-                s.advance_page(laneid());
-                for(int i = 0; i < inst.iters; i++) {
-                    // printf(BLUE_TEXT "Loader %d requesting page for iter %d\n" RESET_TEXT, laneid(), i);
-                    int load_page = s.get_page();
-                    st_fp8e4m3<128, 128> &load_buffer = s.pages[load_page].template as_st<fp8e4m3>();
-                    tma::expect(s.page_arrived[load_page], load_buffer);
-                    if(laneid() < 2) { // load a
-                        // printf(RED_TEXT "Loader %d loading A page %d for iter %d\n" RESET_TEXT, laneid(), load_page, i);
-                        tma::load_async(load_buffer, g.A, {inst.row+laneid(), i}, s.page_arrived[load_page]);
-                    }
-                    else { // load b
-                        // printf(RED_TEXT "Loader %d loading B page %d for iter %d\n" RESET_TEXT, laneid(), load_page, i);
-                        tma::load_async(load_buffer, g.B, {inst.col+laneid()-2, i}, s.page_arrived[load_page]);
-                    }
-                    arrive(s.page_arrived[load_page], config::NUM_CONSUMER_WARPS-1);
-                    s.advance_page(4-1); // -1 for the successful get_page
+            for(int i = 0; i < inst.iters; i++) {
+                #pragma unroll
+                for(int j = 0; j < 2; j++) {
+                    int a_page = s.get_page();
+                    st_fp8e4m3<128, 128> &a = s.pages[a_page].template as_st<fp8e4m3>();
+                    warp::tma::expect(s.page_arrived[a_page], a);
+                    warp::tma::load_async(a, g.A, {inst.row+j, i}, s.page_arrived[a_page]);
+                    warp::arrive(s.page_arrived[a_page], config::NUM_CONSUMER_WARPS-1);
+                    // if(laneid() == 0) printf(RED_TEXT "A PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, a_page, config::NUM_CONSUMER_WARPS-1);
                 }
-                s.advance_page(4-laneid()); // Advance 4 pages for the stores, minus how many over the end we are.
+                #pragma unroll
+                for(int j = 0; j < 2; j++) {
+                    int b_page = s.get_page();
+                    st_fp8e4m3<128, 128> &b = s.pages[b_page].template as_st<fp8e4m3>();
+                    warp::tma::expect(s.page_arrived[b_page], b);
+                    warp::tma::load_async(b, g.B, {inst.col+j, i}, s.page_arrived[b_page]);
+                    // warp::tma::load_async(b, g.B, {i, inst.col+j}, s.page_arrived[b_page]);
+                    warp::arrive(s.page_arrived[b_page], config::NUM_CONSUMER_WARPS-1);
+                    // if(laneid() == 0) printf(RED_TEXT "B PAGE %d received %d arrivals + expect from loader\n" RESET_TEXT, b_page, config::NUM_CONSUMER_WARPS-1);
+                }
             }
-            else s.advance_page(4*inst.iters+4);
             warp::sync();
         }
     };

@@ -21,16 +21,16 @@ struct default_config {
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
     static constexpr int PAGE_SIZE = 16384;
     static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
-    static constexpr int MINI_PAGE_SIZE = 1024;
-    static constexpr int NUM_MINI_PAGES = (DYNAMIC_SHARED_MEMORY % PAGE_SIZE) / MINI_PAGE_SIZE;
-    static constexpr int PAGE_RING_SIZE = 32;
+    static constexpr int SCRATCH_BYTES = 4096;
 
     // Instruction pipeline
     static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
     static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
+    using instruction_t = int[INSTRUCTION_WIDTH];
 
     // Timing info
     static constexpr int TIMING_WIDTH = 128;
+    using timing_t = int[TIMING_WIDTH];
 };
 template<typename config> using instruction_layout = gl<int, 1, -1, -1, config::INSTRUCTION_WIDTH>;
 template<typename config> using timing_layout      = gl<int, 1, -1, -1, config::TIMING_WIDTH>;
@@ -47,9 +47,7 @@ template<typename config> void print_config() {
     std::cout << "STATIC_SHARED_MEMORY: " << config::STATIC_SHARED_MEMORY << std::endl;
     std::cout << "PAGE_SIZE: " << config::PAGE_SIZE << std::endl;
     std::cout << "NUM_PAGES: " << config::NUM_PAGES << std::endl;
-    std::cout << "MINI_PAGE_SIZE: " << config::MINI_PAGE_SIZE << std::endl;
-    std::cout << "NUM_MINI_PAGES: " << config::NUM_MINI_PAGES << std::endl;
-    std::cout << "PAGE_RING_SIZE: " << config::PAGE_RING_SIZE << std::endl;
+    std::cout << "SCRATCH_BYTES: " << config::SCRATCH_BYTES << std::endl;
     std::cout << "INSTRUCTION_PIPELINE_STAGES: " << config::INSTRUCTION_PIPELINE_STAGES << std::endl;
     std::cout << "INSTRUCTION_WIDTH: " << config::INSTRUCTION_WIDTH << std::endl;
     std::cout << "TIMING_WIDTH: " << config::TIMING_WIDTH << std::endl;
