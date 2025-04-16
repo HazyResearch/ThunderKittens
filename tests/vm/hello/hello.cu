@@ -17,8 +17,11 @@ struct globals {
 
 template<typename config=config> struct TestOp {
     static constexpr int opcode = 1;
-    struct release_lid {
-        static __device__ int run(const globals &g, typename config::instruction_t &instruction, int &query) {
+    struct controller {
+        static __device__ int init_semaphores(const globals &g, state<config> &s) {
+            return 0;
+        }
+        static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
             return query;
         }
     };

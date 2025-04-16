@@ -23,6 +23,9 @@ struct default_config {
     static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
     static constexpr int SCRATCH_BYTES = 4096;
 
+    // How many semaphores are available for dynamic use?
+    static constexpr int DYNAMIC_SEMAPHORES = 32;
+
     // Instruction pipeline
     static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
     static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
@@ -48,6 +51,7 @@ template<typename config> void print_config() {
     std::cout << "PAGE_SIZE: " << config::PAGE_SIZE << std::endl;
     std::cout << "NUM_PAGES: " << config::NUM_PAGES << std::endl;
     std::cout << "SCRATCH_BYTES: " << config::SCRATCH_BYTES << std::endl;
+    std::cout << "DYNAMIC_SEMAPHORES: " << config::DYNAMIC_SEMAPHORES << std::endl;
     std::cout << "INSTRUCTION_PIPELINE_STAGES: " << config::INSTRUCTION_PIPELINE_STAGES << std::endl;
     std::cout << "INSTRUCTION_WIDTH: " << config::INSTRUCTION_WIDTH << std::endl;
     std::cout << "TIMING_WIDTH: " << config::TIMING_WIDTH << std::endl;

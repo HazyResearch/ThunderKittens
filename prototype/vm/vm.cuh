@@ -25,7 +25,9 @@ __global__ void kernel(const __grid_constant__ globals g) {
     __shared__ alignas(128) instruction_state_t<config> instruction_state[config::INSTRUCTION_PIPELINE_STAGES];
     __shared__ kittens::semaphore page_finished[config::NUM_PAGES],
                                   instruction_arrived[config::INSTRUCTION_PIPELINE_STAGES],
-                                  instruction_finished[config::INSTRUCTION_PIPELINE_STAGES];
+                                  instruction_finished[config::INSTRUCTION_PIPELINE_STAGES],
+                                  tensor_finished,
+                                  semaphores_ready;
     extern __shared__ int __shm[];
     void *aligned_shm_addr = (void*)((1023 + (uint64_t)&__shm[0]) & ~(uint64_t)1023);
     typename state<config>::page_array_t &pages = *reinterpret_cast<typename state<config>::page_array_t*>(aligned_shm_addr);
@@ -42,6 +44,8 @@ __global__ void kernel(const __grid_constant__ globals g) {
         { /* ... */ },
         pages,
         page_finished,
+        tensor_finished,
+        semaphores_ready,
         (uint64_t)clock64(),
         tensor_alloc
     }; // kittens virtual machine state
@@ -60,10 +64,16 @@ __global__ void kernel(const __grid_constant__ globals g) {
     
     if(threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES) {
         init_semaphore(instruction_arrived[threadIdx.x], 3); // One arrival for instruction arriving, one for timing writeout finishing.
-        init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS-1); // All but the controller warp arrive here.
+        init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS); // All warps but the controller warp arrive here, and the semaphore initializer thread also arrives here.
     }
     if(threadIdx.x < config::NUM_PAGES) {
         init_semaphore(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
+        arrive(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Flip to state 0, to mark that it starts as available.
+    }
+    if(threadIdx.x == 0) {
+        init_semaphore(tensor_finished, config::NUM_CONSUMER_WARPS);
+        arrive(tensor_finished, config::NUM_CONSUMER_WARPS); // Flip to state 0, to mark that it starts as available.
+        init_semaphore(semaphores_ready, 1);
     }
 
     if(config::CLUSTER_BLOCKS == 1) group<config::NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
