@@ -210,8 +210,27 @@ __global__ __launch_bounds__(NUM_WARPS * 32, 1) void dispatchKernel(
       // 
       const uint32_t srcDpGroup = expertAndGroup % numDPGroups; // srcDpGroup = 0
       const uint32_t srcLocalExpert = expertAndGroup / numDPGroups; // srcLocalExpert = expertAndGroup / 1
-      const size_t slot = srcLocalExpert * numDPGroups + srcDpGroup; // slot = expertAndGroup * 8
+      const size_t slot = srcLocalExpert * numDPGroups + srcDpGroup; // slot = expertAndGroup * 1
 
+      /*
+      
+      Every device is sending over amount of tokens from local device that are going to specific expert
+
+      Each device has 32 local experts 
+      
+      numTokensBuffer is just global memory on device that can be written to from another device: 
+      
+      Assuming nvshmemx_signal_op(dstCount, numTokensPerExpert + 1, NVSHMEM_SIGNAL_SET, dstRank) is: 
+          - is sending to numTokensBuffer on device dstRank numTokensPerExpert + 1 
+      
+      Device then receives number and ADDS it to device memory "outNumTokensPerExpert"
+          - How does this work for multiple devices sending to same expert on same device? 
+          - This while loop is called 
+
+      in DO_RECV, looping through 32 local experts and ensuring that all of them have been zerod out 
+      
+      
+      */
       // Fetch the token count per DP, which is non-zero to indicate receipt.
       // Afterwards, wait for exactly that many tokens to be sent to us.
       nvshmem_uint64_wait_until(&numTokensBuffer[slot], NVSHMEM_CMP_NE, 0);
