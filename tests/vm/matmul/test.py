@@ -1,6 +1,6 @@
 import torch
 from matmul import matmul
-from make_instructions import make_instructions, make_instructions_1sm
+from make_instructions import make_instructions
 import sys
 import time
 

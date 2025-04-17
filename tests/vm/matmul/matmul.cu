@@ -78,7 +78,7 @@ template<typename config=config> struct MatmulOp {
                 init_semaphore(outputs_arrived(s, i), 1); // outputs arrived.
                 init_semaphore(outputs_shared(s, i), 1); // outputs shared.
             }
-            s.record(1);
+            // s.record(1);
             // printf(BLUE_TEXT "Controller semaphores initialized for instruction %d\n" RESET_TEXT, s.instruction_index);
             return 2*PIPELINE_STAGES + 8;
         }
@@ -89,7 +89,7 @@ template<typename config=config> struct MatmulOp {
             uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
             int pipeline_stage = 0;
             for(int i = 0; i < inst.iters; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
-                if(laneid() == 0 && i < 48) s.record(16+i);
+                // if(laneid() == 0 && i < 48) s.record(16+i);
                 wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
                 warp::tma::expect_bytes(inputs_arrived(s, pipeline_stage), 128*128*4);
                 #pragma unroll
@@ -121,20 +121,34 @@ template<typename config=config> struct MatmulOp {
             parsed_instruction inst = parse_instruction(g, s);
             s.wait_tensor_ready();
             uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
-            for(int i = 0; i < inst.iters; i++) {
-                int pipeline_stage = i%PIPELINE_STAGES;
+            int pipeline_stage = 0;
+            wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
+            // if(laneid() == 0) s.record(72);
+            if(laneid() < 4) {
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(laneid()*128);
+                st_fp8e4m3<128, 128> &a = s.pages[get_a_page(s, pipeline_stage, laneid()/2)].template as_st<fp8e4m3>();
+                st_fp8e4m3<128, 128> &b = s.pages[get_b_page(s, pipeline_stage, laneid()%2)].template as_st<fp8e4m3>();
+                mm<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
+            }
+            update_phasebit<0>(semaphore_bitfield, pipeline_stage);
+            pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage);
+            for(int i = 1; i < inst.iters-1; i++, update_phasebit<0>(semaphore_bitfield, pipeline_stage), pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
                 wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
-                if(laneid() == 0 && i < 48) s.record(72+i);
-                update_phasebit<0>(semaphore_bitfield, pipeline_stage);
+                // if(laneid() == 0 && i < 48) s.record(72+i);
                 if(laneid() < 4) {
                     auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(laneid()*128);
                     st_fp8e4m3<128, 128> &a = s.pages[get_a_page(s, pipeline_stage, laneid()/2)].template as_st<fp8e4m3>();
                     st_fp8e4m3<128, 128> &b = s.pages[get_b_page(s, pipeline_stage, laneid()%2)].template as_st<fp8e4m3>();
-                    if     (i == 0)            mm <transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
-                    else if(i == inst.iters-1) mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
-                    else                       mma<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
+                    mma<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
                 }
-                warp::sync();
+            }
+            wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
+            // if(laneid() == 0 && inst.iters <= 48) s.record(72+inst.iters-1);
+            if(laneid() < 4) {
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(laneid()*128);
+                st_fp8e4m3<128, 128> &a = s.pages[get_a_page(s, pipeline_stage, laneid()/2)].template as_st<fp8e4m3>();
+                st_fp8e4m3<128, 128> &b = s.pages[get_b_page(s, pipeline_stage, laneid()%2)].template as_st<fp8e4m3>();
+                mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
             }
             warp::sync();
         }
@@ -144,7 +158,19 @@ template<typename config=config> struct MatmulOp {
             parsed_instruction inst = parse_instruction(g, s);
             int store_page = warpgroup::groupid();
             wait(outputs_arrived(s, store_page), 0);
-            if(group<16>::laneid() == 0) s.record(125);
+            // uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&outputs_arrived(s, store_page)));
+            // asm volatile (
+            //     "{\n"
+            //     ".reg .pred                P1;\n"
+            //     "LAB_WAIT:\n"
+            //     "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;\n"
+            //     "@P1                       bra.uni DONE;\n"
+            //     "bra.uni                   LAB_WAIT;\n"
+            //     "DONE:\n"
+            //     "}\n"
+            //     :: "r"(mbar_ptr), "n"(0), "n"(500) // suspend time hint, in nanoseconds
+            // );
+            // if(group<16>::laneid() == 0) s.record(125);
             if(warpid() >= 4 && warpid() < config::NUM_PAGES) {
                 warp::arrive(s.page_finished[s.pid(warpid())], config::NUM_CONSUMER_WARPS);
             }
@@ -166,7 +192,7 @@ template<typename config=config> struct MatmulOp {
         // Uses 4 full pages for outputs.
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst = parse_instruction(g, s);
-            if(laneid() == 0) s.record(126);
+            // if(laneid() == 0) s.record(126);
             int r = laneid()/2, c = laneid()%2;
             if(laneid() < 4) {
                 wait(outputs_shared(s, laneid()), 0);
@@ -177,7 +203,7 @@ template<typename config=config> struct MatmulOp {
                 arrive(s.page_finished[page], config::NUM_CONSUMER_WARPS);
             }
             warp::sync();
-            if(laneid() == 0) s.record(127);
+            // if(laneid() == 0) s.record(127);
         }
     };
 };
