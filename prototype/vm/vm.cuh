@@ -20,7 +20,7 @@ __launch_bounds__(config::NUM_THREADS, 1)
 __cluster_dims__(config::CLUSTER_BLOCKS)
 __global__ void kernel(const __grid_constant__ globals g) {
 #ifdef KVM_DEBUG
-    if(threadIdx.x == 0) printf("Kernel launched\n"); group<config::NUM_WARPS>::sync(15);
+    if(threadIdx.x == 0) printf("Thread %d: Kernel launched\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
 #endif
     __shared__ alignas(128) instruction_state_t<config> instruction_state[config::INSTRUCTION_PIPELINE_STAGES];
     __shared__ kittens::semaphore page_finished[config::NUM_PAGES],
@@ -34,9 +34,9 @@ __global__ void kernel(const __grid_constant__ globals g) {
     typename state<config>::tensor_allocator_t tensor_alloc{};
 
 #ifdef KVM_DEBUG
-    if(threadIdx.x == 0) printf("Pre-KVMS creation\n"); group<config::NUM_WARPS>::sync(15);
+    if(threadIdx.x == 0) printf("Thread %d: Pre-KVMS creation\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
 #endif
-
+    uint64_t start_time = (uint64_t)clock64();
     state<config> kvms {
         instruction_state,
         instruction_arrived, instruction_finished,
@@ -46,12 +46,12 @@ __global__ void kernel(const __grid_constant__ globals g) {
         page_finished,
         tensor_finished,
         semaphores_ready,
-        (uint64_t)clock64(),
+        start_time,
         tensor_alloc
     }; // kittens virtual machine state
 
 #ifdef KVM_DEBUG
-    if(threadIdx.x == 0) printf("Created KVMS\n"); group<config::NUM_WARPS>::sync(15);
+    if(threadIdx.x == 0) printf("Thread %d: Created KVMS\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
 #endif
 
     // Zero initial timings memory.
@@ -76,7 +76,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
         init_semaphore(semaphores_ready, 1);
     }
 
-    if(config::CLUSTER_BLOCKS == 1) group<config::NUM_WARPS>::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
+    if(config::CLUSTER_BLOCKS == 1) everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
     else everyone::tma::cluster::sync();
 
 #ifdef KVM_DEBUG
@@ -112,7 +112,12 @@ __global__ void kernel(const __grid_constant__ globals g) {
 #endif
 
     if(config::CLUSTER_BLOCKS > 1) everyone::tma::cluster::sync();
-    else group<config::NUM_WARPS>::sync(15);
+    else everyone::sync(15);
+
+#ifdef KVM_DEBUG
+    uint64_t end_time = (uint64_t)clock64();
+    if(threadIdx.x == 0) printf("Overall VM execution time: %lu\n", end_time - start_time);
+#endif
 }
 
 

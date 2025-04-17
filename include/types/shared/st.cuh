@@ -337,7 +337,6 @@ __device__ inline void print(const ST& tile) {
         }
         printf("\n");
     }
-    __syncwarp(); // Ensure warp stays in sync
 }
 
 }

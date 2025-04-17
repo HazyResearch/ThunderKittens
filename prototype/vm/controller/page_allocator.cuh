@@ -23,7 +23,6 @@ template<typename config, typename globals, typename... ops> __device__ void inl
     constexpr uint32_t membermask = 0xFFFFFFFF >> (32-config::NUM_PAGES);
     int num_iters = g.instructions.rows();
     uint32_t semaphore_bitfield = 0xFFFF0000;
-    int last_num_semaphores = 0;
     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
          kvms.instruction_index < num_iters;
          kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring)) {
