@@ -67,7 +67,9 @@ template<typename config=config> struct MatmulOp {
     
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
-            return query;
+            int ret_order[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+            // int ret_order[13] = {12, 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3};
+            return ret_order[query];
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s) {
             for(int i = 0; i < PIPELINE_STAGES; i++) {
