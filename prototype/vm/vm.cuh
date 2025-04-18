@@ -19,6 +19,7 @@ template<typename config, typename globals, typename... ops>
 __launch_bounds__(config::NUM_THREADS, 1)
 __cluster_dims__(config::CLUSTER_BLOCKS)
 __global__ void kernel(const __grid_constant__ globals g) {
+    uint64_t start_time = (uint64_t)clock64();
 #ifdef KVM_DEBUG
     if(threadIdx.x == 0) printf("Thread %d: Kernel launched\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
 #endif
@@ -36,7 +37,6 @@ __global__ void kernel(const __grid_constant__ globals g) {
 #ifdef KVM_DEBUG
     if(threadIdx.x == 0) printf("Thread %d: Pre-KVMS creation\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
 #endif
-    uint64_t start_time = (uint64_t)clock64();
     state<config> kvms {
         instruction_state,
         instruction_arrived, instruction_finished,

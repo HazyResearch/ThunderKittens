@@ -5,7 +5,7 @@
 #include "../util.cuh"
 #include "instruction_fetch.cuh"
 #include "timings_store.cuh"
-#include "semaphore_initializer.cuh"
+#include "semaphore_constructor.cuh"
 #include "page_allocator.cuh"
 
 namespace kittens {
@@ -24,7 +24,7 @@ template<typename config, typename globals, typename... ops> __device__ void mai
 #ifdef KVM_DEBUG
         printf("Thread %d: starting semaphore initializer loop\n", threadIdx.x);
 #endif
-        semaphore_initializer_loop<config, globals, ops...>(g, kvms);
+        semaphore_constructor_loop<config, globals, ops...>(g, kvms);
     } else if(lane == 30) {
 #ifdef KVM_DEBUG
         printf("Thread %d: starting timings store loop\n", threadIdx.x);
