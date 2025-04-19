@@ -52,6 +52,12 @@ class Globals:
     hidden_size: int
     intermediate_size: int
 
+    # max sizes
+    max_attn_partials: int
+    max_barriers: int
+    max_instructions: int
+    max_timings: int
+
 
 @dataclass
 class Instruction:
@@ -100,7 +106,7 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
 @dataclass
 class PartialAttention(Instruction):
     layer_idx: int
-    head_idx: int
+    kv_head_idx: int
     num_partials: int
     partial_idx: int
 
@@ -116,6 +122,7 @@ class AttentionReduction(Instruction):
     # the original number of attention partitions
     num_partials: int
     is_terminal: bool
+    output_partial_idx: int
     # TODO: make sure reduction_list can't go beyond instruction
     reduction_list: list[int]
 

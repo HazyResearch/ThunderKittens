@@ -3,11 +3,6 @@ import math
 import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange
-from torch import Tensor
-from transformers.models.llama.modeling_llama import (
-    apply_rotary_pos_emb,
-)
-
 from kvm_runner.instructions import (
     AttentionReduction,
     DownProjResidual,
@@ -22,6 +17,10 @@ from kvm_runner.instructions import (
 from kvm_runner.llama import BatchState, LlamaForCausalLM
 from kvm_runner.scheduler import PrintInfo, schedule_model
 from kvm_runner.utils import trepr
+from torch import Tensor
+from transformers.models.llama.modeling_llama import (
+    apply_rotary_pos_emb,
+)
 
 
 def get_start_end(block_size: int, block_idx: int):
@@ -161,10 +160,7 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     kv_block_size = globals.attn_kv_block_size
     seq_len = globals.pos_id + 1
     layer_idx = instruction.layer_idx
-    head_idx = instruction.head_idx
-
-    gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
-    kv_head_idx = head_idx // gqa_ratio
+    kv_head_idx = instruction.kv_head_idx
 
     total_blocks = math.ceil(seq_len / kv_block_size)
     blocks_per_partial = math.ceil(total_blocks / instruction.num_partials)
@@ -178,9 +174,16 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     k = globals.k_cache[layer_idx, start_token:end_token, kv_head_idx]
     v = globals.v_cache[layer_idx, start_token:end_token, kv_head_idx]
 
-    q = globals.post_ln_rope_q.view(globals.num_attention_heads, -1)[head_idx]
+    gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
 
-    qk = einsum(q.float(), k.float(), "i, k i -> k")
+    head_start = kv_head_idx * gqa_ratio
+    head_end = head_start + gqa_ratio
+
+    q = globals.post_ln_rope_q.view(globals.num_attention_heads, -1)[
+        head_start:head_end
+    ]
+
+    qk = einsum(q.float(), k.float(), "h i, k i -> h k")
     scaled_qk = qk * globals.softmax_temp
 
     # casting the output of the softmax to 16-bit causes small numerical differences
@@ -188,34 +191,23 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
 
     lse = torch.logsumexp(scaled_qk, dim=-1)
 
-    out = einsum(softmax.float(), v.float(), "k, k o -> o")
+    out = einsum(softmax.float(), v.float(), "h k, k o -> h o")
 
-    scratch_slot = (
-        instruction.head_idx * instruction.num_partials + instruction.partial_idx
-    )
-
-    globals.attn_lse_intermediates[scratch_slot] = lse
-    globals.attn_out_intermediates[scratch_slot] = out
-
-    # if globals.pos_id == 32 and instruction.head_idx == 0:
-    #     breakpoint()
+    globals.attn_lse_intermediates[head_start:head_end, instruction.partial_idx] = lse
+    globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = out
 
 
 def attention_reduction(globals: Globals, instruction: AttentionReduction):
     head_idx = instruction.head_idx
 
-    start_scratch_slot = head_idx * instruction.num_partials
-    indices_to_reduce = (
-        torch.tensor(
-            instruction.reduction_list,
-            dtype=torch.long,
-            device=globals.hidden_states.device,
-        )
-        + start_scratch_slot
+    indices_to_reduce = torch.tensor(
+        instruction.reduction_list,
+        dtype=torch.long,
+        device=globals.hidden_states.device,
     )
 
-    lses = globals.attn_lse_intermediates[indices_to_reduce]
-    outs = globals.attn_out_intermediates[indices_to_reduce]
+    lses = globals.attn_lse_intermediates[head_idx, indices_to_reduce]
+    outs = globals.attn_out_intermediates[head_idx, indices_to_reduce]
 
     max_lse = torch.max(lses)
 
@@ -228,9 +220,9 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
         globals.attn_out.view(globals.num_attention_heads, -1)[head_idx] = reduced
     else:
         new_lse = new_denominator.log()
-        output_slot = instruction.reduction_list[0]
-        globals.attn_lse_intermediates[output_slot] = new_lse
-        globals.attn_out_intermediates[output_slot] = reduced
+        output_slot = instruction.output_partial_idx
+        globals.attn_lse_intermediates[head_idx, output_slot] = new_lse
+        globals.attn_out_intermediates[head_idx, output_slot] = reduced
 
 
 def print_state(globals: Globals, instruction: PrintState):

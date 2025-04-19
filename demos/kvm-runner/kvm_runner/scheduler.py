@@ -1,7 +1,6 @@
 import math
 
 import torch
-
 from kvm_runner.instructions import (
     AttentionReduction,
     DownProjResidual,
@@ -24,7 +23,7 @@ def make_globals(
     device = model.device
     dtype = model.dtype
 
-    max_attn_intermediates = 1024 * 128
+    max_attn_partials = 1024
     max_barriers = 1024 * 128
     max_instructions = 1024 * 128
     max_timings = 1024 * 128
@@ -59,10 +58,11 @@ def make_globals(
         post_ln_rope_q=make_buffer(config.hidden_size),
         attn_out=make_buffer(config.hidden_size),
         attn_out_intermediates=make_buffer(
-            [max_attn_intermediates, config.head_dim], buffer_dtype=torch.float32
+            [config.num_attention_heads, max_attn_partials, config.head_dim],
+            buffer_dtype=torch.float32,
         ),
         attn_lse_intermediates=make_buffer(
-            max_attn_intermediates, buffer_dtype=torch.float32
+            config.num_attention_heads, max_attn_partials, buffer_dtype=torch.float32
         ),
         silu_out=make_buffer(config.intermediate_size),
         # scalars
@@ -84,6 +84,11 @@ def make_globals(
         instructions=make_buffer(max_instructions),
         barriers=make_buffer(max_barriers),
         timings=make_buffer(max_timings),
+        # max sizes
+        max_attn_partials=max_attn_partials,
+        max_barriers=max_barriers,
+        max_instructions=max_instructions,
+        max_timings=max_timings,
     )
 
 
@@ -127,12 +132,12 @@ def schedule_layers(
 
     maybe_add_print(layer_idx, "qkv")
 
-    for head_idx in range(globals.num_attention_heads):
+    for kv_head_idx in range(globals.num_kv_heads):
         for partial_idx in range(num_attention_partitions):
             instructions.append(
                 PartialAttention(
                     layer_idx=layer_idx,
-                    head_idx=head_idx,
+                    kv_head_idx=kv_head_idx,
                     num_partials=num_attention_partitions,
                     partial_idx=partial_idx,
                 )
