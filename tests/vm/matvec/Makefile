@@ -2,8 +2,8 @@
 NVCC?=nvcc
 GPU=B200
 
-TARGET=matmul
-SRC=matmul.cu
+TARGET=matvec
+SRC=matvec.cu
 
 # Python version configuration
 ifndef PYTHON_VERSION

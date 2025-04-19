@@ -92,9 +92,6 @@ template<typename config> struct state {
     __device__ inline const kittens::semaphore (&semaphores() const)[config::DYNAMIC_SEMAPHORES] {
         return all_instructions[instruction_ring].semaphores;
     }
-    __device__ inline void* scratch() const {
-        return (void*)&all_instructions[instruction_ring].scratch[0];
-    }
     __device__ inline void await_instruction() {
         wait(instruction_arrived[instruction_ring], (instruction_index/config::INSTRUCTION_PIPELINE_STAGES)&1);
         wait_semaphores_ready(); // This is a cautious thing but is probably right for the time being.

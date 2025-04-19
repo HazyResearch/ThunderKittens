@@ -42,9 +42,9 @@ struct globals {
     int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
 };
 
-template<typename config=config, int _OP_IDX> struct MatmulOp {
+template<typename config=config, int _OP_IDX=0> struct MatmulOp {
     static constexpr int opcode = 2;
-    constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
+    static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction {
         int layer, start_col;
         __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
@@ -128,7 +128,7 @@ template<typename config=config, int _OP_IDX> struct MatmulOp {
             if(group<16>::laneid() == 0) s.record(125);
             // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
             int weight_page = get_weight_page(s, group_id);
-            st_bf<16, 128> (&weights_smem)[4] = reinterpret_cast<(st_bf<16, 128>&)[4]>(s.pages[weight_page]);
+            st_bf<16, 128> (&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
             warp::load(weights, weights_smem[warp_id]);
             warp::sync();
             warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS/4); // this is called by each warp in the warpgroup
@@ -136,19 +136,19 @@ template<typename config=config, int _OP_IDX> struct MatmulOp {
             wait(activations_arrived(s), 0);
             // reinterpret the activations page as sv_bf<128>[16]
             int activation_page = get_activation_page(s);
-            sv_bf<128> (&activations_smem)[16] = reinterpret_cast<(sv_bf<128>&)[16]>(s.pages[activation_page]);
+            sv_bf<128> (&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
             warp::load(activations_vec, activations_smem[warpid()]);
             warp::sync();
             warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
             // broadcast this into a tile
-            broadcast_col(broadcast_activations, activations_vec);
-            mul(broadcast_activations, weights);
-            row_sum(output_col_format, broadcast_activations);
-            copy(output, output_col_format);
+            warp::broadcast_col(broadcast_activations, activations_vec);
+            warp::mul(broadcast_activations, broadcast_activations, weights);
+            warp::row_sum(output_col_format, broadcast_activations);
+            warp::copy(output, output_col_format);
             // Now the first 16 threads have the output.
             if(laneid() < 16) { // this might be a bad idea but yolo, it's probably an okay start
                 // and fortunately this is code where ncu will tell us if it's bad..
-                atomicAdd(((bf16*)s.scratch())[laneid()], output[0]);
+                atomicAdd(&((bf16*)s.scratch())[laneid()], output[0][0]);
             }
             warp::sync();
             warp::arrive(outputs_arrived(s));
@@ -162,15 +162,15 @@ template<typename config=config, int _OP_IDX> struct MatmulOp {
             if(laneid() == 0) {
                 wait(outputs_arrived(s), 0);
                 s.record(125);
-                st_bf<16> &output = reinterpret_cast<st_bf<16>&>(s.scratch());
-                tma::store_async(g.O, output, {g.start_col/16});
+                sv_bf<16> &output = reinterpret_cast<sv_bf<16>&>(s.scratch());
+                tma::store_async(g.O, output, {inst.start_col/16});
                 tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                 s.record(126);
             }
             warp::sync();
             asm volatile("fence.gpu"); // possible we need sc here but I don't think so.
             if(laneid() == 0) {
-                if constexpr (OP_IDX == Bar.rows()-1) g.Bar[{inst.layer+1, 0, 0}] = 1;
+                if constexpr (OP_IDX == g.Bar.rows()-1) g.Bar[{inst.layer+1, 0, 0}] = 1;
                 else g.Bar[{inst.layer, OP_IDX+1, 0}] = 1;
             }
             if(laneid() == 0) s.record(127);
@@ -181,12 +181,13 @@ template<typename config=config, int _OP_IDX> struct MatmulOp {
 #include "pyutils/pyutils.cuh"
 
 PYBIND11_MODULE(matmul, m) {
-    m.doc() = "matmul python module";
-    kittens::py::bind_kernel<kernel<config, globals, MatmulOp<config>>>(m, "matmul",
+    m.doc() = "matvec python module";
+    kittens::py::bind_kernel<kernel<config, globals, MatmulOp<config>>>(m, "matvec",
         &globals::instructions,
         &globals::timings,
+        &globals::W,
         &globals::A,
-        &globals::B,
-        &globals::C
+        &globals::O,
+        &globals::Bar
     );
 }
