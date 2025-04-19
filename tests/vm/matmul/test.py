@@ -1,14 +1,14 @@
 import torch
 from matmul import matmul
-from make_instructions import make_instructions
+from make_instructions import make_instructions as make_instructions
 import sys
 import time
 
 torch.manual_seed(1)
 
-# M, K, N = 4096, 4096, 4096
-M, K, N = 16384, 16384, 16384
-# M, K, N = 8192, 8192, 8192
+# M, K, N = 3072, 4096, 3072
+# M, K, N = 512, 256, 256
+M, K, N = 16384, 3072, 16384
 # M, K, N = 3072, 16384*2, 3072
 # M, K, N = 256, 4096, 256
 
@@ -22,7 +22,7 @@ B = (torch.randn((N, K), device=0, dtype=torch.float32) / K**.25).to(torch.float
 # B[:64,:64] = (torch.randn((64, 64), device=0, dtype=torch.float32) / K**.25).to(torch.float8_e4m3fn)
 C =  torch.zeros((M, N), device=0, dtype=torch.float8_e4m3fn)
 
-print("Input tensors created")
+print("Input tensors created, of shapes", A.shape, B.shape, C.shape)
 
 sys.stdout.flush()
 
@@ -71,7 +71,7 @@ print(C2)
 
 print('TIMINGS')
 for i in range(128):
-    print(f'event {i}: {timings[0,0,i]}')
+    print(f'event {i}: {timings[0,0,i]}, {timings[0,1,i]}')
 
 # Create histogram of differences
 import matplotlib.pyplot as plt
