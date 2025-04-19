@@ -8,6 +8,10 @@ INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 GQA_PARTIAL_OPCODE = 1
 
+# For testing
+LAYER_IDX = 7
+H_kv_IDX = 0
+
 def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_h: int):
     '''Generate tensor inputs for the GQA kernel.
     Args:
@@ -20,12 +24,11 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     '''
     torch.manual_seed(42)
 
-    # Normal random does not support fp8 yet
-    Q   = torch.randn(H_q, D_h,        dtype=torch.bfloat16, device='cuda:0')
+    Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device='cuda:0')
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device='cuda:0')
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device='cuda:0')
-    L   = torch.zeros(M_a, H_q,        dtype=torch.bfloat16, device='cuda:0')
-    O   = torch.zeros(M_a, H_q, D_h,   dtype=torch.bfloat16, device='cuda:0')
+    L   = torch.zeros(M_a, H_q,            dtype=torch.bfloat16, device='cuda:0')
+    O   = torch.zeros(M_a, H_q, D_h,       dtype=torch.bfloat16, device='cuda:0')
 
     return Q, K_c, V_c, L, O
 
@@ -34,8 +37,8 @@ def generate_instructions_and_timings():
     instructions = [[] for _ in range(NUM_BLOCKS)]
     instruction_idx = 0
 
-    # Single instruction, for testing
-    instructions[0].append([GQA_PARTIAL_OPCODE, 0, 0, 2, 0] + [0] * (INSTRUCTION_WIDTH - 5))
+    # Single instruction, for testing (L, H_kv index, num_partials, partial_idx)
+    instructions[0].append([GQA_PARTIAL_OPCODE, LAYER_IDX, H_kv_IDX, 2, 0] + [0] * (INSTRUCTION_WIDTH - 5))
     instruction_idx += 1
 
     # All blocks must have same number of instructions
@@ -69,12 +72,11 @@ max_pattn_blk = 1024
 softmax_temp = 1 / math.sqrt(D_h)
 
 # Generate inputs
-print("Generating inputs...")
+print('\nGenerating inputs...')
 Q, K_c, V_c, L, O = generate_tensor_inputs(L, max_pattn_blk, N_max, H_q, H_kv, D_h)
 instructions, timings = generate_instructions_and_timings()
 
 # Run the kernel
-print()
 print('Instruction shape:', instructions.shape)
 print('Timings shape:', timings.shape) 
 print('Q shape:', Q.shape)
@@ -82,7 +84,7 @@ print('K_c shape:', K_c.shape)
 print('V_c shape:', V_c.shape)
 print('L shape:', L.shape)
 print('O shape:', O.shape)
-print("Running the kernel...")
+print('\nRunning the kernel...')
 gqa_partial(
     instructions, timings, 
     Q, K_c, V_c, L, O, 
@@ -91,5 +93,8 @@ gqa_partial(
 torch.cuda.synchronize(0)
 
 # Verify the output
-print()
-print('Kernel finished.')
+print('\nKernel finished.')
+H_q_IDX = H_kv_IDX * 4
+O_ref = torch.matmul(torch.matmul(Q[H_q_IDX:H_q_IDX+4, :], K_c[LAYER_IDX, :16, H_kv_IDX, :].T), V_c[LAYER_IDX, :16, H_kv_IDX, :])
+print(torch.max(torch.abs(O[0, :4, :] - O_ref)))
+print(O[0, :5, :])

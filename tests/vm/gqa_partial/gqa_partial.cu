@@ -95,6 +95,7 @@ using attn_bf_rt = rt_bf<16, 16>;  // actual size is (G=4, blk_len=16)
 using l_rt = rv_bf<16>;            // actual size is (G=4)
 using l_st = sv_bf<16>;            // actual size is (G=4)
 using o_rt = rt_fl<16, 64>;        // actual size is (G=4, d=64)
+using o_sv = sv_bf<64>;            // (d=64)
 using o_st = st_bf<16, 64>;        // actual size is (G=4, d=64)
 
 using config = default_config;
@@ -104,7 +105,7 @@ struct globals {
     using q_layout = gl<bf16, 1, 1, -1, -1, q_st>; // (H_q, D_h) = (32, 64)
     using kv_layout = gl<bf16, -1, -1, -1, -1, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h) = (16, 131072, 8, 64)
     using l_layout = gl<bf16, 1, 1, -1, -1, l_st>; // (M_a, H_q) = (M_a, 32)
-    using o_layout = gl<bf16, 1, -1, -1, -1, o_st>; // (M_a, H_q, D_h) = (M_a, 32, 64)
+    using o_layout = gl<bf16, 1, -1, -1, -1, o_sv>; // (M_a, H_q, D_h) = (M_a, 32, 64)
     instruction_layout instructions;
     timing_layout timings;
     q_layout Q;
@@ -145,8 +146,8 @@ template<typename config=config> struct rope_gqa_partial_op {
     }
 
     template<ducks::sv::all SV, ducks::rt::all RT>
-    __device__ static inline void store_first_4_rows(SV (&dst)[4], const RT &src) {
-        static_assert(sizeof(typename SV::dtype) == 2 && sizeof(typename RT::dtype) == 2, "Only 16-bit types are supported for now.");
+    __device__ static inline void store_4_rows(SV (&dst)[4], const RT &src, int row4idx/*= 0, 1, 2, or 3*/) {
+        static_assert(RT::rows == 16, "src rows must be 16.");
         static_assert(SV::length == src.cols, "dst length must match src cols.");
 
         using T2 = RT::dtype;
@@ -161,17 +162,48 @@ template<typename config=config> struct rope_gqa_partial_op {
         dst_ptr[3] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[3].data[0]));
         
         int laneid = ::kittens::laneid();
-        int row_idx = laneid / 4;
-        int _col_idx = laneid % 4;
+        int local_row_idx = (laneid % 16) / 4;
+        int local_col_idx = laneid % 4;
 
-        if (laneid < 16) { // thread 16 starts at row 5
-            for (int j = 0; j < src.width; j++) {
-                U2 tmp[2];
-                tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
-                tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
-                int col_idx = _col_idx * 2 + j * 16;
-                move<U2>::sts(dst_ptr[row_idx] + sizeof(typename SV::dtype)*col_idx, tmp[0]);
-                move<U2>::sts(dst_ptr[row_idx] + sizeof(typename SV::dtype)*(col_idx+8), tmp[1]);
+        if (row4idx % 2 == 0 && laneid < 16) { // rows 0~3 or 8~11
+            if (row4idx / 2 == 0) { // rows 0~3
+                for (int j = 0; j < src.width; j++) {
+                    U2 tmp[2];
+                    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
+                    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
+                    int col_idx = local_col_idx * 2 + j * 16;
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx+8), tmp[1]);
+                }
+            } else { // rows 8~11
+                for (int j = 0; j < src.width; j++) {
+                    U2 tmp[2];
+                    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
+                    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
+                    int col_idx = local_col_idx * 2 + j * 16;
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx+8), tmp[1]);
+                }
+            }
+        } else if (row4idx % 2 == 1 && laneid >= 16) { // rows 4~7 or 12~15
+            if (row4idx / 2 == 0) { // rows 4~7
+                for (int j = 0; j < src.width; j++) {
+                    U2 tmp[2];
+                    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
+                    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
+                    int col_idx = local_col_idx * 2 + j * 16;
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx+8), tmp[1]);
+                }
+            } else { // rows 12~15
+                for (int j = 0; j < src.width; j++) {
+                    U2 tmp[2];
+                    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
+                    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
+                    int col_idx = local_col_idx * 2 + j * 16;
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx+8), tmp[1]);
+                }
             }
         }
     }
@@ -190,6 +222,8 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
+            int gqa_ratio = g.Q.rows() / g.K_c.rows();
+            int q_head_tile_idx = (inst.kv_head_idx * gqa_ratio) / q_rt::tile_size_row; // 0 or 1
 
             if (laneid() == 0) {
                 int Q_page_pid = s.pid(0);
@@ -202,9 +236,9 @@ template<typename config=config> struct rope_gqa_partial_op {
                 kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
                 kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
                 tma::expect_bytes(inputs_arrived(s), sizeof(Q_smem) + sizeof(K_smem) + sizeof(V_smem));
-                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, 0, 0}, inputs_arrived(s));
-                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {inst.layer_idx, 0, 0, 0}, inputs_arrived(s));
-                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {inst.layer_idx, 0, 0, 0}, inputs_arrived(s));
+                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, q_head_tile_idx, 0}, inputs_arrived(s));
+                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {inst.layer_idx, 0, inst.kv_head_idx, 0}, inputs_arrived(s));
+                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {inst.layer_idx, 0, inst.kv_head_idx, 0}, inputs_arrived(s));
             }
         }
     };
@@ -214,6 +248,8 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
+            int gqa_ratio = g.Q.rows() / g.K_c.rows();
+            int q_head_local_idx = ((inst.kv_head_idx * gqa_ratio) % q_rt::tile_size_row) / 4;
 
             if (warpid() == 0) {
                 // Wait for the inputs to be ready
@@ -225,10 +261,10 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int V_page_pid = s.pid(2);
                 int O_page_pid = s.pid(3);
                 s.wait_page_ready(O_page_pid);
-                q_st  &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
-                kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
-                kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
-                o_st  &O_smem = *reinterpret_cast<o_st*>(s.pages[O_page_pid].data);
+                q_st  &Q_smem     = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
+                kv_st &K_smem     = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
+                kv_st &V_smem     = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
+                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
                 q_rt Q_reg;
                 k_rt K_reg;
                 v_rt V_reg;
@@ -250,23 +286,23 @@ template<typename config=config> struct rope_gqa_partial_op {
 
                 // Let's figure out register layout
                 // if (laneid() == 0) {
-                //     printf("O_reg rows %d cols %d\n", O_reg.rows, O_reg.cols);
-                //     printf("O_reg height %d width %d\n", O_reg.height, O_reg.width);
-                //     printf("O_reg base tile packed per thread %d\n", O_reg.tiles[0][0].packed_per_thread);
+                //     printf("Q_reg rows %d cols %d\n", Q_reg.rows, Q_reg.cols);
+                //     printf("Q_reg height %d width %d\n", Q_reg.height, Q_reg.width);
+                //     printf("Q_reg base tile packed per thread %d\n", Q_reg.tiles[0][0].packed_per_thread);
                 // }
-                // for (int i = 0; i < O_reg.height; i++) {
-                //     for (int j = 0; j < O_reg.width; j++) {
-                //         for (int k = 0; k < O_reg.tiles[i][j].packed_per_thread; k++) {
-                //             float2 value = O_reg.tiles[i][j].data[k];
+                // for (int i = 0; i < Q_reg.height; i++) {
+                //     for (int j = 0; j < Q_reg.width; j++) {
+                //         for (int k = 0; k < Q_reg.tiles[i][j].packed_per_thread; k++) {
+                //             bf16_2 value = Q_reg.tiles[i][j].data[k];
                 //             printf("tid %d: tiles[%d][%d].data[%d] = %f, %f\n", 
-                //                 threadIdx.x, i, j, k, value.x, value.y);
+                //                 threadIdx.x, i, j, k, (float)value.x, (float)value.y);
                 //             __syncwarp();
                 //         }
                 //     }
                 // }
 
                 // Store the results
-                warp::store(O_smem, O_reg);
+                store_4_rows(O_smem, O_reg, q_head_local_idx);
                 warp::sync();
 
                 // Arrive at semaphores
@@ -280,17 +316,22 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct storer {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
+            int gqa_ratio = g.Q.rows() / g.K_c.rows();
+            int q_head_start_idx = inst.kv_head_idx * gqa_ratio; // 0, 4, 8, 12, 16, 20, 24, 28
 
             if (laneid() == 0) {
                 // Wait for the outputs to be ready
                 wait(outputs_arrived(s), 0);
 
-                // Declare registers and shared memory
+                // Declare shared memory
                 int O_page_pid = s.pid(3);
-                o_st &O_smem = *reinterpret_cast<o_st*>(s.pages[O_page_pid].data);
+                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
                 
                 // Store to global memory
-                tma::store_async(g.O, O_smem, {0, 0, 0, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, 0, q_head_start_idx + 0, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, 0, q_head_start_idx + 1, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, 0, q_head_start_idx + 2, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, 0, q_head_start_idx + 3, 0});
                 tma::store_async_read_wait();
 
                 // Arrive at semaphore
