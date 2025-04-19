@@ -1,16 +1,22 @@
 import math
 
+from einops import einsum
 import torch
 from gqa_partial import gqa_partial
+
+TORCH_DEVICE = torch.device('cuda:7')
 
 NUM_BLOCKS = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 GQA_PARTIAL_OPCODE = 1
+ATTN_BLOCK_SIZE = 16
 
 # For testing
+NUM_PARTIALS = 2
+PARTIAL_IDX = 0
 LAYER_IDX = 7
-H_kv_IDX = 0
+H_kv_IDX = 5
 
 def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_h: int):
     '''Generate tensor inputs for the GQA kernel.
@@ -24,11 +30,11 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     '''
     torch.manual_seed(42)
 
-    Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device='cuda:0')
-    K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device='cuda:0')
-    V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device='cuda:0')
-    L   = torch.zeros(M_a, H_q,            dtype=torch.bfloat16, device='cuda:0')
-    O   = torch.zeros(M_a, H_q, D_h,       dtype=torch.bfloat16, device='cuda:0')
+    Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device=TORCH_DEVICE)
+    K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
+    V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
+    L   = torch.zeros(M_a, H_q,            dtype=torch.float32,  device=TORCH_DEVICE)
+    O   = torch.zeros(M_a, H_q, D_h,       dtype=torch.bfloat16, device=TORCH_DEVICE)
 
     return Q, K_c, V_c, L, O
 
@@ -38,7 +44,7 @@ def generate_instructions_and_timings():
     instruction_idx = 0
 
     # Single instruction, for testing (L, H_kv index, num_partials, partial_idx)
-    instructions[0].append([GQA_PARTIAL_OPCODE, LAYER_IDX, H_kv_IDX, 2, 0] + [0] * (INSTRUCTION_WIDTH - 5))
+    instructions[0].append([GQA_PARTIAL_OPCODE, LAYER_IDX, H_kv_IDX, NUM_PARTIALS, PARTIAL_IDX] + [0] * (INSTRUCTION_WIDTH - 5))
     instruction_idx += 1
 
     # All blocks must have same number of instructions
@@ -52,8 +58,8 @@ def generate_instructions_and_timings():
 
     # (BlockIdx, InstructionIdx, Instruction)
     # If opcode (instructions[:, :, 0]) is invalid, the instruction is ignored
-    instructions = torch.tensor(instructions, dtype=torch.int32).to(device=0)
-    timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=0)
+    instructions = torch.tensor(instructions, dtype=torch.int32).to(device=TORCH_DEVICE)
+    timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
 
     return instructions, timings
 
@@ -66,10 +72,9 @@ H_kv = 8 # number of key/value heads (number of query groups)
 D_h = 64 # dimension of each head
 
 # Kernel parameters
-pos_id = 1024
-attn_blk_size = 16
+pos_id = 1023
 max_pattn_blk = 1024
-softmax_temp = 1 / math.sqrt(D_h)
+attn_scale = 1 / math.sqrt(D_h)
 
 # Generate inputs
 print('\nGenerating inputs...')
@@ -88,13 +93,44 @@ print('\nRunning the kernel...')
 gqa_partial(
     instructions, timings, 
     Q, K_c, V_c, L, O, 
-    pos_id, attn_blk_size, softmax_temp
+    pos_id, attn_scale
 )
-torch.cuda.synchronize(0)
+torch.cuda.synchronize(TORCH_DEVICE)
+
+# Run the reference implementation
+print('\nRunning the reference implementation...')
+kv_block_size = ATTN_BLOCK_SIZE
+seq_len = pos_id + 1
+
+total_blocks = math.ceil(seq_len / kv_block_size)
+blocks_per_partial = math.ceil(total_blocks / NUM_PARTIALS)
+start_block = PARTIAL_IDX * blocks_per_partial
+end_block = min(start_block + blocks_per_partial, total_blocks)
+start_token = start_block * kv_block_size
+end_token = min(end_block * kv_block_size, seq_len)
+
+H_q_IDX = H_kv_IDX * 4
+Qi = Q[H_q_IDX:H_q_IDX+4, :]
+Kj = K_c[LAYER_IDX, start_token:end_token, H_kv_IDX, :]
+Vj = V_c[LAYER_IDX, start_token:end_token, H_kv_IDX, :]
+QiKj = torch.matmul(Qi, Kj.transpose(-1, -2))
+scaled_QiKj = QiKj * attn_scale
+softmax = torch.softmax(scaled_QiKj, dim=-1)
+O_ref = torch.matmul(softmax, Vj)
+
+print('Qi shape:', Qi.shape)
+print('Kj shape:', Kj.shape)
+print('Vj shape:', Vj.shape)
+print('QiKj shape:', QiKj.shape)
+print('scaled_QiKj shape:', scaled_QiKj.shape)
+print('softmax shape:', softmax.shape)
+print('O_ref shape:', O_ref.shape)
+
+
 
 # Verify the output
-print('\nKernel finished.')
-H_q_IDX = H_kv_IDX * 4
-O_ref = torch.matmul(torch.matmul(Q[H_q_IDX:H_q_IDX+4, :], K_c[LAYER_IDX, :16, H_kv_IDX, :].T), V_c[LAYER_IDX, :16, H_kv_IDX, :])
-print(torch.max(torch.abs(O[0, :4, :] - O_ref)))
-print(O[0, :5, :])
+print('\nComparing outputs...')
+print(torch.max(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
+print(torch.mean(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
+print(O_ref)
+print(O[0, H_q_IDX:H_q_IDX+4, :])
