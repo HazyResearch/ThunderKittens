@@ -46,7 +46,7 @@ constexpr int WARPGROUP_WARPS{4};
  * @brief Get the warp ID of the current thread.
  * @return The warp ID.
  */
-__device__ __forceinline__ int warpid() {
+__device__ static __forceinline__ int warpid() {
     // uint32_t wid;
     // asm volatile("mov.u32 %0, %warpid;" : "=r"(wid));
     // return wid;
@@ -56,12 +56,12 @@ __device__ __forceinline__ int warpid() {
  * @brief Get the warpgroup ID of the current thread.
  * @return The warpgroup ID.
  */
-__device__ __forceinline__ int warpgroupid() { return warpid() >> 2; }
+__device__ static __forceinline__ int warpgroupid() { return warpid() >> 2; }
 /**
  * @brief Get the lane ID of the current thread within its warp.
  * @return The lane ID.
  */
-__device__ __forceinline__ int laneid() {
+__device__ static __forceinline__ int laneid() {
     // uint32_t lid;
     // asm volatile("mov.u32 %0, %laneid;" : "=r"(lid));
     // return lid;
