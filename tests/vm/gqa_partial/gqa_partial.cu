@@ -144,6 +144,38 @@ template<typename config=config> struct rope_gqa_partial_op {
         return s.semaphores()[1];
     }
 
+    template<ducks::sv::all SV, ducks::rt::all RT>
+    __device__ static inline void store_first_4_rows(SV (&dst)[4], const RT &src) {
+        static_assert(sizeof(typename SV::dtype) == 2 && sizeof(typename RT::dtype) == 2, "Only 16-bit types are supported for now.");
+        static_assert(SV::length == src.cols, "dst length must match src cols.");
+
+        using T2 = RT::dtype;
+        using T  = base_types::packing<T2>::unpacked_type;
+        using U = SV::dtype;
+        using U2 = base_types::packing<U>::packed_type;
+
+        uint32_t dst_ptr[4];
+        dst_ptr[0] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[0].data[0]));
+        dst_ptr[1] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[1].data[0]));
+        dst_ptr[2] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[2].data[0]));
+        dst_ptr[3] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[3].data[0]));
+        
+        int laneid = ::kittens::laneid();
+        int row_idx = laneid / 4;
+        int _col_idx = laneid % 4;
+
+        if (laneid < 16) { // thread 16 starts at row 5
+            for (int j = 0; j < src.width; j++) {
+                U2 tmp[2];
+                tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
+                tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
+                int col_idx = _col_idx * 2 + j * 16;
+                move<U2>::sts(dst_ptr[row_idx] + sizeof(typename SV::dtype)*col_idx, tmp[0]);
+                move<U2>::sts(dst_ptr[row_idx] + sizeof(typename SV::dtype)*(col_idx+8), tmp[1]);
+            }
+        }
+    }
+
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
             int ret_order[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
@@ -157,7 +189,6 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
-            // parsed_instruction inst = parse_instruction(g, s);
             parsed_instruction inst{s};
 
             if (laneid() == 0) {
@@ -172,8 +203,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                 kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
                 tma::expect_bytes(inputs_arrived(s), sizeof(Q_smem) + sizeof(K_smem) + sizeof(V_smem));
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, 0, 0}, inputs_arrived(s));
-                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {0, 0, 0, 0}, inputs_arrived(s));
-                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {0, 0, 0, 0}, inputs_arrived(s));
+                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {inst.layer_idx, 0, 0, 0}, inputs_arrived(s));
+                tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {inst.layer_idx, 0, 0, 0}, inputs_arrived(s));
             }
         }
     };
@@ -182,6 +213,8 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
+            parsed_instruction inst{s};
+
             if (warpid() == 0) {
                 // Wait for the inputs to be ready
                 wait(inputs_arrived(s), 0);
@@ -215,6 +248,23 @@ template<typename config=config> struct rope_gqa_partial_op {
                 warp::zero(O_reg);
                 warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
 
+                // Let's figure out register layout
+                // if (laneid() == 0) {
+                //     printf("O_reg rows %d cols %d\n", O_reg.rows, O_reg.cols);
+                //     printf("O_reg height %d width %d\n", O_reg.height, O_reg.width);
+                //     printf("O_reg base tile packed per thread %d\n", O_reg.tiles[0][0].packed_per_thread);
+                // }
+                // for (int i = 0; i < O_reg.height; i++) {
+                //     for (int j = 0; j < O_reg.width; j++) {
+                //         for (int k = 0; k < O_reg.tiles[i][j].packed_per_thread; k++) {
+                //             float2 value = O_reg.tiles[i][j].data[k];
+                //             printf("tid %d: tiles[%d][%d].data[%d] = %f, %f\n", 
+                //                 threadIdx.x, i, j, k, value.x, value.y);
+                //             __syncwarp();
+                //         }
+                //     }
+                // }
+
                 // Store the results
                 warp::store(O_smem, O_reg);
                 warp::sync();
@@ -229,6 +279,8 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct storer {
         static __device__ void run(const globals &g, state<config> &s) {
+            parsed_instruction inst{s};
+
             if (laneid() == 0) {
                 // Wait for the outputs to be ready
                 wait(outputs_arrived(s), 0);
