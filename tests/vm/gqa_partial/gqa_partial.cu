@@ -23,6 +23,63 @@ using namespace kittens::prototype::vm;
         [2] = kv_head_idx
         [3] = num_partials
         [4] = partial_idx
+
+    Globals relevant to this instruction:
+
+        - post_ln_rope_q (Tensor)         : (model_dim=2048,)
+        - k_cache (Tensor)                : (num_layers=16, max_seq_len=131072, num_kv_heads=8, dim=64)
+        - v_cache (Tensor)                : (num_layers=16, max_seq_len=131072, num_kv_heads=8, dim=64)
+        - attn_lse_intermediates (Tensor) : (num_q_heads=32, max_attn_partials=1024)
+        - attn_out_intermediates (Tensor) : (num_q_heads=32, max_attn_partials=1024)
+        - pos_id (int)                    : 0
+        - attn_kv_block_size (int)        : 16
+        - num_attention_heads (int)       : 32
+        - num_kv_heads (int)              : 8
+        - softmax_temp (float)            : 1 / math.sqrt(dim=64)
+
+    Llama Configs:
+
+        >>> from transformers import LlamaConfig
+        >>> LlamaConfig.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
+        LlamaConfig {
+            "architectures": [
+                "LlamaForCausalLM"
+            ],
+            "attention_bias": false,
+            "attention_dropout": 0.0,
+            "bos_token_id": 128000,
+            "eos_token_id": [
+                128001,
+                128008,
+                128009
+            ],
+            "head_dim": 64,
+            "hidden_act": "silu",
+            "hidden_size": 2048,
+            "initializer_range": 0.02,
+            "intermediate_size": 8192,
+            "max_position_embeddings": 131072,
+            "mlp_bias": false,
+            "model_type": "llama",
+            "num_attention_heads": 32,
+            "num_hidden_layers": 16,
+            "num_key_value_heads": 8,
+            "pretraining_tp": 1,
+            "rms_norm_eps": 1e-05,
+            "rope_scaling": {
+                "factor": 32.0,
+                "high_freq_factor": 4.0,
+                "low_freq_factor": 1.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3"
+            },
+            "rope_theta": 500000.0,
+            "tie_word_embeddings": true,
+            "torch_dtype": "bfloat16",
+            "transformers_version": "4.51.3",
+            "use_cache": true,
+            "vocab_size": 128256
+        }
 */
 
 constexpr int NUM_BLOCKS = 148;
