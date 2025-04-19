@@ -8,15 +8,25 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
 /*
-    Instruction format:
-    [0] = opcode
-    [1] = Row offset of C, in units of 128
-    [2] = Col offset of C, in units of 128
-    [3] = K reduction dimension, in units of 128
+    Instruction as defined on Python-side:
+
+        class PartialAttention(Instruction):
+            layer_idx: int
+            kv_head_idx: int
+            num_partials: int
+            partial_idx: int
+
+    Instruction format on CUDA:
+
+        [0] = opcode (1)
+        [1] = layer_idx
+        [2] = kv_head_idx
+        [3] = num_partials
+        [4] = partial_idx
 */
 
 constexpr int NUM_BLOCKS = 148;
-constexpr int ROPE_GQA_PARTIAL_OPCODE = 1;
+constexpr int GQA_PARTIAL_OPCODE = 1;
 
 using config = default_config;
 struct globals {
@@ -41,8 +51,8 @@ struct globals {
     int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
 };
 
-template<typename config=config> struct rope_gqa_partial_op {
-    static constexpr int opcode = ROPE_GQA_PARTIAL_OPCODE;
+template<typename config=config> struct gqa_partial_op {
+    static constexpr int opcode = GQA_PARTIAL_OPCODE;
     static constexpr int PIPELINE_STAGES = 3;
 
     __device__ static inline semaphore &inputs_arrived(state<config> &s) {
@@ -245,9 +255,9 @@ template<typename config=config> struct rope_gqa_partial_op {
 
 #include "pyutils/pyutils.cuh"
 
-PYBIND11_MODULE(rope_gqa_partial, m) {
+PYBIND11_MODULE(gqa_partial, m) {
     m.doc() = "";
-    kittens::py::bind_kernel<kernel<config, globals, rope_gqa_partial_op<config>>>(m, "rope_gqa_partial",
+    kittens::py::bind_kernel<kernel<config, globals, gqa_partial_op<config>>>(m, "gqa_partial",
         &globals::instructions,
         &globals::timings,
         &globals::Q,

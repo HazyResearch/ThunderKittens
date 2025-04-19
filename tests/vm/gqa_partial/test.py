@@ -1,12 +1,12 @@
 import torch
-from rope_gqa_partial import rope_gqa_partial
+from gqa_partial import gqa_partial
 
 # TODO: use paged attention
 # TODO: variable sequence lengths
 
 NUM_BLOCKS = 148
 INSTRUCTION_WIDTH = 32
-ROPE_GQA_PARTIAL_OPCODE = 1
+GQA_PARTIAL_OPCODE = 1
 
 def generate_inputs(B: int, N: int, N_new: int, H_q: int, H_kv: int, D_h: int):
 
@@ -35,7 +35,7 @@ def generate_instructions_and_timings():
     instruction_idx = 0
 
     # arbitrary instruction, for testing
-    instructions[0].append([ROPE_GQA_PARTIAL_OPCODE] + [0] * (INSTRUCTION_WIDTH - 1))
+    instructions[0].append([GQA_PARTIAL_OPCODE] + [0] * (INSTRUCTION_WIDTH - 1))
     instruction_idx += 1
 
     # all blocks must have same number of instructions
@@ -91,7 +91,7 @@ print('O shape:', O.shape)
 print('Instruction shape:', instructions.shape)
 print('Timings shape:', timings.shape) 
 print("Running the kernel...")
-rope_gqa_partial(instructions, timings, Q, K_c, V_c, O)
+gqa_partial(instructions, timings, Q, K_c, V_c, O)
 torch.cuda.synchronize(0)
 
 print(O)

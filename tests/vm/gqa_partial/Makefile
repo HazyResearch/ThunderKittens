@@ -2,8 +2,8 @@
 NVCC?=nvcc
 GPU=B200
 
-TARGET=rope_gqa_partial
-SRC=rope_gqa_partial.cu
+TARGET=gqa_partial
+SRC=gqa_partial.cu
 
 # Python version configuration
 ifndef PYTHON_VERSION
