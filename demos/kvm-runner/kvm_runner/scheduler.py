@@ -35,13 +35,6 @@ def make_globals(
 
     return Globals(
         # model params
-        # qkv_proj=stacked_sd["model.layers.all.self_attn.qkv_proj.weight"],
-        # attn_ln_weight=stacked_sd["model.layers.all.self_attn.norm_attn.weight"],
-        # o_proj=stacked_sd["model.layers.all.self_attn.out_proj.weight"],
-        # mlp_ln_weight=stacked_sd["model.layers.all.mlp.norm_mlp.weight"],
-        # up_proj=stacked_sd["model.layers.all.mlp.up_proj.weight"],
-        # gate_proj=stacked_sd["model.layers.all.mlp.gate_proj.weight"],
-        # down_proj=stacked_sd["model.layers.all.mlp.down_proj.weight"],
         qkv_proj=stacked_params.qkv_proj,
         o_proj=stacked_params.o_proj,
         attn_ln_weight=stacked_params.attn_ln_weight,
