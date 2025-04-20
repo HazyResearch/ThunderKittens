@@ -85,7 +85,9 @@ using namespace kittens::prototype::vm;
 constexpr int NUM_BLOCKS = 148;
 constexpr int GQA_PARTIAL_OPCODE = 1;
 constexpr int ATTN_BLOCK_SIZE = 16;
-constexpr int GQA_RATIO = 4; // 32 : 8
+constexpr int NUM_Q_HEADS = 32;
+constexpr int NUM_KV_HEADS = 8;
+constexpr int GQA_RATIO = NUM_Q_HEADS / NUM_KV_HEADS;
 
 using q_rt = rt_bf<16, 64>;                  // actual size is (G=4, d=64)
 using q_st = st_bf<16, 64>;                  // actual size is (G=4, d=64) 2048B
@@ -168,7 +170,7 @@ template<typename config=config> struct rope_gqa_partial_op {
         return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2 + 1];
     }
 
-    // 13 pages
+    // 13 pages TODO use less pages, test pipeline stage speed
     __device__ static inline int get_Q_page(state<config> &s) {
         return s.pid(0);
     }
@@ -269,7 +271,6 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
             // TODO release unused pages immediately
-            // TODO use lanes more efficiently
             if (laneid() == 0) {
                 // Setup
                 parsed_instruction inst{s};
@@ -317,12 +318,12 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
-            if (warpid() == 0) {
+            if (warpid() == 0) { // TODO: divide into multiple warps
                 // Setup
                 parsed_instruction inst{s};
                 int q_head_local_idx = ((inst.kv_head_idx * GQA_RATIO) % q_rt::tile_size_row) / 4;
                 int seq_len = g.pos_id + 1;
-                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;  // TODO indivisble token length
+                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
@@ -355,6 +356,7 @@ template<typename config=config> struct rope_gqa_partial_op {
                 // Load Q once
                 wait(Q_arrived(s), 0);
                 warp::load(Q_reg, Q_smem);
+                warp::arrive(s.page_finished[Q_page_pid], config::NUM_CONSUMER_WARPS);
 
                 // Run the pipeline!
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
@@ -368,6 +370,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::zero(attn_fl_reg);
                     warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::load(K_reg, K_smem);
+                    if (i + start_blk_idx >= end_blk_idx - NUM_STAGES)
+                        warp::arrive(s.page_finished[K_page_pid], config::NUM_CONSUMER_WARPS);
                     warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
                     warp::arrive(K_finished(s, stage));
 
@@ -390,6 +394,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::mul_row(O_reg, O_reg, diff_scaled_max_vec_reg);
                     warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::load(V_reg, V_smem);
+                    if (i + start_blk_idx >= end_blk_idx - NUM_STAGES)
+                        warp::arrive(s.page_finished[V_page_pid], config::NUM_CONSUMER_WARPS);
                     warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                     warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
                     warp::arrive(V_finished(s, stage));
@@ -418,8 +424,6 @@ template<typename config=config> struct rope_gqa_partial_op {
                 warp::store(L_smem, L_reg);
                 warp::sync();
                 warp::arrive(L_arrived(s));
-
-                // TODO: release pages
             }
         }
     };
@@ -437,24 +441,23 @@ template<typename config=config> struct rope_gqa_partial_op {
 
                 // Store partial attention output to global memory
                 wait(O_arrived(s), 0);
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, 0, q_head_start_idx + 0, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, 0, q_head_start_idx + 1, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, 0, q_head_start_idx + 2, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, 0, q_head_start_idx + 3, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, inst.partial_idx, q_head_start_idx + 0, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, inst.partial_idx, q_head_start_idx + 1, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, inst.partial_idx, q_head_start_idx + 2, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, inst.partial_idx, q_head_start_idx + 3, 0});
 
                 // Store LSE to global memory
                 wait(L_arrived(s), 0);
                 float4 tmp; // manual load and store (maybe do this in consumer?)
                 uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx]));
-                float *dst_ptr = (float*)&g.L.raw_ptr[0 + q_head_start_idx];
+                float *dst_ptr = (float*)&g.L.raw_ptr[inst.partial_idx * NUM_Q_HEADS + q_head_start_idx];
                 asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(tmp.x), "=f"(tmp.y), "=f"(tmp.z), "=f"(tmp.w) : "r"(src_ptr));
                 asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(tmp.x), "f"(tmp.y), "f"(tmp.z), "f"(tmp.w), "l"(dst_ptr));
 
-                // Wait for the stores to finish reading from shared memory
+                // Wait and finish
+                arrive(s.page_finished[L_page_pid], config::NUM_CONSUMER_WARPS);
                 tma::store_async_read_wait();
                 arrive(s.page_finished[O_page_pid], config::NUM_CONSUMER_WARPS);
-
-                // TODO clean up other pages
             }
             warp::sync();
          }

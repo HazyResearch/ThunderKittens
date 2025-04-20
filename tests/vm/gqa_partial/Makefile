@@ -29,7 +29,7 @@ endif
 all: $(TARGET)
 
 run: $(TARGET)
-	python test.py
+	python full_test.py
 
 $(TARGET): $(SRC)
 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)$(shell python3-config --extension-suffix)
