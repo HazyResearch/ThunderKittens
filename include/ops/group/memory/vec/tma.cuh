@@ -23,7 +23,7 @@ __device__ static inline void prefetch(SV &dst, const GL &src, const COORD &idx)
         ::kittens::detail::tma::vec_prefetch_tma_internal<policy>(tma_ptr, tma_coord);
     }
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(prefetch)
+__KITTENS_TMA_DEFINE_DEFAULT_LOAD_CACHE_VEC__(prefetch)
 
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
@@ -51,7 +51,7 @@ __device__ static inline void store_async(const GL &dst, const SV &src, const CO
     }
     store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_async)
 
 
 
@@ -78,7 +78,7 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
     }
     store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_add_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_add_async)
 
 
 /**
@@ -105,7 +105,7 @@ __device__ static inline void store_min_async(const GL &dst, const SV &src, cons
     }
     store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_min_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_min_async)
 
 
 /**
@@ -132,7 +132,7 @@ __device__ static inline void store_max_async(const GL &dst, const SV &src, cons
     }
     store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_max_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_max_async)
 
 
 
@@ -160,4 +160,4 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
         ::kittens::detail::tma::vec_load_async_tma_internal<policy>(tma_ptr, dst_i_ptr, mbar_ptr, tma_coord);
     }
 }
-__KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC_(load_async)
+__KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC__(load_async)

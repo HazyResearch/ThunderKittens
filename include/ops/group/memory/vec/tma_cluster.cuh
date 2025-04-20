@@ -28,4 +28,4 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
         ::kittens::detail::tma::cluster::vec_load_async_tma_internal<policy>(tma_ptr, dst_i_ptr, mbar_ptr, tma_coord, cluster_mask, dst_mbar_cta);
     }
 }
-__KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC_(load_async)
+__KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC__(load_async)

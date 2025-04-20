@@ -1,5 +1,5 @@
 import torch
-from matmul import matmul
+from matvec import matvec
 from make_instructions import make_instructions as make_instructions
 import sys
 import time
@@ -8,26 +8,25 @@ torch.manual_seed(1)
 
 print("Starting test...")
 
-# Create input and output tensors
-# A = (torch.ones((M, K), device=0, dtype=torch.float32) / K**.5).to(torch.float8_e4m3fn)
-# B = (torch.ones((N, K), device=0, dtype=torch.float32) / K**.5).to(torch.float8_e4m3fn)
-A = (torch.randn((2048, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.float8_e4m3fn)
-B = (torch.randn((1, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.float8_e4m3fn)
-# B[:64,:64] = (torch.randn((64, 64), device=0, dtype=torch.float32) / K**.25).to(torch.float8_e4m3fn)
-C =  torch.zeros((M, N), device=0, dtype=torch.float8_e4m3fn)
+DEPTH = 2
 
-print("Input tensors created, of shapes", A.shape, B.shape, C.shape)
+# Create input and output tensors
+W = (torch.randn((2048, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.bfloat16)
+A = (torch.randn((1, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.bfloat16)
+O =  torch.zeros((1, 2048), device=0, dtype=torch.bfloat16)  # noqa: E741
+Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
+
+print("Input tensors created, of shapes", A.shape, W.shape, O.shape, Bar.shape)
 
 sys.stdout.flush()
 
 # Create instruction and timing tensors
-instructions, timings = make_instructions(M, K, N)
-# instructions, timings = make_instructions_1sm(M, K, N)
+instructions, timings = make_instructions(DEPTH)
 
 print(f"Instruction and timing tensors created, of shapes {instructions.shape} and {timings.shape}")
 
-# Run the matmul kernel
-matmul(instructions, timings, A, B, C)
+# Run the matvec kernel
+matvec(instructions, timings, W, A, O, Bar)
 
 print("Kernel launched")
 
@@ -40,7 +39,7 @@ start_event = torch.cuda.Event(enable_timing=True)
 end_event = torch.cuda.Event(enable_timing=True)
 start_event.record()
 for i in range(5):
-    matmul(instructions, timings, A, B, C)
+    matvec(instructions, timings, W, A, O, Bar)
 torch.cuda.synchronize()
 end_event.record()
 torch.cuda.synchronize()
@@ -49,27 +48,26 @@ t1 = time.time()  # Keep this for compatibility with the time_per_iter calculati
 t0 = t1 - (elapsed_time / 1000)  # Convert ms to seconds
 time_per_iter = ((t1-t0)*1e6)/5
 print(f'Time per iter: {time_per_iter} us')
-print(f'TFLOP/s: {(2*M*N*K*1e-12)/(time_per_iter*1e-6)}')
+print(f'GB/s: {(2*2048*2048*1e-9)/(time_per_iter*1e-6)}')
 
 
 print("Test completed successfully!")
 
-C = C.to(torch.float32).cpu().numpy()
-print(C.shape)
-print(C)
+O = O.to(torch.float32).cpu().numpy()
+print(O.shape)
+print(O)
 
-C2 = (A.to(torch.float16)@B.to(torch.float16).T).to(torch.float8_e4m3fn)
-C2 = C2.to(torch.float32).cpu().numpy()
-print(C2.shape)
-print(C2)
+O2 = (A@W.T).to(torch.float32).cpu().numpy()
+print(O2.shape)
+print(O2)
 
 print('TIMINGS')
 for i in range(128):
-    print(f'event {i}: {timings[0,0,i]}, {timings[0,1,i]}')
+    print(f'event {i:3d}: {", ".join([f"{timings[0,j,i]:6d}" for j in range(DEPTH)])}')
 
 # Create histogram of differences
 import matplotlib.pyplot as plt
-differences = (C - C2).flatten()
+differences = (O - O2).flatten()
 plt.figure(figsize=(10, 6))
 plt.hist(differences, bins=50, alpha=0.7)
 plt.title('Histogram of Differences Between Matrices')
