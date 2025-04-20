@@ -14,7 +14,7 @@ ATTN_BLOCK_SIZE = 16
 
 # For testing
 NUM_PARTIALS = 2
-PARTIAL_IDX = 0
+PARTIAL_IDX = 1
 LAYER_IDX = 7
 H_kv_IDX = 5
 
@@ -116,21 +116,21 @@ Vj = V_c[LAYER_IDX, start_token:end_token, H_kv_IDX, :]
 QiKj = torch.matmul(Qi, Kj.transpose(-1, -2))
 scaled_QiKj = QiKj * attn_scale
 softmax = torch.softmax(scaled_QiKj, dim=-1)
+# L_ref = torch.logsumexp(scaled_QiKj, dim=-1)
+L_ref = torch.log2(torch.sum(torch.exp(scaled_QiKj.float()), dim=-1)) # use log2 consistently
 O_ref = torch.matmul(softmax, Vj)
 
+# Verify the output
+print('\nComparing outputs...')
 print('Qi shape:', Qi.shape)
 print('Kj shape:', Kj.shape)
 print('Vj shape:', Vj.shape)
 print('QiKj shape:', QiKj.shape)
 print('scaled_QiKj shape:', scaled_QiKj.shape)
 print('softmax shape:', softmax.shape)
+print('L_ref shape:', L_ref.shape)
 print('O_ref shape:', O_ref.shape)
-
-
-
-# Verify the output
-print('\nComparing outputs...')
 print(torch.max(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
 print(torch.mean(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
-print(O_ref)
-print(O[0, H_q_IDX:H_q_IDX+4, :])
+print(torch.max(torch.abs(L[0, H_q_IDX:H_q_IDX+4] - L_ref)))
+print(torch.mean(torch.abs(L[0, H_q_IDX:H_q_IDX+4] - L_ref)))

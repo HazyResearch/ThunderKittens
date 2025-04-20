@@ -86,22 +86,22 @@ constexpr int NUM_BLOCKS = 148;
 constexpr int GQA_PARTIAL_OPCODE = 1;
 constexpr int ATTN_BLOCK_SIZE = 16;
 
-using q_rt = rt_bf<16, 64>;        // actual size is (G=4, d=64)
-using q_st = st_bf<16, 64>;        // actual size is (G=4, d=64) 2048B
-using k_rt = rt_bf<16, 64>;        // (ATTN_BLOCK_SIZE, d=64)
-using v_rt = rt_bf<16, 64, col_l>; // (ATTN_BLOCK_SIZE, d=64)
-using kv_st = st_bf<16, 64>;       // (ATTN_BLOCK_SIZE, d=64) 2048B
-using attn_fl_rt = rt_fl<16, 16>;  // actual size is (G=4, ATTN_BLOCK_SIZE)
-using attn_bf_rt = rt_bf<16, 16>;  // actual size is (G=4, ATTN_BLOCK_SIZE)
+using q_rt = rt_bf<16, 64>;                  // actual size is (G=4, d=64)
+using q_st = st_bf<16, 64>;                  // actual size is (G=4, d=64) 2048B
+using k_rt = rt_bf<16, 64>;                  // (ATTN_BLOCK_SIZE, d=64)
+using v_rt = rt_bf<16, 64, col_l>;           // (ATTN_BLOCK_SIZE, d=64)
+using kv_st = st_bf<16, 64>;                 // (ATTN_BLOCK_SIZE, d=64) 2048B
+using attn_fl_rt = rt_fl<16, 16>;            // actual size is (G=4, ATTN_BLOCK_SIZE)
+using attn_bf_rt = rt_bf<16, 16>;            // actual size is (G=4, ATTN_BLOCK_SIZE)
 using max_vec_rv = col_vec<rt_fl<16, 64>>;   // actual size is (G=4)
-using max_vec_sv = sv_fl<16>;      // actual size is (G=4)
+using max_vec_sv = sv_fl<16>;                // actual size is (G=4)
 using norm_vec_rv = col_vec<rt_fl<16, 64>>;  // actual size is (G=4)
-using norm_vec_sv = sv_fl<16>;     // actual size is (G=4)
+using norm_vec_sv = sv_fl<16>;               // actual size is (G=4)
 using l_rv = col_vec<rt_fl<16, 64>>;         // actual size is (G=4)
-using l_sv = sv_fl<16>;            // actual size is (G=4)
-using o_rt = rt_fl<16, 64>;        // actual size is (G=4, d=64)
-using o_sv = sv_bf<64>;            // (d=64)
-using o_st = st_bf<16, 64>;        // actual size is (G=4, d=64)
+using l_sv = sv_fl<16>;                      // actual size is (G=4)
+using o_rt = rt_fl<16, 64>;                  // actual size is (G=4, d=64)
+using o_sv = sv_bf<64>;                      // (d=64)
+using o_st = st_bf<16, 64>;                  // actual size is (G=4, d=64)
 
 using config = default_config;
 struct globals {
@@ -338,6 +338,7 @@ template<typename config=config> struct rope_gqa_partial_op {
                 q_rt Q_reg;
                 k_rt K_reg;
                 v_rt V_reg;
+                l_rv L_reg;
                 o_rt O_reg;
                 attn_fl_rt attn_fl_reg;
                 attn_bf_rt attn_bf_reg;
@@ -419,7 +420,7 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::row_sum(norm_vec_reg, attn_fl_reg, norm_vec_reg);
 
                     // Save max_vec for next iteration
-                    warp::copy(last_max_vec_reg, max_vec_reg);
+                    warp::copy(last_max_vec_reg, max_vec_reg); // TODO no need for this
                     warp::copy(last_scaled_max_vec_reg, scaled_max_vec_reg);
                 }
 
@@ -427,8 +428,10 @@ template<typename config=config> struct rope_gqa_partial_op {
                     printf("Finished processing\n");
                 }
 
-                // Final division
+                // Finish
                 warp::div_row(O_reg, O_reg, norm_vec_reg);
+                warp::log2(L_reg, norm_vec_reg);
+                warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
 
                 // Get the output pages
                 int O_page_pid = get_O_page(s);
@@ -440,12 +443,13 @@ template<typename config=config> struct rope_gqa_partial_op {
 
                 // Store the results
                 store_4_rows(O_smem, O_reg, q_head_local_idx);
+                warp::store(L_smem, L_reg);
                 warp::sync();
 
                 // Arrive at semaphores
                 warp::arrive(O_arrived(s));
                 warp::arrive(L_arrived(s));
-                
+
                 // TODO: release pages
             }
         }
@@ -455,6 +459,7 @@ template<typename config=config> struct rope_gqa_partial_op {
             parsed_instruction inst{s};
             int gqa_ratio = g.Q.rows() / g.K_c.rows();
             int q_head_start_idx = inst.kv_head_idx * gqa_ratio; // 0, 4, 8, 12, 16, 20, 24, 28
+            int q_head_vec_start_idx = q_head_start_idx % 16;
 
             if (laneid() == 0) {
                 // Wait for the outputs to be ready
@@ -465,12 +470,21 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int O_page_pid = get_O_page(s);
                 o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
                 
-                // Store to global memory
+                // Store partial attention output to global memory
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, 0, q_head_start_idx + 0, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, 0, q_head_start_idx + 1, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, 0, q_head_start_idx + 2, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, 0, q_head_start_idx + 3, 0});
                 tma::store_async_read_wait();
+
+                // Store LSE to global memory
+                int L_page_pid = get_L_page(s);
+                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+                float4 tmp; // manual load and store (maybe do this in consumer?)
+                uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx]));
+                float *dst_ptr = (float*)&g.L.raw_ptr[0 + q_head_start_idx];
+                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(tmp.x), "=f"(tmp.y), "=f"(tmp.z), "=f"(tmp.w) : "r"(src_ptr));
+                asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(tmp.x), "f"(tmp.y), "f"(tmp.z), "f"(tmp.w), "l"(dst_ptr));
 
                 // Arrive at semaphore
                 arrive(s.page_finished[O_page_pid], config::NUM_CONSUMER_WARPS);
