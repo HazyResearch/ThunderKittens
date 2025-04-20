@@ -8,17 +8,22 @@
 #include <iostream>
 
 // This is a macro that helps us define default cache policy versions of each function.
-#define __KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(function_name) \
+#define __KITTENS_TMA_DEFINE_DEFAULT_LOAD_CACHE_VEC__(function_name) \
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>> \
 __device__ static inline void function_name(SV &dst, const GL &src, const COORD &idx) { \
     function_name<cache_policy::NORMAL>(dst, src, idx); \
 }
-#define __KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC_(function_name) \
+#define __KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(function_name) \
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>> \
+__device__ static inline void function_name(const GL &dst, const SV &src, const COORD &idx) { \
+    function_name<cache_policy::NORMAL>(dst, src, idx); \
+}
+#define __KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC__(function_name) \
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>> \
 __device__ static inline void function_name(SV &dst, const GL &src, const COORD &idx, semaphore& bar) { \
     function_name<cache_policy::NORMAL>(dst, src, idx, bar); \
 }
-#define __KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC_(function_name) \
+#define __KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC__(function_name) \
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>> \
 __device__ static inline void function_name(SV &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) { \
     function_name<cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask, dst_mbar_cta); \
@@ -229,7 +234,7 @@ __device__ static inline void prefetch(SV &dst, const GL &src, const COORD &idx)
         ::kittens::detail::tma::vec_prefetch_tma_internal<policy>(tma_ptr, tma_coord);
     }
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(prefetch)
+__KITTENS_TMA_DEFINE_DEFAULT_LOAD_CACHE_VEC__(prefetch)
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_async(const GL &dst, const SV &src, const COORD &idx) {
@@ -244,7 +249,7 @@ __device__ static inline void store_async(const GL &dst, const SV &src, const CO
     }
     ::kittens::tma::store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_async)
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_add_async(const GL &dst, const SV &src, const COORD &idx) {
@@ -259,7 +264,7 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
     }
     ::kittens::tma::store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_add_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_add_async)
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_min_async(const GL &dst, const SV &src, const COORD &idx) {
@@ -275,7 +280,7 @@ __device__ static inline void store_min_async(const GL &dst, const SV &src, cons
     }
     ::kittens::tma::store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_min_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_min_async)
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store_max_async(const GL &dst, const SV &src, const COORD &idx) {
@@ -291,7 +296,7 @@ __device__ static inline void store_max_async(const GL &dst, const SV &src, cons
     }
     ::kittens::tma::store_commit_group();
 }
-__KITTENS_TMA_DEFINE_DEFAULT_CACHE_VEC_(store_max_async)
+__KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_max_async)
 
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar) {
@@ -306,7 +311,7 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
         ::kittens::detail::tma::vec_load_async_tma_internal<policy>(tma_ptr, dst_i_ptr, mbar_ptr, tma_coord);
     }
 }
-__KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC_(load_async)
+__KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC__(load_async)
 
 namespace cluster {
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
@@ -322,7 +327,7 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
         ::kittens::detail::tma::cluster::vec_load_async_tma_internal<policy>(tma_ptr, dst_i_ptr, mbar_ptr, tma_coord, cluster_mask, dst_mbar_cta);
     }
 }
-__KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC_(load_async)
+__KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC__(load_async)
 } // namespace cluster
 } // namespace tma
 } // namespace kittens

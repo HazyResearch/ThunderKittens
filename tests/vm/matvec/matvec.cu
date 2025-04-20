@@ -29,8 +29,8 @@ struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using weights = gl<bf16, 1, -1, -1, 2048, st_bf<16, 512>>; // assumed to be N by 2048 (X@W.T).
-    using activations = gl<bf16, 1, 1, 1, 2048, sv_bf<512>, sv_bf<16>>;
-    using barriers = gl<bf16, 1, -1, 6, 32, sv_bf<512>, sv_bf<16>>; // num_layers by 6 ops per layer by up to 32 heads. 
+    using activations = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>;
+    using barriers = gl<bf16, 1, -1, 6, 32>; // num_layers by 6 ops per layer by up to 32 heads. 
     instruction_layout instructions;
     timing_layout timings;
     weights W;
@@ -103,9 +103,10 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
                 tma::load_async(weight_chunk, g.W, {inst.layer, inst.start_col/16, laneid()}, inputs_arrived(s, laneid()));
             }
             else if(laneid() == 5) {
-                s.wait_page_ready(get_barriers_page(s, laneid()));
+                int activation_page = get_activation_page(s);
+                s.wait_page_ready(activation_page);
                 while(*(volatile int *)&g.Bar[{inst.layer, OP_IDX, 0}] == 0) __nanosleep(20);
-                auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
+                auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                 tma::expect(activations_arrived(s), activations);
                 tma::load_async(activations, g.A, {}, activations_arrived(s));
             }
@@ -114,7 +115,10 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
     };
     struct launcher { // launches mma's
         // launcher does nothing here, since this doesn't use tensor cores.
-        static __device__ void run(const globals &g, state<config> &s) {}
+        static __device__ void run(const globals &g, state<config> &s) {
+            s.wait_tensor_ready();
+            if(laneid() == 0) arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
+        }
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
@@ -162,13 +166,14 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
             if(laneid() == 0) {
                 wait(outputs_arrived(s), 0);
                 s.record(125);
-                sv_bf<16> &output = reinterpret_cast<sv_bf<16>&>(s.scratch());
+                void *scratch = s.scratch();
+                sv_bf<16> &output = *reinterpret_cast<sv_bf<16>*>(scratch);
                 tma::store_async(g.O, output, {inst.start_col/16});
                 tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                 s.record(126);
             }
             warp::sync();
-            asm volatile("fence.gpu"); // possible we need sc here but I don't think so.
+            asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
             if(laneid() == 0) {
                 if constexpr (OP_IDX == g.Bar.rows()-1) g.Bar[{inst.layer+1, 0, 0}] = 1;
                 else g.Bar[{inst.layer, OP_IDX+1, 0}] = 1;
