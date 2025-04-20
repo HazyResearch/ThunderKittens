@@ -85,6 +85,7 @@ using namespace kittens::prototype::vm;
 constexpr int NUM_BLOCKS = 148;
 constexpr int GQA_PARTIAL_OPCODE = 1;
 constexpr int ATTN_BLOCK_SIZE = 16;
+constexpr int GQA_RATIO = 4; // 32 : 8
 
 using q_rt = rt_bf<16, 64>;                  // actual size is (G=4, d=64)
 using q_st = st_bf<16, 64>;                  // actual size is (G=4, d=64) 2048B
@@ -268,49 +269,44 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
             // TODO release unused pages immediately
-
+            // TODO use lanes more efficiently
             if (laneid() == 0) {
+                // Setup
                 parsed_instruction inst{s};
-                int gqa_ratio = g.Q.rows() / g.K_c.rows();
-                int q_head_tile_idx = (inst.kv_head_idx * gqa_ratio) / q_rt::tile_size_row; // 0 or 1
-    
+                int q_head_tile_idx = (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row; // 0 or 1
                 int seq_len = g.pos_id + 1;
                 int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;  // TODO indivisble token length
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
-            
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
-
-                printf("seq_len: %d, total_attn_blocks: %d, blocks_per_partial: %d, start_blk_idx: %d, end_blk_idx: %d\n", seq_len, total_attn_blocks, blocks_per_partial, start_blk_idx, end_blk_idx);
+                int Q_page_pid = get_Q_page(s);
+                q_st &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
 
                 // Load Q once
-                int Q_page_pid = get_Q_page(s);
                 s.wait_page_ready(Q_page_pid);
-                q_st &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
                 tma::expect(Q_arrived(s), Q_smem);
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, q_head_tile_idx, 0}, Q_arrived(s));
 
-                // Start the pipeline!
+                // Run the pipeline!
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
-                    printf("Loading block %d/%d\n", i + start_blk_idx, end_blk_idx);
                     int stage = i % NUM_STAGES;
                     int K_page_pid = get_K_page(s, stage);
                     int V_page_pid = get_V_page(s, stage);
                     kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
                     kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
+
                     if (i < NUM_STAGES) {
-                        printf("P Waiting K and V for block %d/%d, stage %d\n", i + start_blk_idx, end_blk_idx, stage);
                         s.wait_page_ready(K_page_pid);
                         s.wait_page_ready(V_page_pid);
                     } else {
-                        printf("S Waiting K and V for block %d/%d, stage %d\n", i + start_blk_idx, end_blk_idx, stage);
                         wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                     }
-                    printf("Loading K and V for block %d/%d, stage %d\n", i + start_blk_idx, end_blk_idx, stage);
+
+                    // TODO: different lanes for K V
                     tma::expect(K_arrived(s, stage), K_smem);
-                    tma::expect(V_arrived(s, stage), V_smem);
                     tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
+                    tma::expect(V_arrived(s, stage), V_smem);
                     tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                 }
             }
@@ -322,19 +318,17 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
             if (warpid() == 0) {
+                // Setup
                 parsed_instruction inst{s};
-                int gqa_ratio = g.Q.rows() / g.K_c.rows();
-                int q_head_local_idx = ((inst.kv_head_idx * gqa_ratio) % q_rt::tile_size_row) / 4;
-                const float softmax_temp = g.attn_scale * 1.44269504089f; // 1 / (sqrt(D_h) * ln(2))
-
+                int q_head_local_idx = ((inst.kv_head_idx * GQA_RATIO) % q_rt::tile_size_row) / 4;
                 int seq_len = g.pos_id + 1;
                 int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;  // TODO indivisble token length
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
-            
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
+                float softmax_temp = g.attn_scale * 1.44269504089f; // 1 / (sqrt(D_h) * ln(2))
 
-                // Common setup
+                // Even more setup
                 q_rt Q_reg;
                 k_rt K_reg;
                 v_rt V_reg;
@@ -343,55 +337,41 @@ template<typename config=config> struct rope_gqa_partial_op {
                 attn_fl_rt attn_fl_reg;
                 attn_bf_rt attn_bf_reg;
                 max_vec_rv max_vec_reg;
-                max_vec_rv last_max_vec_reg;
                 max_vec_rv scaled_max_vec_reg;
                 max_vec_rv last_scaled_max_vec_reg;
                 max_vec_rv diff_scaled_max_vec_reg;
                 norm_vec_rv norm_vec_reg;
-
-                warp::neg_infty(last_max_vec_reg);
+                warp::neg_infty(max_vec_reg);
                 warp::zero(last_scaled_max_vec_reg); // just not +-inf
                 warp::zero(norm_vec_reg);
                 warp::zero(O_reg);
-
-                // Wait for Q to be ready
                 int Q_page_pid = get_Q_page(s);
+                int O_page_pid = get_O_page(s);
+                int L_page_pid = get_L_page(s);
                 q_st &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
+                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
+                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+
+                // Load Q once
                 wait(Q_arrived(s), 0);
                 warp::load(Q_reg, Q_smem);
 
-                // Start the pipeline!
+                // Run the pipeline!
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                     int stage = i % NUM_STAGES;
-
-                    // TODO Do independent stuff before waiting for K
-
-                    if (!laneid()) {
-                        printf("Processing block %d/%d, stage %d\n", i + start_blk_idx, end_blk_idx, stage);
-                    }
-                    
-                    // Wait for K to be ready
                     int K_page_pid = get_K_page(s, stage);
                     int V_page_pid = get_V_page(s, stage);
                     kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
                     kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
-                    warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
-                    warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2); // TODO do this later
-
-                    if (!laneid()) {
-                        printf("Block %d/%d, stage %d: K and V are ready\n", i + start_blk_idx, end_blk_idx, stage);
-                    }
 
                     // Perform Q @ K.T 
-                    warp::load(K_reg, K_smem);
                     warp::zero(attn_fl_reg);
+                    warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
+                    warp::load(K_reg, K_smem);
                     warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
-
-                    // Signal K done
                     warp::arrive(K_finished(s, stage));
 
                     // Obtain maximums per row (which is per head)
-                    warp::copy(max_vec_reg, last_max_vec_reg);
                     warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max
 
                     // Scale attention block and maximums by sqrt(D_h)
@@ -408,24 +388,18 @@ template<typename config=config> struct rope_gqa_partial_op {
 
                     // Normalize and accumulate numerator (A @ V)
                     warp::mul_row(O_reg, O_reg, diff_scaled_max_vec_reg);
+                    warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::load(V_reg, V_smem);
-                    attn_bf_reg = attn_fl_reg; // plz don't do this before softmax
+                    warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                     warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
-
-                    // Signal V done
                     warp::arrive(V_finished(s, stage));
 
                     // Normalize and accumulate demoniator
                     warp::mul(norm_vec_reg, norm_vec_reg, diff_scaled_max_vec_reg);
                     warp::row_sum(norm_vec_reg, attn_fl_reg, norm_vec_reg);
 
-                    // Save max_vec for next iteration
-                    warp::copy(last_max_vec_reg, max_vec_reg); // TODO no need for this
+                    // Save for next iteration
                     warp::copy(last_scaled_max_vec_reg, scaled_max_vec_reg);
-                }
-
-                if (!laneid()) {
-                    printf("Finished processing\n");
                 }
 
                 // Finish
@@ -433,21 +407,16 @@ template<typename config=config> struct rope_gqa_partial_op {
                 warp::log2(L_reg, norm_vec_reg);
                 warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
 
-                // Get the output pages
-                int O_page_pid = get_O_page(s);
-                int L_page_pid = get_L_page(s);
-                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
-                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+                // Wait for the output pages to be ready
                 s.wait_page_ready(O_page_pid);
                 s.wait_page_ready(L_page_pid);
 
                 // Store the results
                 store_4_rows(O_smem, O_reg, q_head_local_idx);
+                warp::sync();
+                warp::arrive(O_arrived(s));
                 warp::store(L_smem, L_reg);
                 warp::sync();
-
-                // Arrive at semaphores
-                warp::arrive(O_arrived(s));
                 warp::arrive(L_arrived(s));
 
                 // TODO: release pages
@@ -456,39 +425,36 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct storer {
         static __device__ void run(const globals &g, state<config> &s) {
-            parsed_instruction inst{s};
-            int gqa_ratio = g.Q.rows() / g.K_c.rows();
-            int q_head_start_idx = inst.kv_head_idx * gqa_ratio; // 0, 4, 8, 12, 16, 20, 24, 28
-            int q_head_vec_start_idx = q_head_start_idx % 16;
-
             if (laneid() == 0) {
-                // Wait for the outputs to be ready
-                wait(O_arrived(s), 0);
-                wait(L_arrived(s), 0);
-
-                // Declare shared memory
+                // Setup
+                parsed_instruction inst{s};
+                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
+                int q_head_vec_start_idx = q_head_start_idx % 16;
                 int O_page_pid = get_O_page(s);
+                int L_page_pid = get_L_page(s);
                 o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
-                
+                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+
                 // Store partial attention output to global memory
+                wait(O_arrived(s), 0);
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, 0, q_head_start_idx + 0, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, 0, q_head_start_idx + 1, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, 0, q_head_start_idx + 2, 0});
                 tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, 0, q_head_start_idx + 3, 0});
-                tma::store_async_read_wait();
 
                 // Store LSE to global memory
-                int L_page_pid = get_L_page(s);
-                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+                wait(L_arrived(s), 0);
                 float4 tmp; // manual load and store (maybe do this in consumer?)
                 uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx]));
                 float *dst_ptr = (float*)&g.L.raw_ptr[0 + q_head_start_idx];
                 asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(tmp.x), "=f"(tmp.y), "=f"(tmp.z), "=f"(tmp.w) : "r"(src_ptr));
                 asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(tmp.x), "f"(tmp.y), "f"(tmp.z), "f"(tmp.w), "l"(dst_ptr));
 
-                // Arrive at semaphore
+                // Wait for the stores to finish reading from shared memory
+                tma::store_async_read_wait();
                 arrive(s.page_finished[O_page_pid], config::NUM_CONSUMER_WARPS);
-                // TODO clean up other pages?
+
+                // TODO clean up other pages
             }
             warp::sync();
          }
