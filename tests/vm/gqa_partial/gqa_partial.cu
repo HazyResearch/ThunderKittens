@@ -90,6 +90,8 @@ constexpr int GQA_RATIO = NUM_Q_HEADS / NUM_KV_HEADS;
 constexpr int HEAD_DIM = 64;
 constexpr int ATTN_BLOCK_SIZE = 16;
 
+static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
+
 using q_rt = rt_bf<16, HEAD_DIM>;                 // only 4 rows are used
 using q_st = st_bf<16, HEAD_DIM>;                 // only 4 rows are used
 using k_rt = rt_bf<ATTN_BLOCK_SIZE, HEAD_DIM>;
@@ -114,7 +116,7 @@ struct globals {
     using q_layout = gl<bf16, 1, 1, NUM_Q_HEADS, HEAD_DIM, q_st>;
     using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
     using l_layout = gl<float, 1, 1, -1, NUM_Q_HEADS, l_sv>;                               // (max_partials, H_q)
-    using o_layout = gl<bf16, 1, -1, NUM_Q_HEADS, HEAD_DIM, o_sv>;                         // (max_partials, H_q, D_h) TODO should we do float for partial?
+    using o_layout = gl<bf16, 1, -1, NUM_Q_HEADS, HEAD_DIM, o_sv>;                         // (max_partials, H_q, D_h) should we do float for partial O?
     instruction_layout instructions;
     timing_layout timings;
     q_layout Q;
@@ -132,6 +134,7 @@ struct globals {
 template<typename config=config> struct rope_gqa_partial_op {
     static constexpr int opcode = GQA_PARTIAL_OPCODE;
     static constexpr int NUM_STAGES = 4;
+    static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
     static constexpr int HALF_PAGE_SIZE = config::PAGE_SIZE / 2;
 
     struct parsed_instruction {
@@ -171,21 +174,43 @@ template<typename config=config> struct rope_gqa_partial_op {
         return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2 + 1];
     }
 
-    // 13 pages TODO use less pages, test pipeline stage speed
-    __device__ static inline int get_Q_page(state<config> &s) {
-        return s.pid(0);
+    static constexpr int QOL_PAGE = 0;
+    static constexpr int KV_PAGE = 1;
+    __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
+    __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
+    __device__ static inline void finish_QOL_page(state<config> &s) { 
+        if (laneid() == 0) arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS); 
     }
-    __device__ static inline int get_O_page(state<config> &s) {
-        return s.pid(1);
+    __device__ static inline void finish_KV_page(state<config> &s) { 
+        if (laneid() == 0) arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS); 
     }
-    __device__ static inline int get_L_page(state<config> &s) {
-        return s.pid(2);
+    __device__ static inline q_st &get_Q_smem(state<config> &s) {
+        int pid = s.pid(QOL_PAGE);
+        return *reinterpret_cast<q_st*>(s.pages[pid].data);
     }
-    __device__ static inline int get_K_page(state<config> &s, int stage) {
-        return s.pid(3 + stage * 2);
+    __device__ static inline o_sv (&get_O_smem(state<config> &s))[4] {
+        int pid = s.pid(QOL_PAGE);
+        return *reinterpret_cast<o_sv (*)[4]>(
+            reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st)
+        );
     }
-    __device__ static inline int get_V_page(state<config> &s, int stage) {
-        return s.pid(3 + stage * 2 + 1);
+    __device__ static inline l_sv &get_L_smem(state<config> &s) {
+        int pid = s.pid(QOL_PAGE);
+        return *reinterpret_cast<l_sv*>(
+            reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st) + sizeof(o_sv) * 4
+        );
+    }
+    __device__ static inline kv_st &get_K_smem(state<config> &s, int stage) {
+        int pid = s.pid(KV_PAGE);
+        return *reinterpret_cast<kv_st*>(
+            reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (stage * 2)
+        );
+    }
+    __device__ static inline kv_st &get_V_smem(state<config> &s, int stage) {
+        int pid = s.pid(KV_PAGE);
+        return *reinterpret_cast<kv_st*>(
+            reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (1 + stage * 2)
+        );
     }
 
     template<ducks::sv::all SV, ducks::rt::all RT>
@@ -281,26 +306,21 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
-                int Q_page_pid = get_Q_page(s);
-                q_st &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
+                q_st &Q_smem = get_Q_smem(s);
 
                 // Load Q once
-                s.wait_page_ready(Q_page_pid);
+                wait_QOL_page(s);
                 tma::expect(Q_arrived(s), Q_smem);
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, q_head_tile_idx, 0}, Q_arrived(s));
 
                 // Run the pipeline!
+                wait_KV_page(s);
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                     int stage = i % NUM_STAGES;
-                    int K_page_pid = get_K_page(s, stage);
-                    int V_page_pid = get_V_page(s, stage);
-                    kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
-                    kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
+                    kv_st &K_smem = get_K_smem(s, stage);
+                    kv_st &V_smem = get_V_smem(s, stage);
 
-                    if (i < NUM_STAGES) {
-                        s.wait_page_ready(K_page_pid);
-                        s.wait_page_ready(V_page_pid);
-                    } else {
+                    if (i >= NUM_STAGES) {
                         wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                     }
@@ -347,32 +367,24 @@ template<typename config=config> struct rope_gqa_partial_op {
                 warp::zero(last_scaled_max_vec_reg); // just not +-inf
                 warp::zero(norm_vec_reg);
                 warp::zero(O_reg);
-                int Q_page_pid = get_Q_page(s);
-                int O_page_pid = get_O_page(s);
-                int L_page_pid = get_L_page(s);
-                q_st &Q_smem = *reinterpret_cast<q_st*>(s.pages[Q_page_pid].data);
-                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
-                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+                q_st &Q_smem = get_Q_smem(s);
+                o_sv (&O_smem)[4] = get_O_smem(s);
+                l_sv &L_smem = get_L_smem(s);
 
                 // Load Q once
                 wait(Q_arrived(s), 0);
                 warp::load(Q_reg, Q_smem);
-                warp::arrive(s.page_finished[Q_page_pid], config::NUM_CONSUMER_WARPS);
 
                 // Run the pipeline!
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                     int stage = i % NUM_STAGES;
-                    int K_page_pid = get_K_page(s, stage);
-                    int V_page_pid = get_V_page(s, stage);
-                    kv_st &K_smem = *reinterpret_cast<kv_st*>(s.pages[K_page_pid].data);
-                    kv_st &V_smem = *reinterpret_cast<kv_st*>(s.pages[V_page_pid].data);
+                    kv_st &K_smem = get_K_smem(s, stage);
+                    kv_st &V_smem = get_V_smem(s, stage);
 
                     // Perform Q @ K.T 
                     warp::zero(attn_fl_reg);
                     warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::load(K_reg, K_smem);
-                    if (i + start_blk_idx >= end_blk_idx - NUM_STAGES)
-                        warp::arrive(s.page_finished[K_page_pid], config::NUM_CONSUMER_WARPS);
                     warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
                     warp::arrive(K_finished(s, stage));
 
@@ -395,8 +407,6 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::mul_row(O_reg, O_reg, diff_scaled_max_vec_reg);
                     warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::load(V_reg, V_smem);
-                    if (i + start_blk_idx >= end_blk_idx - NUM_STAGES)
-                        warp::arrive(s.page_finished[V_page_pid], config::NUM_CONSUMER_WARPS);
                     warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                     warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
                     warp::arrive(V_finished(s, stage));
@@ -410,13 +420,10 @@ template<typename config=config> struct rope_gqa_partial_op {
                 }
 
                 // Finish
+                finish_KV_page(s);
                 warp::div_row(O_reg, O_reg, norm_vec_reg);
                 warp::log2(L_reg, norm_vec_reg);
                 warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
-
-                // Wait for the output pages to be ready
-                s.wait_page_ready(O_page_pid);
-                s.wait_page_ready(L_page_pid);
 
                 // Store the results
                 store_4_rows(O_smem, O_reg, q_head_local_idx);
@@ -435,10 +442,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                 parsed_instruction inst{s};
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
                 int q_head_vec_start_idx = q_head_start_idx % 16;
-                int O_page_pid = get_O_page(s);
-                int L_page_pid = get_L_page(s);
-                o_sv (&O_smem)[4] = *reinterpret_cast<o_sv(*)[4]>(s.pages[O_page_pid].data);
-                l_sv &L_smem = *reinterpret_cast<l_sv*>(s.pages[L_page_pid].data);
+                o_sv (&O_smem)[4] = get_O_smem(s);
+                l_sv &L_smem = get_L_smem(s);
 
                 // Store partial attention output to global memory
                 wait(O_arrived(s), 0);
@@ -456,9 +461,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                 asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(tmp.x), "f"(tmp.y), "f"(tmp.z), "f"(tmp.w), "l"(dst_ptr));
 
                 // Wait and finish
-                arrive(s.page_finished[L_page_pid], config::NUM_CONSUMER_WARPS);
                 tma::store_async_read_wait();
-                arrive(s.page_finished[O_page_pid], config::NUM_CONSUMER_WARPS);
+                finish_QOL_page(s);
             }
             warp::sync();
          }
