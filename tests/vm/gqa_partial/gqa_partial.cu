@@ -82,38 +82,39 @@ using namespace kittens::prototype::vm;
         }
 */
 
-constexpr int NUM_BLOCKS = 148;
 constexpr int GQA_PARTIAL_OPCODE = 1;
-constexpr int ATTN_BLOCK_SIZE = 16;
+constexpr int NUM_BLOCKS = 148;
 constexpr int NUM_Q_HEADS = 32;
 constexpr int NUM_KV_HEADS = 8;
 constexpr int GQA_RATIO = NUM_Q_HEADS / NUM_KV_HEADS;
+constexpr int HEAD_DIM = 64;
+constexpr int ATTN_BLOCK_SIZE = 16;
 
-using q_rt = rt_bf<16, 64>;                  // actual size is (G=4, d=64)
-using q_st = st_bf<16, 64>;                  // actual size is (G=4, d=64) 2048B
-using k_rt = rt_bf<16, 64>;                  // (ATTN_BLOCK_SIZE, d=64)
-using v_rt = rt_bf<16, 64, col_l>;           // (ATTN_BLOCK_SIZE, d=64)
-using kv_st = st_bf<16, 64>;                 // (ATTN_BLOCK_SIZE, d=64) 2048B
-using attn_fl_rt = rt_fl<16, 16>;            // actual size is (G=4, ATTN_BLOCK_SIZE)
-using attn_bf_rt = rt_bf<16, 16>;            // actual size is (G=4, ATTN_BLOCK_SIZE)
-using max_vec_rv = col_vec<rt_fl<16, 64>>;   // actual size is (G=4)
-using max_vec_sv = sv_fl<16>;                // actual size is (G=4)
-using norm_vec_rv = col_vec<rt_fl<16, 64>>;  // actual size is (G=4)
-using norm_vec_sv = sv_fl<16>;               // actual size is (G=4)
-using l_rv = col_vec<rt_fl<16, 64>>;         // actual size is (G=4)
-using l_sv = sv_fl<16>;                      // actual size is (G=4)
-using o_rt = rt_fl<16, 64>;                  // actual size is (G=4, d=64)
-using o_sv = sv_bf<64>;                      // (d=64)
-using o_st = st_bf<16, 64>;                  // actual size is (G=4, d=64)
+using q_rt = rt_bf<16, HEAD_DIM>;                 // only 4 rows are used
+using q_st = st_bf<16, HEAD_DIM>;                 // only 4 rows are used
+using k_rt = rt_bf<ATTN_BLOCK_SIZE, HEAD_DIM>;
+using v_rt = rt_bf<ATTN_BLOCK_SIZE, HEAD_DIM, col_l>;
+using kv_st = st_bf<ATTN_BLOCK_SIZE, HEAD_DIM>;
+using attn_fl_rt = rt_fl<16, ATTN_BLOCK_SIZE>;    // only 4 values are used
+using attn_bf_rt = rt_bf<16, ATTN_BLOCK_SIZE>;    // only 4 values are used
+using max_vec_rv = col_vec<rt_fl<16, HEAD_DIM>>;  // only 4 values are used
+using max_vec_sv = sv_fl<16>;                     // only 4 values are used
+using norm_vec_rv = col_vec<rt_fl<16, HEAD_DIM>>; // only 4 values are used
+using norm_vec_sv = sv_fl<16>;                    // only 4 values are used
+using l_rv = col_vec<rt_fl<16, HEAD_DIM>>;        // only 4 values are used
+using l_sv = sv_fl<16>;                           // only 4 values are used
+using o_rt = rt_fl<16, HEAD_DIM>;                 // only 4 rows are used
+using o_sv = sv_bf<HEAD_DIM>;
+using o_st = st_bf<16, HEAD_DIM>;                 // only 4 rows are used
 
 using config = default_config;
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
-    using q_layout = gl<bf16, 1, 1, -1, -1, q_st>; // (H_q, D_h) = (32, 64)
-    using kv_layout = gl<bf16, -1, -1, -1, -1, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h) = (16, 131072, 8, 64)
-    using l_layout = gl<float, 1, 1, -1, -1, l_sv>; // (M_a, H_q) = (M_a, 32)
-    using o_layout = gl<bf16, 1, -1, -1, -1, o_sv>; // (M_a, H_q, D_h) = (M_a, 32, 64) TODO should we do float for partial?
+    using q_layout = gl<bf16, 1, 1, NUM_Q_HEADS, HEAD_DIM, q_st>;
+    using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
+    using l_layout = gl<float, 1, 1, -1, NUM_Q_HEADS, l_sv>;                               // (max_partials, H_q)
+    using o_layout = gl<bf16, 1, -1, NUM_Q_HEADS, HEAD_DIM, o_sv>;                         // (max_partials, H_q, D_h) TODO should we do float for partial?
     instruction_layout instructions;
     timing_layout timings;
     q_layout Q;
