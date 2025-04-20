@@ -100,7 +100,7 @@ torch.cuda.synchronize(TORCH_DEVICE)
 
 # Run the reference implementation
 print('\nRunning the reference implementation...')
-L_ref = torch.zeros_like(LSE)
+LSE_ref = torch.zeros_like(LSE)
 O_ref = torch.zeros_like(O)
 seq_len = POS_ID + 1
 for p in range(NUM_PARTIALS):
@@ -119,43 +119,44 @@ for p in range(NUM_PARTIALS):
         QiKj = torch.matmul(Qi, Kj.transpose(-1, -2))
         scaled_QiKj = QiKj * ATTN_SCALE
         softmax = torch.softmax(scaled_QiKj, dim=-1)
-        # L_ref[p, H_q_start:H_q_start+4] = torch.logsumexp(scaled_QiKj, dim=-1)
-        L_ref[p, H_q_start:H_q_start+4] = torch.log2(torch.sum(torch.exp(scaled_QiKj.float()), dim=-1)) # use log2 consistently
+        # LSE_ref[p, H_q_start:H_q_start+4] = torch.logsumexp(scaled_QiKj, dim=-1)
+        LSE_ref[p, H_q_start:H_q_start+4] = torch.log2(torch.sum(torch.exp(scaled_QiKj.float()), dim=-1)) # use log2 consistently
         O_ref[p, H_q_start:H_q_start+4, :] = torch.matmul(softmax, Vj)
 
         print(f'\nPartial {p}, Head {h}:')
         print(torch.max(torch.abs(O[p, H_q_start:H_q_start+4, :] - O_ref[p, H_q_start:H_q_start+4, :])))
         print(torch.mean(torch.abs(O[p, H_q_start:H_q_start+4, :] - O_ref[p, H_q_start:H_q_start+4, :])))
-        print(torch.max(torch.abs(LSE[p, H_q_start:H_q_start+4] - L_ref[p, H_q_start:H_q_start+4])))
-        print(torch.mean(torch.abs(LSE[p, H_q_start:H_q_start+4] - L_ref[p, H_q_start:H_q_start+4])))
+        print(torch.max(torch.abs(LSE[p, H_q_start:H_q_start+4] - LSE_ref[p, H_q_start:H_q_start+4])))
+        print(torch.mean(torch.abs(LSE[p, H_q_start:H_q_start+4] - LSE_ref[p, H_q_start:H_q_start+4])))
 
-# # Run the reference implementation
-# print('\nRunning the reference implementation...')
-# O_ref = torch.zeros((L, H_q, D_h), dtype=torch.bfloat16, device=TORCH_DEVICE)
-# seq_len = POS_ID + 1
-# for l in range(L):
-#     for h in range(H_kv):
-#         Q_start = 4 * H_kv
-#         Q_end = 4 * (H_kv + 1)
-#         K = K_c[l, :seq_len, h, :] # (seq_len, D_h)
-#         V = V_c[l, :seq_len, h, :] # (seq_len, D_h)
+# Run attention reduction
+print('\nRunning attention reduction on kernel outputs...')
+LSE = LSE[:NUM_PARTIALS]
+O = O[:NUM_PARTIALS]
+max_lse = torch.max(LSE, keepdim=True, dim=0).values
+scaled_lse = torch.exp2(LSE - max_lse) # (M_a, H_q)
+final_denominator = torch.sum(scaled_lse, dim=0) # sumexp * M, (H_q,)
+final_numerator = torch.sum(O * scaled_lse.unsqueeze(-1), dim=0) # exp * M, (H_q, D_h)
+final_out = final_numerator / final_denominator.unsqueeze(-1)
 
-#         QK = torch.matmul(Q[Q_start:Q_end, :], K.transpose(-2, -1)) # Just use same Q for all layers
-#         QK /= (Q.size(-1) ** 0.5)
-#         QK = torch.nn.functional.softmax(QK, dim=-1)
-#         O_ref[l, Q_start:Q_end, :] = torch.matmul(QK, V) # (H_q, D_h)
+# Run a reference attention
+print('\nRunning reference attention...')
+K = K_c[LAYER_IDX, :seq_len, :, :] # (seq_len, H_kv, D_h)
+V = V_c[LAYER_IDX, :seq_len, :, :] # (seq_len, H_kv, D_h)
+O_ref = torch.zeros_like(Q)
+for h in range(H_kv):
+    Q_start = 4 * h
+    Q_end = 4 * (h + 1)
+    K_h = K[:, h, :] # (seq_len, D_h)
+    V_h = V[:, h, :] # (seq_len, D_h)
+    QK = torch.matmul(Q[Q_start:Q_end, :], K_h.transpose(-2, -1))
+    scaled_QK = QK * ATTN_SCALE
+    softmax = torch.softmax(scaled_QK, dim=-1)
+    O_ref[Q_start:Q_end, :] = torch.matmul(softmax, V_h)
 
-# Verify the output
-# print('\nComparing outputs...')
-# print('Qi shape:', Qi.shape)
-# print('Kj shape:', Kj.shape)
-# print('Vj shape:', Vj.shape)
-# print('QiKj shape:', QiKj.shape)
-# print('scaled_QiKj shape:', scaled_QiKj.shape)
-# print('softmax shape:', softmax.shape)
-# print('L_ref shape:', L_ref.shape)
-# print('O_ref shape:', O_ref.shape)
-# print(torch.max(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
-# print(torch.mean(torch.abs(O[0, H_q_IDX:H_q_IDX+4, :] - O_ref)))
-# print(torch.max(torch.abs(LSE[0, H_q_IDX:H_q_IDX+4] - L_ref)))
-# print(torch.mean(torch.abs(LSE[0, H_q_IDX:H_q_IDX+4] - L_ref)))
+# Compare the aggregated outputs
+print('\nComparing outputs...')
+print('final_out shape:', final_out.shape)
+print('O_ref shape:', O_ref.shape)
+print(torch.max(torch.abs(final_out - O_ref)))
+print(torch.mean(torch.abs(final_out - O_ref)))
