@@ -16,9 +16,9 @@ constexpr int NUM_Q_HEADS = 32;
 using scalar_rt = rt_fl<16, 16>;
 using scalar_rv = col_vec<scalar_rt>;
 
-using o_vector_rt = rt_fl<16, HEAD_DIM>;
-
 using l_partial_sv = sv_fl<16>; //  only index [0] is relevant)
+
+using o_vector_rt = rt_fl<16, HEAD_DIM>;
 using o_partial_st = st_fl<16, HEAD_DIM>; // Store O partials (only row [0] is relevant)
 using o_final_st = st_bf<16, HEAD_DIM>; // Store final O output (only row [0] is relevant)
 
@@ -31,7 +31,7 @@ struct globals {
     // Input Partial O:
     using o_partial_layout = gl<float, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_partial_st>;
     // Final Output O:
-    using o_final_layout = gl<bf16, 1, NUM_Q_HEADS, 1, HEAD_DIM, o_final_global_tile>;
+    using o_final_layout = gl<bf16, 1, NUM_Q_HEADS, 1, HEAD_DIM, o_final_st>;
 
     instruction_layout instructions;
     timing_layout timings;
