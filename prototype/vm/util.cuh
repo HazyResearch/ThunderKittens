@@ -25,7 +25,10 @@ template<typename config> struct __align__(128) instruction_state_t {
 template<template<typename> typename op_dispatcher, typename... ops>
 struct dispatch_op {
     template<typename return_t, typename config, typename globals, typename... args>
-    __device__ static inline return_t run(int opcode, const globals &g, args&... a) { return return_t{}; } // do nothing, base case
+    __device__ static inline return_t run(int opcode, const globals &g, args&... a) {
+        asm volatile("trap;\n"); // we want to blow up in this case.
+        return return_t{};
+    } // do nothing, base case
 };
 template<template<typename> typename op_dispatcher, typename op, typename... ops>
 struct dispatch_op<op_dispatcher, op, ops...> {

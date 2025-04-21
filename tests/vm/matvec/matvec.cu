@@ -16,14 +16,6 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
-/*
-Instruction format:
-[0] = opcode
-[1] = Row offset of C, in units of 128
-[2] = Col offset of C, in units of 128
-[3] = K reduction dimension, in units of 128
-*/
-
 using config = default_config;
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
@@ -42,7 +34,7 @@ struct globals {
     int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
 };
 
-template<typename config=config, int _OP_IDX=0> struct MatmulOp {
+template<typename config=config, int _OP_IDX=0> struct MatvecOp {
     static constexpr int opcode = 2;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction {
@@ -76,7 +68,6 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
             int ret_order[] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
             return ret_order[query];
-            // return query;
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s) {
             for(int i = 0; i < 4; i++) {
@@ -90,10 +81,6 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
     };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
-            if(laneid() >= 5 && laneid() <= 12) {
-                arrive(s.page_finished[s.pid(laneid())], config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
-                printf(BLUE_TEXT "Thread %d: Released page %d\n" RESET_TEXT, threadIdx.x, s.pid(laneid()));
-            }
             parsed_instruction inst{s};
             // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
             ((int*)s.scratch())[laneid()] = 0;
@@ -105,7 +92,7 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
                 tma::expect(inputs_arrived(s, laneid()), weight_chunk);
                 tma::load_async(weight_chunk, g.W, {inst.layer, inst.start_col/16, laneid()}, inputs_arrived(s, laneid()));
             }
-            else if(laneid() == 5) {
+            else if(laneid() == 31) {
                 int activation_page = get_activation_page(s);
                 s.wait_page_ready(activation_page);
                 while(*(volatile int *)&g.Bar[{inst.layer, OP_IDX, 0}] == 0) __nanosleep(20);
@@ -114,7 +101,11 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
                 tma::expect(activations_arrived(s), activations);
                 tma::load_async(activations, g.A, {}, activations_arrived(s));
             }
-            warp::sync();
+            else if(laneid() >= 5 && laneid() <= 12) {
+                int unused_page = s.pid(laneid());
+                s.wait_page_ready(unused_page);
+                arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+            }
         }
     };
     struct launcher { // launches mma's
@@ -140,7 +131,6 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
             warp::load(weights, weights_smem[warp_id]);
             warp::sync();
             warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS/4); // this is called by each warp in the warpgroup
-            if(laneid() == 0) printf(GREEN_TEXT "Thread %d: Released 1/4 of page %d\n" RESET_TEXT, threadIdx.x, weight_page);
             // Next we need to load the activations
             wait(activations_arrived(s), 0);
             if(laneid() == 0) s.record(64+warpid());
@@ -150,7 +140,6 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
             warp::load(activations_vec, activations_smem[warpid()]);
             warp::sync();
             warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
-            if(laneid() == 0) printf(GREEN_TEXT "Thread %d: Released 1/16 of page %d\n" RESET_TEXT, threadIdx.x, activation_page);
             // broadcast this into a tile
             warp::broadcast_col(broadcast_activations, activations_vec);
             warp::mul(broadcast_activations, broadcast_activations, weights);
@@ -182,8 +171,8 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
             warp::sync();
             asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
             if(laneid() == 0) {
-                if constexpr (OP_IDX == g.Bar.rows()-1) g.Bar[{inst.layer+1, 0, 0}] = 1;
-                else g.Bar[{inst.layer, OP_IDX+1, 0}] = 1;
+                if constexpr (OP_IDX == g.Bar.rows()-1) atomicAdd(&g.Bar[{inst.layer+1, 0, 0}], 1);
+                else atomicAdd(&g.Bar[{inst.layer, OP_IDX+1, 0}], 1);
             }
             if(laneid() == 0) s.record(127);
         }
@@ -194,7 +183,7 @@ template<typename config=config, int _OP_IDX=0> struct MatmulOp {
 
 PYBIND11_MODULE(matvec, m) {
     m.doc() = "matvec python module";
-    kittens::py::bind_kernel<kernel<config, globals, MatmulOp<config>>>(m, "matvec",
+    kittens::py::bind_kernel<kvm<config, globals, MatvecOp<config>>>(m, "matvec",
         &globals::instructions,
         &globals::timings,
         &globals::W,
