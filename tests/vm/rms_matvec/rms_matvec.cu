@@ -297,9 +297,9 @@ struct RMS_MatVecOp
 
 #include "pyutils/pyutils.cuh"
 
-PYBIND11_MODULE(matvec, m)
+PYBIND11_MODULE(rms_matvec, m)
 {
-    m.doc() = "matvec python module";
+    m.doc() = "rms_matvec python module";
     kittens::py::bind_kernel<kvm<config, globals, RMS_MatVecOp<config>>>(m, "rms_matvec",
                                                                      &globals::instructions,
                                                                      &globals::timings,
@@ -307,5 +307,6 @@ PYBIND11_MODULE(matvec, m)
                                                                      &globals::rms_scale,
                                                                      &globals::A,
                                                                      &globals::O,
-                                                                     &globals::Bar);
+                                                                     &globals::Bar,
+                                                                     &globals::rms_epsilon);
 }

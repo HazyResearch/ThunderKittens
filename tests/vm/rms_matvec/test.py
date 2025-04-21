@@ -2,8 +2,9 @@ import sys
 import time
 
 import torch
+from kvm_runner.python_vm import rms_norm
 from make_instructions import make_instructions
-from matvec import matvec
+from rms_matvec import rms_matvec
 
 torch.manual_seed(1)
 
@@ -24,6 +25,8 @@ A = (torch.randn((1, 2048), device=0, dtype=torch.float32) / 2048**0.25).to(
 O = torch.zeros((1, 2048), device=0, dtype=torch.bfloat16)  # noqa: E741
 Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
 
+RMS_EPSILON = 1e-5
+
 print("Input tensors created, of shapes", A.shape, W.shape, O.shape, Bar.shape)
 
 sys.stdout.flush()
@@ -39,7 +42,13 @@ print(instructions.float().mean())
 
 # Run the matvec kernel
 def go():
-    matvec(instructions, timings, W, RMS_SCALE, A, O, Bar)
+    rms_matvec(instructions, timings, W, RMS_SCALE, A, O, Bar, RMS_EPSILON)
+
+
+def reference_go():
+    post_rms = rms_norm(A, RMS_SCALE, RMS_EPSILON)
+    O2 = (post_rms @ W.T).to(torch.float32).cpu().numpy()
+    return O2
 
 
 go()
@@ -72,9 +81,7 @@ O = O.to(torch.float32).cpu().numpy()
 print(O.shape)
 print(O)
 
-O2 = (A @ W.T).to(torch.float32).cpu().numpy()
-print(O2.shape)
-print(O2)
+O2 = reference_go()
 
 print("TIMINGS")
 for i in range(128):
