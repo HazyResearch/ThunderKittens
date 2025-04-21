@@ -23,11 +23,11 @@ struct globals
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using weights = gl<bf16, 1, -1, -1, 2048, st_bf<16, 512>>; // assumed to be N by 2048 (X@W.T).
     using activations = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>;
-    using rms_scale = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>;
     using barriers = gl<bf16, 1, -1, 6, 32>; // num_layers by 6 ops per layer by up to 32 heads.
     instruction_layout instructions;
     timing_layout timings;
     weights W;
+    activations rms_scale;
     activations A;
     activations O;
     barriers Bar;
@@ -40,7 +40,7 @@ struct globals
 template <typename config = config, int _OP_IDX = 0>
 struct RMS_MatVecOp
 {
-    static constexpr NUM_WEIGHT_PAGES = 4;
+    static constexpr int NUM_WEIGHT_PAGES = 4;
     static constexpr int opcode = 3;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction
@@ -181,13 +181,15 @@ struct RMS_MatVecOp
             typename rt_fl<16, 128>::row_vec float_activations;            
             typename rt_bf<16, 128>::col_vec output_col_format;
             rv_bf<16> output;
-            sv_fl<config::NUM_CONSUMER_WARPS> smem_rms_partial_sums;
             rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
+
+            shared_allocator al((int*)s.scratch());
+            using smem_rms_partial_sums_t = sv_fl<config::NUM_CONSUMER_WARPS>;
+            smem_rms_partial_sums_t (&smem_rms_partial_sums) = al.template allocate<smem_rms_partial_sums_t> ();
 
             int group_id = warpgroup::groupid();
             int warp_id = warpgroup::warpid(); // id within the warpgroup
-            
-            
+
             // Step 1: load hidden states and run rms norm
             wait(activations_arrived(s), 0);
             // reinterpret the activations page as sv_bf<128>[16]
@@ -202,23 +204,39 @@ struct RMS_MatVecOp
             // square
             warp::mul(float_activations, float_activations, float_activations);
             // sum
-            float mean = 0.0f;
-            warp::sum(mean, float_activations);
-            mean = mean / 2048.0f;
-            // subtract mean
-            warp::sub(float_activations, float_activations, mean);
-            // square again
-            warp::mul(float_activations, float_activations, float_activations);
+            float partial_sum = 0.0f;
+            warp::sum(partial_sum, float_activations);
             
             // aggregate sums across the 16 consumer warps
             if (laneid() == 0) {
-                smem_rms_partial_sums[warpid()] = mean;
+                smem_rms_partial_sums[warpid()] = partial_sum;
                 arrive(rms_partials_computed(s), config::NUM_CONSUMER_WARPS);
                 wait(rms_partials_computed(s), 0);                
             }
             warp::sync();
+            warp::load(rms_partial_sums, smem_rms_partial_sums);
+            warp::sync();
 
+            float full_sum = 0.0f;
+            warp::sum(full_sum, rms_partial_sums);
+            float variance = full_sum / 2048.0f;
+            float rms_scale = rsqrtf(variance + g.rms_epsilon);
+            warp::mul(float_activations, float_activations, rms_scale);
+
+            // back to bf16
+            warp::copy(activations_vec, float_activations);
+
+            // multiply by rms scale
+            wait(rms_scale_arrived(s), 0);
+            int rms_scale_page = get_rms_scale_page(s);
+            sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
+            warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
+            warp::sync();
+            warp::mul(activations_vec, activations_vec, rms_scale_vec);
             
+
+            // now do the rest of the matvec
+
             wait(inputs_arrived(s, group_id), 0);
             if (laneid() == 0)
                 s.record(32 + warpid());
@@ -229,9 +247,6 @@ struct RMS_MatVecOp
             warp::sync();
             warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
            
-
-
-
             // broadcast this into a tile
             warp::broadcast_col(broadcast_activations, activations_vec);
             warp::mul(broadcast_activations, broadcast_activations, weights);
@@ -285,10 +300,11 @@ struct RMS_MatVecOp
 PYBIND11_MODULE(matvec, m)
 {
     m.doc() = "matvec python module";
-    kittens::py::bind_kernel<kvm<config, globals, MatvecOp<config>>>(m, "matvec",
+    kittens::py::bind_kernel<kvm<config, globals, RMS_MatVecOp<config>>>(m, "rms_matvec",
                                                                      &globals::instructions,
                                                                      &globals::timings,
                                                                      &globals::W,
+                                                                     &globals::rms_scale,
                                                                      &globals::A,
                                                                      &globals::O,
                                                                      &globals::Bar);
