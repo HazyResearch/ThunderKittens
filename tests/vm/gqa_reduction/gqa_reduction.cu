@@ -16,7 +16,7 @@ constexpr int NUM_Q_HEADS = 32;
 using scalar_rt = rt_fl<16, 16>;
 using scalar_rv = col_vec<scalar_rt>;
 
-using l_partial_sv = sv_fl<16>; //  only index [0] is relevant)
+using l_partial_sv = sv_fl<16>; //  (only index [0] is relevant)
 
 using o_vector_rt = rt_fl<16, HEAD_DIM>;
 using o_partial_st = st_fl<16, HEAD_DIM>; // Store O partials (only row [0] is relevant)
@@ -169,6 +169,7 @@ template<typename config=config> struct rope_gqa_reduction_op {
                 scalar_rv scale_final_reg;
                 scalar_rv scale_partial_reg;
                 scalar_rv sum_scales_reg;
+                scalar_rv final_denominator_reg;
 
                 warp::zero(O_final_reg);
                 warp::neg_infty(L_final_reg);
@@ -194,7 +195,7 @@ template<typename config=config> struct rope_gqa_reduction_op {
 
                     // scale_partial[0] = exp2(L_partial[0] - L_max[0]) -> stored in scale_partial_reg[0]
                     warp::sub(scale_partial_reg, L_partial_reg, L_max_reg);
-                    warp::exp2(scale_partial_reg, scale_partial_reg);
+                    warp::exp(scale_partial_reg, scale_partial_reg);
 
                     // O_final = O_final * scale_final[0] + O_partial * scale_partial[0]
                     warp::mul_row(O_final_reg, O_final_reg, scale_final_reg);
@@ -202,15 +203,20 @@ template<typename config=config> struct rope_gqa_reduction_op {
                     warp::add(O_final_reg, O_final_reg, O_partial_reg);
 
                     // L_final[0] = L_max[0] + log2(scale_final[0] + scale_partial[0]) -> stored in L_final_reg[0]
-                    warp::add(sum_scales_reg, scale_final_reg, scale_partial_reg);
-                    warp::log2(sum_scales_reg, sum_scales_reg);
-                    warp::add(L_final_reg, L_max_reg, sum_scales_reg);
+                    warp::add(L_final_reg, scale_final_reg, scale_partial_reg);
+                    warp::log(L_final_reg, L_final_reg);
+                    // warp::add(sum_scales_reg, scale_final_reg, scale_partial_reg);
+                    // warp::log2(sum_scales_reg, sum_scales_reg);
+                    // warp::add(L_final_reg, L_max_reg, sum_scales_reg);
 
                     warp::arrive(L_partial_finished(s, stage));
                     warp::arrive(O_partial_finished(s, stage));
                 }
 
                 finish_partials_page(s);
+
+                warp::exp(final_denominator_reg, L_final_reg);
+                warp::div_row(O_final_reg, O_final_reg, final_denominator_reg);
 
                 o_final_st &O_final_smem = get_O_final_smem(s);
                 warp::store(O_final_smem, O_final_reg);

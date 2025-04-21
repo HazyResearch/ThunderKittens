@@ -487,7 +487,6 @@ template<typename config=config> struct rope_gqa_partial_op {
                 // Can't do anything fancy with writing 4 spread-out values.
                 // We can do this in the consumer if we want to (without using smem)
                 float tmp;
-                printf("LSE: %f\n", L_smem.data[q_head_vec_start_idx + laneid]);
                 uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
                 float *dst_ptr = (float*)&g.L.raw_ptr[(q_head_start_idx + laneid) * g.L.cols() + inst.partial_idx];
                 asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));

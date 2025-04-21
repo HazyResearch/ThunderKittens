@@ -1,238 +1,193 @@
 import math
 import torch
-from gqa_partial import gqa_partial
-from gqa_reduction import gqa_reduction # Import the new kernel binding
+import time
+from gqa_reduction import gqa_reduction
 
-TORCH_DEVICE = torch.device('cuda:7') # Or your desired CUDA device
+TORCH_DEVICE = torch.device('cuda:0') # CHANGE THIS TO YOUR GPU
+torch.cuda.set_device(TORCH_DEVICE)
 
-# --- Constants ---
-# Fixed parameters
-NUM_BLOCKS = 148 # VM size, must be >= H_q for reduction
+# Fixed VM parameters
+NUM_BLOCKS_REDUCTION = 32 # Must match NUM_Q_HEADS for the reduction kernel
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
-GQA_PARTIAL_OPCODE = 1
 GQA_REDUCTION_OPCODE = 2
 
-# Llama 3.2 1B Model Parameters
-L = 16 # number of hidden layers
-B = 1 # this is fixed for now
-N_max = 131072 # maximum sequence length
-H_q = 32 # number of query heads
-H_kv = 8 # number of key/value heads (number of query groups)
-D_h = 64 # dimension of each head
+# Model/Attention Parameters (match kernel constants)
+H_q = 32    # number of query heads (NUM_Q_HEADS in CUDA)
+D_h = 64    # dimension of each head (HEAD_DIM in CUDA)
 
-# Kernel parameters
-LAYER_IDX = 3
-POS_ID = 1050
-MAX_PARTIALS = 1024 # Max intermediates allowed by tensor shapes
-ATTN_SCALE = 1 / math.sqrt(D_h)
-NUM_PARTIALS = 2
-ATTN_BLOCK_SIZE = 16
+# Test Configuration
+NUM_PARTIALS = 2     # Number of partial results to reduce (must be <= MAX_PARTIALS)
+MAX_PARTIALS = 1024  # Max intermediate partials storage capacity (M_a)
 
 # --- Helper Functions ---
 
-def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_h: int):
-    '''Generate tensor inputs for the GQA kernels.'''
-    torch.manual_seed(42)
-    # Inputs for gqa_partial
-    Q_in   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device=TORCH_DEVICE)
-    K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
-    V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
-    # Intermediates (Outputs of partial, Inputs to reduction)
-    # Match kernel's expected layout for inputs (add batch dim 1)
-    LSE_partials = torch.zeros(1, H_q, M_a,    dtype=torch.float32,  device=TORCH_DEVICE)
-    O_partials   = torch.zeros(1, H_q, M_a, D_h, dtype=torch.float32,  device=TORCH_DEVICE)
-    # Final Output (Output of reduction)
-    # Match kernel's expected layout (add batch dims 1, 1) and type bf16
-    O_final      = torch.zeros(1, H_q, 1, D_h,    dtype=torch.bfloat16, device=TORCH_DEVICE)
+def generate_inputs(num_q_heads: int, head_dim: int, num_partials: int, max_partials_storage: int):
+    torch.manual_seed(123)
+    torch.cuda.manual_seed_all(123) # For reproducibility on GPU
 
-    print("\nInitial Tensor Shapes:")
-    print(f"  Q_in (used by partial): {Q_in.shape}")
-    print(f"  K_c (used by partial):  {K_c.shape}")
-    print(f"  V_c (used by partial):  {V_c.shape}")
-    print(f"  LSE_partials (out partial/in reduct): {LSE_partials.shape}, {LSE_partials.dtype}")
-    print(f"  O_partials (out partial/in reduct):   {O_partials.shape}, {O_partials.dtype}")
-    print(f"  O_final (out reduct):   {O_final.shape}, {O_final.dtype}")
+    # LSE Partials Input: Shape (H_q, M_a), dtype float32
+    LSE_partials_in = torch.full((num_q_heads, max_partials_storage), -float('inf'), dtype=torch.float32, device=TORCH_DEVICE)
+    lse_values = torch.randn(num_q_heads, num_partials, dtype=torch.float32, device=TORCH_DEVICE) * 2.0 # Scale variance
+    LSE_partials_in[:, :num_partials] = lse_values
 
+    # O Partials Input: Shape (H_q, M_a, D_h), dtype float32
+    O_partials_in = torch.zeros((num_q_heads, max_partials_storage, head_dim), dtype=torch.float32, device=TORCH_DEVICE)
+    o_values = torch.randn(num_q_heads, num_partials, head_dim, dtype=torch.bfloat16, device=TORCH_DEVICE).float()
+    O_partials_in[:, :num_partials, :] = o_values
 
-    return Q_in, K_c, V_c, LSE_partials, O_partials, O_final
+    # Final Output Tensor: Shape (H_q, D_h), dtype bfloat16
+    O_final_out = torch.zeros(num_q_heads, head_dim, dtype=torch.bfloat16, device=TORCH_DEVICE)
 
-def generate_partial_instructions_and_timings(num_blocks: int, h_kv: int, num_partials: int, layer_idx: int):
-    '''Generates instructions for the GQA Partial kernel.'''
-    instructions = [[] for _ in range(num_blocks)]
-    instruction_count = 0
-    block_idx = 0
+    return LSE_partials_in, O_partials_in, O_final_out
 
-    # Instruction format: [opcode, layer_idx, kv_head_idx, num_partials, partial_idx]
-    for p in range(num_partials):
-        for h in range(h_kv):
-            inst = [GQA_PARTIAL_OPCODE, layer_idx, h, num_partials, p] + [0] * (INSTRUCTION_WIDTH - 5)
-            instructions[block_idx].append(inst)
-            instruction_count += 1
-            block_idx = (block_idx + 1) % num_blocks # Distribute instructions
+def generate_instructions_and_timings_reduction(num_q_heads_to_run: int, num_partials_total: int):
+    '''Generates instructions for the reduction kernel.'''
+    instructions = []
+    max_instructions = 1 # Only one reduction instruction per Q head block
 
-    # Pad instructions
-    max_instructions = max(len(block_inst) for block_inst in instructions) if instruction_count > 0 else 0
-    total_instructions_padded = 0
-    for i in range(num_blocks):
-        while len(instructions[i]) < max_instructions:
-            instructions[i].append([0] * INSTRUCTION_WIDTH) # Pad with NOPs
-        total_instructions_padded += len(instructions[i])
+    # Assign one reduction instruction per Q head block
+    for q_idx in range(num_q_heads_to_run):
+        inst = [GQA_REDUCTION_OPCODE, num_partials_total] + [0] * (INSTRUCTION_WIDTH - 2)
+        instructions.append([inst])
 
+    while len(instructions) < NUM_BLOCKS_REDUCTION:
+         instructions.append([[0] * INSTRUCTION_WIDTH for _ in range(max_instructions)])
 
-    instructions_tensor = torch.tensor(instructions, dtype=torch.int32, device=TORCH_DEVICE)
-    # Ensure timings match the padded instruction shape
-    timings_tensor = torch.zeros((num_blocks, max_instructions, TIMING_WIDTH), dtype=torch.int32, device=TORCH_DEVICE)
-
-    print("\nPartial Kernel Instructions:")
-    print(f"  Shape: {instructions_tensor.shape}")
-    print(f"  Number of active instructions: {instruction_count}")
-
-    return instructions_tensor, timings_tensor
-
-def generate_reduction_instructions_and_timings(num_blocks: int, h_q: int, num_partials: int):
-    '''Generates instructions for the GQA Reduction kernel.'''
-    instructions = [[] for _ in range(num_blocks)]
-    instruction_count = 0
-
-    # Instruction format: [opcode, num_partials]
-    # Assign one reduction instruction per Q head to the first H_q blocks
-    for i in range(h_q):
-         # Only need one instruction per block for reduction
-        inst = [GQA_REDUCTION_OPCODE, num_partials] + [0] * (INSTRUCTION_WIDTH - 2)
-        instructions[i].append(inst)
-        instruction_count += 1
-
-    # Pad instructions - all blocks need at least one instruction slot
-    max_instructions = 1 # We only issue one instruction per active block
-    total_instructions_padded = 0
-    for i in range(num_blocks):
-        while len(instructions[i]) < max_instructions:
-            instructions[i].append([0] * INSTRUCTION_WIDTH) # Pad with NOPs
-        total_instructions_padded += len(instructions[i])
-
-
-    instructions_tensor = torch.tensor(instructions, dtype=torch.int32, device=TORCH_DEVICE)
-    # Ensure timings match the padded instruction shape
-    timings_tensor = torch.zeros((num_blocks, max_instructions, TIMING_WIDTH), dtype=torch.int32, device=TORCH_DEVICE)
-
-    print("\nReduction Kernel Instructions:")
-    print(f"  Shape: {instructions_tensor.shape}")
-    print(f"  Number of active instructions: {instruction_count}")
+    instructions_tensor = torch.tensor(instructions, dtype=torch.int32).to(device=TORCH_DEVICE)
+    timings_tensor = torch.zeros((NUM_BLOCKS_REDUCTION, max_instructions, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
 
     return instructions_tensor, timings_tensor
 
 
-# --- Main Script ---
+def reference_attention_reduction(
+    L_partials: torch.Tensor, # Shape: (H_q, M_a)
+    O_partials: torch.Tensor, # Shape: (H_q, M_a, D_h)
+    num_partials_to_reduce: int,
+    num_q_heads: int,
+    head_dim: int
+) -> torch.Tensor:
+    O_final_ref = torch.zeros(num_q_heads, head_dim, dtype=torch.float32, device=L_partials.device)
 
-# 1. Generate Inputs
-print('\n--- Generating Inputs ---')
-Q_in, K_c, V_c, LSE_partials, O_partials, O_final = generate_tensor_inputs(
-    L, MAX_PARTIALS, N_max, H_q, H_kv, D_h
+    for head_idx in range(num_q_heads):
+        lses = L_partials[head_idx, :num_partials_to_reduce].float()
+        outs = O_partials[head_idx, :num_partials_to_reduce, :].float()
+
+        max_lse = torch.max(lses)
+
+        adjusted_factors = torch.exp(lses - max_lse)
+        new_denominator = adjusted_factors.sum()
+
+        reduced = torch.sum(outs * adjusted_factors.unsqueeze(1), dim=0)
+        O_final_ref[head_idx] = reduced / new_denominator
+
+    return O_final_ref
+
+# --- Main Execution ---
+
+print('\n--- Generating Synthetic Inputs ---')
+# Generate tensors with standard Python shapes first
+LSE_partials_py, O_partials_py, O_final_py = generate_inputs(
+    H_q, D_h, NUM_PARTIALS, MAX_PARTIALS
 )
-partial_instructions, partial_timings = generate_partial_instructions_and_timings(
-    NUM_BLOCKS, H_kv, NUM_PARTIALS, LAYER_IDX
-)
+print(f"Input LSE Partials shape (Python): {LSE_partials_py.shape} ({LSE_partials_py.dtype})")
+print(f"Input O Partials shape (Python): {O_partials_py.shape} ({O_partials_py.dtype})")
+print(f"Output O Final shape (Python): {O_final_py.shape} ({O_final_py.dtype})")
 
-# 2. Run gqa_partial Kernel
-print('\n--- Running gqa_partial Kernel ---')
-gqa_partial(
-    partial_instructions, partial_timings,
-    Q_in, K_c, V_c,
-    LSE_partials, # Output partial LSE (shape 1, H_q, M_a)
-    O_partials,   # Output partial O   (shape 1, H_q, M_a, D_h)
-    POS_ID, ATTN_SCALE
-)
+print('\n--- Reshaping Tensors for Kernel ---')
+# l_partial_layout: gl<float, 1, 1, NUM_Q_HEADS, -1, ...> -> (1, 1, H_q, MAX_PARTIALS)
+LSE_partials_kernel = LSE_partials_py.unsqueeze(0).unsqueeze(0)
+# o_partial_layout: gl<float, 1, NUM_Q_HEADS, -1, HEAD_DIM, ...> -> (1, H_q, MAX_PARTIALS, D_h)
+O_partials_kernel = O_partials_py.unsqueeze(0)
+# o_final_layout: gl<bf16, 1, NUM_Q_HEADS, 1, HEAD_DIM, ...> -> (1, H_q, 1, D_h)
+O_final_kernel = O_final_py.unsqueeze(0).unsqueeze(2)
 
-torch.cuda.synchronize(TORCH_DEVICE)
-print("gqa_partial kernel finished.")
-print("LSE Shape:", LSE_partials.shape)
-for elem in LSE_partials:
-    print(elem)
-print("O Shape:", O_partials.shape)
-for elem in O_partials:
-    print(elem)
-# Note: LSE_partials and O_partials are now populated and have the correct
-# shape and type (float32) expected by the reduction kernel's input layout.
+print(f"Input LSE Partials shape (Kernel): {LSE_partials_kernel.shape}")
+print(f"Input O Partials shape (Kernel): {O_partials_kernel.shape}")
+print(f"Output O Final shape (Kernel): {O_final_kernel.shape}")
 
-# 3. Generate Reduction Instructions
-print('\n--- Generating Reduction Instructions ---')
-reduction_instructions, reduction_timings = generate_reduction_instructions_and_timings(
-    H_q, H_q, NUM_PARTIALS
-)
 
-# 4. Run gqa_reduction Kernel
 print('\n--- Running gqa_reduction Kernel ---')
+# Generate instructions for the reduction kernel
+reduction_instructions, reduction_timings = generate_instructions_and_timings_reduction(
+    H_q, NUM_PARTIALS
+)
+print(f"Reduction Instructions shape: {reduction_instructions.shape}")
+print(f"Reduction Timings shape: {reduction_timings.shape}")
+
+start_time = time.time()
+# Call the CUDA kernel with RESHAPED tensors
+# gqa_reduction modifies O_final_kernel in place
 gqa_reduction(
     reduction_instructions, reduction_timings,
-    LSE_partials, # Input partial LSE (shape 1, H_q, M_a)
-    O_partials,   # Input partial O   (shape 1, H_q, M_a, D_h)
-    O_final       # Output final O    (shape 1, 1, H_q, D_h, bf16)
+    LSE_partials_kernel, O_partials_kernel, O_final_kernel # Pass reshaped tensors
 )
-torch.cuda.synchronize(TORCH_DEVICE)
-print("gqa_reduction kernel finished.")
-print("O Final Shape:", O_final.shape)
-for elem in O_final:
-    print(elem)
+torch.cuda.synchronize(TORCH_DEVICE) # Wait for kernel completion
+end_time = time.time()
+print(f"Reduction kernel execution time: {end_time - start_time:.4f} seconds")
 
-# 5. Run Reference Implementation (Full Attention)
-print('\n--- Running Reference Full Attention ---')
-# This part calculates the ground truth O_ref using standard PyTorch attention
-seq_len = POS_ID + 1
-K_ref = K_c[LAYER_IDX, :seq_len, :, :] # (seq_len, H_kv, D_h)
-V_ref = V_c[LAYER_IDX, :seq_len, :, :] # (seq_len, H_kv, D_h)
-O_ref = torch.zeros_like(Q_in, dtype=torch.float32) # Reference output in float32
+# Squeeze the output tensor back to the standard Python shape for comparison
+# (1, H_q, 1, D_h) -> (H_q, D_h)
+O_final_squeezed = O_final_kernel.squeeze(2).squeeze(0)
 
-for h in range(H_kv):
-    q_start = h * (H_q // H_kv) # Calculate Q head start index for this group
-    q_end = (h + 1) * (H_q // H_kv) # Calculate Q head end index for this group
-    
-    Q_group = Q_in[q_start:q_end, :]   # (num_q_per_group, D_h)
-    K_h = K_ref[:, h, :]               # (seq_len, D_h)
-    V_h = V_ref[:, h, :]               # (seq_len, D_h)
-
-    # Calculate attention scores
-    # (num_q_per_group, D_h) @ (D_h, seq_len) -> (num_q_per_group, seq_len)
-    QK = torch.matmul(Q_group.float(), K_h.float().transpose(-1, -2))
-    scaled_QK = QK * ATTN_SCALE
-
-    # Apply softmax
-    softmax_QK = torch.softmax(scaled_QK, dim=-1)
-
-    # Calculate output
-    # (num_q_per_group, seq_len) @ (seq_len, D_h) -> (num_q_per_group, D_h)
-    O_ref[q_start:q_end, :] = torch.matmul(softmax_QK.to(V_h.dtype), V_h)
-
-print("Reference calculation finished.")
-print(f"  Reference O_ref shape: {O_ref.shape}, dtype: {O_ref.dtype}")
+# Convert final CUDA output (bf16) to float32 for comparison
+O_final_cuda = O_final_squeezed.float()
+print(f"Output O Final shape (from kernel, squeezed): {O_final_cuda.shape} ({O_final_cuda.dtype})")
 
 
-# 6. Compare Kernel Output with Reference
-print('\n--- Comparing Reduction Kernel Output with Reference ---')
+print('\n--- Running Reference Python Reduction ---')
+start_time = time.time()
+# Calculate the reference result using the original Python-shaped synthetic inputs
+O_final_ref = reference_attention_reduction(
+    LSE_partials_py, O_partials_py, NUM_PARTIALS, H_q, D_h
+)
+end_time = time.time()
+print(f"Reference implementation execution time: {end_time - start_time:.4f} seconds")
+print(f"Reference O Final shape: {O_final_ref.shape} ({O_final_ref.dtype})")
 
-# Extract the meaningful part of the kernel's output O_final
-# O_final shape is (1, 1, H_q, D_h), bf16. Extract and convert to float32.
-O_final_kernel = O_final[0, :, 0, :].float()
+# --- Verification ---
+print('\n--- Comparing Outputs ---')
 
-print(f"  Kernel O_final shape (extracted): {O_final_kernel.shape}, dtype: {O_final_kernel.dtype}")
+# Calculate Absolute Error
+abs_error = torch.abs(O_final_cuda - O_final_ref)
 
-# Calculate differences
-abs_diff = torch.abs(O_final_kernel - O_ref)
-max_abs_err = torch.max(abs_diff)
-mean_abs_err = torch.mean(abs_diff)
+# Calculate Relative Error (handle potential zero values in reference)
+epsilon = 1e-9 # Small value to avoid division by zero
+relative_error = abs_error / (torch.abs(O_final_ref) + epsilon)
 
-print(f"\nMax Absolute Error: {max_abs_err.item()}")
-print(f"Mean Absolute Error: {mean_abs_err.item()}")
+max_abs_err = torch.max(abs_error).item()
+mean_abs_err = torch.mean(abs_error).item()
+max_rel_err = torch.max(relative_error).item()
+mean_rel_err = torch.mean(relative_error).item()
 
-# Add a tolerance check (adjust tolerance as needed)
-tolerance = 1e-2 # Tolerance for bfloat16 comparisons
-if max_abs_err < tolerance:
-    print("\n✅ Test Passed (within tolerance)")
+print(f"Max Absolute Error: {max_abs_err:.6e}")
+print(f"Mean Absolute Error: {mean_abs_err:.6e}")
+print(f"Max Relative Error: {max_rel_err:.6e}")
+print(f"Mean Relative Error: {mean_rel_err:.6e}")
+
+# --- Tolerance Check ---
+abs_tolerance = 1e-2
+
+for i in range(H_q):
+    for j in range(D_h):
+        if abs_error[i, j] > abs_tolerance:
+            print(f"Error at Head {i}, Dim {j}: {abs_error[i, j].item():.6e}")
+            break
+        else :
+            print(f"Head {i}, Dim {j} passed!!!")
+print(f"\nMax Abs Error: {max_abs_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
+print(f"Max Rel Error: {max_rel_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
+
+
+if max_abs_err < abs_tolerance:
+    print(f"\n✅ Test Passed (Max Abs Error < {abs_tolerance:.1e})")
 else:
-    print(f"\n❌ Test Failed (Max error {max_abs_err.item()} exceeds tolerance {tolerance})")
+    print(f"\n❌ Test Failed (Max Abs Error >= {abs_tolerance:.1e})")
 
-# Optional: Print some values for debugging
-# print("\nSample Values (Kernel):")
-# print(O_final_kernel[0, :5])
-# print("\nSample Values (Reference):")
-# print(O_ref[0, :5])
+    fail_idx = torch.argmax(abs_error)
+    fail_head = (fail_idx // D_h).item()
+    fail_dim = (fail_idx % D_h).item()
+    print(f"  Max error occurred at Head {fail_head}, Dim {fail_dim}")
+    print(f"  CUDA Output value: {O_final_cuda[fail_head, fail_dim].item():.6f}")
+    print(f"  Reference value:   {O_final_ref[fail_head, fail_dim].item():.6f}")
+    print(f"  Absolute error:    {abs_error[fail_head, fail_dim].item():.6e}")
