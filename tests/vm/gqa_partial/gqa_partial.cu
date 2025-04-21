@@ -318,18 +318,11 @@ template<typename config=config> struct rope_gqa_partial_op {
             if (laneid == 0) {
                 // Setup
                 parsed_instruction inst{s};
-                int q_head_tile_idx = (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row; // 0 or 1
                 int seq_len = g.pos_id + 1;
                 int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
-                q_st &Q_smem = get_Q_smem(s);
-
-                // Load Q once
-                wait_QOL_page(s);
-                tma::expect(Q_arrived(s), Q_smem);
-                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(Q_smem, g.Q, {0, 0, q_head_tile_idx, 0}, Q_arrived(s));
 
                 // Run the pipeline!
                 wait_KV_page(s);
@@ -357,9 +350,14 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
-            if (warpid() == 0) { // TODO: divide into multiple warps
-                // Setup
+            if (warpid() == 0) {
+                // Initiate the load on Q
                 parsed_instruction inst{s};
+                wait_QOL_page(s);
+                q_st &Q_smem = get_Q_smem(s);
+                warp::load_async(Q_smem, g.Q, {0, 0, (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row /*0 or 1*/, 0});
+
+                // Setup
                 int q_head_local_idx = ((inst.kv_head_idx * GQA_RATIO) % q_rt::tile_size_row) / 4;
                 int seq_len = g.pos_id + 1;
                 int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
@@ -367,8 +365,6 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
                 float softmax_temp = g.attn_scale * 1.44269504089f; // 1 / (sqrt(D_h) * ln(2))
-
-                // Even more setup
                 q_rt Q_reg;
                 k_rt K_reg;
                 v_rt V_reg;
@@ -385,12 +381,11 @@ template<typename config=config> struct rope_gqa_partial_op {
                 warp::zero(last_scaled_max_vec_reg); // just not +-inf
                 warp::zero(norm_vec_reg);
                 warp::zero(O_reg);
-                q_st &Q_smem = get_Q_smem(s);
                 o_sv (&O_smem)[4] = get_O_smem(s);
                 l_sv &L_smem = get_L_smem(s);
 
-                // Load Q once
-                wait(Q_arrived(s), 0);
+                // Wait for Q to arrive
+                warp::load_async_wait();
                 warp::load(Q_reg, Q_smem);
 
                 // Run the pipeline!
