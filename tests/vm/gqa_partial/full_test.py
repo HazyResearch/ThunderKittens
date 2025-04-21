@@ -97,6 +97,25 @@ gqa_partial(
 )
 torch.cuda.synchronize(TORCH_DEVICE)
 
+# Calculate timings
+num_iters = 5
+torch.cuda.set_device(TORCH_DEVICE)
+start_event = torch.cuda.Event(enable_timing=True)
+end_event = torch.cuda.Event(enable_timing=True)
+start_event.record()
+for i in range(num_iters):
+    gqa_partial(
+        instructions, timings, 
+        Q, K_c, V_c, LSE, O, 
+        POS_ID, ATTN_SCALE
+    )
+torch.cuda.synchronize(TORCH_DEVICE)
+end_event.record()
+torch.cuda.synchronize(TORCH_DEVICE)
+elapsed_time = start_event.elapsed_time(end_event)
+time_per_iter_us = (elapsed_time * 1e3) / num_iters
+print(f'Time per iter: {time_per_iter_us} us')
+
 # Reshape to match the reference implementation
 Q = Q.view(H_q, D_h)    # (H_q, D_h)
 LSE = LSE.permute(1, 0) # (M_a, H_q)
