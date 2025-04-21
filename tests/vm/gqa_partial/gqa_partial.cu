@@ -131,7 +131,7 @@ struct globals {
 
 template<typename config=config> struct rope_gqa_partial_op {
     static constexpr int opcode = GQA_PARTIAL_OPCODE;
-    static constexpr int NUM_STAGES = 4;
+    static constexpr int NUM_STAGES = 3;
     static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
     struct parsed_instruction {
