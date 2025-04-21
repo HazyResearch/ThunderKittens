@@ -135,7 +135,6 @@ template<typename config=config> struct rope_gqa_partial_op {
     static constexpr int opcode = GQA_PARTIAL_OPCODE;
     static constexpr int NUM_STAGES = 4;
     static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
-    static constexpr int HALF_PAGE_SIZE = config::PAGE_SIZE / 2;
 
     struct parsed_instruction {
         int layer_idx;
@@ -408,8 +407,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::arrive(K_finished(s, stage));
 
                     // Mask out invalid positions at the end
-                    if (inst.num_partials - 1 == inst.partial_idx && i + start_blk_idx == end_blk_idx - 1)
-                        right_fill(attn_fl_reg, attn_fl_reg, seq_len % ATTN_BLOCK_SIZE, -9999999999.f);
+                    if ((i + start_blk_idx + 1) * ATTN_BLOCK_SIZE > seq_len)
+                        right_fill(attn_fl_reg, attn_fl_reg, seq_len % ATTN_BLOCK_SIZE, -999999999999.f);
 
                     // Obtain maximums per row (which is per head)
                     warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max
@@ -444,9 +443,15 @@ template<typename config=config> struct rope_gqa_partial_op {
 
                 // Finish
                 finish_KV_page(s);
-                warp::div_row(O_reg, O_reg, norm_vec_reg);
-                warp::log2(L_reg, norm_vec_reg);
-                warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
+                if (start_blk_idx < end_blk_idx) {
+                    warp::div_row(O_reg, O_reg, norm_vec_reg);
+                    warp::log2(L_reg, norm_vec_reg);
+                    warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
+                } else {
+                    // Very edgy case where no blocks are processed.
+                    // Make the math work out during attention reduction!
+                    warp::neg_infty(L_reg);
+                }
 
                 // Store the results
                 store_4_rows(O_smem, O_reg, q_head_local_idx);
