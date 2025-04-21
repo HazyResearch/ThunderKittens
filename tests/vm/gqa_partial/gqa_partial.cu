@@ -105,8 +105,7 @@ using norm_vec_sv = sv_fl<16>;                    // only 4 values are used
 using l_rv = col_vec<rt_fl<16, HEAD_DIM>>;        // only 4 values are used
 using l_sv = sv_fl<16>;                           // only 4 values are used
 using o_rt = rt_fl<16, HEAD_DIM>;                 // only 4 rows are used
-using o_sv = sv_bf<HEAD_DIM>;
-using o_st = st_bf<16, HEAD_DIM>;                 // only 4 rows are used
+using o_sv = sv_fl<HEAD_DIM>;
 
 using config = default_config;
 struct globals {
@@ -115,7 +114,7 @@ struct globals {
     using q_layout = gl<bf16, 1, 1, NUM_Q_HEADS, HEAD_DIM, q_st>;
     using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
     using l_layout = gl<float, 1, 1, NUM_Q_HEADS, -1, l_sv>; // (H_q, max_partials)
-    using o_layout = gl<bf16, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_sv>; // (H_q, max_partials, D_h) should we do float for partial O?
+    using o_layout = gl<float, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_sv>; // (H_q, max_partials, D_h)
     instruction_layout instructions;
     timing_layout timings;
     q_layout Q;

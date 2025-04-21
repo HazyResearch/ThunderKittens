@@ -1,6 +1,5 @@
 import math
 
-from einops import einsum
 import torch
 from gqa_partial import gqa_partial
 
@@ -44,7 +43,7 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     LSE = torch.zeros(H_q, M_a,            dtype=torch.float32,  device=TORCH_DEVICE)
-    O   = torch.zeros(H_q, M_a, D_h,       dtype=torch.bfloat16, device=TORCH_DEVICE)
+    O   = torch.zeros(H_q, M_a, D_h,       dtype=torch.float32,  device=TORCH_DEVICE)
 
     return Q, K_c, V_c, LSE, O
 
@@ -121,12 +120,12 @@ for p in range(NUM_PARTIALS):
         Qi = Q[H_q_start:H_q_start+4, :]
         Kj = K_c[LAYER_IDX, start_token:end_token, h, :]
         Vj = V_c[LAYER_IDX, start_token:end_token, h, :]
-        QiKj = torch.matmul(Qi, Kj.transpose(-1, -2))
+        QiKj = torch.matmul(Qi.float(), Kj.float().transpose(-1, -2))
         scaled_QiKj = QiKj * ATTN_SCALE
         softmax = torch.softmax(scaled_QiKj, dim=-1)
         # LSE_ref[p, H_q_start:H_q_start+4] = torch.logsumexp(scaled_QiKj, dim=-1)
         LSE_ref[p, H_q_start:H_q_start+4] = torch.log2(torch.sum(torch.exp(scaled_QiKj.float()), dim=-1)) # use log2 consistently
-        O_ref[p, H_q_start:H_q_start+4, :] = torch.matmul(softmax, Vj)
+        O_ref[p, H_q_start:H_q_start+4, :] = torch.matmul(softmax.float(), Vj.float())
 
         print(f'\nPartial {p}, Head {h}:')
         print(torch.max(torch.abs(O[p, H_q_start:H_q_start+4, :] - O_ref[p, H_q_start:H_q_start+4, :])))
@@ -154,10 +153,10 @@ for h in range(H_kv):
     Q_end = 4 * (h + 1)
     K_h = K[:, h, :] # (seq_len, D_h)
     V_h = V[:, h, :] # (seq_len, D_h)
-    QK = torch.matmul(Q[Q_start:Q_end, :], K_h.transpose(-2, -1))
+    QK = torch.matmul(Q[Q_start:Q_end, :].float(), K_h.float().transpose(-2, -1))
     scaled_QK = QK * ATTN_SCALE
     softmax = torch.softmax(scaled_QK, dim=-1)
-    O_ref[Q_start:Q_end, :] = torch.matmul(softmax, V_h)
+    O_ref[Q_start:Q_end, :] = torch.matmul(softmax.float(), V_h.float())
 
 # Compare the aggregated outputs
 print('\nComparing outputs...')
