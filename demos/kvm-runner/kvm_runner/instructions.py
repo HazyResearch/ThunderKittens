@@ -1,4 +1,5 @@
 from dataclasses import dataclass, fields
+from typing import Optional
 
 from torch import Tensor
 
@@ -122,9 +123,10 @@ class AttentionReduction(Instruction):
     # the original number of attention partitions
     num_partials: int
     is_terminal: bool
-    output_partial_idx: int
     # TODO: make sure reduction_list can't go beyond instruction
     reduction_list: list[int]
+    # Not required for the last reduction
+    output_partial_idx: Optional[int] = None 
 
     @classmethod
     def opcode(cls) -> int:

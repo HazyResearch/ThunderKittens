@@ -22,7 +22,7 @@ D_h = 64 # dimension of each head
 
 # Kernel parameters
 LAYER_IDX = 3
-POS_ID = 1023
+POS_ID = 1050
 MAX_PARTIALS = 1024
 ATTN_SCALE = 1 / math.sqrt(D_h)
 NUM_PARTIALS = 2

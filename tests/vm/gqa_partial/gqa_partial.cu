@@ -179,10 +179,10 @@ template<typename config=config> struct rope_gqa_partial_op {
     __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
     __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
     __device__ static inline void finish_QOL_page(state<config> &s) { 
-        if (laneid() == 0) arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS); 
+        if (laneid() == 0) arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS);
     }
     __device__ static inline void finish_KV_page(state<config> &s) { 
-        if (laneid() == 0) arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS); 
+        if (laneid() == 0) arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS);
     }
     __device__ static inline q_st &get_Q_smem(state<config> &s) {
         int pid = s.pid(QOL_PAGE);
@@ -275,6 +275,25 @@ template<typename config=config> struct rope_gqa_partial_op {
             }
         }
     }
+    template<ducks::rt::row_layout RT>
+    __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+        if(col_idx >= dst.cols) return;
+        #pragma unroll
+        for(int i = 0; i < dst.height; i++) {
+            #pragma unroll
+            for(int j = 0; j < dst.width; j++) {
+                #pragma unroll
+                for (int k = 0; k < dst.packed_per_tile; k++) {
+                    const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2);
+                    const int col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                    if (col_idx_x >= col_idx)  { dst.tiles[i][j].data[k].x = val; }
+                    else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                    if (col_idx_y >= col_idx)  { dst.tiles[i][j].data[k].y = val; }
+                    else                       { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                }
+            }
+        }
+    }
 
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
@@ -296,13 +315,14 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
-            // TODO release unused pages immediately
+            // Release unused pages
+            if (laneid() >= 2 && laneid() < config::NUM_PAGES) arrive(s.page_finished[s.pid(laneid())], config::NUM_CONSUMER_WARPS); 
             if (laneid() == 0) {
                 // Setup
                 parsed_instruction inst{s};
                 int q_head_tile_idx = (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row; // 0 or 1
                 int seq_len = g.pos_id + 1;
-                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;  // TODO indivisble token length
+                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
@@ -325,7 +345,6 @@ template<typename config=config> struct rope_gqa_partial_op {
                         wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                     }
 
-                    // TODO: different lanes for K V
                     tma::expect(K_arrived(s, stage), K_smem);
                     tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.K_c, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
                     tma::expect(V_arrived(s, stage), V_smem);
@@ -387,6 +406,10 @@ template<typename config=config> struct rope_gqa_partial_op {
                     warp::load(K_reg, K_smem);
                     warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
                     warp::arrive(K_finished(s, stage));
+
+                    // Mask out invalid positions at the end
+                    if (inst.num_partials - 1 == inst.partial_idx && i + start_blk_idx == end_blk_idx - 1)
+                        right_fill(attn_fl_reg, attn_fl_reg, seq_len % ATTN_BLOCK_SIZE, -9999999999.f);
 
                     // Obtain maximums per row (which is per head)
                     warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max
