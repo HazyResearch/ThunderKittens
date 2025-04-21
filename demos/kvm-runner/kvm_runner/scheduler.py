@@ -55,7 +55,7 @@ def make_globals(
             buffer_dtype=torch.float32,
         ),
         attn_lse_intermediates=make_buffer(
-            config.num_attention_heads, max_attn_partials, buffer_dtype=torch.float32
+            [config.num_attention_heads, max_attn_partials], buffer_dtype=torch.float32
         ),
         silu_out=make_buffer(config.intermediate_size),
         # scalars
