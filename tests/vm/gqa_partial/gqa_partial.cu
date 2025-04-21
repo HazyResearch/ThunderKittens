@@ -84,12 +84,11 @@ using namespace kittens::prototype::vm;
 
 constexpr int GQA_PARTIAL_OPCODE = 1;
 constexpr int NUM_BLOCKS = 148;
+constexpr int ATTN_BLOCK_SIZE = 16;
+constexpr int HEAD_DIM = 64;
 constexpr int NUM_Q_HEADS = 32;
 constexpr int NUM_KV_HEADS = 8;
 constexpr int GQA_RATIO = NUM_Q_HEADS / NUM_KV_HEADS;
-constexpr int HEAD_DIM = 64;
-constexpr int ATTN_BLOCK_SIZE = 16;
-
 static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
 
 using q_rt = rt_bf<16, HEAD_DIM>;                 // only 4 rows are used
@@ -115,8 +114,8 @@ struct globals {
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using q_layout = gl<bf16, 1, 1, NUM_Q_HEADS, HEAD_DIM, q_st>;
     using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
-    using l_layout = gl<float, 1, 1, -1, NUM_Q_HEADS, l_sv>;                               // (max_partials, H_q)
-    using o_layout = gl<bf16, 1, -1, NUM_Q_HEADS, HEAD_DIM, o_sv>;                         // (max_partials, H_q, D_h) should we do float for partial O?
+    using l_layout = gl<float, 1, 1, NUM_Q_HEADS, -1, l_sv>; // (H_q, max_partials)
+    using o_layout = gl<bf16, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_sv>; // (H_q, max_partials, D_h) should we do float for partial O?
     instruction_layout instructions;
     timing_layout timings;
     q_layout Q;
@@ -178,10 +177,10 @@ template<typename config=config> struct rope_gqa_partial_op {
     __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
     __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
     __device__ static inline void finish_QOL_page(state<config> &s) { 
-        if (laneid() == 0) arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS);
+        if (warp::laneid() == 0) arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS);
     }
     __device__ static inline void finish_KV_page(state<config> &s) { 
-        if (laneid() == 0) arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS);
+        if (warp::laneid() == 0) arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS);
     }
     __device__ static inline q_st &get_Q_smem(state<config> &s) {
         int pid = s.pid(QOL_PAGE);
@@ -228,7 +227,7 @@ template<typename config=config> struct rope_gqa_partial_op {
         dst_ptr[2] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[2].data[0]));
         dst_ptr[3] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[3].data[0]));
         
-        int laneid = ::kittens::laneid();
+        int laneid = warp::laneid();
         int local_row_idx = (laneid % 16) / 4;
         int local_col_idx = laneid % 4;
 
@@ -283,8 +282,8 @@ template<typename config=config> struct rope_gqa_partial_op {
             for(int j = 0; j < dst.width; j++) {
                 #pragma unroll
                 for (int k = 0; k < dst.packed_per_tile; k++) {
-                    const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2);
-                    const int col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
+                    const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2);
+                    const int col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2) + 1;
                     if (col_idx_x >= col_idx)  { dst.tiles[i][j].data[k].x = val; }
                     else                       { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
                     if (col_idx_y >= col_idx)  { dst.tiles[i][j].data[k].y = val; }
@@ -315,8 +314,9 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct loader {
         static __device__ void run(const globals &g, state<config> &s) {
             // Release unused pages
-            if (laneid() >= 2 && laneid() < config::NUM_PAGES) arrive(s.page_finished[s.pid(laneid())], config::NUM_CONSUMER_WARPS); 
-            if (laneid() == 0) {
+            int laneid = warp::laneid();
+            if (laneid >= 2 && laneid < config::NUM_PAGES) arrive(s.page_finished[s.pid(laneid)], config::NUM_CONSUMER_WARPS); 
+            if (laneid == 0) {
                 // Setup
                 parsed_instruction inst{s};
                 int q_head_tile_idx = (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row; // 0 or 1
@@ -350,6 +350,7 @@ template<typename config=config> struct rope_gqa_partial_op {
                     tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.V_c, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                 }
             }
+            warp::sync();
         }
     };
     struct launcher {
@@ -465,30 +466,36 @@ template<typename config=config> struct rope_gqa_partial_op {
     };
     struct storer {
         static __device__ void run(const globals &g, state<config> &s) {
-            if (laneid() == 0) {
-                // Setup
-                parsed_instruction inst{s};
-                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
-                int q_head_vec_start_idx = q_head_start_idx % 16;
+            parsed_instruction inst{s};
+            int laneid = warp::laneid();
+            int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
+            int q_head_vec_start_idx = q_head_start_idx % 16;
+
+            // Store partial attention output to global memory
+            if (laneid == 0) {
                 o_sv (&O_smem)[4] = get_O_smem(s);
-                l_sv &L_smem = get_L_smem(s);
-
-                // Store partial attention output to global memory
                 wait(O_arrived(s), 0);
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, inst.partial_idx, q_head_start_idx + 0, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, inst.partial_idx, q_head_start_idx + 1, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, inst.partial_idx, q_head_start_idx + 2, 0});
-                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, inst.partial_idx, q_head_start_idx + 3, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
+                tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, q_head_start_idx + 3, inst.partial_idx, 0});
+            }
 
-                // Store LSE to global memory
+            // Store LSE to global memory
+            if (laneid < GQA_RATIO) {
+                l_sv &L_smem = get_L_smem(s);
                 wait(L_arrived(s), 0);
-                float4 tmp; // manual load and store (maybe do this in consumer?)
-                uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx]));
-                float *dst_ptr = (float*)&g.L.raw_ptr[inst.partial_idx * NUM_Q_HEADS + q_head_start_idx];
-                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n" : "=f"(tmp.x), "=f"(tmp.y), "=f"(tmp.z), "=f"(tmp.w) : "r"(src_ptr));
-                asm volatile("st.global.v4.f32 [%4], {%0, %1, %2, %3};\n" : : "f"(tmp.x), "f"(tmp.y), "f"(tmp.z), "f"(tmp.w), "l"(dst_ptr));
+                // Can't do anything fancy with writing 4 spread-out values.
+                // We can do this in the consumer if we want to (without using smem)
+                float tmp;
+                uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
+                float *dst_ptr = (float*)&g.L.raw_ptr[(q_head_start_idx + laneid) * g.L.cols() + inst.partial_idx];
+                asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
+                asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
+            }
 
-                // Wait and finish
+            // Wait and finish
+            if (laneid == 0) {
                 tma::store_async_read_wait();
                 finish_QOL_page(s);
             }

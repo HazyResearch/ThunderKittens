@@ -43,8 +43,8 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device=TORCH_DEVICE)
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
-    LSE   = torch.zeros(M_a, H_q,          dtype=torch.float32,  device=TORCH_DEVICE)
-    O   = torch.zeros(M_a, H_q, D_h,       dtype=torch.bfloat16, device=TORCH_DEVICE)
+    LSE = torch.zeros(H_q, M_a,            dtype=torch.float32,  device=TORCH_DEVICE)
+    O   = torch.zeros(H_q, M_a, D_h,       dtype=torch.bfloat16, device=TORCH_DEVICE)
 
     return Q, K_c, V_c, LSE, O
 
@@ -97,6 +97,11 @@ gqa_partial(
     POS_ID, ATTN_SCALE
 )
 torch.cuda.synchronize(TORCH_DEVICE)
+
+# Reshape to match the reference implementation
+Q = Q.view(H_q, D_h)    # (H_q, D_h)
+LSE = LSE.permute(1, 0) # (M_a, H_q)
+O = O.permute(1, 0, 2)  # (M_a, H_q, D_h)
 
 # Run the reference implementation
 print('\nRunning the reference implementation...')
