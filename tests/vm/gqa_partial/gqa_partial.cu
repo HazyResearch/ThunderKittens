@@ -508,7 +508,7 @@ template<typename config=config> struct rope_gqa_partial_op {
 
 PYBIND11_MODULE(gqa_partial, m) {
     m.doc() = "";
-    kittens::py::bind_kernel<kernel<config, globals, rope_gqa_partial_op<config>>>(m, "gqa_partial",
+    kittens::py::bind_kernel<kvm<config, globals, rope_gqa_partial_op<config>>>(m, "gqa_partial",
         &globals::instructions,
         &globals::timings,
         &globals::Q,
