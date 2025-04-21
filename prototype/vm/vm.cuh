@@ -10,15 +10,14 @@
 #include "storer.cuh"
 #include "loader.cuh"
 #include "consumer.cuh"
+#include "noop.cuh"
 
 namespace kittens {
 namespace prototype {
 namespace vm {
 
 template<typename config, typename globals, typename... ops>
-__launch_bounds__(config::NUM_THREADS, 1)
-__cluster_dims__(config::CLUSTER_BLOCKS)
-__global__ void kernel(const __grid_constant__ globals g) {
+__device__ inline void kvm_internal(const globals &g) {
     uint64_t start_time = (uint64_t)clock64();
 #ifdef KVM_DEBUG
     if(threadIdx.x == 0) printf("Thread %d: Kernel launched\n", threadIdx.x); group<config::NUM_WARPS>::sync(15);
@@ -120,6 +119,21 @@ __global__ void kernel(const __grid_constant__ globals g) {
 #endif
 }
 
+// Forward a NoOp to the VM, to ensure that the VM can support zeros.
+template<typename config, typename globals, typename... ops>
+struct kittens_virtual_machine {
+    __device__ inline static void run(const globals &g) {
+        kvm_internal<config, globals, NoOp<config>, ops...>(g);
+    }
+};
+
+
+template<typename config, typename globals, typename... ops>
+__launch_bounds__(config::NUM_THREADS, 1)
+__cluster_dims__(config::CLUSTER_BLOCKS)
+__global__ void kvm(const __grid_constant__ globals g) {
+    kittens_virtual_machine<config, globals, ops...>::run(g);
+}
 
 } // namespace vm
 } // namespace prototype

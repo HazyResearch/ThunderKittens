@@ -8,7 +8,7 @@ torch.manual_seed(1)
 
 print("Starting test...")
 
-DEPTH = 2
+DEPTH = 4
 
 # Create input and output tensors
 W = (torch.randn((2048, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.bfloat16)
@@ -24,6 +24,7 @@ sys.stdout.flush()
 instructions, timings = make_instructions(DEPTH)
 
 print(f"Instruction and timing tensors created, of shapes {instructions.shape} and {timings.shape}")
+print(instructions.float().mean())
 
 # Run the matvec kernel
 matvec(instructions, timings, W, A, O, Bar)
