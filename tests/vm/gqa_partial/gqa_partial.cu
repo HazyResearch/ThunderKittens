@@ -111,7 +111,7 @@ using config = default_config;
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
-    using q_layout = gl<bf16, 1, 1, NUM_Q_HEADS, HEAD_DIM, q_st>;
+    using q_layout = gl<bf16, 1, 1, 1, NUM_Q_HEADS * HEAD_DIM, q_st>;
     using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
     using l_layout = gl<float, 1, 1, NUM_Q_HEADS, -1, l_sv>; // (H_q, max_partials)
     using o_layout = gl<float, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_sv>; // (H_q, max_partials, D_h)
@@ -291,6 +291,31 @@ template<typename config=config> struct rope_gqa_partial_op {
             }
         }
     }
+    // This is super specific to loading Q in a single warp
+    // Mainly two things are different:
+    //   1. Ignores Q global dimensions
+    //   2. Only loads 4 rows of Q, not 16 (assumes GQA_RATIO == 4) --> only 32 calls needed, so single call per thread
+    __device__ static inline void load_Q_async(q_st &dst, const globals::q_layout &src, const int q_head_start_idx/*0, 4, 8, ...*/) {
+        static_assert(HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
+        using T = typename q_st::dtype;
+        constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
+        constexpr int memcpy_per_row = HEAD_DIM / elem_per_memcpy; // 8
+
+        globals::q_layout::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * HEAD_DIM];
+        uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * HEAD_DIM]));
+
+        int laneid = warp::laneid();
+        int row = laneid / memcpy_per_row;
+        int col = (laneid * elem_per_memcpy) % HEAD_DIM;
+    
+        // everything should fit!
+        asm volatile(
+            "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
+            :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * HEAD_DIM + col])
+            : "memory"
+        );
+        asm volatile("cp.async.commit_group;\n" ::: "memory");
+    }
 
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
@@ -355,7 +380,7 @@ template<typename config=config> struct rope_gqa_partial_op {
                 parsed_instruction inst{s};
                 wait_QOL_page(s);
                 q_st &Q_smem = get_Q_smem(s);
-                warp::load_async(Q_smem, g.Q, {0, 0, (inst.kv_head_idx * GQA_RATIO) / q_rt::tile_size_row /*0 or 1*/, 0});
+                load_Q_async(Q_smem, g.Q, inst.kv_head_idx * GQA_RATIO);
 
                 // Setup
                 int q_head_local_idx = ((inst.kv_head_idx * GQA_RATIO) % q_rt::tile_size_row) / 4;

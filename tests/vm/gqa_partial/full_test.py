@@ -3,7 +3,7 @@ import math
 import torch
 from gqa_partial import gqa_partial
 
-TORCH_DEVICE = torch.device('cuda:7')
+TORCH_DEVICE = torch.device('cuda:5')
 
 # Fixed paramters
 NUM_BLOCKS = 148
@@ -39,7 +39,7 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     '''
     torch.manual_seed(42)
 
-    Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device=TORCH_DEVICE)
+    Q   = torch.randn(H_q * D_h,           dtype=torch.bfloat16, device=TORCH_DEVICE)
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     LSE = torch.zeros(H_q, M_a,            dtype=torch.float32,  device=TORCH_DEVICE)
