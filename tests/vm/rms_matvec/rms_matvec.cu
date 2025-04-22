@@ -73,10 +73,6 @@ struct RMS_MatVecOp
     {
         return s.semaphores()[NUM_WEIGHT_PAGES + 2];
     }
-    __device__ static inline semaphore &rms_partials_computed(state<config> &s)
-    {
-        return s.semaphores()[NUM_WEIGHT_PAGES + 3];
-    }
     __device__ static inline int get_weight_page(state<config> &s, int offset)
     {
         return s.pid(offset);
@@ -99,7 +95,6 @@ struct RMS_MatVecOp
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s)
         {
-            // printf("controller at %d %d\n", laneid(), warpid());
             for (int i = 0; i < 4; i++)
             {
                 init_semaphore(inputs_arrived(s, i), 1); // Inputs arrived.
@@ -107,16 +102,14 @@ struct RMS_MatVecOp
             init_semaphore(outputs_arrived(s), 16); // outputs arrived.
             init_semaphore(activations_arrived(s), 1);
             init_semaphore(rms_scale_arrived(s), 1);
-            init_semaphore(rms_partials_computed(s), config::NUM_CONSUMER_WARPS);
             s.record(1);
-            return 8;
+            return 7;
         }
     };
     struct loader
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            // printf("loader at %d %d\n", laneid(), warpid());
             parsed_instruction inst{s};
             // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
             ((int *)s.scratch())[laneid()] = 0;
@@ -172,7 +165,6 @@ struct RMS_MatVecOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            // printf("consumer at %d %d\n", laneid(), warpid());
             rt_bf<16, 128> weights, broadcast_activations;
             typename rt_bf<16, 128>::row_vec activations_vec;
             typename rt_bf<16, 128>::row_vec rms_scale_vec;
@@ -208,12 +200,9 @@ struct RMS_MatVecOp
             // aggregate sums across the 16 consumer warps
             if (laneid() == 0) {
                 smem_rms_partial_sums[warpid()] = partial_sum;
-                // arrive(rms_partials_computed(s));
-                // wait(rms_partials_computed(s), 0);
             }
 
             group<16>::sync(0);
-            // warp::sync();
             
             warp::load(rms_partial_sums, smem_rms_partial_sums);
             warp::sync();
@@ -224,12 +213,6 @@ struct RMS_MatVecOp
             float rms_scale = rsqrtf(variance + g.rms_epsilon);
             warp::copy(float_activations, activations_vec);
             warp::mul(float_activations, float_activations, rms_scale);
-
-            auto float_sum = warp::sum(float_activations);
-            if (laneid() == 0 && blockIdx.x == 0) {
-                printf("warp %d float_sum: %f\n", warpid(), __bfloat162float(float_sum));
-            }
-            
 
             // back to bf16
             warp::copy(activations_vec, float_activations);
@@ -242,13 +225,6 @@ struct RMS_MatVecOp
             warp::sync();
             warp::arrive(s.page_finished[rms_scale_page]);
             warp::mul(activations_vec, activations_vec, rms_scale_vec);
-
-
-            // bf16 rms_sum = warp::sum(activations_vec);
-            // if (laneid() == 0 && blockIdx.x == 0) {
-            //     printf("warp %d rms_sum: %f\n", warpid(), __bfloat162float(rms_sum));
-            // }
-            
 
             // now do the rest of the matvec
 
