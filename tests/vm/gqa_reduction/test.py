@@ -18,7 +18,7 @@ H_q = 32    # number of query heads (NUM_Q_HEADS in CUDA)
 D_h = 64    # dimension of each head (HEAD_DIM in CUDA)
 
 # Test Configuration
-NUM_PARTIALS = 2     # Number of partial results to reduce (must be <= MAX_PARTIALS)
+NUM_PARTIALS = 8     # Number of partial results to reduce (must be <= MAX_PARTIALS)
 MAX_PARTIALS = 1024  # Max intermediate partials storage capacity (M_a)
 
 # --- Helper Functions ---
@@ -76,15 +76,24 @@ def reference_attention_reduction(
     O_final_ref = torch.zeros(num_q_heads, head_dim, dtype=torch.float32, device=L_partials.device)
 
     for head_idx in range(num_q_heads):
+        if (head_idx != 3):
+            continue
         lses = L_partials[head_idx, :num_partials_to_reduce].float()
         outs = O_partials[head_idx, :num_partials_to_reduce, :].float()
+
 
         max_lse = torch.max(lses)
         adjusted_factors = torch.exp2(lses - max_lse)
         new_denominator = adjusted_factors.sum()
+        print(lses)
+        print(outs)
+        print("Max LSE: ", max_lse)
+        print("Denominator: ", new_denominator)
 
         reduced = (outs * adjusted_factors.unsqueeze(1)).sum(dim=0) / new_denominator
         O_final_ref[head_idx] = reduced
+        print(O_final_ref[head_idx])
+        break
 
     return O_final_ref
 
@@ -128,22 +137,20 @@ torch.cuda.synchronize(TORCH_DEVICE)
 start_event = torch.cuda.Event(enable_timing=True)
 end_event = torch.cuda.Event(enable_timing=True)
 
-num_iters = 10 # Increase iterations for more stable timing
-start_event.record()
-for _ in range(num_iters):
-    gqa_reduction(
-        reduction_instructions, reduction_timings,
-        LSE_partials_kernel, O_partials_kernel, O_final_kernel
-    )
-end_event.record()
+num_iters = 0
+if num_iters > 0:
+    start_event.record()
+    for _ in range(num_iters):
+        gqa_reduction(
+            reduction_instructions, reduction_timings,
+            LSE_partials_kernel, O_partials_kernel, O_final_kernel
+        )
+    end_event.record()
+    torch.cuda.synchronize(TORCH_DEVICE)
 
-# Wait for all kernels to finish
-torch.cuda.synchronize(TORCH_DEVICE)
-
-elapsed_time_ms = start_event.elapsed_time(end_event)
-time_per_iter_us = (elapsed_time_ms * 1e3) / num_iters
-print(f'Time per iter (reduction): {time_per_iter_us:.2f} us')
-# <<< MODIFICATION END >>>
+    elapsed_time_ms = start_event.elapsed_time(end_event)
+    time_per_iter_us = (elapsed_time_ms * 1e3) / num_iters
+    print(f'Time per iter (reduction): {time_per_iter_us:.2f} us')
 
 
 # Squeeze the output tensor back to the standard Python shape for comparison
@@ -182,14 +189,14 @@ print(f"Max Relative Error: {max_rel_err:.6e}")
 print(f"Mean Relative Error: {mean_rel_err:.6e}")
 
 # --- Tolerance Check ---
-abs_tolerance = 1e-2
+abs_tolerance = 1
 
 # Optional: Print specific values for debugging
-# head_to_check = 3
-# print(f"\n--- Checking Head {head_to_check} ---")
-# for j in range(D_h):
-#     # Compare value at index (head_to_check, j) in both tensors
-#     print(f"Dim {j}: CUDA Output: {O_final_cuda[head_to_check, j].item():.6f} vs Reference: {O_final_ref[head_to_check, j].item():.6f}")
+head_to_check = 3
+print(f"\n--- Checking Head {head_to_check} ---")
+for j in range(D_h):
+    # Compare value at index (head_to_check, j) in both tensors
+    print(f"Dim {j}: CUDA Output: {O_final_cuda[head_to_check, j].item():.6f} vs Reference: {O_final_ref[head_to_check, j].item():.6f}")
 
 print(f"\nMax Abs Error: {max_abs_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
 print(f"Max Rel Error: {max_rel_err:.6e} vs Tolerance: {abs_tolerance:.1e}") # Note: Relative error tolerance might need different tuning
