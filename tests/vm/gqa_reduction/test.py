@@ -3,7 +3,7 @@ import torch
 import time
 from gqa_reduction import gqa_reduction
 
-TORCH_DEVICE = torch.device('cuda:0') # CHANGE THIS TO YOUR GPU
+TORCH_DEVICE = torch.device('cuda:2') # CHANGE THIS TO YOUR GPU
 torch.cuda.set_device(TORCH_DEVICE)
 
 # Fixed VM parameters
@@ -23,10 +23,12 @@ MAX_PARTIALS = 1024  # Max intermediate partials storage capacity (M_a)
 # --- Helper Functions ---
 
 def generate_inputs(num_q_heads: int, head_dim: int, num_partials: int, max_partials_storage: int):
-    # torch.manual_seed(420)
-    # torch.cuda.manual_seed_all(420) # For reproducibility on GPU
-    torch.manual_seed(123)
-    torch.cuda.manual_seed_all(123) # For reproducibility on GPU
+    # torch.manual_seed(321)
+    # torch.cuda.manual_seed_all(321) # For reproducibility on GPU
+    torch.manual_seed(345)
+    torch.cuda.manual_seed_all(345) # For reproducibility on GPU
+    # torch.manual_seed(123)
+    # torch.cuda.manual_seed_all(123) # For reproducibility on GPU
 
     # LSE Partials Input: Shape (H_q, M_a), dtype float32
     LSE_partials_in = torch.full((num_q_heads, max_partials_storage), -float('inf'), dtype=torch.float32, device=TORCH_DEVICE)
@@ -72,6 +74,8 @@ def reference_attention_reduction(
     O_final_ref = torch.zeros(num_q_heads, head_dim, dtype=torch.float32, device=L_partials.device)
 
     for head_idx in range(num_q_heads):
+        # if (head_idx != 3):
+        #     continue
         lses = L_partials[head_idx, :num_partials_to_reduce].float()
         outs = O_partials[head_idx, :num_partials_to_reduce, :].float()
         # print(lses)
@@ -120,7 +124,6 @@ reduction_instructions, reduction_timings = generate_instructions_and_timings_re
 )
 print(f"Reduction Instructions shape: {reduction_instructions.shape}")
 print(f"Reduction Timings shape: {reduction_timings.shape}")
-
 start_time = time.time()
 gqa_reduction(
     reduction_instructions, reduction_timings,
@@ -172,14 +175,16 @@ print(f"Mean Relative Error: {mean_rel_err:.6e}")
 # --- Tolerance Check ---
 abs_tolerance = 1e-2
 
-# for i in range(H_q):
-#     print("Processing Head", i)
-#     for j in range(D_h):
-#         # Compare value at index (i, j) in both tensors
-#         print(f"CUDA Output: {O_final_cuda[i, j].item():.6f} vs Reference: {O_final_ref[i, j].item():.6f}")
-#     break
-# print(f"\nMax Abs Error: {max_abs_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
-# print(f"Max Rel Error: {max_rel_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
+for i in range(H_q):
+    if (i != 3):
+        continue
+    print("Processing Head", i)
+    for j in range(D_h):
+        # Compare value at index (i, j) in both tensors
+        print(f"CUDA Output: {O_final_cuda[i, j].item():.6f} vs Reference: {O_final_ref[i, j].item():.6f}")
+    break
+print(f"\nMax Abs Error: {max_abs_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
+print(f"Max Rel Error: {max_rel_err:.6e} vs Tolerance: {abs_tolerance:.1e}")
 
 
 if max_abs_err < abs_tolerance:
