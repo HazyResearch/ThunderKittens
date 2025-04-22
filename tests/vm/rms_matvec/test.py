@@ -2,15 +2,25 @@ import sys
 import time
 
 import torch
-from kvm_runner.python_vm import rms_norm
 from make_instructions import make_instructions
 from rms_matvec import rms_matvec
+from torch import Tensor
 
-torch.manual_seed(1)
+torch.manual_seed(0)
+
+
+def rms_norm(inp: Tensor, weight: Tensor, eps: float):
+    input_dtype = inp.dtype
+    inp = inp.to(torch.float32)
+    variance = inp.pow(2).mean(-1, keepdim=True)
+    inp = inp * torch.rsqrt(variance + eps)
+
+    return weight * inp.to(input_dtype)
+
 
 print("Starting test...")
 
-DEPTH = 4
+DEPTH = 1
 
 # Create input and output tensors
 W = (torch.randn((2048, 2048), device=0, dtype=torch.float32) / 2048**0.25).to(
@@ -47,9 +57,11 @@ def go():
 
 def reference_go():
     post_rms = rms_norm(A, RMS_SCALE, RMS_EPSILON)
-    O2 = (post_rms @ W.T).to(torch.float32).cpu().numpy()
+    O2 = post_rms @ W.T
     return O2
 
+
+torch.cuda.synchronize()
 
 go()
 print("Kernel launched")
@@ -77,11 +89,22 @@ print(f"GB/s: {(2 * 2048 * 2048 * 1e-9) / (time_per_iter * 1e-6)}")
 
 print("Test completed successfully!")
 
-O = O.to(torch.float32).cpu().numpy()
-print(O.shape)
-print(O)
+O_numpy = O.float().cpu().numpy()
+print(O_numpy.shape)
+print(O_numpy)
 
 O2 = reference_go()
+O2_numpy = O2.float().cpu().numpy()
+
+diff = O - O2
+adiff = diff.abs()
+rdiff = 2 * adiff / (O.abs() + O2.abs())
+
+print("ADIFFS:", adiff.max(), adiff.min(), adiff.mean())
+print("RDIFFS:", rdiff.max(), rdiff.min(), rdiff.mean())
+
+
+print(diff.shape)
 
 print("TIMINGS")
 for i in range(128):
