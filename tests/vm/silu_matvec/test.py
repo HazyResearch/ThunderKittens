@@ -14,6 +14,9 @@ torch.manual_seed(0)
 
 hidden_size = 2048
 intermediate_size = 2048
+num_layers = 16
+num_ops = 6
+num_heads = 32
 
 
 ################# CREATE PYTORCH REFERENCE ######################
@@ -23,7 +26,7 @@ def matvec(mat: Tensor, vec: Tensor):
     return out
 
 
-def silu_mlp_reference(inp: Tensor, up_proj: nn.Linear, down_proj: nn.Linear, gate_proj: nn.Linear) -> Tensor:
+def silu_mlp_reference(inp: Tensor, up_proj: nn.Linear, gate_proj: nn.Linear) -> Tensor:
 
     up_matvec = matvec(
         mat=up_proj, 
@@ -37,12 +40,7 @@ def silu_mlp_reference(inp: Tensor, up_proj: nn.Linear, down_proj: nn.Linear, ga
 
     post_silu = F.silu(gate_matvec) * up_matvec
 
-    out = matvec(
-        mat=down_proj, 
-        vec=post_silu,
-    )
-
-    return out
+    return post_silu
 
 
 ################## CREATE INPUTS ######################
@@ -58,10 +56,6 @@ GATE_PROJ_W = (
     torch.randn((intermediate_size, hidden_size), device=0, dtype=torch.float32) / 2048**0.25
 ).to(torch.bfloat16)
 
-DOWN_PROJ_W = (
-    torch.randn((hidden_size, intermediate_size), device=0, dtype=torch.float32) / 2048**0.25
-).to(torch.bfloat16)
-
 INP = (
     torch.randn((hidden_size), device=0, dtype=torch.float32) / 2048**0.25
 ).to(torch.bfloat16)
@@ -70,12 +64,12 @@ O = torch.zeros(
     (1, hidden_size), device=0, dtype=torch.bfloat16
 )  # noqa: E741
 
-Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
+Bar = torch.ones((num_layers, num_ops, num_heads), device=0, dtype=torch.int32)
 
 print(INP.float().mean())
 
 
-print("Input tensors created, of shapes", f"{INP.shape=}\n{UP_PROJ_W.shape=}\n{DOWN_PROJ_W.shape=}\n{GATE_PROJ_W.shape}\n{O.shape}\n\n")
+print("Input tensors created, of shapes", f"{INP.shape=}\n{UP_PROJ_W.shape=}\n{GATE_PROJ_W.shape}\n{O.shape}\n\n")
 
 sys.stdout.flush()
 
@@ -97,7 +91,6 @@ def go():
         instructions, 
         timings, 
         UP_PROJ_W, 
-        DOWN_PROJ_W, 
         GATE_PROJ_W, 
         INP, 
         O,
@@ -109,7 +102,6 @@ def reference_go():
     O2 = silu_mlp_reference(
         INP,
         UP_PROJ_W,
-        DOWN_PROJ_W,
         GATE_PROJ_W,
     )
     return O2

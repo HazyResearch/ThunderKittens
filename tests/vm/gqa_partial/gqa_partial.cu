@@ -83,6 +83,7 @@ using namespace kittens::prototype::vm;
 */
 
 constexpr int GQA_PARTIAL_OPCODE = 1;
+constexpr int GQA_REDUCTION_OPCODE = 2;
 constexpr int NUM_BLOCKS = 148;
 constexpr int ATTN_BLOCK_SIZE = 16;
 constexpr int HEAD_DIM = 64;
@@ -110,12 +111,14 @@ using o_sv = sv_fl<HEAD_DIM>;
 using config = default_config;
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
+    using bar_layout = gl<uint, 1, -1, 6, NUM_Q_HEADS + 2 * NUM_KV_HEADS>; // (L, num_ops, qkv_heads).
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using q_layout = gl<bf16, 1, 1, 1, NUM_Q_HEADS * HEAD_DIM, q_st>;
     using kv_layout = gl<bf16, -1, -1, NUM_KV_HEADS, HEAD_DIM, tma::descriptor<kv_st, 1>>; // (L, N_max, H_kv, D_h)
     using l_layout = gl<float, 1, 1, NUM_Q_HEADS, -1, l_sv>; // (H_q, max_partials)
     using o_layout = gl<float, 1, NUM_Q_HEADS, -1, HEAD_DIM, o_sv>; // (H_q, max_partials, D_h)
     instruction_layout instructions;
+    bar_layout barriers;
     timing_layout timings;
     q_layout Q;
     kv_layout K_c;
@@ -349,6 +352,11 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
+                // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + inst.kv_head_idx}] != 4 || // K
+                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
+                    __nanosleep(20);
+
                 // Run the pipeline!
                 wait_KV_page(s);
                 for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
@@ -376,14 +384,23 @@ template<typename config=config> struct rope_gqa_partial_op {
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
             if (warpid() == 0) {
-                // Initiate the load on Q
+                // Wait for the previous ops to finish
                 parsed_instruction inst{s};
+                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 0}] != 4 ||
+                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 1}] != 4 ||
+                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 2}] != 4 ||
+                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 3}] != 4)
+                    __nanosleep(20);
+                warp::sync();
+
+                // Initiate the load on Q
                 wait_QOL_page(s);
                 q_st &Q_smem = get_Q_smem(s);
-                load_Q_async(Q_smem, g.Q, inst.kv_head_idx * GQA_RATIO);
+                load_Q_async(Q_smem, g.Q, q_head_start_idx);
 
                 // Setup
-                int q_head_local_idx = ((inst.kv_head_idx * GQA_RATIO) % q_rt::tile_size_row) / 4;
+                int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
                 int seq_len = g.pos_id + 1;
                 int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
@@ -512,11 +529,14 @@ template<typename config=config> struct rope_gqa_partial_op {
                 asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
                 asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
             }
+            warp::sync(); // ensure all writes are committed
 
             // Wait and finish
             if (laneid == 0) {
-                tma::store_async_read_wait();
+                tma::store_async_wait();
                 finish_QOL_page(s);
+                // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
+                atomicAdd(&g.barriers[{inst.layer_idx, GQA_REDUCTION_OPCODE - 1, q_head_start_idx}], 1);
             }
             warp::sync();
          }
@@ -529,6 +549,7 @@ PYBIND11_MODULE(gqa_partial, m) {
     m.doc() = "";
     kittens::py::bind_kernel<kvm<config, globals, rope_gqa_partial_op<config>>>(m, "gqa_partial",
         &globals::instructions,
+        &globals::barriers,
         &globals::timings,
         &globals::Q,
         &globals::K_c,

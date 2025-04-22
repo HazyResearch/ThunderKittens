@@ -259,6 +259,18 @@ template<> struct packing<int2> {
     using packed_type = int2;
     static __device__ inline constexpr int2 pack(const int &i) { return int2{i, i}; } // this replication makes code cleaner later.
 };
+template<> struct packing<uint> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = uint;
+    using packed_type = uint2;
+    static __device__ inline constexpr uint2 pack(const uint &i) { return uint2{i, i}; } // this replication makes code cleaner later.
+};
+template<> struct packing<uint2> {
+    static __device__ inline constexpr int num() { return 2; }
+    using unpacked_type = uint;
+    using packed_type = uint2;
+    static __device__ inline constexpr uint2 pack(const uint &i) { return uint2{i, i}; } // this replication makes code cleaner later.
+};
 struct uint64_2 { uint64_t x, y; };
 template<> struct packing<uint64_t> {
     static __device__ inline constexpr int num() { return 1; }
