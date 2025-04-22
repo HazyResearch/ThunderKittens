@@ -37,6 +37,19 @@ Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
 
 RMS_EPSILON = 1e-5
 
+print("GOLD SUM: ", A.pow(2).mean(-1, keepdim=True))
+
+GOLD_RMS = rms_norm(A, RMS_SCALE, RMS_EPSILON)
+GOLD_RMS_PRE_SCALE = rms_norm(A, torch.ones_like(RMS_SCALE), RMS_EPSILON)
+
+viewed = GOLD_RMS.view(-1, 128)
+summed = viewed.sum(-1, keepdim=True)
+print("GOLD SUM: ", summed)
+
+viewed_pre_scale = GOLD_RMS_PRE_SCALE.view(-1, 128)
+summed_pre_scale = viewed_pre_scale.sum(-1, keepdim=True)
+print("GOLD SUM PRE SCALE: ", summed_pre_scale)
+
 print("Input tensors created, of shapes", A.shape, W.shape, O.shape, Bar.shape)
 
 sys.stdout.flush()
@@ -103,6 +116,7 @@ rdiff = 2 * adiff / (O.abs() + O2.abs())
 print("ADIFFS:", adiff.max(), adiff.min(), adiff.mean())
 print("RDIFFS:", rdiff.max(), rdiff.min(), rdiff.mean())
 
+assert False
 
 print(diff.shape)
 

@@ -222,7 +222,14 @@ struct RMS_MatVecOp
 
             float variance = full_sum / 2048.0f;
             float rms_scale = rsqrtf(variance + g.rms_epsilon);
+            warp::copy(float_activations, activations_vec);
             warp::mul(float_activations, float_activations, rms_scale);
+
+            auto float_sum = warp::sum(float_activations);
+            if (laneid() == 0 && blockIdx.x == 0) {
+                printf("warp %d float_sum: %f\n", warpid(), __bfloat162float(float_sum));
+            }
+            
 
             // back to bf16
             warp::copy(activations_vec, float_activations);
@@ -235,6 +242,12 @@ struct RMS_MatVecOp
             warp::sync();
             warp::arrive(s.page_finished[rms_scale_page]);
             warp::mul(activations_vec, activations_vec, rms_scale_vec);
+
+
+            // bf16 rms_sum = warp::sum(activations_vec);
+            // if (laneid() == 0 && blockIdx.x == 0) {
+            //     printf("warp %d rms_sum: %f\n", warpid(), __bfloat162float(rms_sum));
+            // }
             
 
             // now do the rest of the matvec
