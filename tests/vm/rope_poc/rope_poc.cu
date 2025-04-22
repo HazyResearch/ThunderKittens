@@ -61,14 +61,12 @@ template<typename config=config> struct rope_op {
     __device__ static inline semaphore &setup_ready(state<config> &s) { return s.semaphores()[0]; }
     __device__ static inline semaphore &rope_cos_ready(state<config> &s) { return s.semaphores()[1]; }
     __device__ static inline semaphore &rope_sin_ready(state<config> &s) { return s.semaphores()[2]; }
+    __device__ static inline semaphore &output_ready(state<config> &s) { return s.semaphores()[3]; }
 
     // Pages (very naive for now, no fine-grained usage)
     __device__ static inline int get_QKV_proj_page(state<config> &s) { return s.pid(0); }
     __device__ static inline int get_rope_cos_page(state<config> &s) { return s.pid(1); }
     __device__ static inline int get_rope_sin_page(state<config> &s) { return s.pid(2); }
-    __device__ static inline int get_Q_page(state<config> &s) { return s.pid(3); }
-    __device__ static inline int get_K_page(state<config> &s) { return s.pid(4); }
-    __device__ static inline int get_V_page(state<config> &s) { return s.pid(5); }
 
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
@@ -79,27 +77,24 @@ template<typename config=config> struct rope_op {
             init_semaphore(setup_ready(s), 0, 1);
             init_semaphore(rope_cos_ready(s), 0, 1);
             init_semaphore(rope_sin_ready(s), 0, 1);
-            return 3;
+            init_semaphore(output_ready(s), 0, 1);
+            return 4;
         }
     };
     struct loader {
-        // Everything is in consumer as proof of concept
-        static __device__ void run(const globals &g, state<config> &s) { }
-    };
-    struct launcher {
-        static __device__ void run(const globals &g, state<config> &s) { }
-    };
-    struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
+            if (warp::laneid() >= 6 && warp::laneid() < 13)
+                arrive(s.page_finished[s.pid(warp::laneid())], config::NUM_CONSUMER_WARPS); // Release the unused page immediately
+
 
 
             /* THIS PART DOESN'T EXIST IN FUSED OP */
             /* THIS PART DOESN'T EXIST IN FUSED OP */
-            int qkv_proj_page_idx = get_QKV_proj_page(s);
-            qkv_rope_sv &qkv_proj_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[qkv_proj_page_idx]);
-            if (group<config::NUM_CONSUMER_WARPS>::laneid() == 0) {
+            if (warp::laneid() == 0) {
+                int qkv_proj_page_idx = get_QKV_proj_page(s);
                 s.wait_page_ready(qkv_proj_page_idx);
+                qkv_rope_sv &qkv_proj_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[qkv_proj_page_idx]);
                 tma::expect(setup_ready(s), qkv_proj_smem);
                 tma::load_async(qkv_proj_smem, g.QKV_proj, {0, 0, 0, inst.qkv_block_idx}, setup_ready(s));
                 wait(setup_ready(s), 0);
@@ -107,44 +102,56 @@ template<typename config=config> struct rope_op {
             warp::sync();
             /* THIS PART DOESN'T EXIST IN FUSED OP */
             /* THIS PART DOESN'T EXIST IN FUSED OP */
-            
 
-            /* This part does! */
-            if (warpid() == 0) {
+
+
+            // Load rotary encodings
+            int rope_dim_idx = inst.qkv_block_idx % 4; // 0, 1, 2, 3
+            if (warp::laneid() == 0) {
                 int rope_cos_page_idx = get_rope_cos_page(s);
+                s.wait_page_ready(rope_cos_page_idx);
                 qkv_rope_sv &rope_cos_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[rope_cos_page_idx]);
+                tma::expect(rope_cos_ready(s), rope_cos_smem);
+                tma::load_async(rope_cos_smem, g.rope_cos, {0, 0, g.pos_id, rope_dim_idx}, rope_cos_ready(s));
+            } else if (warp::laneid() == 1) {
                 int rope_sin_page_idx = get_rope_sin_page(s);
+                s.wait_page_ready(rope_sin_page_idx);
                 qkv_rope_sv &rope_sin_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[rope_sin_page_idx]);
+                tma::expect(rope_sin_ready(s), rope_sin_smem);
+                tma::load_async(rope_sin_smem, g.rope_sin, {0, 0, g.pos_id, rope_dim_idx}, rope_sin_ready(s));
+            }
+        }
+    };
+    struct launcher {
+        static __device__ void run(const globals &g, state<config> &s) { }
+    };
+    struct consumer {
+        static __device__ void run(const globals &g, state<config> &s) {
+            // Use a single warp
+            if (warpid() == 0) {
+                parsed_instruction inst{s};
+    
+                if (inst.qkv_block_idx < V_BLK_START) { // Q or K
+                    int qkv_proj_page_idx = get_QKV_proj_page(s);
+                    int rope_cos_page_idx = get_rope_cos_page(s);
+                    int rope_sin_page_idx = get_rope_sin_page(s);
+                    qkv_rope_sv &qkv_proj_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[qkv_proj_page_idx]);
+                    qkv_rope_sv &rope_cos_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[rope_cos_page_idx]);
+                    qkv_rope_sv &rope_sin_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[rope_sin_page_idx]);
+                    qkv_rope_rv qkv_proj_reg;
+                    qkv_rope_rv rope_cos_reg;
+                    qkv_rope_rv rope_sin_reg;
 
-                if (laneid() == 0) {
-                    /* THIS PART SHOULD BE IN LOADER */
-                    /* THIS PART SHOULD BE IN LOADER */
-
-                    int rope_d_idx = inst.qkv_block_idx % (HEAD_DIM / QKV_BLOCK_SIZE); // 0, 1, 2, 3
-
-                    // Load rope cos
-                    s.wait_page_ready(rope_cos_page_idx);
-                    tma::expect(rope_cos_ready(s), rope_cos_smem);
-                    tma::load_async(rope_cos_smem, g.rope_cos, {0, 0, g.pos_id, rope_d_idx}, rope_cos_ready(s));
-
-                    // Load rope sin
-                    s.wait_page_ready(rope_sin_page_idx);
-                    tma::expect(rope_sin_ready(s), rope_sin_smem);
-                    tma::load_async(rope_sin_smem, g.rope_sin, {0, 0, g.pos_id, rope_d_idx}, rope_sin_ready(s));
-
-                    // Wait
+                    // Load values
                     wait(rope_cos_ready(s), 0);
-                    wait(rope_sin_ready(s), 0);
-                }
-                warp::sync();
-
-                // Everything is in smem, let's do the computation
-                if (inst.qkv_block_idx < V_BLK_START) {
-                    qkv_rope_rv qkv_proj_reg, rope_cos_reg, rope_sin_reg;
-                    
-                    warp::load(qkv_proj_reg, qkv_proj_smem);
+                    warp::load(qkv_proj_reg, qkv_proj_smem); // for this implementation only, we rely on rope_cos_ready (no need to wait in the fused op)
                     warp::load(rope_cos_reg, rope_cos_smem);
+                    wait(rope_sin_ready(s), 0);
                     warp::load(rope_sin_reg, rope_sin_smem);
+
+                    // Release pages
+                    warp::arrive(s.page_finished[rope_cos_page_idx], config::NUM_CONSUMER_WARPS);
+                    warp::arrive(s.page_finished[rope_sin_page_idx], config::NUM_CONSUMER_WARPS);
                     
                     // Fetch the neighbor values
                     int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -154,33 +161,44 @@ template<typename config=config> struct rope_op {
                     if (laneid() < 16)
                         qkv_proj_reg[0][0] = qkv_proj_reg[0][0] * rope_cos_reg[0][0] + bf16(-1 * mod) * pair_val * rope_sin_reg[0][0];
     
-                    // Store the result (reuse the same smem for now)
+                    // Store the result in-place
                     warp::store(qkv_proj_smem, qkv_proj_reg);
-                    
-                    /* THIS PART SHOULD BE IN STORER */
-                    /* THIS PART SHOULD BE IN STORER */
-
-                    // We have to decide which location to store the result
-                    if (inst.qkv_block_idx < K_BLK_START) { // Q
-                        if (laneid() == 0) tma::store_async<cache_policy::NORMAL>(g.Q, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
-                    } else { // K
-                        int base_index = (inst.qkv_block_idx - K_BLK_START) * QKV_BLOCK_SIZE;
-                        int head_idx = base_index / HEAD_DIM;
-                        int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
-                        if (laneid() == 0) tma::store_async<cache_policy::NORMAL>(g.K_c, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
-                    }
+                    warp::sync();
                 } else { // V
-                    int base_index = (inst.qkv_block_idx - V_BLK_START) * QKV_BLOCK_SIZE;
-                    int head_idx = base_index / HEAD_DIM;
-                    int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
-                    if (laneid() == 0) tma::store_async<cache_policy::NORMAL>(g.V_c, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                    wait(rope_cos_ready(s), 0); // delete this in fused op (no need to wait for projection, as it is already in reg/smem)
                 }
+
+                warp::arrive(output_ready(s));
             }
         }
     };
     struct storer {
-        // Everything is in consumer as proof of concept
-        static __device__ void run(const globals &g, state<config> &s) { }
+        static __device__ void run(const globals &g, state<config> &s) {
+            if (warp::laneid() == 0) {
+                parsed_instruction inst{s};
+
+                int qkv_proj_page_idx = get_QKV_proj_page(s);
+                qkv_rope_sv &qkv_proj_smem = reinterpret_cast<qkv_rope_sv &>(s.pages[qkv_proj_page_idx]);
+                wait(output_ready(s), 0);
+    
+                if (inst.qkv_block_idx < K_BLK_START) { // Q
+                    tma::store_async<cache_policy::NORMAL>(g.Q, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
+                } else if (inst.qkv_block_idx < V_BLK_START) { // K
+                    int base_index = (inst.qkv_block_idx - K_BLK_START) * QKV_BLOCK_SIZE;
+                    int head_idx = base_index / HEAD_DIM;
+                    int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
+                    tma::store_async<cache_policy::NORMAL>(g.K_c, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                } else { // V
+                    int base_index = (inst.qkv_block_idx - V_BLK_START) * QKV_BLOCK_SIZE;
+                    int head_idx = base_index / HEAD_DIM;
+                    int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
+                    tma::store_async<cache_policy::NORMAL>(g.V_c, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                }
+
+                tma::store_async_read_wait();
+                arrive(s.page_finished[qkv_proj_page_idx], config::NUM_CONSUMER_WARPS);
+            }
+        }
     };
 };
 
