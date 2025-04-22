@@ -8,7 +8,7 @@
 #define RESET_TEXT "\033[0m"
 
 #include "kittens.cuh"
-#define KVM_DEBUG
+// #define KVM_DEBUG
 #include "vm/vm.cuh"
 #include <iostream>
 
@@ -31,7 +31,6 @@ struct globals
 
     weights UP_PROJ_W;
     weights GATE_PROJ_W;
-    weights DOWN_PROJ_W;
     activations INP;
     activations O;
     barriers Bar;
@@ -64,22 +63,19 @@ struct SiLU_MLPOp
 
     static constexpr int UP_PAGES    = 4;
     static constexpr int GATE_PAGES  = 4;
-    static constexpr int DOWN_PAGES  = 4;
-    static constexpr int PAGE_INPUT  = UP_PAGES + GATE_PAGES + DOWN_PAGES;    // = 12
-    static constexpr int PAGE_OUTPUT = PAGE_INPUT + 1;                        // = 13
-    static constexpr int SEM_COUNT   = PAGE_OUTPUT + 1;                       // = 14
+    static constexpr int PAGE_INPUT  = UP_PAGES + GATE_PAGES;    // = 8
+    static constexpr int PAGE_OUTPUT = PAGE_INPUT + 1;           // = 9
+    static constexpr int SEM_COUNT   = PAGE_OUTPUT + 1;          // = 10
 
     //  semaphores 
-  __device__ static inline semaphore &up_arrived   (state<config> &s, int i) { return s.semaphores()[ i                  ]; }
-  __device__ static inline semaphore &gate_arrived (state<config> &s, int i) { return s.semaphores()[ UP_PAGES + i        ]; }
-  __device__ static inline semaphore &down_arrived (state<config> &s, int i) { return s.semaphores()[ UP_PAGES + GATE_PAGES + i ]; }
-  __device__ static inline semaphore &in_arrived   (state<config> &s)        { return s.semaphores()[ PAGE_INPUT           ]; }
-  __device__ static inline semaphore &out_arrived  (state<config> &s)        { return s.semaphores()[ PAGE_OUTPUT          ]; }
+  __device__ static inline semaphore &up_arrived   (state<config> &s, int i) { return s.semaphores()[ i            ]; }
+  __device__ static inline semaphore &gate_arrived (state<config> &s, int i) { return s.semaphores()[ UP_PAGES + i ]; }
+  __device__ static inline semaphore &in_arrived   (state<config> &s)        { return s.semaphores()[ PAGE_INPUT   ]; }
+  __device__ static inline semaphore &out_arrived  (state<config> &s)        { return s.semaphores()[ PAGE_OUTPUT  ]; }
 
     // getters
     __device__ static inline int get_up_page  (state<config> &s, int i) { return s.pid(i); }
     __device__ static inline int get_gate_page(state<config> &s, int i) { return s.pid(UP_PAGES + i); }
-    __device__ static inline int get_down_page(state<config> &s, int i) { return s.pid(UP_PAGES + GATE_PAGES + i); }
     __device__ static inline int get_input_page(state<config> &s) { return s.pid(PAGE_INPUT); }
     __device__ static inline int get_output_page(state<config> &s) { return s.pid(PAGE_OUTPUT); }
 
@@ -92,18 +88,22 @@ struct SiLU_MLPOp
                 13,
                 0, 1, 2, 3, 4, 5
             };
-            printf("hiiii\n");
+            
+            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
+                printf("Inside controller release lid!\n");
+            }
             return ret_order[query];
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s)
         {
 
-            printf("hello 1!\n");
+            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
+                printf("Inside controller init semaphores!\n");
+            }
 
             // each weight page and the input page needs exactly 1 “ready” signal
             for (int i = 0; i < UP_PAGES;   i++) init_semaphore(up_arrived(s,i),   1);
             for (int i = 0; i < GATE_PAGES; i++) init_semaphore(gate_arrived(s,i), 1);
-            for (int i = 0; i < DOWN_PAGES; i++) init_semaphore(down_arrived(s,i), 1);
             init_semaphore(in_arrived(s),   1);
             // output must wait for all 4 consumer warps
             init_semaphore(out_arrived(s),  16);
@@ -118,7 +118,9 @@ struct SiLU_MLPOp
         static __device__ void run(const globals &g, state<config> &s)
         {
 
-            printf("hello 2!\n");
+            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
+                printf("Inside loader run!\n");
+            }
 
             parsed_instruction inst{s};
             // clear scratch buffer
@@ -150,20 +152,6 @@ struct SiLU_MLPOp
                 tma::load_async(chunk, g.GATE_PROJ_W,
                                 {inst.layer, inst.start_col/16, idx},
                                 gate_arrived(s,idx));
-            }
-
-            // 3) DOWN projections
-            else if (laneid() < UP_PAGES + GATE_PAGES + DOWN_PAGES)
-            {
-                int idx = laneid() - (UP_PAGES + GATE_PAGES);
-                int pg  = get_down_page(s, idx);
-                s.wait_page_ready(pg);
-                s.record(16 + laneid());
-                auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
-                tma::expect(down_arrived(s,idx), chunk);
-                tma::load_async(chunk, g.DOWN_PROJ_W,
-                                {inst.layer, inst.start_col/16, idx},
-                                down_arrived(s,idx));
             }
 
             // 4) INPUT page
@@ -208,26 +196,25 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            int group = warpgroup::groupid();      // which weight‐page group
+            int group  = warpgroup::groupid();     // which weight‐page group
             int warpid = warpgroup::warpid();      // which “lane‐block”
             int lid    = laneid();                 // 0–31
 
-            printf("hello 3!\n");
+            if ( laneid() == 0 && warpid == 0 ) { 
+                printf("Inside consumer run!\n");
+            }
 
             //--------------------------------------------------
             // 1) LOAD INPUT ACTIVATIONS
             //--------------------------------------------------
             wait(in_arrived(s), 0);
             int in_pg = get_input_page(s);
+            typename rt_bf<16, 128>::row_vec x_vec;
             // copy the 16×128bfslice out of shared pages
-            sv_bf<128> in_smem[16];
-            memcpy(in_smem, &s.pages[in_pg], sizeof(in_smem));
-            // each warpblock loads its 128‐wide row vector
-            typename rt_bf<16,128>::row_vec x_vec;
-            warp::load(x_vec, in_smem[warpid]);
+            sv_bf<128>(&in_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[in_pg]);
+            warp::load(x_vec, in_smem[warp::warpid()]);
             warp::sync();
-            // signal “page finished” so the loader can reuse it
-            warp::arrive(s.page_finished[in_pg], config::NUM_CONSUMER_WARPS);
+            warp::arrive(s.page_finished[in_pg]); // just 1 is sufficient
 
 
             //--------------------------------------------------
@@ -282,48 +269,25 @@ struct SiLU_MLPOp
             }
             warp::sync();
 
-
             //--------------------------------------------------
-            // 5) DOWN PROJECTION
+            // 5) ROW‐SUM → out_vec (16 lanes)
             //--------------------------------------------------
-            wait(down_arrived(s, group), 0);
-            int down_pg = get_down_page(s, group);
-            st_bf<16,128> down_smem[4];
-            memcpy(down_smem, &s.pages[down_pg], sizeof(down_smem));
-            rt_bf<16,128> down_reg;
-            warp::load(down_reg, down_smem[warpid]);
-            warp::sync();
-            warp::arrive(s.page_finished[down_pg], config::NUM_CONSUMER_WARPS);
-
-            // final mat‐vec
-            warp::mul(acc, acc, down_reg);
-            typename rt_bf<16,128>::col_vec col;
-            rv_bf<16>        out_vec;
+            rt_bf<16,128>::col_vec col;
+            rv_bf<16> out_vec;
             warp::row_sum(col, acc);
             warp::copy(out_vec, col);
+            warp::sync();
 
-
-            //--------------------------------------------------
-            // 6) ATOMIC ADD INTO SCRATCH
-            //--------------------------------------------------
-            if (lid < 16) {
-                // out_vec[lid] is a __nv_bfloat16*, so dereference it:
-                __nv_bfloat16  raw = *out_vec[lid];
-                float          val = __bfloat162float(raw);
-
-                // accumulate into a float scratch buffer:
-                float *fs = reinterpret_cast<float*>(s.scratch());
-                atomicAdd(&fs[lid], val);
-
-                /* print val */
-                printf("warp %d lane %d: %f\n", warpid, val);
+            // --------------------------------------------------
+            // 6) ATOMIC ADD EACH LANE INTO SCRATCH
+            // --------------------------------------------------
+            // Now the first 16 threads have the output.
+            if (laneid() < 16)
+            { // this might be a bad idea but yolo, it's probably an okay start
+                // and fortunately this is code where ncu will tell us if it's bad..
+                // atomicAdd(&((bf16 *)s.scratch())[laneid()], out_vec[0][0]);
             }
             warp::sync();
-        
-
-            //--------------------------------------------------
-            // 7) SIGNAL “all done” for this op
-            //--------------------------------------------------
             warp::arrive(out_arrived(s));
         }
     };
@@ -333,24 +297,19 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s) {
             
-            printf("hello 4!\n");
+            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
+                printf("Inside storer run!\n");
+            }
 
             parsed_instruction inst{s};
 
             if (laneid() == 0) {
                 // wait for all consumer warps
                 wait(out_arrived(s), 0);
-
                 // read back the float sums
-                float *fs = reinterpret_cast<float*>(s.scratch());
-                __nv_bfloat16 bf16_out[16];
-                #pragma unroll
-                for (int i = 0; i < 16; ++i) {
-                    bf16_out[i] = __float2bfloat16(fs[i]);
-                }
-
+                void *scratch = s.scratch();
                 // now treat that flat array as an sv_bf<16> tile
-                auto &output = *reinterpret_cast<sv_bf<16>*>(bf16_out);
+                sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
                 tma::store_async(g.O, output, { inst.start_col/16 });
                 tma::store_async_wait();
             }
@@ -369,7 +328,6 @@ struct SiLU_MLPOp
 
 #include "pyutils/pyutils.cuh"
 
-
 PYBIND11_MODULE(silu_mlp, m)
 {
     m.doc() = "silu_mlp python module";
@@ -378,10 +336,10 @@ PYBIND11_MODULE(silu_mlp, m)
         &globals::instructions,
         &globals::timings,
         &globals::UP_PROJ_W,
-        &globals::DOWN_PROJ_W,
         &globals::GATE_PROJ_W,
         &globals::INP,
         &globals::O,
         &globals::Bar
     );
+    cudaGetLastError();
 }
