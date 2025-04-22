@@ -1,10 +1,9 @@
 import math
 
-from einops import einsum
 import torch
 from gqa_partial import gqa_partial
 
-TORCH_DEVICE = torch.device('cuda:7')
+TORCH_DEVICE = torch.device('cuda:5')
 
 # Fixed paramters
 NUM_BLOCKS = 148
@@ -40,11 +39,11 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
     '''
     torch.manual_seed(42)
 
-    Q   = torch.randn(H_q, D_h,            dtype=torch.bfloat16, device=TORCH_DEVICE)
+    Q   = torch.randn(H_q * D_h,           dtype=torch.bfloat16, device=TORCH_DEVICE)
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
-    LSE   = torch.zeros(M_a, H_q,          dtype=torch.float32,  device=TORCH_DEVICE)
-    O   = torch.zeros(M_a, H_q, D_h,       dtype=torch.bfloat16, device=TORCH_DEVICE)
+    LSE = torch.zeros(H_q, M_a,            dtype=torch.float32,  device=TORCH_DEVICE)
+    O   = torch.zeros(H_q, M_a, D_h,       dtype=torch.float32,  device=TORCH_DEVICE)
 
     return Q, K_c, V_c, LSE, O
 
@@ -98,6 +97,30 @@ gqa_partial(
 )
 torch.cuda.synchronize(TORCH_DEVICE)
 
+# Calculate timings
+num_iters = 5
+torch.cuda.set_device(TORCH_DEVICE)
+start_event = torch.cuda.Event(enable_timing=True)
+end_event = torch.cuda.Event(enable_timing=True)
+start_event.record()
+for i in range(num_iters):
+    gqa_partial(
+        instructions, timings, 
+        Q, K_c, V_c, LSE, O, 
+        POS_ID, ATTN_SCALE
+    )
+torch.cuda.synchronize(TORCH_DEVICE)
+end_event.record()
+torch.cuda.synchronize(TORCH_DEVICE)
+elapsed_time = start_event.elapsed_time(end_event)
+time_per_iter_us = (elapsed_time * 1e3) / num_iters
+print(f'Time per iter: {time_per_iter_us} us')
+
+# Reshape to match the reference implementation
+Q = Q.view(H_q, D_h)    # (H_q, D_h)
+LSE = LSE.permute(1, 0) # (M_a, H_q)
+O = O.permute(1, 0, 2)  # (M_a, H_q, D_h)
+
 # Run the reference implementation
 print('\nRunning the reference implementation...')
 LSE_ref = torch.zeros_like(LSE)
@@ -116,12 +139,12 @@ for p in range(NUM_PARTIALS):
         Qi = Q[H_q_start:H_q_start+4, :]
         Kj = K_c[LAYER_IDX, start_token:end_token, h, :]
         Vj = V_c[LAYER_IDX, start_token:end_token, h, :]
-        QiKj = torch.matmul(Qi, Kj.transpose(-1, -2))
+        QiKj = torch.matmul(Qi.float(), Kj.float().transpose(-1, -2))
         scaled_QiKj = QiKj * ATTN_SCALE
         softmax = torch.softmax(scaled_QiKj, dim=-1)
         # LSE_ref[p, H_q_start:H_q_start+4] = torch.logsumexp(scaled_QiKj, dim=-1)
         LSE_ref[p, H_q_start:H_q_start+4] = torch.log2(torch.sum(torch.exp(scaled_QiKj.float()), dim=-1)) # use log2 consistently
-        O_ref[p, H_q_start:H_q_start+4, :] = torch.matmul(softmax, Vj)
+        O_ref[p, H_q_start:H_q_start+4, :] = torch.matmul(softmax.float(), Vj.float())
 
         print(f'\nPartial {p}, Head {h}:')
         print(torch.max(torch.abs(O[p, H_q_start:H_q_start+4, :] - O_ref[p, H_q_start:H_q_start+4, :])))
@@ -149,10 +172,10 @@ for h in range(H_kv):
     Q_end = 4 * (h + 1)
     K_h = K[:, h, :] # (seq_len, D_h)
     V_h = V[:, h, :] # (seq_len, D_h)
-    QK = torch.matmul(Q[Q_start:Q_end, :], K_h.transpose(-2, -1))
+    QK = torch.matmul(Q[Q_start:Q_end, :].float(), K_h.float().transpose(-2, -1))
     scaled_QK = QK * ATTN_SCALE
     softmax = torch.softmax(scaled_QK, dim=-1)
-    O_ref[Q_start:Q_end, :] = torch.matmul(softmax, V_h)
+    O_ref[Q_start:Q_end, :] = torch.matmul(softmax.float(), V_h.float())
 
 # Compare the aggregated outputs
 print('\nComparing outputs...')

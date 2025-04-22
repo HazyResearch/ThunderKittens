@@ -16,4 +16,3 @@ Currently a bit disorganized, but largely everything is in:
 
 - Get `meta-llama/Llama-3.2-1B-Instruct` forward pass to run.
 - Main to-do is to implement the instructions defined in `./demos/kvm-runner/kvm_runner/instructions.py`
-- Currently, 1 person is working per instruction
