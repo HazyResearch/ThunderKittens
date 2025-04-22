@@ -353,7 +353,8 @@ template<typename config=config> struct rope_gqa_partial_op {
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                 // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + inst.kv_head_idx}] != 4)
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + inst.kv_head_idx}] != 4 || // K
+                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
                     __nanosleep(20);
 
                 // Run the pipeline!

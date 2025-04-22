@@ -75,7 +75,7 @@ def generate_itb(): # instruction, timings, barriers
     # If opcode (instructions[:, :, 0]) is invalid, the instruction is ignored
     instructions = torch.tensor(instructions, dtype=torch.int32).to(device=TORCH_DEVICE)
     timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
-    barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.int32).to(device=TORCH_DEVICE)
+    barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.uint32).to(device=TORCH_DEVICE)
 
     # Fill in the barrier
     barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 0] = 4
@@ -83,6 +83,7 @@ def generate_itb(): # instruction, timings, barriers
     barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 2] = 4
     barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 3] = 4
     barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_q + H_kv_IDX] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_q + H_kv + H_kv_IDX] = 4
 
     return instructions, timings, barriers
 
@@ -93,6 +94,7 @@ Q, K_c, V_c, LSE, O = generate_tensor_inputs(L, MAX_PARTIALS, N_max, H_q, H_kv, 
 
 # Run the kernel
 print('Instruction shape:', instructions.shape)
+print('Barrier shape:', barriers.shape)
 print('Timings shape:', timings.shape) 
 print('Q shape:', Q.shape)
 print('K_c shape:', K_c.shape)
@@ -101,7 +103,7 @@ print('LSE shape:', LSE.shape)
 print('O shape:', O.shape)
 print('\nRunning the kernel...')
 gqa_partial(
-    instructions, barriers, timings, 
+    instructions, barriers, timings,
     Q, K_c, V_c, LSE, O, 
     POS_ID, ATTN_SCALE
 )
