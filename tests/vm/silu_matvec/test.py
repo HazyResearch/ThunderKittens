@@ -72,6 +72,8 @@ O = torch.zeros(
 
 Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
 
+print(INP.float().mean())
+
 
 print("Input tensors created, of shapes", f"{INP.shape=}\n{UP_PROJ_W.shape=}\n{DOWN_PROJ_W.shape=}\n{GATE_PROJ_W.shape}\n{O.shape}\n\n")
 
@@ -140,14 +142,13 @@ t1 = time.time()  # Keep this for compatibility with the time_per_iter calculati
 t0 = t1 - (elapsed_time / 1000)  # Convert ms to seconds
 time_per_iter = ((t1 - t0) * 1e6) / 5
 print(f"Time per iter: {time_per_iter} us")
-print(f"GB/s: {(2 * 2048 * 2048 * 1e-9) / (time_per_iter * 1e-6)}")
+print(f"GB/s: {(2 * 2048 * 2048 * 1e-9) / (time_per_iter * 1e-6)}\n")
 
 
 print("Test completed successfully!")
-
 O_numpy = O.float().cpu().numpy()
-print(O_numpy.shape)
-print(O_numpy)
+print(f"Shape = {O_numpy.shape}")
+print(f"Output = {O_numpy}, Mean = {O_numpy.mean()}, Max = {O_numpy.max()}, Min = {O_numpy.min()}")
 
 O2 = reference_go()
 O2_numpy = O2.float().cpu().numpy()
@@ -159,8 +160,6 @@ rdiff = 2 * adiff / (O.abs() + O2.abs())
 print("\nStats:")
 print("ADIFFS:", adiff.max(), adiff.min(), adiff.mean())
 print("RDIFFS:", rdiff.max(), rdiff.min(), rdiff.mean())
-
-breakpoint()
 
 
 print(diff.shape)

@@ -1,4 +1,14 @@
+#define RED_TEXT "\033[31m"
+#define GREEN_TEXT "\033[32m"
+#define YELLOW_TEXT "\033[33m"
+#define BLUE_TEXT "\033[34m"
+#define MAGENTA_TEXT "\033[35m"
+#define CYAN_TEXT "\033[36m"
+#define WHITE_TEXT "\033[37m"
+#define RESET_TEXT "\033[0m"
+
 #include "kittens.cuh"
+#define KVM_DEBUG
 #include "vm/vm.cuh"
 #include <iostream>
 
@@ -35,7 +45,7 @@ struct globals
 template <typename config = config, int _OP_IDX = 0>
 struct SiLU_MLPOp
 {
-    static constexpr int opcode = 4;
+    static constexpr int opcode = 3;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction
     {
@@ -73,7 +83,6 @@ struct SiLU_MLPOp
     __device__ static inline int get_input_page(state<config> &s) { return s.pid(PAGE_INPUT); }
     __device__ static inline int get_output_page(state<config> &s) { return s.pid(PAGE_OUTPUT); }
 
-    // TODO: fix controller
     struct controller
     {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
@@ -83,18 +92,22 @@ struct SiLU_MLPOp
                 13,
                 0, 1, 2, 3, 4, 5
             };
+            printf("hiiii\n");
             return ret_order[query];
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s)
         {
+
+            printf("hello 1!\n");
+
             // each weight page and the input page needs exactly 1 “ready” signal
             for (int i = 0; i < UP_PAGES;   i++) init_semaphore(up_arrived(s,i),   1);
             for (int i = 0; i < GATE_PAGES; i++) init_semaphore(gate_arrived(s,i), 1);
             for (int i = 0; i < DOWN_PAGES; i++) init_semaphore(down_arrived(s,i), 1);
             init_semaphore(in_arrived(s),   1);
             // output must wait for all 4 consumer warps
-            init_semaphore(out_arrived(s),  config::NUM_CONSUMER_WARPS);
-            // tell KVM: we set up SEM_COUNT semaphores
+            init_semaphore(out_arrived(s),  16);
+            
             return SEM_COUNT;
         }
     };
@@ -104,6 +117,8 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
+
+            printf("hello 2!\n");
 
             parsed_instruction inst{s};
             // clear scratch buffer
@@ -150,6 +165,7 @@ struct SiLU_MLPOp
                                 {inst.layer, inst.start_col/16, idx},
                                 down_arrived(s,idx));
             }
+
             // 4) INPUT page
             else if (laneid() == PAGE_INPUT)
             {
@@ -163,6 +179,7 @@ struct SiLU_MLPOp
                 tma::expect(in_arrived(s), buf);
                 tma::load_async(buf, g.INP, {}, in_arrived(s));
             }
+
             // 5) UNUSED pages: release them immediately so consumer warps can retire
             else if (laneid() >= PAGE_INPUT+1 && laneid() < SEM_COUNT)
             {
@@ -192,8 +209,10 @@ struct SiLU_MLPOp
         static __device__ void run(const globals &g, state<config> &s)
         {
             int group = warpgroup::groupid();      // which weight‐page group
-            int warpid = warpgroup::warpid();      // which “lane‐block” within shared memory
+            int warpid = warpgroup::warpid();      // which “lane‐block”
             int lid    = laneid();                 // 0–31
+
+            printf("hello 3!\n");
 
             //--------------------------------------------------
             // 1) LOAD INPUT ACTIVATIONS
@@ -313,34 +332,36 @@ struct SiLU_MLPOp
     struct storer
     {
         static __device__ void run(const globals &g, state<config> &s) {
+            
+            printf("hello 4!\n");
+
             parsed_instruction inst{s};
 
             if (laneid() == 0) {
-            // wait for all consumer warps
-            wait(out_arrived(s), 0);
+                // wait for all consumer warps
+                wait(out_arrived(s), 0);
 
-            // read back the float sums
-            float *fs = reinterpret_cast<float*>(s.scratch());
-            __nv_bfloat16 bf16_out[16];
-            #pragma unroll
-            for (int i = 0; i < 16; ++i) {
-                bf16_out[i] = __float2bfloat16(fs[i]);
-            }
+                // read back the float sums
+                float *fs = reinterpret_cast<float*>(s.scratch());
+                __nv_bfloat16 bf16_out[16];
+                #pragma unroll
+                for (int i = 0; i < 16; ++i) {
+                    bf16_out[i] = __float2bfloat16(fs[i]);
+                }
 
-            // now treat that flat array as an sv_bf<16> tile
-            auto &output = *reinterpret_cast<sv_bf<16>*>(bf16_out);
-            tma::store_async(g.O, output, { inst.start_col/16 });
-            tma::store_async_wait();
+                // now treat that flat array as an sv_bf<16> tile
+                auto &output = *reinterpret_cast<sv_bf<16>*>(bf16_out);
+                tma::store_async(g.O, output, { inst.start_col/16 });
+                tma::store_async_wait();
             }
 
             warp::sync();
             asm volatile("fence.acq_rel.gpu;\n");
-
             if (laneid() == 0) {
-            if constexpr (OP_IDX == g.Bar.rows() - 1)
-                atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
-            else
-                atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
+                if constexpr (OP_IDX == g.Bar.rows() - 1)
+                    atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
+                else
+                    atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
             }
         }
     };
@@ -348,16 +369,19 @@ struct SiLU_MLPOp
 
 #include "pyutils/pyutils.cuh"
 
+
 PYBIND11_MODULE(silu_mlp, m)
 {
     m.doc() = "silu_mlp python module";
-    kittens::py::bind_kernel<kvm<config, globals, SiLU_MLPOp<config>>>(m, "silu_mlp",
-                                                                     &globals::instructions,
-                                                                     &globals::timings,
-                                                                     &globals::UP_PROJ_W,
-                                                                     &globals::DOWN_PROJ_W,
-                                                                     &globals::GATE_PROJ_W,
-                                                                     &globals::INP,
-                                                                     &globals::O,
-                                                                     &globals::Bar);
+    kittens::py::bind_kernel<kvm<config, globals, SiLU_MLPOp<config>>>(
+        m, "silu_mlp",
+        &globals::instructions,
+        &globals::timings,
+        &globals::UP_PROJ_W,
+        &globals::DOWN_PROJ_W,
+        &globals::GATE_PROJ_W,
+        &globals::INP,
+        &globals::O,
+        &globals::Bar
+    );
 }

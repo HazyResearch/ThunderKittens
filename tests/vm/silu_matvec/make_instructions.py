@@ -1,7 +1,7 @@
 import torch
 
 
-instr_opcode = 4     # Opcode for the instruction
+instr_opcode = 3     # Opcode for the instruction
 num_sms = 148        # Number of SMs in the GPU
 bits_per_instr = 32  # 32-bit integers
 num_work_units = 128 # # 2048x2048 matrix - the 2048 output units chopped into units of size 16 gives 128 work units
