@@ -1,14 +1,4 @@
-#define RED_TEXT "\033[31m"
-#define GREEN_TEXT "\033[32m"
-#define YELLOW_TEXT "\033[33m"
-#define BLUE_TEXT "\033[34m"
-#define MAGENTA_TEXT "\033[35m"
-#define CYAN_TEXT "\033[36m"
-#define WHITE_TEXT "\033[37m"
-#define RESET_TEXT "\033[0m"
-
 #include "kittens.cuh"
-// #define KVM_DEBUG
 #include "vm/vm.cuh"
 #include <iostream>
 
@@ -34,10 +24,10 @@ struct globals
     weights DOWN_PROJ_W;
     activations INP;
     activations O;
-    // barriers Bar;
+    barriers Bar;
     
     // persistent grid structure
-    dim3 grid() { return dim3(148); }
+    dim3 grid() { return dim3(148); } 
     dim3 block() { return dim3(config::NUM_THREADS); }
     int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
 };
@@ -45,7 +35,7 @@ struct globals
 template <typename config = config, int _OP_IDX = 0>
 struct SiLU_MLPOp
 {
-    static constexpr int opcode = 3;
+    static constexpr int opcode = 4;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction
     {
@@ -88,7 +78,11 @@ struct SiLU_MLPOp
     {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
         {
-            int ret_order[] = {6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4, 5};
+            int ret_order[] = {
+                6, 7, 8, 9, 10, 11, 12, 
+                13,
+                0, 1, 2, 3, 4, 5
+            };
             return ret_order[query];
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s)
@@ -112,51 +106,69 @@ struct SiLU_MLPOp
         {
 
             parsed_instruction inst{s};
-            // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
-            ((int *)s.scratch())[laneid()] = 0;
-            warp::sync(); // done, now we can proceed to other things.
-            
-            // lanes 0..UP_PAGES-1 load UP_W tiles
-            if(laneid()<UP_PAGES) {
-                int page = get_up_page(s, laneid());
-                s.wait_page_ready(page);
-                tma::expect(up_arrived(s,laneid()), g.UP_PROJ_W);
-                tma::load_async(reinterpret_cast<st_bf<16,512>&>(s.pages[page]),
-                                g.UP_PROJ_W,
+            // clear scratch buffer
+            ((int*)s.scratch())[laneid()] = 0;
+            warp::sync();
+
+            // 1) UP projections
+            if (laneid() < UP_PAGES)
+            {
+                int pg = get_up_page(s, laneid());
+                s.wait_page_ready(pg);
+                s.record(16 + laneid());
+                auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
+                tma::expect(up_arrived(s,laneid()), chunk);
+                tma::load_async(chunk, g.UP_PROJ_W,
                                 {inst.layer, inst.start_col/16, laneid()},
                                 up_arrived(s,laneid()));
             }
-            // lanes UP_PAGES..UP+GATE load GATE_W
-            else if(laneid()<UP_PAGES+GATE_PAGES) {
-                int idx = laneid()-UP_PAGES;
-                int page = get_gate_page(s, idx);
-                s.wait_page_ready(page);
-                tma::expect(gate_arrived(s,idx), g.GATE_PROJ_W);
-                tma::load_async(reinterpret_cast<st_bf<16,512>&>(s.pages[page]),
-                                g.GATE_PROJ_W,
+
+            // 2) GATE projections
+            else if (laneid() < UP_PAGES + GATE_PAGES)
+            {
+                int idx = laneid() - UP_PAGES;
+                int pg  = get_gate_page(s, idx);
+                s.wait_page_ready(pg);
+                s.record(16 + laneid());
+                auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
+                tma::expect(gate_arrived(s,idx), chunk);
+                tma::load_async(chunk, g.GATE_PROJ_W,
                                 {inst.layer, inst.start_col/16, idx},
                                 gate_arrived(s,idx));
             }
-            // lanes UP+GATE..UP+GATE+DOWN load DOWN_W
-            else if(laneid()<UP_PAGES+GATE_PAGES+DOWN_PAGES) {
-                int idx = laneid()-(UP_PAGES+GATE_PAGES);
-                int page = get_down_page(s, idx);
-                s.wait_page_ready(page);
-                tma::expect(down_arrived(s,idx), g.DOWN_PROJ_W);
-                tma::load_async(reinterpret_cast<st_bf<16,512>&>(s.pages[page]),
-                                g.DOWN_PROJ_W,
+
+            // 3) DOWN projections
+            else if (laneid() < UP_PAGES + GATE_PAGES + DOWN_PAGES)
+            {
+                int idx = laneid() - (UP_PAGES + GATE_PAGES);
+                int pg  = get_down_page(s, idx);
+                s.wait_page_ready(pg);
+                s.record(16 + laneid());
+                auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
+                tma::expect(down_arrived(s,idx), chunk);
+                tma::load_async(chunk, g.DOWN_PROJ_W,
                                 {inst.layer, inst.start_col/16, idx},
                                 down_arrived(s,idx));
             }
-            // lane for input vector
-            else if(laneid()==UP_PAGES+GATE_PAGES+DOWN_PAGES) {
-                int page = get_input_page(s);
-                s.wait_page_ready(page);
-                tma::expect(in_arrived(s), g.INP);
-                tma::load_async(reinterpret_cast<sv_bf<2048>&>(s.pages[page]),
-                                g.INP,
-                                {},
-                                in_arrived(s));
+            // 4) INPUT page
+            else if (laneid() == PAGE_INPUT)
+            {
+                int pg = get_input_page(s);
+                s.wait_page_ready(pg);
+                // wait on barrier from previous op
+                while (*(volatile int*)&g.Bar[{inst.layer, OP_IDX, 0}] == 0)
+                    __nanosleep(20);
+                s.record(24);
+                auto &buf = reinterpret_cast<sv_bf<2048>&>(s.pages[pg]);
+                tma::expect(in_arrived(s), buf);
+                tma::load_async(buf, g.INP, {}, in_arrived(s));
+            }
+            // 5) UNUSED pages: release them immediately so consumer warps can retire
+            else if (laneid() >= PAGE_INPUT+1 && laneid() < SEM_COUNT)
+            {
+                int pg = s.pid(laneid());
+                s.wait_page_ready(pg);
+                arrive(s.page_finished[pg], config::NUM_CONSUMER_WARPS);
             }
         }
     };
@@ -179,125 +191,157 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            int group_id = warpgroup::groupid();
-            int warp_id = warpgroup::warpid(); // id within the warpgroup
+            int group = warpgroup::groupid();      // which weight‐page group
+            int warpid = warpgroup::warpid();      // which “lane‐block” within shared memory
+            int lid    = laneid();                 // 0–31
 
-            // 1) load input into register
+            //--------------------------------------------------
+            // 1) LOAD INPUT ACTIVATIONS
+            //--------------------------------------------------
             wait(in_arrived(s), 0);
-            int in_page = get_input_page(s);
-            sv_bf<128>(&in_smem)[16] =
-                reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[in_page]);
-            typename rt_bf<16,128>::row_vec activations_vec;
-            warp::load(activations_vec, in_smem[ warpgroup::warpid() ]);
+            int in_pg = get_input_page(s);
+            // copy the 16×128bfslice out of shared pages
+            sv_bf<128> in_smem[16];
+            memcpy(in_smem, &s.pages[in_pg], sizeof(in_smem));
+            // each warpblock loads its 128‐wide row vector
+            typename rt_bf<16,128>::row_vec x_vec;
+            warp::load(x_vec, in_smem[warpid]);
             warp::sync();
-            warp::arrive( s.page_finished[in_page] );
+            // signal “page finished” so the loader can reuse it
+            warp::arrive(s.page_finished[in_pg], config::NUM_CONSUMER_WARPS);
 
 
-            // 2) UP matvec
-            wait(up_arrived(s, group_id), 0);
-            st_bf<16,128>(&up_w_smem)[4] =
-                reinterpret_cast<st_bf<16,128>(&)[4]>(s.pages[ get_up_page(s,group_id) ]);
-            rt_bf<16,128> up_w_reg;
-            warp::load(up_w_reg, up_w_smem[ warp_id ]);
+            //--------------------------------------------------
+            // 2) UP PROJECTION
+            //--------------------------------------------------
+            wait(up_arrived(s, group), 0);
+            int up_pg = get_up_page(s, group);
+            st_bf<16,128> up_smem[4];
+            memcpy(up_smem, &s.pages[up_pg], sizeof(up_smem));
+            rt_bf<16,128> up_reg;
+            warp::load(up_reg, up_smem[warpid]);
             warp::sync();
+            warp::arrive(s.page_finished[up_pg], config::NUM_CONSUMER_WARPS);
 
-            rt_bf<16,128> broadcast;
-            warp::broadcast_col(broadcast, activations_vec);
-            warp::mul(broadcast, broadcast, up_w_reg);
-
-            typename rt_bf<16,128>::col_vec up_col;
-            rv_bf<16> up_vec;
-            warp::row_sum(up_col, broadcast);
-            warp::copy(up_vec, up_col);
+            // broadcast & mul
+            rt_bf<16,128> acc;
+            warp::broadcast_col(acc, x_vec);
+            warp::mul(acc, acc, up_reg);
 
 
-            // 3) GATE matvec
-            wait(gate_arrived(s, group_id), 0);
-            st_bf<16,128>(&gate_w_smem)[4] =
-                reinterpret_cast<st_bf<16,128>(&)[4]>(s.pages[ get_gate_page(s,group_id) ]);
-            rt_bf<16,128> gate_w_reg;
-            warp::load(gate_w_reg, gate_w_smem[ warp_id ]);
+            //--------------------------------------------------
+            // 3) GATE PROJECTION
+            //--------------------------------------------------
+            wait(gate_arrived(s, group), 0);
+            int gate_pg = get_gate_page(s, group);
+            st_bf<16,128> gate_smem[4];
+            memcpy(gate_smem, &s.pages[gate_pg], sizeof(gate_smem));
+            rt_bf<16,128> gate_reg;
+            warp::load(gate_reg, gate_smem[warpid]);
             warp::sync();
+            warp::arrive(s.page_finished[gate_pg], config::NUM_CONSUMER_WARPS);
 
-            // broadcast the same activations
-            warp::broadcast_col(broadcast, activations_vec);
-            warp::mul(broadcast, broadcast, gate_w_reg);
+            // mul in place
+            warp::mul(acc, acc, gate_reg);
 
-            typename rt_bf<16,128>::col_vec gate_col;
-            rv_bf<16> gate_vec;
-            warp::row_sum(gate_col, broadcast);
-            warp::copy(gate_vec, gate_col);
 
-           
-            // 4) element‑wise SiLU on the gate result and fuse into up_vec
+            //--------------------------------------------------
+            // 4) SiLU FUSION (in‑place on acc)
+            //--------------------------------------------------
             #pragma unroll
             for (int i = 0; i < 16; ++i) {
                 #pragma unroll
                 for (int j = 0; j < 4; ++j) {
-                    // extract the two bf16 lanes from broadcast.tiles[0][i].data[j]
-                    __nv_bfloat16 xf = broadcast.tiles[0][i].data[j].x;
-                    __nv_bfloat16 yf = broadcast.tiles[0][i].data[j].y;
-
-                    // to float
-                    float f = __bfloat162float(xf);
-                    float g = __bfloat162float(yf);
-
-                    // sigmoid
-                    float sf = f / (1.0f + expf(-f));
-                    float sg = g / (1.0f + expf(-g));
-
-                    // write back SiLU = x * sigmoid(x)
-                    broadcast.tiles[0][i].data[j].x = __float2bfloat16(f * sf);
-                    broadcast.tiles[0][i].data[j].y = __float2bfloat16(g * sg);
+                    auto & d = acc.tiles[0][i].data[j];
+                    float  f0 = __bfloat162float(d.x);
+                    float  f1 = __bfloat162float(d.y);
+                    float  s0 = f0/(1+expf(-f0));
+                    float  s1 = f1/(1+expf(-f1));
+                    d.x = __float2bfloat16(f0 * s0);
+                    d.y = __float2bfloat16(f1 * s1);
                 }
             }
             warp::sync();
 
 
-            // 5) accumulate each lane’s fused up_vec[i] into scratch    
-            // Now the first 16 threads have the output.
-            if (laneid() < 16)
-            { // this might be a bad idea but yolo, it's probably an okay start
-                // and fortunately this is code where ncu will tell us if it's bad..
-                atomicAdd(&((bf16 *)s.scratch())[laneid()], up_vec[0][0]);
+            //--------------------------------------------------
+            // 5) DOWN PROJECTION
+            //--------------------------------------------------
+            wait(down_arrived(s, group), 0);
+            int down_pg = get_down_page(s, group);
+            st_bf<16,128> down_smem[4];
+            memcpy(down_smem, &s.pages[down_pg], sizeof(down_smem));
+            rt_bf<16,128> down_reg;
+            warp::load(down_reg, down_smem[warpid]);
+            warp::sync();
+            warp::arrive(s.page_finished[down_pg], config::NUM_CONSUMER_WARPS);
+
+            // final mat‐vec
+            warp::mul(acc, acc, down_reg);
+            typename rt_bf<16,128>::col_vec col;
+            rv_bf<16>        out_vec;
+            warp::row_sum(col, acc);
+            warp::copy(out_vec, col);
+
+
+            //--------------------------------------------------
+            // 6) ATOMIC ADD INTO SCRATCH
+            //--------------------------------------------------
+            if (lid < 16) {
+                // out_vec[lid] is a __nv_bfloat16*, so dereference it:
+                __nv_bfloat16  raw = *out_vec[lid];
+                float          val = __bfloat162float(raw);
+
+                // accumulate into a float scratch buffer:
+                float *fs = reinterpret_cast<float*>(s.scratch());
+                atomicAdd(&fs[lid], val);
+
+                /* print val */
+                printf("warp %d lane %d: %f\n", warpid, val);
             }
             warp::sync();
+        
+
+            //--------------------------------------------------
+            // 7) SIGNAL “all done” for this op
+            //--------------------------------------------------
             warp::arrive(out_arrived(s));
-
-
-           
-            
         }
     };
 
 
     struct storer
     {
-        // Uses 4 full pages for outputs.
-        static __device__ void run(const globals &g, state<config> &s)
-        {
+        static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
-            if (laneid() == 0)
-            {
-                wait(out_arrived(s), 0);
-                s.record(125);
-                void *scratch = s.scratch();
-                sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
-                tma::store_async(g.O, output, {inst.start_col / 16});
-                tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                s.record(126);
+
+            if (laneid() == 0) {
+            // wait for all consumer warps
+            wait(out_arrived(s), 0);
+
+            // read back the float sums
+            float *fs = reinterpret_cast<float*>(s.scratch());
+            __nv_bfloat16 bf16_out[16];
+            #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                bf16_out[i] = __float2bfloat16(fs[i]);
             }
+
+            // now treat that flat array as an sv_bf<16> tile
+            auto &output = *reinterpret_cast<sv_bf<16>*>(bf16_out);
+            tma::store_async(g.O, output, { inst.start_col/16 });
+            tma::store_async_wait();
+            }
+
             warp::sync();
-            asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-            if (laneid() == 0)
-            {
-                // if constexpr (OP_IDX == g.Bar.rows() - 1)
-                //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
-                // else
-                //     atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
+            asm volatile("fence.acq_rel.gpu;\n");
+
+            if (laneid() == 0) {
+            if constexpr (OP_IDX == g.Bar.rows() - 1)
+                atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
+            else
+                atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
             }
-            if (laneid() == 0)
-                s.record(127);
         }
     };
 };
@@ -314,5 +358,6 @@ PYBIND11_MODULE(silu_mlp, m)
                                                                      &globals::DOWN_PROJ_W,
                                                                      &globals::GATE_PROJ_W,
                                                                      &globals::INP,
-                                                                     &globals::O);
+                                                                     &globals::O,
+                                                                     &globals::Bar);
 }
