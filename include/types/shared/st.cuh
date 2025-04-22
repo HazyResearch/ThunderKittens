@@ -302,41 +302,39 @@ template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width
  */
 template<ducks::st::all ST>
 __device__ inline void print(const ST& tile) {
-    if (laneid() == 0) { // Only first thread in warp prints
-        printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
-        
-        // Print column headers
-        printf("     "); // Padding for row indices
+    printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
+    
+    // Print column headers
+    printf("     "); // Padding for row indices
+    for (int c = 0; c < ST::cols; c++) {
+        printf("%8d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < ST::cols; c++) {
+        printf("--------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        printf("%3d |", r); // Row index
         for (int c = 0; c < ST::cols; c++) {
-            printf("%8d ", c);
-        }
-        printf("\n");
-        
-        // Print separator line
-        printf("     ");
-        for (int c = 0; c < ST::cols; c++) {
-            printf("--------+");
-        }
-        printf("\n");
-        
-        // Print data rows
-        for (int r = 0; r < ST::rows; r++) {
-            printf("%3d |", r); // Row index
-            for (int c = 0; c < ST::cols; c++) {
-                if constexpr (std::is_same_v<typename ST::dtype, float>) {
-                    printf("%8.3f ", tile[{r,c}]);
-                } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
-                    printf("%8.3f ", __bfloat162float(tile[{r,c}]));
-                } else if constexpr (std::is_integral_v<typename ST::dtype>) {
-                    printf("%8d ", (int)tile[{r,c}]);
-                } else {
-                    printf("%8.3f ", (float)tile[{r,c}]);
-                }
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                printf("%8d ", (int)tile[{r,c}]);
+            } else {
+                printf("%8.3f ", (float)tile[{r,c}]);
             }
-            printf("\n");
         }
         printf("\n");
     }
+    printf("\n");
 }
 
 }
