@@ -1,5 +1,6 @@
 import torch
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
+from rope_poc import rope_poc
 
 TORCH_DEVICE = torch.device('cuda:5')
 
@@ -22,7 +23,7 @@ LAYER_IDX = 3
 POS_ID = 1050
 
 # Unit testing
-QKV_BLOCK_IDX = 0
+QKV_BLOCK_IDX = 131
 QKV_BLOCK_SIZE = 16
 
 def generate_tensor_inputs():
@@ -43,7 +44,7 @@ def generate_instructions_and_timings():
     instruction_idx = 0
 
     # Single instruction, for testing (L, H_kv index, num_partials, partial_idx)
-    instructions[0].append([TEMP_OPCODE, QKV_BLOCK_IDX] + [0] * (INSTRUCTION_WIDTH - 2))
+    instructions[0].append([TEMP_OPCODE, LAYER_IDX, QKV_BLOCK_IDX] + [0] * (INSTRUCTION_WIDTH - 3))
     instruction_idx += 1
 
     # All blocks must have same number of instructions
@@ -77,7 +78,12 @@ print('Q shape:', Q.shape)
 print('K_c shape:', K_c.shape)
 print('V_c shape:', V_c.shape)
 print('\nRunning the kernel...')
-# RUN KERNEL
+rope_poc(
+    instructions, timings,
+    QKV_proj, rope_cos, rope_sin,
+    Q, K_c, V_c, 
+    POS_ID
+)
 torch.cuda.synchronize(TORCH_DEVICE)
 
 # Run the reference implementation
