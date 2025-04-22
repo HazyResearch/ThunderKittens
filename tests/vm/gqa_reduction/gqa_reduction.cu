@@ -156,19 +156,13 @@ template<typename config=config> struct rope_gqa_reduction_op {
             parsed_instruction inst{s};
 
             if (warpid() == 0) {
-                o_rv O_final_reg;
-                o_rv O_partial_reg;
+                o_rv accumulated_out;
+                float accumulated_lse = -INFINITY;
 
-                float L_final_reg;
-                float L_partial_reg;
-                float L_max_reg;
-                float L_max_accum_reg;
-                float scale_final_reg;
-                float scale_partial_reg;
+                o_rv current_out;
+                float current_lse;
 
-                warp::zero(O_final_reg);
-                L_final_reg = -INFINITY;
-                L_max_accum_reg = -INFINITY;
+                warp::zero(accumulated_out);
 
                 // --- Reduction Pipeline ---
                 for (int i = 0; i < inst.num_partials; ++i) {
@@ -180,31 +174,34 @@ template<typename config=config> struct rope_gqa_reduction_op {
 
                     // Load L_partial_reg (single float)
                     uint32_t src_ptr_L = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[0]));
-                    move<float>::lds(L_partial_reg, src_ptr_L);
+                    move<float>::lds(current_lse, src_ptr_L);
 
                     // Load O_partial_reg
-                    warp::load(O_partial_reg, O_smem);
+                    warp::load(current_out, O_smem);
 
-                    L_max_reg = max(L_final_reg, L_partial_reg);
-                    L_max_accum_reg = max(L_max_accum_reg, L_partial_reg);
+                    float max_lse = max(accumulated_lse, current_lse);
 
-                    scale_final_reg = exp2f(L_final_reg - L_max_reg);
-                    scale_partial_reg = exp2f(L_partial_reg - L_max_reg);
+                    float accumulated_exp = exp2f(accumulated_lse - max_lse);
+                    float current_exp = exp2f(current_lse - max_lse);
 
-                    warp::mul(O_final_reg, O_final_reg, scale_final_reg);
-                    warp::mul(O_partial_reg, O_partial_reg, scale_partial_reg);
-                    warp::add(O_final_reg, O_final_reg, O_partial_reg);
+                    float new_denom = accumulated_exp + current_exp;
+
+                    float accumulated_scale = accumulated_exp / new_denom;
+                    float current_scale = current_exp / new_denom;
+
+                    warp::mul(accumulated_out, accumulated_out, accumulated_scale);
+                    warp::mul(current_out, current_out, current_scale);
+                    warp::add(accumulated_out, accumulated_out, current_out);
 
                     // Update LSE accumulator:
-                    L_final_reg = L_max_reg + log2f(scale_final_reg + scale_partial_reg);
+                    accumulated_lse = max_lse + log2f(new_denom);
 
                     warp::arrive(L_partial_finished(s, stage));
                     warp::arrive(O_partial_finished(s, stage));
                 }
-                warp::div(O_final_reg, O_final_reg, exp2f(L_final_reg - L_max_accum_reg));
 
                 o_final_sv &O_final_smem = get_O_final_smem(s);
-                warp::store(O_final_smem, O_final_reg);
+                warp::store(O_final_smem, accumulated_out);
                 warp::sync();
 
                 warp::arrive(final_O_ready(s));
