@@ -1,6 +1,6 @@
-import math
-
 import torch
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
+from rope_poc import rope_poc
 
 TORCH_DEVICE = torch.device('cuda:5')
 
@@ -23,7 +23,7 @@ LAYER_IDX = 3
 POS_ID = 1050
 
 # Unit testing
-QKV_BLOCK_IDX = 0
+QKV_BLOCK_IDX = 131
 QKV_BLOCK_SIZE = 16
 
 def generate_tensor_inputs():
@@ -32,7 +32,7 @@ def generate_tensor_inputs():
     QKV_proj = torch.randn((H_q + H_kv * 2) * D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     rope_cos = torch.randn((N_max, D_h), dtype=torch.bfloat16, device=TORCH_DEVICE) # yes I'm being lazy
     rope_sin = torch.randn((N_max, D_h), dtype=torch.bfloat16, device=TORCH_DEVICE) # yes I'm being lazy
-    Q   = torch.randn(H_q * D_h,           dtype=torch.bfloat16, device=TORCH_DEVICE)
+    Q   = torch.randn(H_q * D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     K_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
     V_c = torch.randn(L, N_max, H_kv, D_h, dtype=torch.bfloat16, device=TORCH_DEVICE)
 
@@ -44,7 +44,7 @@ def generate_instructions_and_timings():
     instruction_idx = 0
 
     # Single instruction, for testing (L, H_kv index, num_partials, partial_idx)
-    instructions[0].append([TEMP_OPCODE, QKV_BLOCK_IDX] + [0] * (INSTRUCTION_WIDTH - 2))
+    instructions[0].append([TEMP_OPCODE, LAYER_IDX, QKV_BLOCK_IDX] + [0] * (INSTRUCTION_WIDTH - 3))
     instruction_idx += 1
 
     # All blocks must have same number of instructions
@@ -78,7 +78,12 @@ print('Q shape:', Q.shape)
 print('K_c shape:', K_c.shape)
 print('V_c shape:', V_c.shape)
 print('\nRunning the kernel...')
-# RUN KERNEL
+rope_poc(
+    instructions, timings,
+    QKV_proj, rope_cos, rope_sin,
+    Q, K_c, V_c, 
+    POS_ID
+)
 torch.cuda.synchronize(TORCH_DEVICE)
 
 # Run the reference implementation
@@ -88,13 +93,29 @@ K_in = QKV_proj[H_q * D_h:H_q * D_h + H_kv * D_h].reshape(H_kv, D_h)
 V_in = QKV_proj[H_q * D_h + H_kv * D_h:].reshape(H_kv, D_h)
 rope_cos_at_pos = rope_cos[POS_ID, :].unsqueeze(0)
 rope_sin_at_pos = rope_sin[POS_ID, :].unsqueeze(0)
-mask = (torch.arange(D_h) % 2 == 0).unsqueeze(0)
-Q_rotated = torch.roll(Q_in, 1, dims=-1)
-Q_rotated[mask.expand_as(Q_rotated)] *= -1
-K_rotated = torch.roll(K_in, 1, dims=-1)
-K_rotated[mask.expand_as(K_rotated)] *= -1
+Q_rotated = torch.zeros_like(Q_in)
+Q_rotated[:, ::2] = -Q_in[:, 1::2]
+Q_rotated[:, 1::2] = Q_in[:, ::2]
+K_rotated = torch.zeros_like(K_in)
+K_rotated[:, ::2] = -K_in[:, 1::2]
+K_rotated[:, 1::2] = K_in[:, ::2]
 Q_roped = Q_in * rope_cos_at_pos + Q_rotated * rope_sin_at_pos
 K_roped = K_in * rope_cos_at_pos + K_rotated * rope_sin_at_pos
+
+# Run the refence-reference implementation to check the reference implementation (?)
+_Q_in = Q_in.view(H_q, D_h // 2, 2).transpose(-1, -2).reshape(H_q, D_h) # un-interleave
+_K_in = K_in.view(H_kv, D_h // 2, 2).transpose(-1, -2).reshape(H_kv, D_h) # un-interleave
+_rope_cos_at_pos = rope_cos_at_pos[0].view(D_h // 2, 2).transpose(-1, -2).reshape(D_h) # un-interleave
+_rope_sin_at_pos = rope_sin_at_pos[0].view(D_h // 2, 2).transpose(-1, -2).reshape(D_h) # un-interleave
+_Q_roped, _K_roped = apply_rotary_pos_emb(q=_Q_in, k=_K_in, cos=_rope_cos_at_pos, sin=_rope_sin_at_pos, unsqueeze_dim=0)
+_Q_roped = _Q_roped.reshape(H_q, 2, D_h // 2).transpose(-1, -2).reshape(H_q, D_h) # re-interleave
+_K_roped = _K_roped.reshape(H_kv, 2, D_h // 2).transpose(-1, -2).reshape(H_kv, D_h) # re-interleave
+print (Q_roped.shape, K_roped.shape)
+print(_Q_roped.shape, _K_roped.shape)
+print(torch.max(torch.abs(Q_roped - _Q_roped)))
+print(torch.mean(torch.abs(Q_roped - _Q_roped)))
+print(torch.max(torch.abs(K_roped - _K_roped)))
+print(torch.mean(torch.abs(K_roped - _K_roped)))
 
 print('\nComparing outputs...')
 start_idx = QKV_BLOCK_IDX * QKV_BLOCK_SIZE
