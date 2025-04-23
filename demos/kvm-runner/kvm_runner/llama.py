@@ -6,14 +6,6 @@ import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
 from einops import rearrange
-from torch import Tensor, nn
-from torch.distributed import _functional_collectives as funcol
-from transformers import LlamaConfig
-from transformers.models.llama.modeling_llama import (
-    LlamaRotaryEmbedding,
-    apply_rotary_pos_emb,
-)
-
 from kvm_runner.types import (
     BatchState,
     DeviceType,
@@ -21,6 +13,13 @@ from kvm_runner.types import (
 )
 from kvm_runner.utils import (
     load_safetensors_repo,
+)
+from torch import Tensor, nn
+from torch.distributed import _functional_collectives as funcol
+from transformers import LlamaConfig
+from transformers.models.llama.modeling_llama import (
+    LlamaRotaryEmbedding,
+    apply_rotary_pos_emb,
 )
 
 KV_Cache = tuple[Tensor, Tensor]
@@ -133,6 +132,47 @@ def attention(
     return reshaped_attn_output
 
 
+def rotate_half_interleaved(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., ::2]
+    x2 = x[..., 1::2]
+
+    new_x1 = -x2
+    new_x2 = x1
+
+    stacked = torch.stack((new_x1, new_x2), dim=-1)
+    return stacked.view_as(x)
+
+
+def apply_rotary_pos_emb_interleaved(
+    q, k, cos, sin, position_ids=None, unsqueeze_dim=1
+):
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`, *optional*):
+            Deprecated and unused.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half_interleaved(q) * sin)
+    k_embed = (k * cos) + (rotate_half_interleaved(k) * sin)
+    return q_embed, k_embed
+
+
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -218,7 +258,12 @@ class LlamaAttention(nn.Module):
 
         dtype = query_states.dtype
 
-        query_states, key_states = apply_rotary_pos_emb(
+        if self.extra_config.interleave_rope:
+            rope_fn = apply_rotary_pos_emb_interleaved
+        else:
+            rope_fn = apply_rotary_pos_emb
+
+        query_states, key_states = rope_fn(
             query_states,
             key_states,
             cos,
@@ -404,6 +449,30 @@ class LlamaModel(nn.Module):
         self.register_buffer("rope_cos", cos.squeeze(0), persistent=False)
         self.register_buffer("rope_sin", sin.squeeze(0), persistent=False)
 
+    def interleave_rope(self):
+        indices_for_q_list = []
+        half_head_dim = self.config.head_dim // 2
+        for n in range(self.config.num_attention_heads):
+            offset = n * self.config.head_dim
+            for i in range(half_head_dim):
+                indices_for_q_list.append(i + offset)
+                indices_for_q_list.append(i + half_head_dim + offset)
+
+        indices_for_q = torch.tensor(indices_for_q_list, device=self.rope_cos.device)
+        one_head_indices = indices_for_q[: self.config.head_dim]
+
+        self.rope_cos = self.rope_cos[..., one_head_indices]
+        self.rope_sin = self.rope_sin[..., one_head_indices]
+
+        indices_for_k = indices_for_q[
+            : self.config.head_dim * self.config.num_key_value_heads
+        ]
+
+        for mod in self.modules():
+            if isinstance(mod, LlamaAttention):
+                mod.q_proj.weight[:] = mod.q_proj.weight[indices_for_q]
+                mod.k_proj.weight[:] = mod.k_proj.weight[indices_for_k]
+
     def forward(self, batch_state: BatchState):
         out: BatchState = self.embed_tokens(batch_state)
         assert self.rope_cos.dtype == torch.float32
@@ -554,6 +623,9 @@ class LlamaForCausalLM(nn.Module):
         model.to(device=device)
 
         model.requires_grad_(False)
+
+        if extra_config.interleave_rope:
+            model.model.interleave_rope()
 
         model.stack_params()
         model.setup_caches()

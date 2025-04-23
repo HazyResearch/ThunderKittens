@@ -43,3 +43,5 @@ class ExtraModelConfig:
     torch_compile: bool = False
 
     rope_scaling: dict | None = None
+
+    interleave_rope: bool = False

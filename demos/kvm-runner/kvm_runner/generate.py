@@ -1,14 +1,13 @@
 import pydra
 import torch
+from kvm_runner.llama import LlamaForCausalLM
+from kvm_runner.python_vm import PyVM_Runner
+from kvm_runner.scheduler import PrintInfo
+from kvm_runner.types import BatchState, ExtraModelConfig
 from tabulate import tabulate
 from torch import Tensor
 from tqdm import tqdm
 from transformers import AutoTokenizer
-
-from kvm_runner.llama import LlamaForCausalLM
-from kvm_runner.python_vm import PyVM_Runner
-from kvm_runner.scheduler import PrintInfo
-from kvm_runner.types import BatchState
 
 
 class ScriptConfig(pydra.Config):
@@ -23,6 +22,11 @@ class ScriptConfig(pydra.Config):
     print_layer_filter: list[int] | None = None
     print_name_filter: list[str] | None = None
     print_state_filter: list[str] | None = None
+    interleave_rope: bool = False
+
+    def finalize(self):
+        if self.mode == "kvm":
+            assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
 
 def pytorch_model_generate(
@@ -87,7 +91,12 @@ def kvm_interpreter_generate(
 
 def main(config: ScriptConfig):
     tokenizer = AutoTokenizer.from_pretrained(config.model)
-    model = LlamaForCausalLM.from_pretrained(config.model, device=config.device)
+    extra_config = ExtraModelConfig(
+        interleave_rope=config.interleave_rope,
+    )
+    model = LlamaForCausalLM.from_pretrained(
+        config.model, device=config.device, extra_config=extra_config
+    )
 
     if config.chat:
         tok_inp = tokenizer.apply_chat_template(
