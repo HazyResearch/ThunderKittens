@@ -260,14 +260,16 @@ class PyVM_Runner:
     def __init__(
         self,
         model: LlamaForCausalLM,
-        num_attention_partitions: int,
+        prompt_len: int,
+        ntok: int,
         print_info: PrintInfo | None = None,
     ):
         self.model = model
 
         self.globals, self.instructions = schedule_model(
             self.model,
-            num_attention_partitions=num_attention_partitions,
+            prompt_len=prompt_len,
+            ntok=ntok,
             print_info=print_info,
         )
 

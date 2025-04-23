@@ -93,9 +93,11 @@ def assert_div(a, b):
 def schedule_layers(
     globals: Globals,
     layer_idx: int,
-    num_attention_partitions: int,
+    prompt_len: int,
+    ntok: int,
     print_info: PrintInfo | None = None,
 ):
+    num_attention_partitions = 2
     add_print_instructions = print_info is not None
 
     instructions: list[Instruction] = []
@@ -192,7 +194,8 @@ def schedule_layers(
 
 def schedule_model(
     model: LlamaForCausalLM,
-    num_attention_partitions: int,
+    prompt_len: int,
+    ntok: int,
     print_info: PrintInfo | None = None,
 ):
     config = model.config
@@ -204,7 +207,8 @@ def schedule_model(
             schedule_layers(
                 globals=globals,
                 layer_idx=layer_idx,
-                num_attention_partitions=num_attention_partitions,
+                prompt_len=prompt_len,
+                ntok=ntok,
                 print_info=print_info,
             )
         )

@@ -20,7 +20,6 @@ class ScriptConfig(pydra.Config):
     chat: bool = False
     ntok: int = 100
     mode: str = "model"
-    num_attention_partitions: int = 2
     add_print_instructions: bool = False
     print_layer_filter: list[int] | None = None
     print_name_filter: list[str] | None = None
@@ -71,7 +70,6 @@ def pyvm_generate(
 
     runner = PyVM_Runner(
         model,
-        num_attention_partitions=config.num_attention_partitions,
         print_info=print_info,
     )
 
@@ -91,7 +89,6 @@ def kvm_generate(
     runner = KVM_Runner(
         model,
         kvm_dir=config.kvm_dir,
-        num_attention_partitions=config.num_attention_partitions,
     )
 
     for i in tqdm(range(1, config.ntok)):

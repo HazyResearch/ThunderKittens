@@ -11,7 +11,8 @@ class KVM_Runner:
         self,
         model: LlamaForCausalLM,
         kvm_dir: Path,
-        num_attention_partitions: int,
+        prompt_len: int,
+        ntok: int,
     ):
         sys.path.append(str(kvm_dir.expanduser().absolute()))
         from kvm_llama import kvm_llama  # type: ignore
@@ -22,7 +23,8 @@ class KVM_Runner:
 
         self.globals, self.instructions = schedule_model(
             self.model,
-            num_attention_partitions=num_attention_partitions,
+            prompt_len=prompt_len,
+            ntok=ntok,
         )
 
     def invoke(self):
