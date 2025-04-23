@@ -1,3 +1,4 @@
+local/
 *.so
 *.i
 *.ii
