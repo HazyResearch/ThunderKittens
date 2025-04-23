@@ -3,6 +3,7 @@
 #include "attention_partial.cu"
 #include "attention_reduction.cu"
 #include "matvec_adds.cu"
+#include "rms_matvec_rope_append.cu"
 #include "upgate.cu"
 
 #include "pyutils/pyutils.cuh"
@@ -17,7 +18,7 @@ PYBIND11_MODULE(llama, m)
     kittens::py::bind_kernel<kvm<config, llama_1b_globals,
                                  attention_partial<>,
                                  attention_reduction<>,
-                                 rms_qkv_rope_append<>,
+                                 rms_matvec_rope_append<>,
                                  downproj<>,
                                  o_proj<>,
                                  rms_upgate_silu<>>>(
@@ -27,9 +28,9 @@ PYBIND11_MODULE(llama, m)
         &llama_1b_globals::timings,
 
         &llama_1b_globals::qkv_weights,
-        &llama_1b_globals::attn_ln_weights,
+        &llama_1b_globals::attn_norm_weights,
         &llama_1b_globals::o_weights,
-        &llama_1b_globals::mlp_ln_weights,
+        &llama_1b_globals::mlp_norm_weights,
         &llama_1b_globals::up_weights,
         &llama_1b_globals::gate_weights,
         &llama_1b_globals::down_weights,
