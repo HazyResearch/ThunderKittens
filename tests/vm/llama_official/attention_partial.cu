@@ -209,13 +209,13 @@ namespace kittens::prototype::vm {
         {
             if (col_idx >= dst.cols)
                 return;
-    #pragma unroll
+            #pragma unroll
             for (int i = 0; i < dst.height; i++)
             {
-    #pragma unroll
+                #pragma unroll
                 for (int j = 0; j < dst.width; j++)
                 {
-    #pragma unroll
+                    #pragma unroll
                     for (int k = 0; k < dst.packed_per_tile; k++)
                     {
                         const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2);
@@ -462,54 +462,52 @@ namespace kittens::prototype::vm {
                     warp::arrive(L_arrived(s));
                 }
             }
-        
+        };
         struct storer
+        {
+            static __device__ void run(const Globals &g, state<Config> &s)
             {
-                static __device__ void run(const Globals &g, state<Config> &s)
+                parsed_instruction inst{s};
+                int laneid = warp::laneid();
+                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
+                int q_head_vec_start_idx = q_head_start_idx % 16;
+
+                // Store partial attention output to global memory
+                if (laneid == 0)
                 {
-                    parsed_instruction inst{s};
-                    int laneid = warp::laneid();
-                    int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
-                    int q_head_vec_start_idx = q_head_start_idx % 16;
-
-                    // Store partial attention output to global memory
-                    if (laneid == 0)
-                    {
-                        o_sv(&O_smem)[4] = get_O_smem(s);
-                        wait(O_arrived(s), 0);
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 0, 0});
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 1, 0});
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 2, 0});
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 3, 0});
-                    }
-
-                    // Store LSE to global memory
-                    if (laneid < GQA_RATIO)
-                    {
-                        l_sv &L_smem = get_L_smem(s);
-                        wait(L_arrived(s), 0);
-                        // Can't do anything fancy with writing 4 spread-out values.
-                        // We can do this in the consumer if we want to (without using smem)
-                        float tmp;
-                        uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
-                        float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
-                        asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
-                        asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
-                    }
-                    warp::sync(); // ensure all writes are committed
-
-                    // Wait and finish
-                    if (laneid == 0)
-                    {
-                        tma::store_async_wait();
-                        finish_QOL_page(s);
-                        // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                        atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
-                    }
-                    warp::sync();
+                    o_sv(&O_smem)[4] = get_O_smem(s);
+                    wait(O_arrived(s), 0);
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 0, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 1, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 2, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 3, 0});
                 }
-            };
+
+                // Store LSE to global memory
+                if (laneid < GQA_RATIO)
+                {
+                    l_sv &L_smem = get_L_smem(s);
+                    wait(L_arrived(s), 0);
+                    // Can't do anything fancy with writing 4 spread-out values.
+                    // We can do this in the consumer if we want to (without using smem)
+                    float tmp;
+                    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
+                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
+                    asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
+                    asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
+                }
+                warp::sync(); // ensure all writes are committed
+
+                // Wait and finish
+                if (laneid == 0)
+                {
+                    tma::store_async_wait();
+                    finish_QOL_page(s);
+                    // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
+                }
+                warp::sync();
+            }
         };
     };
-
-}
+};
