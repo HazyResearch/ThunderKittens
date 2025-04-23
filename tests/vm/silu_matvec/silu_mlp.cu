@@ -88,19 +88,10 @@ struct SiLU_MLPOp
                 13,
                 0, 1, 2, 3, 4, 5
             };
-            
-            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
-                printf("Inside controller release lid!\n");
-            }
             return ret_order[query];
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s)
         {
-
-            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
-                printf("Inside controller init semaphores!\n");
-            }
-
             // each weight page and the input page needs exactly 1 “ready” signal
             for (int i = 0; i < UP_PAGES;   i++) init_semaphore(up_arrived(s,i),   1);
             for (int i = 0; i < GATE_PAGES; i++) init_semaphore(gate_arrived(s,i), 1);
@@ -117,11 +108,6 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-
-            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
-                printf("Inside loader run!\n");
-            }
-
             parsed_instruction inst{s};
             // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
             ((int*)s.scratch())[laneid()] = 0;
@@ -181,7 +167,6 @@ struct SiLU_MLPOp
         // launcher does nothing here, since this doesn't use tensor cores.
         static __device__ void run(const globals &g, state<config> &s)
         {
-            // printf("launcher at %d %d\n", laneid(), warpid());
             s.wait_tensor_ready();
             if (laneid() == 0)
                 arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
@@ -193,10 +178,6 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            if ( laneid() == 0 && warpid == 0 ) { 
-                printf("Inside consumer run!\n");
-            }
-
             //--------------------------------------------------
             // LOAD INPUT ACTIVATIONS
             //--------------------------------------------------
