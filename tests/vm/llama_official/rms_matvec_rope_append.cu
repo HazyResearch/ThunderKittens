@@ -12,7 +12,6 @@ namespace kittens::prototype::vm {
     template <typename Config, typename Globals>
     struct rms_qkv_rope_append {
         static constexpr int opcode = OPCODE_RMS_QKV_MatVecRopeAppend; // Op index within the layer -- controls which barrier to listen to.
-        static constexpr int  prev_opcode  = 0;
         static constexpr int NUM_WEIGHT_PAGES = 4;
         static constexpr int K_BLK_START = 2048 / Globals::matvec_block_size;
         static constexpr int V_BLK_START = 2560 / Globals::matvec_block_size;
@@ -73,7 +72,7 @@ namespace kittens::prototype::vm {
                 } else if (laneid() == 4) {
                     // Activation
                     s.wait_page_ready(get_activation_page(s));
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode, 0}] != 512) __nanosleep(20);
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, 0}] != 512) __nanosleep(20);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
@@ -252,7 +251,7 @@ namespace kittens::prototype::vm {
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
                 if (warp::laneid() == 0)
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode + 1, inst.qkv_block_idx / 4}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode, inst.qkv_block_idx / 4}], 1);
             }
         };
     };
