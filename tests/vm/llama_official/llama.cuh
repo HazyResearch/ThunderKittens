@@ -45,8 +45,8 @@ namespace kittens
                 using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
                 using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
 
-                using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<16, 512>>;                 // assumed to be N by 2048 (X@W.T).
-                using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<16, 512>>; // assumed to be N by 2048 (X@W.T).
+                using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matvec_block_size, 512>>;                 // assumed to be N by 2048 (X@W.T).
+                using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matvec_block_size, 512>>; // assumed to be N by 2048 (X@W.T).
 
                 using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>>;
                 using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>>;
@@ -56,8 +56,8 @@ namespace kittens
                 using kv_cache_t = gl<bf16, 1, -1, -1, head_dim, st_bf<kv_block_size, head_dim>>;
 
                 // max attention partials == sm_count
-                using attn_out_intermediates_t = gl<float, -1, sm_count, num_attention_heads, head_dim, sv_bf<head_dim>>;
-                using attn_lse_intermediates_t = gl<float, -1, sm_count, num_attention_heads, head_dim, sv_bf<head_dim>>;
+                using attn_out_intermediates_t = gl<float, -1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
+                using attn_lse_intermediates_t = gl<float, 1, -1, num_attention_heads, sm_count, sv_fl<16>>;
 
                 // num_layers by 6 ops per layer by up to 32 heads.
                 using barriers = gl<bf16, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
@@ -89,7 +89,7 @@ namespace kittens
                 activations_big_indim_t silu_out;
 
                 unsigned int pos_id;
-                float softmax_temp;
+                float attn_scale;
                 float rms_norm_eps;
 
                 dim3 grid() { return dim3(sm_count); }
