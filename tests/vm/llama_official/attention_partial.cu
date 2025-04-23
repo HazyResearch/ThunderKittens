@@ -456,7 +456,8 @@ struct attention_partial
                 warp::arrive(L_arrived(s));
             }
         }
-        struct storer
+    
+    struct storer
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
