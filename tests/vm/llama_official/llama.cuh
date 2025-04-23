@@ -51,7 +51,7 @@ namespace kittens::prototype::vm
         using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
-        using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, st_bf<kv_block_size, head_dim>>;
+        using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
         using attn_out_intermediates_t = gl<float, -1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;

@@ -306,8 +306,8 @@ namespace kittens::prototype::vm {
                     int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, Globals::num_attention_heads + inst.kv_head_idx}] != 4 ||                       // K
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, Globals::num_attention_heads + Globals::num_kv_heads + inst.kv_head_idx}] != 4) // V
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads) + inst.kv_head_idx}] != 4 || // K
+                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads + Globals::num_kv_heads) + inst.kv_head_idx}] != 4) // V
                         __nanosleep(20);
 
                     // Run the pipeline!
