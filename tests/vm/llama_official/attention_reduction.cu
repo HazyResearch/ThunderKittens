@@ -100,7 +100,6 @@ namespace kittens::prototype::vm {
             return *reinterpret_cast<l_partial_sv*>(head_base_ptr);
         }
         __device__ static inline o_sv &get_O_partial_smem(state<config> &s, int q_head_local_idx, int stage) {
-            assert(stage >= 0 && stage < NUM_STAGES);
             int pid = s.pid(SHARED_DATA_PAGE);
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
             char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
@@ -123,8 +122,10 @@ namespace kittens::prototype::vm {
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-                for (int q_head = 0; q_head < Q_HEADS_PER_INSTRUCTION; ++q_head) {
-                    for (int stage = 0; stage < NUM_STAGES; stage++) {
+                for (int q_head = 0; q_head < Q_HEADS_PER_INSTRUCTION; ++q_head)
+                {
+                    for (int stage = 0; stage < NUM_STAGES; stage++)
+                    {
                         init_semaphore(O_partial_arrived(s, q_head, stage), 0, 1);
                         init_semaphore(O_partial_finished(s, q_head, stage), 0, 1);
                     }
@@ -142,7 +143,8 @@ namespace kittens::prototype::vm {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 int local_q_head = warp::laneid();
-                if (local_q_head < Q_HEADS_PER_INSTRUCTION) {
+                if (local_q_head < Q_HEADS_PER_INSTRUCTION)
+                {
                     parsed_instruction inst{s};
 
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] != 1)
