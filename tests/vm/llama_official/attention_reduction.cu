@@ -22,6 +22,7 @@ namespace kittens::prototype::vm {
         static constexpr int opcode = OPCODE_AttentionReduction;
         static constexpr int prev_opcode = OPCODE_PartialAttention;
         static constexpr int NUM_STAGES = 2;
+        static_assert(NUM_STAGES <= 2, "Reduction NUM_STAGES must be less than or equal to 2");
 
         struct parsed_instruction
         {
@@ -147,7 +148,7 @@ namespace kittens::prototype::vm {
                 {
                     parsed_instruction inst{s};
 
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] != 1)
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] != inst.num_partials)
                     {
                         __nanosleep(20);
                     }
