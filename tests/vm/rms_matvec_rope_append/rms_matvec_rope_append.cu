@@ -138,57 +138,49 @@ struct RMS_MatVec_Rope_Append_Op {
     };
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
+            // Setup
             rt_bf<16, 128> weights, broadcast_activations;
             typename rt_bf<16, 128>::row_vec activations_vec;
+            typename rt_fl<16, 128>::row_vec fl_activations_vec;            
             typename rt_bf<16, 128>::row_vec rms_scale_vec;
-            typename rt_fl<16, 128>::row_vec float_activations;            
             typename rt_bf<16, 128>::col_vec output_col_format;
             rv_bf<16> output;
             rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
-
-            // reinterpret cast!
             shared_allocator al((int*)s.scratch());
-            using smem_rms_partial_sums_t = sv_fl<config::NUM_CONSUMER_WARPS>;
-            smem_rms_partial_sums_t (&smem_rms_partial_sums) = al.template allocate<smem_rms_partial_sums_t> ();
-
+            sv_fl<config::NUM_CONSUMER_WARPS> (&smem_rms_partial_sums) = al.template allocate<sv_fl<config::NUM_CONSUMER_WARPS>> ();
             int group_id = warpgroup::groupid();
-            int warp_id = warpgroup::warpid(); // id within the warpgroup
+            int warp_id = warpgroup::warpid();
 
-            // Step 1: load hidden states and run rms norm
+            // Step 1: Load hidden states into register
             wait(activations_arrived(s), 0);
             // reinterpret the activations page as sv_bf<128>[16]
             int activation_page = get_activation_page(s);
             sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
-            warp::load(activations_vec, activations_smem[warpid()]);
+            warp::load(activations_vec, activations_smem[warpid()]); // 128 elements per warp
             warp::sync();
-            warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
+            warp::arrive(s.page_finished[activation_page]);
 
-            // cast to float
-            warp::copy(float_activations, activations_vec);
-            // square
-            warp::mul(float_activations, float_activations, float_activations);
-            // sum
-            float partial_sum = warp::sum(float_activations);
+            // Step 2: Apply RMS normalization
+            warp::copy(fl_activations_vec, activations_vec); // cast to float      
+            warp::mul(fl_activations_vec, fl_activations_vec, fl_activations_vec); // square
+            float partial_sum = warp::sum(fl_activations_vec);
             
             // aggregate sums across the 16 consumer warps
             if (laneid() == 0) {
                 smem_rms_partial_sums[warpid()] = partial_sum;
             }
-
             group<16>::sync(0);
             
             warp::load(rms_partial_sums, smem_rms_partial_sums);
             warp::sync();
-
+            
             float full_sum = warp::sum(rms_partial_sums);
-
             float variance = full_sum / 2048.0f;
             float rms_scale = rsqrtf(variance + g.rms_epsilon);
-            warp::copy(float_activations, activations_vec);
-            warp::mul(float_activations, float_activations, rms_scale);
-
-            // back to bf16
-            warp::copy(activations_vec, float_activations);
+            
+            warp::copy(fl_activations_vec, activations_vec); // reuse the reg vec
+            warp::mul(fl_activations_vec, fl_activations_vec, rms_scale);
+            warp::copy(activations_vec, fl_activations_vec); // back to bf16
 
             // multiply by rms scale
             wait(rms_scale_arrived(s), 0);
@@ -199,19 +191,15 @@ struct RMS_MatVec_Rope_Append_Op {
             warp::arrive(s.page_finished[rms_scale_page]);
             warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
-            // now do the rest of the matvec
-
+            // Step 3: Load QKV projection weights into register
             wait(weights_arrived(s, group_id), 0);
-            if (laneid() == 0)
-                s.record(32 + warpid());
-            // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
             int weight_page = get_weight_page(s, group_id);
             st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
             warp::load(weights, weights_smem[warp_id]);
             warp::sync();
-            warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
+            warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
            
-            // broadcast this into a tile
+            // Steo 4: Apply QKV projection
             warp::broadcast_col(broadcast_activations, activations_vec);
             warp::mul(broadcast_activations, broadcast_activations, weights);
             warp::row_sum(output_col_format, broadcast_activations);
