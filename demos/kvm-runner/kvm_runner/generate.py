@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import pydra
@@ -25,7 +24,7 @@ class ScriptConfig(pydra.Config):
     print_layer_filter: list[int] | None = None
     print_name_filter: list[str] | None = None
     print_state_filter: list[str] | None = None
-    interleave_rope: bool = False
+    interleave_rope: bool = True
     kvm_dir: Path | None = None
 
     def finalize(self):
