@@ -2,8 +2,7 @@
 
 #include "llama.cuh"
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     template <
         int _EXPECTED_ARRIVAL_COUNT,
@@ -12,7 +11,8 @@ namespace kittens::prototype::vm
         auto OutputActivationsPtr,
         int _opcode,
         int _prev_opcode = 0,
-        typename config = kittens::prototype::vm::default_config>
+        typename Config = kittens::prototype::vm::default_config>
+
     struct MatVecAddOp
     {
         static constexpr int opcode = _opcode;
@@ -21,47 +21,47 @@ namespace kittens::prototype::vm
         struct parsed_instruction
         {
             int layer, start_output_col, start_reduction_col;
-            __device__ inline parsed_instruction(typename config::instruction_t &instruction)
+            __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];               // in units of 1
                 start_output_col = instruction[2];    // in units of 1
                 start_reduction_col = instruction[3]; // in units of 1
             }
-            __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
+            __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
-        static __device__ inline parsed_instruction parse_instruction(const globals &g, state<config> &s)
+        static __device__ inline parsed_instruction parse_instruction(const globals &g, state<Config> &s)
         {
             return parsed_instruction{s.instruction()[1], s.instruction()[2]};
         }
-        __device__ static inline kittens::semaphore &inputs_arrived(state<config> &s, int id)
+        __device__ static inline kittens::semaphore &inputs_arrived(state<Config> &s, int id)
         {
             return s.semaphores()[id];
         }
-        __device__ static inline kittens::semaphore &outputs_arrived(state<config> &s)
+        __device__ static inline kittens::semaphore &outputs_arrived(state<Config> &s)
         {
             return s.semaphores()[4];
         }
-        __device__ static inline kittens::semaphore &activations_arrived(state<config> &s)
+        __device__ static inline kittens::semaphore &activations_arrived(state<Config> &s)
         {
             return s.semaphores()[5];
         }
-        __device__ static inline int get_weight_page(state<config> &s, int offset)
+        __device__ static inline int get_weight_page(state<Config> &s, int offset)
         {
             return s.pid(offset + 1);
         }
-        __device__ static inline int get_activation_page(state<config> &s)
+        __device__ static inline int get_activation_page(state<Config> &s)
         {
             return s.pid(0);
         }
 
         struct controller
         {
-            static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
+            static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
             {
                 int ret_order[] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
                 return ret_order[query];
             }
-            static __device__ int init_semaphores(const globals &g, state<config> &s)
+            static __device__ int init_semaphores(const globals &g, state<Config> &s)
             {
                 for (int i = 0; i < 4; i++)
                 {
@@ -75,7 +75,7 @@ namespace kittens::prototype::vm
         };
         struct loader
         {
-            static __device__ void run(const globals &g, state<config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
@@ -108,22 +108,22 @@ namespace kittens::prototype::vm
                 {
                     int unused_page = s.pid(kittens::laneid());
                     s.wait_page_ready(unused_page);
-                    kittens::arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+                    kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
                 }
             }
         };
         struct launcher
         { // launches mma's
             // launcher does nothing here, since this doesn't use tensor cores.
-            static __device__ void run(const globals &g, state<config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 s.wait_tensor_ready();
-                kittens::warp::arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
+                kittens::warp::arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
             }
         };
         struct consumer
         {
-            static __device__ void run(const globals &g, state<config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 kittens::rt_bf<16, 128> weights, broadcast_activations;
                 typename kittens::rt_bf<16, 128>::row_vec activations_vec;
@@ -139,7 +139,7 @@ namespace kittens::prototype::vm
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
                 kittens::warp::load(weights, weights_smem[warp_id]);
                 kittens::warp::sync();
-                kittens::warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
+                kittens::warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
                 // Next we need to load the activations
                 wait(activations_arrived(s), 0);
                 if (laneid() == 0)
@@ -170,7 +170,7 @@ namespace kittens::prototype::vm
         struct storer
         {
             // Uses 4 full pages for outputs.
-            static __device__ void run(const globals &g, state<config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
                 if (laneid() == 0)
@@ -181,7 +181,7 @@ namespace kittens::prototype::vm
                     sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
 
                     auto& OutputActivations = g.*OutputActivationsPtr;      // object in global memory
-                    kittens::tma::store_add_async(OutputActivations, output, {inst.start_col / 16});
+                    kittens::tma::store_add_async(OutputActivations, output, {inst.start_output_col / 16});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
                 }
@@ -201,20 +201,23 @@ namespace kittens::prototype::vm
         };
     };
 
-using G = llama_1b_globals;
-
-    using DownOp = MatVecAddOp<
+     template<typename Config, typename Globals>
+    struct downproj : MatVecAddOp<
         128, 
-        &G::down_weights, 
-        &G::attn_out,   /// TODO: CHECK
-        &G::attn_out, 
+        &Globals::down_weights, 
+        &Globals::attn_out,   /// TODO: CHECK
+        &Globals::attn_out, 
         OPCODE_DownProjResidual, 
-        OPCODE_DownProjResidual - 1>;
-    using OOp = MatVecAddOp<
+        OPCODE_DownProjResidual - 1,
+        Config> { };
+
+    template<typename Config, typename Globals>
+    struct o_proj : MatVecAddOp<
         128, 
-        &G::o_weights, 
-        &G::attn_out, 
-        &G::attn_out, 
+        &Globals::o_weights, 
+        &Globals::attn_out, 
+        &Globals::attn_out, 
         OPCODE_O_ProjResidual, 
-        OPCODE_O_ProjResidual - 1>;
+        OPCODE_O_ProjResidual - 1,
+        Config> { };
 }
