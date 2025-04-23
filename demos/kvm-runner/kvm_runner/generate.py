@@ -71,6 +71,8 @@ def pyvm_generate(
     runner = PyVM_Runner(
         model,
         print_info=print_info,
+        prompt_len=prompt_len,
+        ntok=config.ntok,
     )
 
     for i in tqdm(range(1, config.ntok)):
@@ -89,6 +91,8 @@ def kvm_generate(
     runner = KVM_Runner(
         model,
         kvm_dir=config.kvm_dir,
+        prompt_len=prompt_len,
+        ntok=config.ntok,
     )
 
     for i in tqdm(range(1, config.ntok)):
