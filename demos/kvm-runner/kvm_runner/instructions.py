@@ -33,7 +33,7 @@ class Globals:
 
     pos_id: int
     softmax_temp: float
-    ln_eps: float
+    rms_norm_eps: float
 
     # the vm stuff (instructions and timing)
     instructions: Tensor
@@ -126,7 +126,7 @@ class AttentionReduction(Instruction):
     # TODO: make sure reduction_list can't go beyond instruction
     reduction_list: list[int]
     # Not required for the last reduction
-    output_partial_idx: Optional[int] = None 
+    output_partial_idx: Optional[int] = None
 
     @classmethod
     def opcode(cls) -> int:
