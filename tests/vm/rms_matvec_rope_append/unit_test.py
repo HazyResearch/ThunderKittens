@@ -35,8 +35,8 @@ def generate_tensor_inputs():
     hidden_states  = torch.randn((H_q * D_h,), dtype=torch.bfloat16, device=TORCH_DEVICE)
     attn_ln_weight = torch.randn((L, H_q * D_h), dtype=torch.bfloat16, device=TORCH_DEVICE)
     qkv_proj       = torch.randn((L, (H_q + 2 * H_kv) * D_h , H_q * D_h), dtype=torch.bfloat16, device=TORCH_DEVICE) # proj weights
-    rope_cos       = torch.randn((N_max, D_h), dtype=torch.bfloat16, device=TORCH_DEVICE) # yes I'm being lazy
-    rope_sin       = torch.randn((N_max, D_h), dtype=torch.bfloat16, device=TORCH_DEVICE) # yes I'm being lazy
+    rope_cos       = torch.randn((N_max, D_h), dtype=torch.float32, device=TORCH_DEVICE) # yes I'm being lazy
+    rope_sin       = torch.randn((N_max, D_h), dtype=torch.float32, device=TORCH_DEVICE) # yes I'm being lazy
 
     # Outputs
     post_ln_rope_q = torch.randn((H_q * D_h,), dtype=torch.bfloat16, device=TORCH_DEVICE)

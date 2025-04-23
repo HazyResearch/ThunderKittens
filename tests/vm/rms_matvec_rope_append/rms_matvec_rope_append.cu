@@ -17,7 +17,7 @@ struct globals {
     using activation_layout = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>; // (hidden_dim,)
     using rms_scale_layout = gl<bf16, 1, 1, 16, 2048, sv_bf<2048>, sv_bf<16>>; // (num_layers, hidden_dim)
     using proj_weight_layout = gl<bf16, 1, 16, 3072, 2048, st_bf<16, 512>>;    // (num_layers, qkv_dims, hidden_dim)
-    using rope_table_layout = gl<bf16, 1, 1, -1, 64, sv_bf<16>>; // (N_max, head_dim)
+    using rope_table_layout = gl<float, 1, 1, -1, 64, sv_fl<16>>; // (N_max, head_dim)
     using kv_cache_layout = gl<bf16, 16, -1, 8, 64, sv_bf<16>>;  // (num_layers, N_max, num_kv_heads, head_dim)
     instruction_layout instructions;
     barrier_layout barriers;
@@ -114,13 +114,13 @@ struct RMS_MatVec_Rope_Append_Op {
             } else if (laneid() == 6) {
                 // Rope cos
                 s.wait_page_ready(get_rope_cos_page(s));
-                auto &rope_cos = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_cos_page(s)]);
+                auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
                 tma::expect(rope_cos_arrived(s), rope_cos);
                 tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_arrived(s));
             } else if (laneid() == 7) {
                 // Rope sin
                 s.wait_page_ready(get_rope_sin_page(s));
-                auto &rope_sin = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_sin_page(s)]);
+                auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
                 tma::expect(rope_sin_arrived(s), rope_sin);
                 tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_arrived(s));
             } else if (laneid() >= 8 && laneid() <= 12) {
@@ -148,8 +148,8 @@ struct RMS_MatVec_Rope_Append_Op {
             typename rt_bf<16, 128>::col_vec qkv_proj_partial_col_format;
             rv_bf<16> qkv_proj_partial;
             rv_bf<16> qkv_proj;
-            rv_bf<16> rope_cos;
-            rv_bf<16> rope_sin;
+            rv_fl<16> rope_cos;
+            rv_fl<16> rope_sin;
             shared_allocator al((int*)s.scratch());
             sv_fl<config::NUM_CONSUMER_WARPS> (&smem_rms_partial_sums) = al.template allocate<sv_fl<config::NUM_CONSUMER_WARPS>> ();
             int group_id = warpgroup::groupid();
@@ -221,13 +221,13 @@ struct RMS_MatVec_Rope_Append_Op {
                     warp::load(qkv_proj, qkv_proj_smem);
 
                     int rope_cos_page = get_rope_cos_page(s);
-                    sv_bf<16> &rope_cos_smem = reinterpret_cast<sv_bf<16> &>(s.pages[rope_cos_page]);
+                    sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                     wait(rope_cos_arrived(s), 0);
                     warp::load(rope_cos, rope_cos_smem);
                     warp::arrive(s.page_finished[rope_cos_page], config::NUM_CONSUMER_WARPS);
                     
                     int rope_sin_page = get_rope_sin_page(s);
-                    sv_bf<16> &rope_sin_smem = reinterpret_cast<sv_bf<16> &>(s.pages[rope_sin_page]);
+                    sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                     wait(rope_sin_arrived(s), 0);
                     warp::load(rope_sin, rope_sin_smem);
                     warp::arrive(s.page_finished[rope_sin_page], config::NUM_CONSUMER_WARPS);
@@ -238,7 +238,8 @@ struct RMS_MatVec_Rope_Append_Op {
 
                     // Compute RoPE in-place
                     if (laneid() < 16)
-                        qkv_proj[0][0] = qkv_proj[0][0] * rope_cos[0][0] + bf16(-1 * mod) * pair_val * rope_sin[0][0];
+                        // will clean this up later
+                        qkv_proj[0][0] = __bfloat162float(float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0]);
 
                     // Store back to the scratch
                     warp::store(qkv_proj_smem, qkv_proj);
