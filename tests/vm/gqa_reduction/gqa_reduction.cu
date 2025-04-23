@@ -130,7 +130,7 @@ template<typename config=config> struct rope_gqa_reduction_op {
             int laneid = warp::laneid();
             if (laneid >= 1 && laneid < config::NUM_PAGES) arrive(s.page_finished[s.pid(laneid)], config::NUM_CONSUMER_WARPS); 
             if (laneid == 0) {
-                while (*(volatile int *)&g.barriers[{inst.layer_idx, GQA_PARTIAL_OPCODE, inst.q_head_idx}] < inst.num_partials) {
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, GQA_PARTIAL_OPCODE, (inst.q_head_idx / 4) * 4}] < inst.num_partials) {
                     __nanosleep(20);
                 }
 

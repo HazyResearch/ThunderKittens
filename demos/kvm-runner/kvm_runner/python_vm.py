@@ -14,13 +14,14 @@ from kvm_runner.instructions import (
     PartialAttention,
     PrintState,
 )
-from kvm_runner.llama import BatchState, LlamaForCausalLM
+from kvm_runner.llama import (
+    BatchState,
+    LlamaForCausalLM,
+    apply_rotary_pos_emb_interleaved,
+)
 from kvm_runner.scheduler import PrintInfo, schedule_model
 from kvm_runner.utils import trepr
 from torch import Tensor
-from transformers.models.llama.modeling_llama import (
-    apply_rotary_pos_emb,
-)
 
 
 def get_start_end(block_size: int, block_idx: int):
@@ -131,7 +132,7 @@ def layer_norm_matvec_rope_append(
     k_arr = rearrange(k, "(h d) -> h d", h=globals.num_kv_heads)
 
     pos_id = globals.pos_id
-    q_with_rope, k_with_rope = apply_rotary_pos_emb(
+    q_with_rope, k_with_rope = apply_rotary_pos_emb_interleaved(
         q=q_arr,
         k=k_arr,
         cos=globals.rope_cos[pos_id],

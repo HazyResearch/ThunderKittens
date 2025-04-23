@@ -1,14 +1,16 @@
+from pathlib import Path
+
 import pydra
 import torch
+from kvm_runner.kvm import KVM_Runner
+from kvm_runner.llama import LlamaForCausalLM
+from kvm_runner.python_vm import PyVM_Runner
+from kvm_runner.scheduler import PrintInfo
+from kvm_runner.types import BatchState, ExtraModelConfig
 from tabulate import tabulate
 from torch import Tensor
 from tqdm import tqdm
 from transformers import AutoTokenizer
-
-from kvm_runner.llama import LlamaForCausalLM
-from kvm_runner.python_vm import PyVM_Runner
-from kvm_runner.scheduler import PrintInfo
-from kvm_runner.types import BatchState
 
 
 class ScriptConfig(pydra.Config):
@@ -23,6 +25,12 @@ class ScriptConfig(pydra.Config):
     print_layer_filter: list[int] | None = None
     print_name_filter: list[str] | None = None
     print_state_filter: list[str] | None = None
+    interleave_rope: bool = True
+    kvm_dir: Path | None = None
+
+    def finalize(self):
+        if self.mode in ["kvm", "pyvm"]:
+            assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
 
 def pytorch_model_generate(
@@ -73,21 +81,33 @@ def pyvm_generate(
         output_tokens[i] = output_ids
 
 
-def kvm_interpreter_generate(
+def kvm_generate(
     config: ScriptConfig,
     model: LlamaForCausalLM,
     output_tokens: Tensor,
     prompt_len: int,
 ):
-    """
-    The magic goes here!
-    """
-    raise NotImplementedError
+    assert config.kvm_dir is not None
+    runner = KVM_Runner(
+        model,
+        kvm_dir=config.kvm_dir,
+        num_attention_partitions=config.num_attention_partitions,
+    )
+
+    for i in tqdm(range(1, config.ntok)):
+        input_ids = output_tokens[i - 1 : i]
+        output_ids = runner.run(input_ids, pos_id=prompt_len + i)
+        output_tokens[i] = output_ids
 
 
 def main(config: ScriptConfig):
     tokenizer = AutoTokenizer.from_pretrained(config.model)
-    model = LlamaForCausalLM.from_pretrained(config.model, device=config.device)
+    extra_config = ExtraModelConfig(
+        interleave_rope=config.interleave_rope,
+    )
+    model = LlamaForCausalLM.from_pretrained(
+        config.model, device=config.device, extra_config=extra_config
+    )
 
     if config.chat:
         tok_inp = tokenizer.apply_chat_template(
@@ -119,7 +139,7 @@ def main(config: ScriptConfig):
         case "pyvm":
             pyvm_generate(config, model, output_tokens, prompt_len)
         case "kvm":
-            kvm_interpreter_generate(config, model, output_tokens, prompt_len)
+            kvm_generate(config, model, output_tokens, prompt_len)
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
