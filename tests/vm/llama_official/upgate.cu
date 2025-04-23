@@ -50,7 +50,7 @@ struct rms_upgate_silu
     __device__ static inline int get_gate_page(state<config> &s, int i) { return s.pid(UP_PAGES + i); }
     __device__ static inline int get_input_page(state<config> &s) { return s.pid(PAGE_INPUT); }
     __device__ static inline int get_output_page(state<config> &s) { return s.pid(PAGE_OUTPUT); }
-    __device__ static inline int get_rms_scale_page(state<config> &s) { return s.pid(NUM_WEIGHT_PAGES + 1); }
+    __device__ static inline int get_rms_scale_page(state<config> &s) { return s.pid(PAGE_RMS_SCALE ); }
 
     struct controller
     {
@@ -178,6 +178,7 @@ struct rms_upgate_silu
 
             // setup for rms norm
             typename block_rt::row_vec rms_scale_vec;
+            typename rt_fl<16, 128>::row_vec float_activations;
             rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
             // reinterpret cast!
             shared_allocator al((int *)s.scratch());

@@ -245,7 +245,7 @@ struct attention_partial
         constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
         constexpr int memcpy_per_row = globals::head_dim / elem_per_memcpy;            // 8
 
-        globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * globals::head_dim];
+        const typename globals::activations_t::dtype* *src_ptr = &src.raw_ptr[q_head_start_idx * globals::head_dim];
         uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * globals::head_dim]));
 
         int laneid = warp::laneid();

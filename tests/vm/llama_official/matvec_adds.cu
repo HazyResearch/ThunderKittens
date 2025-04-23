@@ -7,9 +7,9 @@ namespace kittens::prototype::vm
 
     template <
         int _EXPECTED_ARRIVAL_COUNT,
-        typename Weights,
-        typename InputActivations,
-        typename OutputActivations,
+        auto WeightsPtr,
+        auto InputActivationsPtr,
+        auto OutputActivationsPtr,
         int _opcode,
         int _prev_opcode = 0,
         typename config = kittens::prototype::vm::default_config>
@@ -87,7 +87,9 @@ namespace kittens::prototype::vm
                     s.record(16 + kittens::laneid());
                     auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
                     kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
-                    kittens::tma::load_async(weight_chunk, Weights, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+
+                    auto& weights_global = g.*WeightsPtr;      // object in global memory
+                    kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
                 }
                 else if (kittens::laneid() == 31)
                 {
@@ -98,6 +100,8 @@ namespace kittens::prototype::vm
                     s.record(24);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                     kittens::tma::expect(activations_arrived(s), activations);
+
+                    auto& InputActivations = g.*InputActivationsPtr;      // object in global memory
                     kittens::tma::load_async(activations, InputActivations, {}, activations_arrived(s));
                 }
                 else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
@@ -175,6 +179,8 @@ namespace kittens::prototype::vm
                     s.record(125);
                     void *scratch = s.scratch();
                     sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
+
+                    auto& OutputActivations = g.*OutputActivationsPtr;      // object in global memory
                     kittens::tma::store_add_async(OutputActivations, output, {inst.start_col / 16});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
@@ -194,6 +200,21 @@ namespace kittens::prototype::vm
             }
         };
     };
-    using DownOp = MatVecAddOp<128, &globals_t::down_weights, &globals_t::hidden_activations, &globals_t::activations, OPCODE_DownProjResidual, OPCODE_DownProjResidual - 1>;
-    using OOp = MatVecAddOp<128, &globals_t::o_weights, &globals_t::attention_output, &globals_t::activations, OPCODE_O_ProjResidual, OPCODE_O_ProjResidual - 1>;
+
+using G = llama_1b_globals;
+
+    using DownOp = MatVecAddOp<
+        128, 
+        &G::down_weights, 
+        &G::attn_out,   /// TODO: CHECK
+        &G::attn_out, 
+        OPCODE_DownProjResidual, 
+        OPCODE_DownProjResidual - 1>;
+    using OOp = MatVecAddOp<
+        128, 
+        &G::o_weights, 
+        &G::attn_out, 
+        &G::attn_out, 
+        OPCODE_O_ProjResidual, 
+        OPCODE_O_ProjResidual - 1>;
 }
