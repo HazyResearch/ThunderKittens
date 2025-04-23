@@ -1,9 +1,9 @@
 #include "llama.cuh"
 
-#include "attention_partial.cuh"
-#include "attention_reduction.cuh"
-#include "matvec_adds.cuh"
-#include "upgate.cuh"
+#include "attention_partial.cu"
+#include "attention_reduction.cu"
+#include "matvec_adds.cu"
+#include "upgate.cu"
 
 #include "pyutils/pyutils.cuh"
 
