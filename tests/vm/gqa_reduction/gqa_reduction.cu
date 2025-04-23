@@ -7,9 +7,11 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
+constexpr int GQA_PARTIAL_OPCODE = 1;
 constexpr int GQA_REDUCTION_OPCODE = 2;
 constexpr int HEAD_DIM = 64;
 constexpr int NUM_Q_HEADS = 32;
+constexpr int NUM_KV_HEADS = 8;
 
 using l_partial_sv = sv_fl<16>;
 using o_sv = sv_fl<HEAD_DIM>;
@@ -20,7 +22,9 @@ using config = default_config;
 
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
+    using bar_layout = gl<uint, 1, -1, 6, NUM_Q_HEADS + 2 * NUM_KV_HEADS>;
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
+
     // Input Partial LSE:
     using l_partial_layout = gl<float, 1, 1, NUM_Q_HEADS, -1, l_partial_sv>;
     // Input Partial O:
@@ -29,6 +33,7 @@ struct globals {
     using o_final_layout = gl<bf16, 1, NUM_Q_HEADS, 1, HEAD_DIM, o_final_sv>;
 
     instruction_layout instructions;
+    bar_layout barriers; 
     timing_layout timings;
     l_partial_layout L_partials;     // Input: Global partial LSE tensor
     o_partial_layout O_partials;     // Input: Global partial O tensor
@@ -46,12 +51,15 @@ template<typename config=config> struct rope_gqa_reduction_op {
     // --- Instruction Parsing ---
     // Instruction format:
     // [0] = opcode (GQA_REDUCTION_OPCODE)
-    // [1] = num_partials
+    // [1] = layer_idx
+    // [2] = num_partials
     struct parsed_instruction {
+        int layer_idx;
         int num_partials;
         int q_head_idx;
         __device__ inline parsed_instruction(state<config> &s) {
-            num_partials = s.instruction()[1];
+            layer_idx = s.instruction()[1];
+            num_partials = s.instruction()[2];
             q_head_idx = blockIdx.x;
         }
     };
@@ -122,6 +130,10 @@ template<typename config=config> struct rope_gqa_reduction_op {
             int laneid = warp::laneid();
             if (laneid >= 1 && laneid < config::NUM_PAGES) arrive(s.page_finished[s.pid(laneid)], config::NUM_CONSUMER_WARPS); 
             if (laneid == 0) {
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, GQA_PARTIAL_OPCODE, inst.q_head_idx}] < inst.num_partials) {
+                    __nanosleep(20);
+                }
+
                 wait_shared_page(s);
 
                 for (int i = 0; i < inst.num_partials; ++i) {
@@ -135,9 +147,9 @@ template<typename config=config> struct rope_gqa_reduction_op {
                         wait(O_partial_finished(s, stage), prev_phase);
                     }
 
-                    L_smem.data[0] = g.L_partials.raw_ptr[(inst.q_head_idx * g.L_partials.cols()) + i];
-                    // tma::expect(L_partial_arrived(s, stage), L_smem); // Expect size of L_smem
-                    // tma::load_async<cache_policy::EVICT_FIRST>(L_smem, g.L_partials, {0, 0, inst.q_head_idx, i}, L_partial_arrived(s, stage));
+                    // L_smem.data[0] = g.L_partials.raw_ptr[(inst.q_head_idx * g.L_partials.cols()) + i];
+                    L_smem.data[0] = __ldg(&g.L_partials.raw_ptr[(inst.q_head_idx * g.L_partials.cols()) + i]);
+                    if (warp::laneid()==0) arrive(L_partial_arrived(s, stage));
 
                     tma::expect(O_partial_arrived(s, stage), O_smem);
                     tma::load_async<cache_policy::EVICT_FIRST>(O_smem, g.O_partials, {0, inst.q_head_idx, i, 0}, O_partial_arrived(s, stage));
@@ -167,6 +179,7 @@ template<typename config=config> struct rope_gqa_reduction_op {
                 // --- Reduction Pipeline ---
                 for (int i = 0; i < inst.num_partials; ++i) {
                     int stage = i % NUM_STAGES;
+                    warp::wait(L_partial_arrived(s, stage), (i / NUM_STAGES) % 2);
                     warp::wait(O_partial_arrived(s, stage), (i / NUM_STAGES) % 2);
 
                     l_partial_sv &L_smem = get_L_partial_smem(s, stage);
@@ -220,6 +233,7 @@ template<typename config=config> struct rope_gqa_reduction_op {
                 tma::store_async<cache_policy::NORMAL>(g.O_final, O_final_smem, {0, inst.q_head_idx, 0, 0});
                 tma::store_async_read_wait();
                 finish_shared_page(s);
+                atomicAdd(&g.barriers[{inst.layer_idx, GQA_REDUCTION_OPCODE, inst.q_head_idx}], 1);
             }
             warp::sync();
          }
@@ -233,6 +247,7 @@ PYBIND11_MODULE(gqa_reduction, m) {
     m.doc() = "GQA Reduction VM Operation";
     kittens::py::bind_kernel<kvm<config, globals, rope_gqa_reduction_op<config>>>(m, "gqa_reduction",
         &globals::instructions,
+        &globals::barriers,
         &globals::timings,
         &globals::L_partials,
         &globals::O_partials,
