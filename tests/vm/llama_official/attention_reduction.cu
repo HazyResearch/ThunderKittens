@@ -14,33 +14,62 @@ namespace kittens::prototype::vm {
     using o_rv = rv_fl<globals::head_dim>;
     using o_final_sv = sv_bf<globals::head_dim>;
 
+    constexpr int Q_HEADS_PER_INSTRUCTION = 4;
 
     template <typename Config, typename Globals>
     struct attention_reduction
     {
         static constexpr int opcode = OPCODE_AttentionReduction;
         static constexpr int prev_opcode = OPCODE_PartialAttention;
-        static constexpr int NUM_STAGES = 3;
+        static constexpr int NUM_STAGES = 2;
 
         struct parsed_instruction
         {
             int layer_idx;
-            int q_head_idx;
+            int q_head_start_idx;
             int num_partials;
             __device__ inline parsed_instruction(state<Config> &s)
             {
                 layer_idx = s.instruction()[1];
-                q_head_idx = s.instruction()[2];
+                q_head_start_idx = s.instruction()[2];
                 num_partials = s.instruction()[3];
             }
         };
 
         // --- Semaphore Access Helpers ---
-        __device__ static inline semaphore &L_partial_arrived(state<Config> &s, int stage) { return s.semaphores()[stage * 2]; }
-        __device__ static inline semaphore &O_partial_arrived(state<Config> &s, int stage) { return s.semaphores()[stage * 2 + 1]; }
-        __device__ static inline semaphore &L_partial_finished(state<Config> &s, int stage) { return s.semaphores()[NUM_STAGES * 2 + stage * 2]; }
-        __device__ static inline semaphore &O_partial_finished(state<Config> &s, int stage) { return s.semaphores()[NUM_STAGES * 2 + stage * 2 + 1]; }
-        __device__ static inline semaphore &final_O_ready(state<Config> &s) { return s.semaphores()[NUM_STAGES * 4]; }
+        __device__ static constexpr int O_partial_sem_idx(int q_head_local_idx, int stage, bool is_finished)
+        {
+            return q_head_local_idx * (NUM_STAGES * 2) + stage * 2 + (is_finished ? 1 : 0);
+        }
+        __device__ static constexpr int L_partial_sem_idx(int q_head_local_idx, bool is_finished)
+        {
+            return (Q_HEADS_PER_INSTRUCTION * NUM_STAGES * 2) + q_head_local_idx * 2 + (is_finished ? 1 : 0);
+        }
+        __device__ static constexpr int Final_O_ready_sem_idx(int q_head_local_idx)
+        {
+            return (Q_HEADS_PER_INSTRUCTION * NUM_STAGES * 2) + (Q_HEADS_PER_INSTRUCTION * 2) + q_head_local_idx;
+        }
+
+        __device__ static inline semaphore &O_partial_arrived(state<config> &s, int q_head_local_idx, int stage)
+        {
+            return s.semaphores()[O_partial_sem_idx(q_head_local_idx, stage, false)];
+        }
+        __device__ static inline semaphore &O_partial_finished(state<config> &s, int q_head_local_idx, int stage)
+        {
+            return s.semaphores()[O_partial_sem_idx(q_head_local_idx, stage, true)];
+        }
+        __device__ static inline semaphore &L_partial_all_arrived(state<config> &s, int q_head_local_idx) 
+        {
+            return s.semaphores()[L_partial_sem_idx(q_head_local_idx, false)];
+        }
+        __device__ static inline semaphore &L_partial_all_finished(state<config> &s, int q_head_local_idx)
+        {
+            return s.semaphores()[L_partial_sem_idx(q_head_local_idx, true)];
+        }
+        __device__ static inline semaphore &final_O_ready(state<config> &s, int q_head_local_idx)
+        {
+            return s.semaphores()[Final_O_ready_sem_idx(q_head_local_idx)];
+        }
 
         // --- Shared Memory Page Management Helpers ---
         static constexpr int SHARED_DATA_PAGE = 0; // Use only the first logical page
@@ -59,30 +88,31 @@ namespace kittens::prototype::vm {
 
         // --- Shared Memory Layout and Access Helpers (Single Page) ---
         // Calculate the size needed for partials buffering
-        static constexpr size_t partials_region_size = NUM_STAGES * (sizeof(l_partial_sv) + sizeof(o_sv));
-        static constexpr size_t final_o_offset = partials_region_size;
-        static_assert(partials_region_size + sizeof(o_final_sv) <= Config::PAGE_SIZE,
-                    "Required shared memory exceeds Configured page size.");
-
-        __device__ static inline l_partial_sv &get_L_partial_smem(state<Config> &s, int stage)
-        {
+        static constexpr size_t size_per_head = sizeof(l_partial_sv) + NUM_STAGES * sizeof(o_sv) + sizeof(o_final_sv);
+        static constexpr size_t total_smem_needed = Q_HEADS_PER_INSTRUCTION * size_per_head;
+        static_assert(total_smem_needed <= config::PAGE_SIZE,
+            "Required shared memory exceeds configured page size.");
+    
+        __device__ static inline l_partial_sv &get_L_partial_smem(state<config> &s, int q_head_local_idx) {
             int pid = s.pid(SHARED_DATA_PAGE);
-            char *base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
-            size_t offset = stage * (sizeof(l_partial_sv) + sizeof(o_sv));
-            return *reinterpret_cast<l_partial_sv *>(base_ptr + offset);
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
+            char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
+            return *reinterpret_cast<l_partial_sv*>(head_base_ptr);
         }
-        __device__ static inline o_sv &get_O_partial_smem(state<Config> &s, int stage)
-        {
+        __device__ static inline o_sv &get_O_partial_smem(state<config> &s, int q_head_local_idx, int stage) {
+            assert(stage >= 0 && stage < NUM_STAGES);
             int pid = s.pid(SHARED_DATA_PAGE);
-            char *base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
-            size_t offset = stage * (sizeof(l_partial_sv) + sizeof(o_sv)) + sizeof(l_partial_sv);
-            return *reinterpret_cast<o_sv *>(base_ptr + offset);
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
+            char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
+            size_t offset = sizeof(l_partial_sv) + stage * sizeof(o_sv);
+            return *reinterpret_cast<o_sv*>(head_base_ptr + offset);
         }
-        __device__ static inline o_final_sv &get_O_final_smem(state<Config> &s)
-        {
+        __device__ static inline o_final_sv &get_O_final_smem(state<config> &s, int q_head_local_idx) {
             int pid = s.pid(SHARED_DATA_PAGE);
-            char *base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
-            return *reinterpret_cast<o_final_sv *>(base_ptr + final_o_offset);
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
+            char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
+            size_t offset = sizeof(l_partial_sv) + NUM_STAGES * sizeof(o_sv);
+            return *reinterpret_cast<o_final_sv*>(head_base_ptr + offset);
         }
 
         struct controller
@@ -93,15 +123,17 @@ namespace kittens::prototype::vm {
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-                for (int i = 0; i < NUM_STAGES; i++)
-                {
-                    init_semaphore(L_partial_arrived(s, i), 0, 1);
-                    init_semaphore(O_partial_arrived(s, i), 0, 1);
-                    init_semaphore(L_partial_finished(s, i), 0, 1);
-                    init_semaphore(O_partial_finished(s, i), 0, 1);
+                for (int q_head = 0; q_head < Q_HEADS_PER_INSTRUCTION; ++q_head) {
+                    for (int stage = 0; stage < NUM_STAGES; stage++) {
+                        init_semaphore(O_partial_arrived(s, q_head, stage), 0, 1);
+                        init_semaphore(O_partial_finished(s, q_head, stage), 0, 1);
+                    }
+                    init_semaphore(L_partial_all_arrived(s, q_head), 0, 1);
+                    init_semaphore(L_partial_all_finished(s, q_head), 0, 1);
+    
+                    init_semaphore(final_O_ready(s, q_head), 0, 1);
                 }
-                init_semaphore(final_O_ready(s), 0, 1);
-                return 4 * NUM_STAGES + 1;
+                return 4 * ((NUM_STAGES * 2) + 3);
             }
         };
 
@@ -109,39 +141,41 @@ namespace kittens::prototype::vm {
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
-                if (laneid >= 1 && laneid < Config::NUM_PAGES)
-                    arrive(s.page_finished[s.pid(laneid)], Config::NUM_CONSUMER_WARPS);
-                if (laneid == 0)
-                {
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_idx}] < inst.num_partials)
+                int local_q_head = warp::laneid();
+                if (local_q_head < Q_HEADS_PER_INSTRUCTION) {
+                    parsed_instruction inst{s};
+
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] != 1)
                     {
                         __nanosleep(20);
                     }
 
                     wait_shared_page(s);
 
+                    l_partial_sv &L_smem = get_L_partial_smem(s, local_q_head);
+                    tma::expect(L_partial_all_arrived(s, local_q_head), L_smem);
+                    tma::load_async<cache_policy::EVICT_FIRST>(
+                        L_smem, g.attn_lse_intermediates, {0, 0, inst.q_head_start_idx + local_q_head, 0}, L_partial_all_arrived(s, local_q_head));
+
                     for (int i = 0; i < inst.num_partials; ++i)
                     {
                         int stage = i % NUM_STAGES;
-                        l_partial_sv &L_smem = get_L_partial_smem(s, stage);
-                        o_sv &O_smem = get_O_partial_smem(s, stage);
+                        o_sv &O_smem = get_O_partial_smem(s, local_q_head, stage);
 
-                        if (i >= NUM_STAGES)
+                        if (i >= NUM_STAGES) 
                         {
                             int prev_phase = (i / NUM_STAGES - 1) % 2;
-                            wait(L_partial_finished(s, stage), prev_phase);
-                            wait(O_partial_finished(s, stage), prev_phase);
+                            wait(O_partial_finished(s, local_q_head, stage), prev_phase);
                         }
 
-                        L_smem.data[0] = __ldg(&g.attn_lse_intermediates.raw_ptr[(inst.q_head_idx * g.attn_lse_intermediates.cols()) + i]);
-                        if (warp::laneid() == 0)
-                            arrive(L_partial_arrived(s, stage));
-
-                        tma::expect(O_partial_arrived(s, stage), O_smem);
-                        tma::load_async<cache_policy::EVICT_FIRST>(O_smem, g.attn_out_intermediates, {0, inst.q_head_idx, i, 0}, O_partial_arrived(s, stage));
+                        tma::expect(O_partial_arrived(s, local_q_head, stage), O_smem);
+                        tma::load_async<cache_policy::EVICT_FIRST>(
+                            O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
                     }
+                } 
+                else if (local_q_head - (Q_HEADS_PER_INSTRUCTION - 1) < config::NUM_PAGES) 
+                {
+                    arrive(s.page_finished[s.pid(local_q_head - (Q_HEADS_PER_INSTRUCTION - 1))], config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
             }
@@ -163,10 +197,11 @@ namespace kittens::prototype::vm {
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-
-                if (warpid() == 0)
+                if (warpid() < Q_HEADS_PER_INSTRUCTION) 
                 {
+                    parsed_instruction inst{s};
+                    int q_head_local_idx = warpid();
+
                     o_rv accumulated_out;
                     float accumulated_lse = -INFINITY;
 
@@ -175,20 +210,20 @@ namespace kittens::prototype::vm {
 
                     warp::zero(accumulated_out);
 
+                    warp::wait(L_partial_all_arrived(s, q_head_local_idx), 0);
+                    l_partial_sv &L_smem = get_L_partial_smem(s, q_head_local_idx);
+
                     // --- Reduction Pipeline ---
                     for (int i = 0; i < inst.num_partials; ++i)
                     {
                         int stage = i % NUM_STAGES;
-                        warp::wait(L_partial_arrived(s, stage), (i / NUM_STAGES) % 2);
-                        warp::wait(O_partial_arrived(s, stage), (i / NUM_STAGES) % 2);
+                        warp::wait(O_partial_arrived(s, q_head_local_idx, stage), (i / NUM_STAGES) % 2);
 
-                        l_partial_sv &L_smem = get_L_partial_smem(s, stage);
-                        o_sv &O_smem = get_O_partial_smem(s, stage);
+                        o_sv &O_smem = get_O_partial_smem(s, q_head_local_idx, stage);
 
-                        // Load L_partial_reg (single float)
-                        uint32_t src_ptr_L = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[0]));
+                        // Load cur L_partial value
+                        uint32_t src_ptr_L = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[i]));
                         move<float>::lds(current_lse, src_ptr_L);
-
                         // Load O_partial_reg
                         warp::load(current_out, O_smem);
 
@@ -209,15 +244,15 @@ namespace kittens::prototype::vm {
                         // Update LSE accumulator:
                         accumulated_lse = max_lse + log2f(new_denom);
 
-                        warp::arrive(L_partial_finished(s, stage));
-                        warp::arrive(O_partial_finished(s, stage));
+                        warp::arrive(O_partial_finished(s, q_head_local_idx, stage));
                     }
+                    warp::arrive(L_partial_all_finished(s, q_head_local_idx));
 
-                    o_final_sv &O_final_smem = get_O_final_smem(s);
+                    o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
                     warp::store(O_final_smem, accumulated_out);
                     warp::sync();
 
-                    warp::arrive(final_O_ready(s));
+                    warp::arrive(final_O_ready(s, q_head_local_idx));
                     finish_shared_page(s);
                 }
             }
@@ -228,15 +263,18 @@ namespace kittens::prototype::vm {
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-                if (warp::laneid() == 0)
+                if (warp::laneid() < Q_HEADS_PER_INSTRUCTION)
                 {
-                    o_final_sv &O_final_smem = get_O_final_smem(s);
-                    wait(final_O_ready(s), 0);
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, inst.q_head_idx, 0, 0});
+                    parsed_instruction inst{s};
+                    int q_head_local_idx = warp::laneid();
+
+                    o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
+                    wait(final_O_ready(s, q_head_local_idx), 0);
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, inst.q_head_start_idx + q_head_local_idx, 0, 0});
                     tma::store_async_read_wait();
                     finish_shared_page(s);
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_idx}], 1);
+
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);
                 }
                 warp::sync();
             }
@@ -244,3 +282,4 @@ namespace kittens::prototype::vm {
     };
 
 }
+

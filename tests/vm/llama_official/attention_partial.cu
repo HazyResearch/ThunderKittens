@@ -518,3 +518,4 @@ namespace kittens::prototype::vm
             };
         };
     };
+}
