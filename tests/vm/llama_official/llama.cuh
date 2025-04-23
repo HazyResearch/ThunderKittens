@@ -3,22 +3,22 @@
 #include <iostream>
 
 
-
+// boo bad practice in a header file
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
-using config = default_config;
+using llama_config = default_config;
 
-#define RMS_QKV_MatVecRopeAppend 1
-#define PartialAttention 2
-#define AttentionReduction 3
-#define DownProjResidual 4
-#define O_ProjResidual 5
-#define RMS_DoubleMatVecSiLU 6
+#define RMS_DoubleMatVecSiLU 1
+#define DownProjResidual 2
+#define RMS_QKV_MatVecRopeAppend 3
+#define PartialAttention 4
+#define AttentionReduction 5
+#define O_ProjResidual 6
 
 template <int hidden_dim, int intermediate_dim, int head_dim, int num_attention_heads, int num_kv_heads, int kv_block_size, int matvec_block_size, int sm_count>
-struct globals
+struct llama_globals
 {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;

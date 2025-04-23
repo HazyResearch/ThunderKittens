@@ -1,61 +1,6 @@
 #pragma once
 
-#include "kittens.cuh"
-#include "vm/vm.cuh"
-#include <iostream>
-
-using namespace kittens;
-using namespace kittens::prototype;
-using namespace kittens::prototype::vm;
-
-using llama_vm_config = default_config;
-struct llama_globals {
-    static constexpr int MAX_SEQ_LEN = 4096;
-    using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_vm_config>;
-    using timing_layout = ::kittens::prototype::vm::timing_layout<llama_vm_config>;
-    // All weights are fused here.
-    using up_weights_t         = gl<bf16,  1, 16, 8192, 2048>;
-    using down_weights_t       = gl<bf16,  1, 16, 2048, 8192>;
-    using qkv_weights_t        = gl<bf16,  1, 16, 2048+512+512, 2048>; // Q + K + V output dimensions are fused here.
-    using o_weights_t          = gl<bf16,  1, 16, 2048, 2048>;
-    using layernorm_weights_t  = gl<bf16,  1, 16, 2, 2048>; // both layernorms are fused here.
-    // Two types of activations: for the residual stream, and for the hidden activations.
-    using activations_t        = gl<bf16,  1, 1, 1, 2048>;
-    using hidden_activations_t = gl<bf16,  1, 1, 1, 8192>;
-    // I am making a deliberate choice to fuse nheads & headdim to make it easier to batch later.
-    using k_cache_t            = gl<bf16,  1, 16, MAX_SEQ_LEN, 512>; 
-    using v_cache_t            = gl<bf16,  1, 16, MAX_SEQ_LEN, 512>;
-    // Never expecting to have more partials for a given sequence than SM's.
-    using o_scratch_t          = gl<float, 1, 16, 160, 2048>;
-    using lvec_scratch_t       = gl<float, 1, 1, 16, 160>;
-    // Barriers are per-layer, per-op, per-head.
-    using barriers_t           = gl<bf16,  1, 16, 6, 32>;
-    // instructions
-    instruction_layout instructions;
-    timing_layout timings;
-    // model weights
-    up_weights_t up_weights;
-    down_weights_t down_weights;
-    qkv_weights_t qkv_weights;
-    o_weights_t o_weights;
-    layernorm_weights_t layernorm_weights;
-    // activations
-    activations_t activations;
-    activations_t attention_output;
-    hidden_activations_t hidden_activations;
-    // caches
-    k_cache_t k_cache;
-    v_cache_t v_cache;
-    // scratch for ThunderGQA
-    o_scratch_t o_scratch;
-    lvec_scratch_t lvec_scratch;
-    // barriers
-    barriers_t barriers;
-    // grid & block sizes
-    dim3 grid() { return dim3(148); }
-    dim3 block() { return dim3(llama_vm_config::NUM_THREADS); }
-    int dynamic_shared_memory() { return llama_vm_config::DYNAMIC_SHARED_MEMORY; }
-};
+#include "llama.cuh"
 
 template<
     int _EXPECTED_ARRIVAL_COUNT,
@@ -64,17 +9,18 @@ template<
     typename OutputActivations,
     int _opcode,
     int _OP_IDX=0,
-    typename config=llama_vm_config
+    typename config=config
 >
 struct AddMatvecOp {
     static constexpr int opcode = _opcode;
     static constexpr int EXPECTED_ARRIVAL_COUNT = _EXPECTED_ARRIVAL_COUNT;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction {
-        int layer, start_col;
+        int layer, start_output_col, start_reduction_col;
         __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
             layer = instruction[1]; // in units of 1
-            start_col = instruction[2]; // in units of 1
+            start_output_col = instruction[2]; // in units of 1
+            start_reduction_col = instruction[3]; // in units of 1
         }
         __device__ inline parsed_instruction(state<config> &s): parsed_instruction(s.instruction()) {}
     };
@@ -123,7 +69,7 @@ struct AddMatvecOp {
                 s.record(16+laneid());
                 auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[get_weight_page(s, laneid())]);
                 tma::expect(inputs_arrived(s, laneid()), weight_chunk);
-                tma::load_async(weight_chunk, Weights, {inst.layer, inst.start_col/16, laneid()}, inputs_arrived(s, laneid()));
+                tma::load_async(weight_chunk, Weights, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512*laneid()}, inputs_arrived(s, laneid()));
             }
             else if(laneid() == 31) {
                 int activation_page = get_activation_page(s);
@@ -211,5 +157,5 @@ struct AddMatvecOp {
         }
     };
 };
-using DownOp = AddMatvecOp<128, &llama_globals::down_weights, &llama_globals::hidden_activations, &llama_globals::activations, 2, 1>;
-using OOp = AddMatvecOp<128, &llama_globals::o_weights, &llama_globals::attention_output, &llama_globals::activations, 6, 5>;
+using DownOp = AddMatvecOp<128, &llama_globals::down_weights, &llama_globals::hidden_activations, &llama_globals::activations, DownProjResidual, DownProjResidual-1>;
+using OOp = AddMatvecOp<128, &llama_globals::o_weights, &llama_globals::attention_output, &llama_globals::activations, O_ProjResidual, O_ProjResidual-1>;

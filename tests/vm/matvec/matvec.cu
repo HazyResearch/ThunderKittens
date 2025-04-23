@@ -38,15 +38,16 @@ template<typename config=config, int _OP_IDX=0> struct MatvecOp {
     static constexpr int opcode = 2;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction {
-        int layer, start_col;
+        int layer, start_col, expected_arrival_count;
         __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
             layer = instruction[1]; // in units of 1
             start_col = instruction[2]; // in units of 1
+            expected_arrival_count = instruction[3];
         }
         __device__ inline parsed_instruction(state<config> &s): parsed_instruction(s.instruction()) {}
     };
     static __device__ inline parsed_instruction parse_instruction(const globals &g, state<config> &s) {
-        return parsed_instruction{s.instruction()[1], s.instruction()[2]};
+        return parsed_instruction{s.instruction()[1], s.instruction()[2], s.instruction()[3]};
     }
     __device__ static inline semaphore &inputs_arrived(state<config> &s, int id) {
         return s.semaphores()[id];
@@ -95,7 +96,7 @@ template<typename config=config, int _OP_IDX=0> struct MatvecOp {
             else if(laneid() == 31) {
                 int activation_page = get_activation_page(s);
                 s.wait_page_ready(activation_page);
-                while(*(volatile int *)&g.Bar[{inst.layer, OP_IDX, 0}] == 0) __nanosleep(20);
+                while(*(volatile int *)&g.Bar[{inst.layer, OP_IDX, 0}] != inst.expected_arrival_count) __nanosleep(20);
                 s.record(24);
                 auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                 tma::expect(activations_arrived(s), activations);

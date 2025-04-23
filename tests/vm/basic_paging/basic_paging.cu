@@ -59,10 +59,8 @@ template<typename config=config> struct TestOp {
                 if(threadIdx.x == 0) {
                     // printf("Consumer setting page finished for page %d\n", page_id);
                     // Let's simulate reserving the first 8 pages as persistent scratch.
-                    if(page_id >= 8) {
-                        printf(RED_TEXT "Consumer setting page finished for page %d\n" RESET_TEXT, page_id);
-                        kittens::arrive(s.page_finished[page_id], config::NUM_CONSUMER_WARPS);
-                    }
+                    // printf(RED_TEXT "Consumer setting page finished for page %d\n" RESET_TEXT, page_id);
+                    kittens::arrive(s.page_finished[page_id], config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
             }
