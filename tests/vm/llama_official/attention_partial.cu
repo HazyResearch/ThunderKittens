@@ -4,8 +4,8 @@ using namespace kittens;
 using namespace kittens::prototype;
 // using namespace kittens::prototype::vm;
 
-
-namespace kittens::prototype::vm {
+namespace kittens::prototype::vm
+{
 
     using globals = llama_1b_globals;
     using config = default_config;
@@ -28,7 +28,6 @@ namespace kittens::prototype::vm {
     using l_sv = sv_fl<16>;                                    // only 4 values are used
     using o_rt = rt_fl<16, globals::head_dim>;                 // only 4 rows are used
     using o_sv = sv_fl<globals::head_dim>;
-
 
     template <typename Config, typename Globals>
     struct attention_partial
@@ -209,13 +208,13 @@ namespace kittens::prototype::vm {
         {
             if (col_idx >= dst.cols)
                 return;
-    #pragma unroll
+#pragma unroll
             for (int i = 0; i < dst.height; i++)
             {
-    #pragma unroll
+#pragma unroll
                 for (int j = 0; j < dst.width; j++)
                 {
-    #pragma unroll
+#pragma unroll
                     for (int k = 0; k < dst.packed_per_tile; k++)
                     {
                         const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2);
@@ -251,7 +250,7 @@ namespace kittens::prototype::vm {
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
             constexpr int memcpy_per_row = Globals::head_dim / elem_per_memcpy;            // 8
 
-            const typename Globals::activations_t::dtype* src_ptr = &src.raw_ptr[q_head_start_idx * Globals::head_dim];
+            const typename Globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * Globals::head_dim];
             uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * Globals::head_dim]));
 
             int laneid = warp::laneid();
@@ -306,8 +305,8 @@ namespace kittens::prototype::vm {
                     int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads) + inst.kv_head_idx}] != 4 || // K
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads + Globals::num_kv_heads) + inst.kv_head_idx}] != 4) // V
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads) + inst.kv_head_idx}] != 4 ||                       // K
+                           *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(Globals::num_attention_heads + Globals::num_kv_heads) + inst.kv_head_idx}] != 4) // V
                         __nanosleep(20);
 
                     // Run the pipeline!
@@ -347,9 +346,9 @@ namespace kittens::prototype::vm {
                     parsed_instruction inst{s};
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 0}] != 4 ||
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 1}] != 4 ||
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 2}] != 4 ||
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 3}] != 4)
+                           *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 1}] != 4 ||
+                           *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 2}] != 4 ||
+                           *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 3}] != 4)
                         __nanosleep(20);
                     warp::sync();
 
@@ -464,8 +463,16 @@ namespace kittens::prototype::vm {
             }
         };
         struct storer
+        {
+            static __device__ void run(const Globals &g, state<Config> &s)
             {
-                static __device__ void run(const Globals &g, state<Config> &s)
+                parsed_instruction inst{s};
+                int laneid = warp::laneid();
+                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
+                int q_head_vec_start_idx = q_head_start_idx % 16;
+
+                // Store partial attention output to global memory
+                if (laneid == 0)
                 {
                     parsed_instruction inst{s};
                     int laneid = warp::laneid();
@@ -483,32 +490,31 @@ namespace kittens::prototype::vm {
                         tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 3, 0});
                     }
 
-                // Store LSE to global memory
-                if (laneid < GQA_RATIO)
-                {
-                    l_sv &L_smem = get_L_smem(s);
-                    wait(L_arrived(s), 0);
-                    // Can't do anything fancy with writing 4 spread-out values.
-                    // We can do this in the consumer if we want to (without using smem)
-                    float tmp;
-                    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
-                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
-                    asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
-                    asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
-                }
-                warp::sync(); // ensure all writes are committed
+                    // Store LSE to global memory
+                    if (laneid < GQA_RATIO)
+                    {
+                        l_sv &L_smem = get_L_smem(s);
+                        wait(L_arrived(s), 0);
+                        // Can't do anything fancy with writing 4 spread-out values.
+                        // We can do this in the consumer if we want to (without using smem)
+                        float tmp;
+                        uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
+                        float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
+                        asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
+                        asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
+                    }
+                    warp::sync(); // ensure all writes are committed
 
-                // Wait and finish
-                if (laneid == 0)
-                {
-                    tma::store_async_wait();
-                    finish_QOL_page(s);
-                    // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
+                    // Wait and finish
+                    if (laneid == 0)
+                    {
+                        tma::store_async_wait();
+                        finish_QOL_page(s);
+                        // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
+                        atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
+                    }
+                    warp::sync();
                 }
-                warp::sync();
-            }
+            };
         };
     };
-
-}
