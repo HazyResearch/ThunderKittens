@@ -44,7 +44,7 @@ struct globals
 template <typename config = config, int _OP_IDX = 0>
 struct SiLU_MLPOp
 {
-    static constexpr int opcode = 3;
+    static constexpr int opcode = 4;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     struct parsed_instruction
     {
@@ -123,16 +123,15 @@ struct SiLU_MLPOp
             }
 
             parsed_instruction inst{s};
-            // clear scratch buffer
+            // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
             ((int*)s.scratch())[laneid()] = 0;
-            warp::sync();
+            warp::sync(); // done, now we can proceed to other things.
 
             // 1) UP projections
             if (laneid() < UP_PAGES)
             {
                 int pg = get_up_page(s, laneid());
                 s.wait_page_ready(pg);
-                s.record(16 + laneid());
                 auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
                 tma::expect(up_arrived(s,laneid()), chunk);
                 tma::load_async(chunk, g.UP_PROJ_W,
@@ -146,7 +145,6 @@ struct SiLU_MLPOp
                 int idx = laneid() - UP_PAGES;
                 int pg  = get_gate_page(s, idx);
                 s.wait_page_ready(pg);
-                s.record(16 + laneid());
                 auto &chunk = reinterpret_cast<st_bf<16,512>&>(s.pages[pg]);
                 tma::expect(gate_arrived(s,idx), chunk);
                 tma::load_async(chunk, g.GATE_PROJ_W,
@@ -162,7 +160,6 @@ struct SiLU_MLPOp
                 // wait on barrier from previous op
                 while (*(volatile int*)&g.Bar[{inst.layer, OP_IDX, 0}] == 0)
                     __nanosleep(20);
-                s.record(24);
                 auto &buf = reinterpret_cast<sv_bf<2048>&>(s.pages[pg]);
                 tma::expect(in_arrived(s), buf);
                 tma::load_async(buf, g.INP, {}, in_arrived(s));
@@ -196,126 +193,104 @@ struct SiLU_MLPOp
     {
         static __device__ void run(const globals &g, state<config> &s)
         {
-            int group  = warpgroup::groupid();     // which weight‐page group
-            int warpid = warpgroup::warpid();      // which “lane‐block”
-            int lid    = laneid();                 // 0–31
-
             if ( laneid() == 0 && warpid == 0 ) { 
                 printf("Inside consumer run!\n");
             }
 
             //--------------------------------------------------
-            // 1) LOAD INPUT ACTIVATIONS
+            // LOAD INPUT ACTIVATIONS
             //--------------------------------------------------
+            rt_bf<16, 128> weights, gate_weights, broadcast_activations, gate_broadcast_activations;
+            typename rt_bf<16, 128>::row_vec activations_vec;
+            typename rt_bf<16, 128>::col_vec output_col_format, gate_output_col_format;
+            rv_bf<16> output, gate_output;
+            int group_id = warpgroup::groupid();
+            int warp_id = warpgroup::warpid(); // id within the warpgroup
+
+            // Next we need to load the activations
             wait(in_arrived(s), 0);
-            int in_pg = get_input_page(s);
-            typename rt_bf<16, 128>::row_vec x_vec;
-            // copy the 16×128bfslice out of shared pages
-            sv_bf<128>(&in_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[in_pg]);
-            warp::load(x_vec, in_smem[warp::warpid()]);
+            // reinterpret the activations page as sv_bf<128>[16]
+            int activation_page = get_input_page(s);
+            sv_bf<128> (&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
+            warp::load(activations_vec, activations_smem[warpid()]);
             warp::sync();
-            warp::arrive(s.page_finished[in_pg]); // just 1 is sufficient
+            warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
 
 
             //--------------------------------------------------
-            // 2) UP PROJECTION
+            // UP MATVEC
             //--------------------------------------------------
-            wait(up_arrived(s, group), 0);
-            int up_pg = get_up_page(s, group);
-            st_bf<16,128> up_smem[4];
-            memcpy(up_smem, &s.pages[up_pg], sizeof(up_smem));
-            rt_bf<16,128> up_reg;
-            warp::load(up_reg, up_smem[warpid]);
+            wait(up_arrived(s, group_id), 0);
+            int weight_page = get_up_page(s, group_id);
+            st_bf<16, 128> (&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
+            warp::load(weights, weights_smem[warp_id]);
             warp::sync();
-            warp::arrive(s.page_finished[up_pg], config::NUM_CONSUMER_WARPS);
-
-            // broadcast & mul
-            rt_bf<16,128> acc;
-            warp::broadcast_col(acc, x_vec);
-            warp::mul(acc, acc, up_reg);
-
-
-            //--------------------------------------------------
-            // 3) GATE PROJECTION
-            //--------------------------------------------------
-            wait(gate_arrived(s, group), 0);
-            int gate_pg = get_gate_page(s, group);
-            st_bf<16,128> gate_smem[4];
-            memcpy(gate_smem, &s.pages[gate_pg], sizeof(gate_smem));
-            rt_bf<16,128> gate_reg;
-            warp::load(gate_reg, gate_smem[warpid]);
+            warp::arrive(s.page_finished[weight_page], config::NUM_CONSUMER_WARPS/4); // this is called by each warp in the warpgroup
+            
+            // broadcast this into a tile
+            warp::broadcast_col(broadcast_activations, activations_vec);
+            warp::mul(broadcast_activations, broadcast_activations, weights);
+            warp::row_sum(output_col_format, broadcast_activations);
+            warp::copy(output, output_col_format);
             warp::sync();
-            warp::arrive(s.page_finished[gate_pg], config::NUM_CONSUMER_WARPS);
-
-            // mul in place
-            warp::mul(acc, acc, gate_reg);
 
 
             //--------------------------------------------------
-            // 4) SiLU FUSION (in‑place on acc)
+            // GATE MATVEC
             //--------------------------------------------------
-            #pragma unroll
-            for (int i = 0; i < 16; ++i) {
-                #pragma unroll
-                for (int j = 0; j < 4; ++j) {
-                    auto & d = acc.tiles[0][i].data[j];
-                    float  f0 = __bfloat162float(d.x);
-                    float  f1 = __bfloat162float(d.y);
-                    float  s0 = f0/(1+expf(-f0));
-                    float  s1 = f1/(1+expf(-f1));
-                    d.x = __float2bfloat16(f0 * s0);
-                    d.y = __float2bfloat16(f1 * s1);
-                }
+            wait(gate_arrived(s, group_id), 0);
+            int gate_weight_page = get_gate_page(s, group_id);
+            st_bf<16, 128> (&gate_weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[gate_weight_page]);
+            warp::load(gate_weights, gate_weights_smem[warp_id]);
+            warp::sync();
+            warp::arrive(s.page_finished[gate_weight_page], config::NUM_CONSUMER_WARPS/4); // this is called by each warp in the warpgroup
+            
+            // broadcast this into a tile
+            warp::broadcast_col(gate_broadcast_activations, activations_vec);
+            warp::mul(gate_broadcast_activations, gate_broadcast_activations, gate_weights);
+            warp::row_sum(gate_output_col_format, gate_broadcast_activations);
+            warp::copy(gate_output, gate_output_col_format);
+            warp::sync();
+
+            float* scratch_f32 = (float*)s.scratch();
+            // 1) accumulate partial sums from every consumer warp
+            if (laneid() < 16) {
+                atomicAdd(&scratch_f32[laneid()     ], float(output      [0][0]));   // up
+                atomicAdd(&scratch_f32[laneid() + 16], float(gate_output [0][0]));   // gate
             }
-            warp::sync();
-
-            //--------------------------------------------------
-            // 5) ROW‐SUM → out_vec (16 lanes)
-            //--------------------------------------------------
-            rt_bf<16,128>::col_vec col;
-            rv_bf<16> out_vec;
-            warp::row_sum(col, acc);
-            warp::copy(out_vec, col);
-            warp::sync();
-
-            // --------------------------------------------------
-            // 6) ATOMIC ADD EACH LANE INTO SCRATCH
-            // --------------------------------------------------
-            // Now the first 16 threads have the output.
-            if (laneid() < 16)
-            { // this might be a bad idea but yolo, it's probably an okay start
-                // and fortunately this is code where ncu will tell us if it's bad..
-                // atomicAdd(&((bf16 *)s.scratch())[laneid()], out_vec[0][0]);
-            }
-            warp::sync();
-            warp::arrive(out_arrived(s));
+            warp::sync();                             // all adds have landed
+            warp::arrive(out_arrived(s));  // let the storer know we’re done 
         }
     };
 
 
     struct storer
     {
+        // Uses 4 full pages for outputs.
         static __device__ void run(const globals &g, state<config> &s) {
-            
-            if ( laneid() == 0 && warpgroup::warpid() == 0 ) { 
-                printf("Inside storer run!\n");
-            }
-
             parsed_instruction inst{s};
 
             if (laneid() == 0) {
-                // wait for all consumer warps
                 wait(out_arrived(s), 0);
-                // read back the float sums
-                void *scratch = s.scratch();
-                // now treat that flat array as an sv_bf<16> tile
-                sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
-                tma::store_async(g.O, output, { inst.start_col/16 });
+
+                float* scratch_f32 = (float*)s.scratch();
+                bf16*  scratch_bf16 = (bf16*)scratch_f32;    // alias
+                /* fuse up * SiLU(gate) once, in float, then cast */
+                #pragma unroll
+                for (int i = 0; i < 16; ++i) {
+                    float up   = scratch_f32[i];
+                    float gate = scratch_f32[i + 16];
+                    float silu = gate / (1.f + expf(-gate));
+                    scratch_bf16[i] = bf16(up * silu);
+                }
+
+                sv_bf<16>& vec = *reinterpret_cast<sv_bf<16>*>(scratch_bf16);
+                tma::store_async(g.O, vec, {inst.start_col/16});
                 tma::store_async_wait();
             }
 
             warp::sync();
-            asm volatile("fence.acq_rel.gpu;\n");
+            asm volatile("fence.acq_rel.gpu;");
             if (laneid() == 0) {
                 if constexpr (OP_IDX == g.Bar.rows() - 1)
                     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);

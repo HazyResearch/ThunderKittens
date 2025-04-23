@@ -40,6 +40,8 @@ def silu_mlp_reference(inp: Tensor, up_proj: nn.Linear, gate_proj: nn.Linear) ->
 
     post_silu = F.silu(gate_matvec) * up_matvec
 
+    # post_silu = gate_matvec * up_matvec
+
     return post_silu
 
 
@@ -138,12 +140,20 @@ print(f"GB/s: {(2 * 2048 * 2048 * 1e-9) / (time_per_iter * 1e-6)}\n")
 
 
 print("Test completed successfully!")
-O_numpy = O.float().cpu().numpy()
-print(f"Shape = {O_numpy.shape}")
-print(f"Output = {O_numpy}, Mean = {O_numpy.mean()}, Max = {O_numpy.max()}, Min = {O_numpy.min()}")
 
+print("Output tensor:")
+O_numpy = O.float().cpu().numpy()
+print(f"-- Shape = {O_numpy.shape}")
+print(f"-- Output = {O_numpy}, Mean = {O_numpy.mean()}, Max = {O_numpy.max()}, Min = {O_numpy.min()}")
+
+
+print(f"Reference tensor:")
 O2 = reference_go()
 O2_numpy = O2.float().cpu().numpy()
+print(f"-- Shape = {O2_numpy.shape}")
+print(f"-- Output = {O2_numpy}, Mean = {O2_numpy.mean()}, Max = {O2_numpy.max()}, Min = {O2_numpy.min()}")
+print("")
+
 
 diff = O - O2
 adiff = diff.abs()
