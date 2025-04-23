@@ -52,7 +52,7 @@ struct globals_t
     using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>>;
 
     using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>>;
-    using rope_table_t = gl<bf16, 1, 1, -1, head_dim, sv_bf<head_dim>>;
+    using rope_table_t = gl<float32, 1, 1, -1, head_dim, sv_bf<head_dim>>;
     using kv_cache_t = gl<bf16, 1, -1, -1, head_dim, st_bf<kv_block_size, head_dim>>;
 
     // max attention partials == sm_count
@@ -75,6 +75,10 @@ struct globals_t
     weights_t up_weights;
     weights_t gate_weights;
     weights_big_indim_t down_weights;
+
+    // kv cache
+    kv_cache_t k_cache;
+    kv_cache_t v_cache;
 
     // other buffers
     rope_table_t rope_cos;
