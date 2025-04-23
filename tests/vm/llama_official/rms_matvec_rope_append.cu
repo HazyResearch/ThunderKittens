@@ -87,13 +87,13 @@ namespace kittens::prototype::vm {
                     s.wait_page_ready(get_rope_cos_page(s));
                     auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
                     tma::expect(rope_cos_arrived(s), rope_cos);
-                    tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_arrived(s));
+                    tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
                 } else if (laneid() == 7) {
                     // Rope sin
                     s.wait_page_ready(get_rope_sin_page(s));
                     auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
                     tma::expect(rope_sin_arrived(s), rope_sin);
-                    tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_arrived(s));
+                    tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
                 } else if (laneid() >= 8 && laneid() <= 12) {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
@@ -236,12 +236,12 @@ namespace kittens::prototype::vm {
                         int base_index = (inst.qkv_block_idx - K_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                        tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     } else { // V
                         int base_index = (inst.qkv_block_idx - V_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                        tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
 
                     tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
