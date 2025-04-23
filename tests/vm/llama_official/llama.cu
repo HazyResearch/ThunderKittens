@@ -2,6 +2,10 @@
 
 #include "pyutils/pyutils.cuh"
 
+using namespace kittens;
+using namespace kittens::prototype;
+using namespace kittens::prototype::vm;
+
 PYBIND11_MODULE(llama, m)
 {
     m.doc() = "";
@@ -36,6 +40,6 @@ PYBIND11_MODULE(llama, m)
         &llama_1b_globals::silu_out,
 
         &llama_1b_globals::pos_id,
-        &llama_1b_globals::softmax_temp,
+        &llama_1b_globals::attn_scale,
         &llama_1b_globals::rms_norm_eps);
 }
