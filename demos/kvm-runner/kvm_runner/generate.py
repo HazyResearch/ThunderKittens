@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pydra
 import torch
+from kvm_runner.kvm import KVM_Runner
 from kvm_runner.llama import LlamaForCausalLM
 from kvm_runner.python_vm import PyVM_Runner
 from kvm_runner.scheduler import PrintInfo
@@ -30,9 +31,6 @@ class ScriptConfig(pydra.Config):
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
-
-        if self.mode == "kvm":
-            assert self.kvm_dir is not None, "kvm_dir must be provided for kvm mode"
 
 
 def pytorch_model_generate(
@@ -89,7 +87,17 @@ def kvm_generate(
     output_tokens: Tensor,
     prompt_len: int,
 ):
-    raise NotImplementedError
+    assert config.kvm_dir is not None
+    runner = KVM_Runner(
+        model,
+        kvm_dir=config.kvm_dir,
+        num_attention_partitions=config.num_attention_partitions,
+    )
+
+    for i in tqdm(range(1, config.ntok)):
+        input_ids = output_tokens[i - 1 : i]
+        output_ids = runner.run(input_ids, pos_id=prompt_len + i)
+        output_tokens[i] = output_ids
 
 
 def main(config: ScriptConfig):
