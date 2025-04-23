@@ -19,7 +19,7 @@ using block_st = st_bf<16, 128>;
 using block_rv = rv_bf<16>;
 
 template <typename config = config, typename globals = globals>
-struct upgate
+struct rms_upgate_silu
 {
     static constexpr int opcode = OPCODE_RMS_DoubleMatVecSiLU; // Op index within the layer -- controls which barrier to listen to.
     static constexpr int NUM_STAGES = 3;

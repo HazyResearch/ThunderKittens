@@ -13,7 +13,7 @@ using o_final_sv = sv_bf<globals::head_dim>;
 
 
 template <typename config = config, typename globals = globals>
-struct rope_gqa_reduction_op {
+struct attention_reduction {
     static constexpr int opcode = OPCODE_AttentionReduction;
     static constexpr int opcode_partial = OPCODE_PartialAttention;
     static constexpr int NUM_STAGES = 3;
