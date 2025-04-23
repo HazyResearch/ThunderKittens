@@ -24,8 +24,8 @@ namespace kittens::prototype::vm {
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];               // in units of 1
-                start_output_col = instruction[2];    // in units of 1
-                start_reduction_col = instruction[3]; // in units of 1
+                start_output_col = instruction[2];    // in units of 1 (0, 16, 32, ..., 2032)
+                start_reduction_col = instruction[3]; // in units of 1 (0, 2048, 4096, 6144)
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -102,8 +102,8 @@ namespace kittens::prototype::vm {
                     kittens::tma::expect(activations_arrived(s), activations);
 
                     auto& InputActivations = g.*InputActivationsPtr;      // object in global memory
-                    kittens::tma::load_async(activations, InputActivations, {}, activations_arrived(s));
-                }
+                    kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
+                }\
                 else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
                 {
                     int unused_page = s.pid(kittens::laneid());
@@ -205,8 +205,8 @@ namespace kittens::prototype::vm {
     struct downproj : MatVecAddOp<
         128, 
         &Globals::down_weights, 
-        &Globals::attn_out,   /// TODO: CHECK
-        &Globals::attn_out, 
+        &Globals::silu_out,   /// TODO: CHECK
+        &Globals::hidden_states, 
         OPCODE_DownProjResidual, 
         OPCODE_DownProjResidual - 1,
         Config> { };
@@ -216,7 +216,7 @@ namespace kittens::prototype::vm {
         128, 
         &Globals::o_weights, 
         &Globals::attn_out, 
-        &Globals::attn_out, 
+        &Globals::hidden_states, 
         OPCODE_O_ProjResidual, 
         OPCODE_O_ProjResidual - 1,
         Config> { };
