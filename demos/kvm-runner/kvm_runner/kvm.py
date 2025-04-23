@@ -2,8 +2,51 @@ import sys
 from pathlib import Path
 
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import schedule_model
+from kvm_runner.scheduler import Globals, schedule_model
 from torch import Tensor
+
+
+def get_kvm_func(kvm_dir: Path):
+    sys.path.append(str(kvm_dir.expanduser().absolute()))
+    from kvm_llama import kvm_llama  # type: ignore
+
+    return kvm_llama
+
+
+def interpret_with_kvm(
+    kvm_func,
+    globs: Globals,
+):
+    kvm_func(
+        # vm stuff
+        globs.barriers,
+        globs.instructions,
+        globs.timings,
+        # weights
+        globs.qkv_proj,
+        globs.attn_ln_weight,
+        globs.o_proj,
+        globs.mlp_ln_weight,
+        globs.up_proj,
+        globs.gate_proj,
+        globs.down_proj,
+        globs.k_cache,
+        globs.v_cache,
+        # rope
+        globs.rope_cos,
+        globs.rope_sin,
+        # activations
+        globs.hidden_states,
+        globs.post_ln_rope_q,
+        globs.attn_out,
+        globs.attn_lse_intermediates,
+        globs.attn_out_intermediates,
+        globs.silu_out,
+        # scalars
+        globs.pos_id,
+        globs.attn_scale,
+        globs.rms_norm_eps,
+    )
 
 
 class KVM_Runner:
@@ -27,36 +70,6 @@ class KVM_Runner:
             ntok=ntok,
         )
 
-    def invoke(self):
-        self.kvm_func(
-            # vm stuff
-            self.globals.barriers,
-            self.globals.instructions,
-            self.globals.timings,
-            # weights
-            self.globals.qkv_proj,
-            self.globals.attn_ln_weight,
-            self.globals.o_proj,
-            self.globals.mlp_ln_weight,
-            self.globals.up_proj,
-            self.globals.gate_proj,
-            self.globals.down_proj,
-            # rope
-            self.globals.rope_cos,
-            self.globals.rope_sin,
-            # activations
-            self.globals.hidden_states,
-            self.globals.post_ln_rope_q,
-            self.globals.attn_out,
-            self.globals.attn_lse_intermediates,
-            self.globals.attn_out_intermediates,
-            self.globals.silu_out,
-            # scalars
-            self.globals.pos_id,
-            self.globals.attn_scale,
-            self.globals.rms_norm_eps,
-        )
-
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
             input_ids=input_ids,
@@ -70,7 +83,7 @@ class KVM_Runner:
 
         self.globals.barriers.zero_()
 
-        self.invoke()
+        interpret_with_kvm(self.kvm_func, self.globals)
 
         output_hiddens = self.globals.hidden_states
 
