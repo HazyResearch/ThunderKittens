@@ -1,4 +1,3 @@
-
 #include "llama.cuh"
 
 using namespace kittens;
@@ -239,23 +238,23 @@ struct attention_partial
     // Mainly two things are different:
     //   1. Ignores Q global dimensions
     //   2. Only loads 4 rows of Q, not 16 (assumes GQA_RATIO == 4) --> only 32 calls needed, so single call per thread
-    __device__ static inline void load_Q_async(q_st &dst, const globals::q_layout &src, const int q_head_start_idx /*0, 4, 8, ...*/)
+    __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/)
     {
-        static_assert(HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
+        static_assert(globals::head_dim == 64 && GQA_RATIO == 4, "Fix this function.");
         using T = typename q_st::dtype;
         constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
-        constexpr int memcpy_per_row = HEAD_DIM / elem_per_memcpy;                     // 8
+        constexpr int memcpy_per_row = globals::head_dim / elem_per_memcpy;            // 8
 
-        globals::q_layout::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * HEAD_DIM];
-        uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * HEAD_DIM]));
+        globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * globals::head_dim];
+        uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * globals::head_dim]));
 
         int laneid = warp::laneid();
         int row = laneid / memcpy_per_row;
-        int col = (laneid * elem_per_memcpy) % HEAD_DIM;
+        int col = (laneid * elem_per_memcpy) % globals::head_dim;
 
         // everything should fit!
         asm volatile(
-            "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::"r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * HEAD_DIM + col])
+            "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::"r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * globals::head_dim + col])
             : "memory");
         asm volatile("cp.async.commit_group;\n" ::: "memory");
     }
@@ -295,14 +294,14 @@ struct attention_partial
                 // Setup
                 parsed_instruction inst{s};
                 int seq_len = g.pos_id + 1;
-                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
+                int total_attn_blocks = (seq_len + globals::kv_block_size - 1) / globals::kv_block_size;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                 // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + inst.kv_head_idx}] != 4 ||              // K
-                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, globals::num_attention_heads + inst.kv_head_idx}] != 4 ||                       // K
+                       *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, globals::num_attention_heads + globals::num_kv_heads + inst.kv_head_idx}] != 4) // V
                     __nanosleep(20);
 
                 // Run the pipeline!
@@ -341,22 +340,22 @@ struct attention_partial
                 // Wait for the previous ops to finish
                 parsed_instruction inst{s};
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
-                while (*(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 0}] != 4 ||
-                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 1}] != 4 ||
-                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 2}] != 4 ||
-                       *(volatile int *)&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx + 3}] != 4)
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 0}] != 4 ||
+                       *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 1}] != 4 ||
+                       *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 2}] != 4 ||
+                       *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + 3}] != 4)
                     __nanosleep(20);
                 warp::sync();
 
                 // Initiate the load on Q
                 wait_QOL_page(s);
                 q_st &Q_smem = get_Q_smem(s);
-                load_Q_async(Q_smem, g.Q, q_head_start_idx);
+                load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
 
                 // Setup
                 int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
                 int seq_len = g.pos_id + 1;
-                int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
+                int total_attn_blocks = (seq_len + globals::kv_block_size - 1) / globals::kv_block_size;
                 int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                 int start_blk_idx = inst.partial_idx * blocks_per_partial;
                 int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
@@ -399,8 +398,8 @@ struct attention_partial
                     warp::arrive(K_finished(s, stage));
 
                     // Mask out invalid positions at the end
-                    if ((i + start_blk_idx + 1) * ATTN_BLOCK_SIZE > seq_len)
-                        right_fill(attn_fl_reg, attn_fl_reg, seq_len % ATTN_BLOCK_SIZE, -999999999999.f);
+                    if ((i + start_blk_idx + 1) * globals::kv_block_size > seq_len)
+                        right_fill(attn_fl_reg, attn_fl_reg, seq_len % globals::kv_block_size, -999999999999.f);
 
                     // Obtain maximums per row (which is per head)
                     warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max
@@ -471,10 +470,10 @@ struct attention_partial
                 {
                     o_sv(&O_smem)[4] = get_O_smem(s);
                     wait(O_arrived(s), 0);
-                    tma::store_async<cache_policy::NORMAL>(g.O, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.O, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.O, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.O, O_smem[3], {0, q_head_start_idx + 3, inst.partial_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 0, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 1, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 2, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {inst.layer_idx, inst.partial_idx, q_head_start_idx + 3, 0});
                 }
 
                 // Store LSE to global memory
@@ -486,7 +485,7 @@ struct attention_partial
                     // We can do this in the consumer if we want to (without using smem)
                     float tmp;
                     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
-                    float *dst_ptr = (float *)&g.L.raw_ptr[(q_head_start_idx + laneid) * g.L.cols() + inst.partial_idx];
+                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
                     asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
                     asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
                 }
@@ -498,7 +497,7 @@ struct attention_partial
                     tma::store_async_wait();
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.barriers[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx}], 1);
                 }
                 warp::sync();
             }
