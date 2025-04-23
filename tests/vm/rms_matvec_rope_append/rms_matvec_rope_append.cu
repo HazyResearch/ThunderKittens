@@ -6,10 +6,8 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
-constexpr int QKV_BLOCK_SIZE = 16;
-constexpr int NUM_Q_HEADS = 32;
-constexpr int NUM_KV_HEADS = 8;
-constexpr int HEAD_DIM = 64;
+static constexpr int QKV_BLOCK_SIZE = 16;
+static constexpr int HEAD_DIM = 64;
 
 using config = default_config;
 struct globals {
@@ -18,9 +16,9 @@ struct globals {
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using activation_layout = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>; // (hidden_dim,)
     using rms_scale_layout = gl<bf16, 1, 1, 16, 2048, sv_bf<2048>, sv_bf<16>>; // (num_layers, hidden_dim)
-    using proj_weight_layout = gl<bf16, 1, 16, 3072, 2048, st_bf<16, 512>>; // (num_layers, qkv_dims, hidden_dim)
-    using rope_table_layout = gl<bf16, 1, 1, -1, 64, qkv_rope_sv>; // (N_max, head_dim)
-    using kv_cache_layout = gl<bf16, 16, -1, 8, 64, qkv_rope_sv>; // (num_layers, N_max, num_kv_heads, head_dim)
+    using proj_weight_layout = gl<bf16, 1, 16, 3072, 2048, st_bf<16, 512>>;    // (num_layers, qkv_dims, hidden_dim)
+    using rope_table_layout = gl<bf16, 1, 1, -1, 64, sv_bf<16>>; // (N_max, head_dim)
+    using kv_cache_layout = gl<bf16, 16, -1, 8, 64, sv_bf<16>>;  // (num_layers, N_max, num_kv_heads, head_dim)
     instruction_layout instructions;
     barrier_layout barriers;
     timing_layout timings;
@@ -44,6 +42,8 @@ struct RMS_MatVec_Rope_Append_Op {
     static constexpr int opcode = 1;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     static constexpr int NUM_WEIGHT_PAGES = 4;
+    static constexpr int K_BLK_START = 2048 / QKV_BLOCK_SIZE;
+    static constexpr int V_BLK_START = 2560 / QKV_BLOCK_SIZE;
 
     struct parsed_instruction {
         int layer_idx;
@@ -81,7 +81,7 @@ struct RMS_MatVec_Rope_Append_Op {
             init_semaphore(rms_scale_arrived(s), 1);
             init_semaphore(rope_cos_arrived(s), 1);
             init_semaphore(rope_sin_arrived(s), 1);
-            init_semaphore(outputs_arrived(s), 16);
+            init_semaphore(outputs_arrived(s), 1);
             return 9;
         }
     };
@@ -101,7 +101,7 @@ struct RMS_MatVec_Rope_Append_Op {
             } else if (laneid() == 4) {
                 // Activation
                 s.wait_page_ready(get_activation_page(s));
-                while (*(volatile int *)&g.barriers[{inst.layer_idx, OP_IDX, 0}] == 0) __nanosleep(20);
+                while (*(volatile int *)&g.barriers[{inst.layer_idx, OP_IDX, 0}] != 512) __nanosleep(20);
                 auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                 tma::expect(activations_arrived(s), activations);
                 tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
@@ -115,14 +115,14 @@ struct RMS_MatVec_Rope_Append_Op {
                 // Rope cos
                 s.wait_page_ready(get_rope_cos_page(s));
                 auto &rope_cos = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_cos_page(s)]);
-                tma::expect(rope_cos_ready(s), rope_cos);
-                tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_ready(s));
+                tma::expect(rope_cos_arrived(s), rope_cos);
+                tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_arrived(s));
             } else if (laneid() == 7) {
                 // Rope sin
                 s.wait_page_ready(get_rope_sin_page(s));
                 auto &rope_sin = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_sin_page(s)]);
-                tma::expect(rope_sin_ready(s), rope_sin);
-                tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_ready(s));
+                tma::expect(rope_sin_arrived(s), rope_sin);
+                tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_arrived(s));
             } else if (laneid() >= 8 && laneid() <= 12) {
                 // Unused pages
                 s.wait_page_ready(s.pid(laneid()));
@@ -139,13 +139,17 @@ struct RMS_MatVec_Rope_Append_Op {
     struct consumer {
         static __device__ void run(const globals &g, state<config> &s) {
             // Setup
+            parsed_instruction inst{s};
             rt_bf<16, 128> weights, broadcast_activations;
             typename rt_bf<16, 128>::row_vec activations_vec;
             typename rt_fl<16, 128>::row_vec fl_activations_vec;            
-            typename rt_bf<16, 128>::row_vec rms_scale_vec;
-            typename rt_bf<16, 128>::col_vec output_col_format;
-            rv_bf<16> output;
             rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
+            typename rt_bf<16, 128>::row_vec rms_scale_vec;
+            typename rt_bf<16, 128>::col_vec qkv_proj_partial_col_format;
+            rv_bf<16> qkv_proj_partial;
+            rv_bf<16> qkv_proj;
+            rv_bf<16> rope_cos;
+            rv_bf<16> rope_sin;
             shared_allocator al((int*)s.scratch());
             sv_fl<config::NUM_CONSUMER_WARPS> (&smem_rms_partial_sums) = al.template allocate<sv_fl<config::NUM_CONSUMER_WARPS>> ();
             int group_id = warpgroup::groupid();
@@ -170,13 +174,11 @@ struct RMS_MatVec_Rope_Append_Op {
                 smem_rms_partial_sums[warpid()] = partial_sum;
             }
             group<16>::sync(0);
-            
             warp::load(rms_partial_sums, smem_rms_partial_sums);
             warp::sync();
-            
             float full_sum = warp::sum(rms_partial_sums);
             float variance = full_sum / 2048.0f;
-            float rms_scale = rsqrtf(variance + g.rms_epsilon);
+            float rms_scale = rsqrtf(variance + g.ln_eps);
             
             warp::copy(fl_activations_vec, activations_vec); // reuse the reg vec
             warp::mul(fl_activations_vec, fl_activations_vec, rms_scale);
@@ -202,43 +204,82 @@ struct RMS_MatVec_Rope_Append_Op {
             // Steo 4: Apply QKV projection
             warp::broadcast_col(broadcast_activations, activations_vec);
             warp::mul(broadcast_activations, broadcast_activations, weights);
-            warp::row_sum(output_col_format, broadcast_activations);
-            warp::copy(output, output_col_format);
-            // Now the first 16 threads have the output.
-            if (laneid() < 16)
-            { // this might be a bad idea but yolo, it's probably an okay start
+            warp::row_sum(qkv_proj_partial_col_format, broadcast_activations);
+            warp::copy(qkv_proj_partial, qkv_proj_partial_col_format);
+            // now the first 16 threads have the output.
+            if (laneid() < 16) {
+                // this might be a bad idea but yolo, it's probably an okay start
                 // and fortunately this is code where ncu will tell us if it's bad..
-                atomicAdd(&((bf16 *)s.scratch())[laneid()], output[0][0]);
+                atomicAdd(&((bf16 *)s.scratch())[laneid()], qkv_proj_partial[0][0]);
             }
-            warp::sync();
-            warp::arrive(outputs_arrived(s));
-            if (group<16>::laneid() == 0)
-                s.record(124);
+            group<16>::sync(1); // must wait for all warps to finish atomic add
+
+            // Step 5: Apply RoPE
+            if (warpid() == 0) { // only a single warp needed from here!
+                if (inst.qkv_block_idx < V_BLK_START) { // only Q & K need RoPE
+                    sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
+                    warp::load(qkv_proj, qkv_proj_smem);
+
+                    int rope_cos_page = get_rope_cos_page(s);
+                    sv_bf<16> &rope_cos_smem = reinterpret_cast<sv_bf<16> &>(s.pages[rope_cos_page]);
+                    wait(rope_cos_arrived(s), 0);
+                    warp::load(rope_cos, rope_cos_smem);
+                    warp::arrive(s.page_finished[rope_cos_page], config::NUM_CONSUMER_WARPS);
+                    
+                    int rope_sin_page = get_rope_sin_page(s);
+                    sv_bf<16> &rope_sin_smem = reinterpret_cast<sv_bf<16> &>(s.pages[rope_sin_page]);
+                    wait(rope_sin_arrived(s), 0);
+                    warp::load(rope_sin, rope_sin_smem);
+                    warp::arrive(s.page_finished[rope_sin_page], config::NUM_CONSUMER_WARPS);
+
+                    // Fetch the neighbor values
+                    int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
+                    bf16 pair_val = __shfl_sync(MASK_ALL, qkv_proj[0][0], laneid() + mod);
+
+                    // Compute RoPE in-place
+                    if (laneid() < 16)
+                        qkv_proj[0][0] = qkv_proj[0][0] * rope_cos[0][0] + bf16(-1 * mod) * pair_val * rope_sin[0][0];
+
+                    // Store back to the scratch
+                    warp::store(qkv_proj_smem, qkv_proj);
+                    warp::sync();
+                }
+
+                warp::arrive(outputs_arrived(s));
+            }
         }
     };
     struct storer {
         // Uses 4 full pages for outputs.
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
-            if (laneid() == 0) {
+
+            if (warp::laneid() == 0) {
+                sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                 wait(outputs_arrived(s), 0);
-                s.record(125);
-                void *scratch = s.scratch();
-                sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
-                tma::store_async(g.O, output, {inst.qkv_block_idx});
+
+                if (inst.qkv_block_idx < K_BLK_START) { // Q
+                    tma::store_async<cache_policy::NORMAL>(g.post_ln_rope_q, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
+                } else if (inst.qkv_block_idx < V_BLK_START) { // K
+                    int base_index = (inst.qkv_block_idx - K_BLK_START) * QKV_BLOCK_SIZE;
+                    int head_idx = base_index / HEAD_DIM;
+                    int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
+                    tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                } else { // V
+                    int base_index = (inst.qkv_block_idx - V_BLK_START) * QKV_BLOCK_SIZE;
+                    int head_idx = base_index / HEAD_DIM;
+                    int dim_idx = (base_index % HEAD_DIM) / QKV_BLOCK_SIZE;
+                    tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem, {inst.layer_idx, g.pos_id, head_idx, dim_idx});
+                }
+
                 tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                s.record(126);
             }
+
             warp::sync();
             asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-            if (laneid() == 0) {
-                if constexpr (OP_IDX == g.barriers.rows() - 1)
-                    atomicAdd(&g.barriers[{inst.layer_idx + 1, 0, 0}], 1);
-                else
-                    atomicAdd(&g.barriers[{inst.layer_idx, OP_IDX + 1, 0}], 1);
-            }
-            if (laneid() == 0)
-                s.record(127);
+
+            if (warp::laneid() == 0)
+                atomicAdd(&g.barriers[{inst.layer_idx, OP_IDX + 1, inst.qkv_block_idx / 4}], 1);
         }
     };
 };

@@ -69,6 +69,9 @@ def generate_itb(): # instruction, timings, barriers
     timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
     barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.uint32).to(device=TORCH_DEVICE)
 
+    # Set up the barrier
+    barriers[LAYER_IDX, RMS_MATVEC_ROPE_APPEND_OPCODE - 1, 0] = 512
+
     return instructions, timings, barriers
 
 # Generate inputs
@@ -89,7 +92,21 @@ print('post_ln_rope_q shape:', post_ln_rope_q.shape)
 print('k_cache shape:', k_cache.shape)
 print('v_cache shape:', v_cache.shape)
 print('\nRunning the kernel...')
-# KERNEL LAUNCH HERE!
+rms_matvec_rope_append(
+    instructions,
+    barriers,
+    timings,
+    hidden_states,
+    attn_ln_weight,
+    qkv_proj,
+    rope_cos,
+    rope_sin,
+    post_ln_rope_q,
+    k_cache,
+    v_cache,
+    POS_ID,
+    LN_EPS
+)
 torch.cuda.synchronize(TORCH_DEVICE)
 
 # Run the reference implementation
@@ -128,7 +145,7 @@ end_idx = start_idx + QKV_BLOCK_SIZE
 if start_idx < H_q * D_h: # Q
     print(f'Should have been stored to Q[{start_idx}:{end_idx}]')
     out_kernel = post_ln_rope_q[start_idx:end_idx]
-    out_ref = post_ln_rope_q_ref.view(-1)[start_idx:end_idx]
+    out_ref = post_ln_rope_q_ref[start_idx:end_idx]
 elif start_idx < (H_q + H_kv) * D_h: # K
     start_idx -= D_h * H_q
     end_idx -= D_h * H_q
@@ -145,3 +162,4 @@ print('out_kernel shape:', out_kernel.shape)
 print('out_ref shape:', out_ref.shape)
 print(torch.max(torch.abs(out_kernel - out_ref)))
 print(torch.mean(torch.abs(out_kernel - out_ref)))
+print(barriers[LAYER_IDX, RMS_MATVEC_ROPE_APPEND_OPCODE])

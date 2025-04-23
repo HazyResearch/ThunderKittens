@@ -18,6 +18,23 @@ def get_start_end(block_size: int, block_idx: int):
     end = start + block_size
     return start, end
 
+# For compatibility with our kernel
+# Inefficient but quick impl
+def uninterleave(x: Tensor):
+    assert(len(x.shape) == 1 and x.shape[0] % 64 == 0)
+    y = torch.zeros_like(x)
+    for i in range(0, x.shape[0], 64):
+        y[i:i+32] = x[i:i+64:2]
+        y[i+32:i+64] = x[i+1:i+64:2]
+    return y
+def interleave(x: Tensor):
+    assert(len(x.shape) == 1 and x.shape[0] % 64 == 0)
+    y = torch.zeros_like(x)
+    for i in range(0, x.shape[0], 64):
+        y[i:i+64:2] = x[i:i+32]
+        y[i+1:i+64:2] = x[i+32:i+64]
+    return y
+
 # A little modification on the inputs
 def layer_norm_matvec_rope_append(
     # Globals
@@ -53,6 +70,7 @@ def layer_norm_matvec_rope_append(
         post_ln,
         "o i, i -> o",
     )
+    matmul_output = uninterleave(matmul_output)
 
     k_start = num_attention_heads * head_dim
     v_start = k_start + num_kv_heads * head_dim
@@ -68,10 +86,14 @@ def layer_norm_matvec_rope_append(
     q_with_rope, k_with_rope = apply_rotary_pos_emb(
         q=q_arr,
         k=k_arr,
-        cos=rope_cos[pos_id],
-        sin=rope_sin[pos_id],
+        cos=uninterleave(rope_cos[pos_id]),
+        sin=uninterleave(rope_sin[pos_id]),
         unsqueeze_dim=0,
     )
+
+    q_with_rope = interleave(q_with_rope.view(-1)).reshape(32, 64)
+    k_with_rope = interleave(k_with_rope.view(-1)).reshape(8, 64)
+    v = interleave(v.view(-1))
 
     start, end = get_start_end(qkv_block_size, output_block_idx)
     if start < k_start:
