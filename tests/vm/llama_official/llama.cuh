@@ -29,8 +29,6 @@ namespace prototype
 namespace vm
 {
 
-using config = default_config;
-
 template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matvec_block_size, int _sm_count>
 struct globals_t
 {
