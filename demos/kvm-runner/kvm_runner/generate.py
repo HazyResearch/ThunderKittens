@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+
 import pydra
 import torch
 from kvm_runner.llama import LlamaForCausalLM
@@ -23,10 +26,14 @@ class ScriptConfig(pydra.Config):
     print_name_filter: list[str] | None = None
     print_state_filter: list[str] | None = None
     interleave_rope: bool = False
+    kvm_dir: Path | None = None
 
     def finalize(self):
-        if self.mode == "kvm":
+        if self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
+
+        if self.mode == "kvm":
+            assert self.kvm_dir is not None, "kvm_dir must be provided for kvm mode"
 
 
 def pytorch_model_generate(
@@ -77,15 +84,12 @@ def pyvm_generate(
         output_tokens[i] = output_ids
 
 
-def kvm_interpreter_generate(
+def kvm_generate(
     config: ScriptConfig,
     model: LlamaForCausalLM,
     output_tokens: Tensor,
     prompt_len: int,
 ):
-    """
-    The magic goes here!
-    """
     raise NotImplementedError
 
 
@@ -128,7 +132,7 @@ def main(config: ScriptConfig):
         case "pyvm":
             pyvm_generate(config, model, output_tokens, prompt_len)
         case "kvm":
-            kvm_interpreter_generate(config, model, output_tokens, prompt_len)
+            kvm_generate(config, model, output_tokens, prompt_len)
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
