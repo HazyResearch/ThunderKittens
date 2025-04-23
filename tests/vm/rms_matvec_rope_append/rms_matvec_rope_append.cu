@@ -6,11 +6,6 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
-constexpr int QKV_BLOCK_SIZE = 16;
-constexpr int NUM_Q_HEADS = 32;
-constexpr int NUM_KV_HEADS = 8;
-constexpr int HEAD_DIM = 64;
-
 using config = default_config;
 struct globals {
     using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
@@ -18,9 +13,9 @@ struct globals {
     using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
     using activation_layout = gl<bf16, 1, 1, 1, 2048, sv_bf<2048>, sv_bf<16>>; // (hidden_dim,)
     using rms_scale_layout = gl<bf16, 1, 1, 16, 2048, sv_bf<2048>, sv_bf<16>>; // (num_layers, hidden_dim)
-    using proj_weight_layout = gl<bf16, 1, 16, 3072, 2048, st_bf<16, 512>>; // (num_layers, qkv_dims, hidden_dim)
-    using rope_table_layout = gl<bf16, 1, 1, -1, 64, qkv_rope_sv>; // (N_max, head_dim)
-    using kv_cache_layout = gl<bf16, 16, -1, 8, 64, qkv_rope_sv>; // (num_layers, N_max, num_kv_heads, head_dim)
+    using proj_weight_layout = gl<bf16, 1, 16, 3072, 2048, st_bf<16, 512>>;    // (num_layers, qkv_dims, hidden_dim)
+    using rope_table_layout = gl<bf16, 1, 1, -1, 64, sv_bf<16>>; // (N_max, head_dim)
+    using kv_cache_layout = gl<bf16, 16, -1, 8, 64, sv_bf<16>>;  // (num_layers, N_max, num_kv_heads, head_dim)
     instruction_layout instructions;
     barrier_layout barriers;
     timing_layout timings;
@@ -115,14 +110,14 @@ struct RMS_MatVec_Rope_Append_Op {
                 // Rope cos
                 s.wait_page_ready(get_rope_cos_page(s));
                 auto &rope_cos = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_cos_page(s)]);
-                tma::expect(rope_cos_ready(s), rope_cos);
-                tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_ready(s));
+                tma::expect(rope_cos_arrived(s), rope_cos);
+                tma::load_async(rope_cos, g.rope_cos, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_cos_arrived(s));
             } else if (laneid() == 7) {
                 // Rope sin
                 s.wait_page_ready(get_rope_sin_page(s));
                 auto &rope_sin = reinterpret_cast<sv_bf<16> &>(s.pages[get_rope_sin_page(s)]);
-                tma::expect(rope_sin_ready(s), rope_sin);
-                tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_ready(s));
+                tma::expect(rope_sin_arrived(s), rope_sin);
+                tma::load_async(rope_sin, g.rope_sin, {0, 0, g.pos_id, inst.qkv_block_idx % 4}, rope_sin_arrived(s));
             } else if (laneid() >= 8 && laneid() <= 12) {
                 // Unused pages
                 s.wait_page_ready(s.pid(laneid()));
@@ -142,10 +137,10 @@ struct RMS_MatVec_Rope_Append_Op {
             rt_bf<16, 128> weights, broadcast_activations;
             typename rt_bf<16, 128>::row_vec activations_vec;
             typename rt_fl<16, 128>::row_vec fl_activations_vec;            
+            rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
             typename rt_bf<16, 128>::row_vec rms_scale_vec;
             typename rt_bf<16, 128>::col_vec output_col_format;
             rv_bf<16> output;
-            rv_fl<config::NUM_CONSUMER_WARPS> rms_partial_sums;
             shared_allocator al((int*)s.scratch());
             sv_fl<config::NUM_CONSUMER_WARPS> (&smem_rms_partial_sums) = al.template allocate<sv_fl<config::NUM_CONSUMER_WARPS>> ();
             int group_id = warpgroup::groupid();
@@ -170,13 +165,11 @@ struct RMS_MatVec_Rope_Append_Op {
                 smem_rms_partial_sums[warpid()] = partial_sum;
             }
             group<16>::sync(0);
-            
             warp::load(rms_partial_sums, smem_rms_partial_sums);
             warp::sync();
-            
             float full_sum = warp::sum(rms_partial_sums);
             float variance = full_sum / 2048.0f;
-            float rms_scale = rsqrtf(variance + g.rms_epsilon);
+            float rms_scale = rsqrtf(variance + g.ln_eps);
             
             warp::copy(fl_activations_vec, activations_vec); // reuse the reg vec
             warp::mul(fl_activations_vec, fl_activations_vec, rms_scale);
@@ -204,10 +197,10 @@ struct RMS_MatVec_Rope_Append_Op {
             warp::mul(broadcast_activations, broadcast_activations, weights);
             warp::row_sum(output_col_format, broadcast_activations);
             warp::copy(output, output_col_format);
-            // Now the first 16 threads have the output.
-            if (laneid() < 16)
-            { // this might be a bad idea but yolo, it's probably an okay start
-                // and fortunately this is code where ncu will tell us if it's bad..
+            // now the first 16 threads have the output.
+            if (laneid() < 16) {
+              // this might be a bad idea but yolo, it's probably an okay start
+              // and fortunately this is code where ncu will tell us if it's bad..
                 atomicAdd(&((bf16 *)s.scratch())[laneid()], output[0][0]);
             }
             warp::sync();
@@ -225,10 +218,11 @@ struct RMS_MatVec_Rope_Append_Op {
                 s.record(125);
                 void *scratch = s.scratch();
                 sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
-                tma::store_async(g.O, output, {inst.qkv_block_idx});
+                tma::store_async(g.post_ln_rope_q, output, {});
                 tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                 s.record(126);
             }
+
             warp::sync();
             asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
             if (laneid() == 0) {

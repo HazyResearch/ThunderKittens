@@ -69,6 +69,9 @@ def generate_itb(): # instruction, timings, barriers
     timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
     barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.uint32).to(device=TORCH_DEVICE)
 
+    # Set up the barrier
+    barriers[LAYER_IDX, RMS_MATVEC_ROPE_APPEND_OPCODE - 1, 0] = 1
+
     return instructions, timings, barriers
 
 # Generate inputs
@@ -89,7 +92,21 @@ print('post_ln_rope_q shape:', post_ln_rope_q.shape)
 print('k_cache shape:', k_cache.shape)
 print('v_cache shape:', v_cache.shape)
 print('\nRunning the kernel...')
-# KERNEL LAUNCH HERE!
+rms_matvec_rope_append(
+    instructions,
+    barriers,
+    timings,
+    hidden_states,
+    attn_ln_weight,
+    qkv_proj,
+    rope_cos,
+    rope_sin,
+    post_ln_rope_q,
+    k_cache,
+    v_cache,
+    POS_ID,
+    LN_EPS
+)
 torch.cuda.synchronize(TORCH_DEVICE)
 
 # Run the reference implementation
