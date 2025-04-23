@@ -47,6 +47,7 @@ class Globals:
     attn_kv_block_size: int
 
     # model constants
+    num_hidden_layers: int
     num_attention_heads: int
     num_kv_heads: int
     head_dim: int
