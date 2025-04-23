@@ -24,9 +24,9 @@ def make_globals(
     dtype = model.dtype
 
     max_attn_partials = 1024
-    max_barriers = 1024 * 128
     max_instructions = 1024 * 128
     max_timings = 1024 * 128
+    num_ops = 6
 
     def make_buffer(shape, buffer_dtype=dtype):
         return torch.zeros(shape, device=device, dtype=buffer_dtype)
@@ -75,11 +75,14 @@ def make_globals(
         attn_kv_block_size=16,
         # misc buffers
         instructions=make_buffer(max_instructions),
-        barriers=make_buffer(max_barriers),
+        barriers=make_buffer([
+            config.num_hidden_layers, 
+            num_ops, 
+            config.num_attention_heads + config.num_key_value_heads * 2
+        ]),
         timings=make_buffer(max_timings),
         # max sizes
         max_attn_partials=max_attn_partials,
-        max_barriers=max_barriers,
         max_instructions=max_instructions,
         max_timings=max_timings,
     )

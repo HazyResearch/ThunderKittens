@@ -55,7 +55,6 @@ class Globals:
 
     # max sizes
     max_attn_partials: int
-    max_barriers: int
     max_instructions: int
     max_timings: int
 
@@ -101,7 +100,7 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
 
     @classmethod
     def opcode(cls) -> int:
-        return 0
+        return 1
 
 
 @dataclass
@@ -113,7 +112,7 @@ class PartialAttention(Instruction):
 
     @classmethod
     def opcode(cls) -> int:
-        return 1
+        return 2
 
 
 @dataclass
@@ -130,7 +129,7 @@ class AttentionReduction(Instruction):
 
     @classmethod
     def opcode(cls) -> int:
-        return 2
+        return 3
 
 
 @dataclass
@@ -140,13 +139,6 @@ class MatVecAdd(Instruction):
 
 
 # denoting these with separate opcodes so that know what inputs to read from
-
-
-@dataclass
-class DownProjResidual(MatVecAdd):
-    @classmethod
-    def opcode(cls) -> int:
-        return 3
 
 
 @dataclass
@@ -168,6 +160,13 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     @classmethod
     def opcode(cls) -> int:
         return 5
+
+
+@dataclass
+class DownProjResidual(MatVecAdd):
+    @classmethod
+    def opcode(cls) -> int:
+        return 6
 
 
 @dataclass
