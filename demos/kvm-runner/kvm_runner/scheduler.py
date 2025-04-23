@@ -94,11 +94,12 @@ def assert_div(a, b):
     return a // b
 
 
-def schedule_layers(
+def schedule_layer(
     globals: Globals,
     layer_idx: int,
     prompt_len: int,
     ntok: int,
+    stop_after_op: str | None = None,
     print_info: PrintInfo | None = None,
 ):
     num_attention_partitions = 2
@@ -131,6 +132,9 @@ def schedule_layers(
 
     maybe_add_print(layer_idx, "qkv")
 
+    if stop_after_op == "qkv":
+        return instructions
+
     for kv_head_idx in range(globals.num_kv_heads):
         for partial_idx in range(num_attention_partitions):
             instructions.append(
@@ -142,7 +146,10 @@ def schedule_layers(
                 )
             )
 
-    maybe_add_print(layer_idx, "attn")
+    maybe_add_print(layer_idx, "partial_attn")
+
+    if stop_after_op == "partial_attn":
+        return instructions
 
     # HACK: one reduction stage, for correctness
     for head_idx in range(globals.num_attention_heads):
@@ -158,6 +165,9 @@ def schedule_layers(
 
     maybe_add_print(layer_idx, "attn_reduction")
 
+    if stop_after_op == "attn_reduction":
+        return instructions
+
     num_o_blocks = assert_div(globals.hidden_size, globals.o_proj_block_size)
     for o_block_idx in range(num_o_blocks):
         instructions.append(
@@ -168,6 +178,9 @@ def schedule_layers(
         )
 
     maybe_add_print(layer_idx, "o_proj")
+
+    if stop_after_op == "o_proj":
+        return instructions
 
     num_up_gate_blocks = assert_div(
         globals.intermediate_size, globals.up_gate_proj_block_size
@@ -182,6 +195,9 @@ def schedule_layers(
 
     maybe_add_print(layer_idx, "up_gate")
 
+    if stop_after_op == "up_gate":
+        return instructions
+
     num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
     for down_block_idx in range(num_down_blocks):
         instructions.append(
@@ -192,6 +208,9 @@ def schedule_layers(
         )
 
     maybe_add_print(layer_idx, "down_proj")
+
+    if stop_after_op == "down_proj":
+        return instructions
 
     return instructions
 
@@ -208,7 +227,7 @@ def schedule_model(
 
     for layer_idx in range(config.num_hidden_layers):
         instructions.extend(
-            schedule_layers(
+            schedule_layer(
                 globals=globals,
                 layer_idx=layer_idx,
                 prompt_len=prompt_len,
