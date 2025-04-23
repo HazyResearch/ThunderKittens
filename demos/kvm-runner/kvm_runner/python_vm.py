@@ -251,7 +251,7 @@ INSTRUCTION_TO_SOLVER = {
 }
 
 
-def interpret(globals: Globals, instructions: list[Instruction]):
+def interpret_with_pyvm(globals: Globals, instructions: list[Instruction]):
     for instruction in instructions:
         INSTRUCTION_TO_SOLVER[type(instruction)](globals, instruction)
 
@@ -285,7 +285,7 @@ class PyVM_Runner:
 
         self.globals.pos_id = pos_id
 
-        interpret(self.globals, self.instructions)
+        interpret_with_pyvm(self.globals, self.instructions)
 
         output_hiddens = self.globals.hidden_states
 
