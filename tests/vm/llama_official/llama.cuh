@@ -69,9 +69,9 @@ struct globals_t
 
     // model weights
     weights_t qkv_weights;
-    norm_weights_t attn_ln_weights;
+    norm_weights_t attn_norm_weights;
     weights_t o_weights;
-    norm_weights_t mlp_ln_weights;
+    norm_weights_t mlp_norm_weights;
     weights_t up_weights;
     weights_t gate_weights;
     weights_big_indim_t down_weights;
