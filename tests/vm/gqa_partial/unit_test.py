@@ -3,13 +3,15 @@ import math
 import torch
 from gqa_partial import gqa_partial
 
-TORCH_DEVICE = torch.device('cuda:7')
+TORCH_DEVICE = torch.device('cuda:2')
 
 # Fixed paramters
 NUM_BLOCKS = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 GQA_PARTIAL_OPCODE = 1
+GQA_REDUCTION_OPCODE = 2
+NUM_OPS = 6
 
 # Llama 3.2 1B Model Parameters
 L = 16 # number of hidden layers
@@ -51,7 +53,7 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
 
     return Q, K_c, V_c, LSE, O
 
-def generate_instructions_and_timings():
+def generate_itb(): # instruction, timings, barriers
 
     instructions = [[] for _ in range(NUM_BLOCKS)]
     instruction_idx = 0
@@ -73,16 +75,26 @@ def generate_instructions_and_timings():
     # If opcode (instructions[:, :, 0]) is invalid, the instruction is ignored
     instructions = torch.tensor(instructions, dtype=torch.int32).to(device=TORCH_DEVICE)
     timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
+    barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.uint32).to(device=TORCH_DEVICE)
 
-    return instructions, timings
+    # Fill in the barrier
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 0] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 1] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 2] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_kv_IDX * 4 + 3] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_q + H_kv_IDX] = 4
+    barriers[LAYER_IDX, GQA_PARTIAL_OPCODE - 1, H_q + H_kv + H_kv_IDX] = 4
+
+    return instructions, timings, barriers
 
 # Generate inputs
 print('\nGenerating inputs...')
-instructions, timings = generate_instructions_and_timings()
+instructions, timings, barriers = generate_itb()
 Q, K_c, V_c, LSE, O = generate_tensor_inputs(L, MAX_PARTIALS, N_max, H_q, H_kv, D_h)
 
 # Run the kernel
 print('Instruction shape:', instructions.shape)
+print('Barrier shape:', barriers.shape)
 print('Timings shape:', timings.shape) 
 print('Q shape:', Q.shape)
 print('K_c shape:', K_c.shape)
@@ -91,7 +103,7 @@ print('LSE shape:', LSE.shape)
 print('O shape:', O.shape)
 print('\nRunning the kernel...')
 gqa_partial(
-    instructions, timings, 
+    instructions, barriers, timings,
     Q, K_c, V_c, LSE, O, 
     POS_ID, ATTN_SCALE
 )
@@ -136,3 +148,4 @@ print(torch.max(torch.abs(O[PARTIAL_IDX, H_q_IDX:H_q_IDX+4, :] - O_ref)))
 print(torch.mean(torch.abs(O[PARTIAL_IDX, H_q_IDX:H_q_IDX+4, :] - O_ref)))
 print(torch.max(torch.abs(LSE[PARTIAL_IDX, H_q_IDX:H_q_IDX+4] - LSE_ref)))
 print(torch.mean(torch.abs(LSE[PARTIAL_IDX, H_q_IDX:H_q_IDX+4] - LSE_ref)))
+print(barriers[LAYER_IDX, GQA_REDUCTION_OPCODE - 1])

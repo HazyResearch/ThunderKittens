@@ -3,13 +3,15 @@ import math
 import torch
 from gqa_partial import gqa_partial
 
-TORCH_DEVICE = torch.device('cuda:5')
+TORCH_DEVICE = torch.device('cuda:2')
 
 # Fixed paramters
 NUM_BLOCKS = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 GQA_PARTIAL_OPCODE = 1
+GQA_REDUCTION_OPCODE = 2
+NUM_OPS = 6
 
 # Llama 3.2 1B Model Parameters
 L = 16 # number of hidden layers
@@ -47,7 +49,7 @@ def generate_tensor_inputs(L: int, M_a: int, N_max: int, H_q: int, H_kv: int, D_
 
     return Q, K_c, V_c, LSE, O
 
-def generate_instructions_and_timings():
+def generate_itb(): # instruction, timings, barriers
 
     instructions = [[] for _ in range(NUM_BLOCKS)]
     instruction_idx = 0
@@ -69,20 +71,32 @@ def generate_instructions_and_timings():
             instructions[i].append([0] * INSTRUCTION_WIDTH)
         instruction_idx += 1
 
-    # (BlockIdx, InstructionIdx, InstructionOption)
+    # (BlockIdx, InstructionIdx, Instruction)
     # If opcode (instructions[:, :, 0]) is invalid, the instruction is ignored
     instructions = torch.tensor(instructions, dtype=torch.int32).to(device=TORCH_DEVICE)
     timings = torch.zeros((NUM_BLOCKS, instruction_idx // NUM_BLOCKS, TIMING_WIDTH), dtype=torch.int32).to(device=TORCH_DEVICE)
+    barriers = torch.zeros((L, NUM_OPS, H_q + 2 * H_kv), dtype=torch.uint32).to(device=TORCH_DEVICE)
 
-    return instructions, timings
+    # Fill in the barrier
+    for l in range(L):
+        for h in range(H_kv):
+            barriers[l, GQA_PARTIAL_OPCODE - 1, h * 4 + 0] = 4
+            barriers[l, GQA_PARTIAL_OPCODE - 1, h * 4 + 1] = 4
+            barriers[l, GQA_PARTIAL_OPCODE - 1, h * 4 + 2] = 4
+            barriers[l, GQA_PARTIAL_OPCODE - 1, h * 4 + 3] = 4
+            barriers[l, GQA_PARTIAL_OPCODE - 1, H_q + h] = 4
+            barriers[l, GQA_PARTIAL_OPCODE - 1, H_q + H_kv + h] = 4
+
+    return instructions, timings, barriers
 
 # Generate inputs
 print('\nGenerating inputs...')
-instructions, timings = generate_instructions_and_timings()
+instructions, timings, barriers = generate_itb()
 Q, K_c, V_c, LSE, O = generate_tensor_inputs(L, MAX_PARTIALS, N_max, H_q, H_kv, D_h)
 
 # Run the kernel
 print('Instruction shape:', instructions.shape)
+print('Barrier shape:', barriers.shape)
 print('Timings shape:', timings.shape) 
 print('Q shape:', Q.shape)
 print('K_c shape:', K_c.shape)
@@ -91,7 +105,7 @@ print('LSE shape:', LSE.shape)
 print('O shape:', O.shape)
 print('\nRunning the kernel...')
 gqa_partial(
-    instructions, timings, 
+    instructions, barriers, timings,
     Q, K_c, V_c, LSE, O, 
     POS_ID, ATTN_SCALE
 )
@@ -105,7 +119,7 @@ end_event = torch.cuda.Event(enable_timing=True)
 start_event.record()
 for i in range(num_iters):
     gqa_partial(
-        instructions, timings, 
+        instructions, barriers, timings,
         Q, K_c, V_c, LSE, O, 
         POS_ID, ATTN_SCALE
     )
@@ -183,3 +197,4 @@ print('final_out shape:', final_out.shape)
 print('O_ref shape:', O_ref.shape)
 print(torch.max(torch.abs(final_out - O_ref)))
 print(torch.mean(torch.abs(final_out - O_ref)))
+print(barriers[LAYER_IDX, GQA_REDUCTION_OPCODE - 1]) # keep in mind the kernel ran multiple times for measurement
