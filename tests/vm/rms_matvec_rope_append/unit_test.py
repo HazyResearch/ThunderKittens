@@ -1,5 +1,6 @@
 import torch
 from reference import layer_norm_matvec_rope_append
+from rms_matvec_rope_append import rms_matvec_rope_append
 
 TORCH_DEVICE = torch.device('cuda:2')
 

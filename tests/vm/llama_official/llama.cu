@@ -1,31 +1,46 @@
 #include "llama.cuh"
 #include "addmatvec.cuh"
 
-#include "pyutils/pyutils.h"
+#include "pyutils/pyutils.cuh"
 
-PYBIND11_MODULE(matvec, m) {
-    m.doc() = "matvec python module";
-    kittens::py::bind_kernel<kvm<llama_config, llama_globals, MatvecOp<llama_config>>>(m, "matvec",
-        &llama_globals::qkv_weights,
-        &llama_globals::attn_ln_weights,
-        &llama_globals::o_weights,
-        &llama_globals::mlp_ln_weights,
-        &llama_globals::up_weights,
-        &llama_globals::gate_weights,
-        &llama_globals::down_weights,
-        &llama_globals::rope_cos,
-        &llama_globals::rope_sin,
-        &llama_globals::rms_scale,
-        &llama_globals::post_ln_rope_q,
-        &llama_globals::attn_out,
-        &llama_globals::attn_lse_intermediates,
-        &llama_globals::attn_out_intermediates,
-        &llama_globals::silu_out,
-        &llama_globals::Bar,
-        &llama_globals::instructions,
-        &llama_globals::timings,
-        &llama_globals::pos_id,
-        &llama_globals::softmax_temp,
-        &llama_globals::rms_norm_eps
-    );
+using namespace kittens;
+using namespace kittens::prototype;
+using namespace kittens::prototype::vm;
+
+PYBIND11_MODULE(llama, m)
+{
+    m.doc() = "";
+    kittens::py::bind_kernel<kvm<config, llama_1b_globals,
+                                 attention_partial<>,
+                                 attention_reduction<>,
+                                 rms_qkv_rope_append<>,
+                                 downproj<>,
+                                 o_proj<>,
+                                 rms_upgate_silu<>>>(
+        m, "llama",
+        &llama_1b_globals::Bar,
+        &llama_1b_globals::instructions,
+        &llama_1b_globals::timings,
+
+        &llama_1b_globals::qkv_weights,
+        &llama_1b_globals::attn_ln_weights,
+        &llama_1b_globals::o_weights,
+        &llama_1b_globals::mlp_ln_weights,
+        &llama_1b_globals::up_weights,
+        &llama_1b_globals::gate_weights,
+        &llama_1b_globals::down_weights,
+
+        &llama_1b_globals::rope_cos,
+        &llama_1b_globals::rope_sin,
+
+        &llama_1b_globals::hidden_states,
+        &llama_1b_globals::q_post_rope,
+        &llama_1b_globals::attn_out,
+        &llama_1b_globals::attn_lse_intermediates,
+        &llama_1b_globals::attn_out_intermediates,
+        &llama_1b_globals::silu_out,
+
+        &llama_1b_globals::pos_id,
+        &llama_1b_globals::attn_scale,
+        &llama_1b_globals::rms_norm_eps);
 }

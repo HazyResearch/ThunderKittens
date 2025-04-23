@@ -2,8 +2,8 @@
 NVCC?=nvcc
 GPU=B200
 
-TARGET=llama
-SRC=llama.cu
+TARGET=rms_matvec_rope_append
+SRC=rms_matvec_rope_append.cu
 
 # Python version configuration
 ifndef PYTHON_VERSION
@@ -28,8 +28,8 @@ endif
 # Default target
 all: $(TARGET)
 
-# run: $(TARGET)
-# 	python test.py
+run: $(TARGET)
+	python unit_test.py
 
 $(TARGET): $(SRC)
 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)$(shell python3-config --extension-suffix)
