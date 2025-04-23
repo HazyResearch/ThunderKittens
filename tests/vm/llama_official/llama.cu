@@ -18,7 +18,7 @@ PYBIND11_MODULE(llama, m)
     kittens::py::bind_kernel<kvm<config, llama_1b_globals,
                                  attention_partial<>,
                                  attention_reduction<>,
-                                 rms_matvec_rope_append<>,
+                                 rms_qkv_rope_append<>,
                                  downproj<>,
                                  o_proj<>,
                                  rms_upgate_silu<>>>(

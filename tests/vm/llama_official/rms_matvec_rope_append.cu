@@ -7,7 +7,7 @@ using namespace kittens::prototype::vm;
 using globals = llama_1b_globals;
 
 template <typename config = config, int _OP_IDX = 0>
-struct rms_matvec_rope_append {
+struct rms_qkv_rope_append {
     static constexpr int opcode = 1;
     static constexpr int OP_IDX = _OP_IDX; // Op index within the layer -- controls which barrier to listen to.
     static constexpr int NUM_WEIGHT_PAGES = 4;
