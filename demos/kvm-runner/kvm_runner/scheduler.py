@@ -61,7 +61,7 @@ def make_globals(
         silu_out=make_buffer(config.intermediate_size),
         # scalars
         pos_id=0,
-        softmax_temp=1 / math.sqrt(config.head_dim),
+        attn_scale=1 / math.sqrt(config.head_dim),
         rms_norm_eps=config.rms_norm_eps,
         num_hidden_layers=config.num_hidden_layers,
         num_attention_heads=config.num_attention_heads,
