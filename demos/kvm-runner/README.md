@@ -24,3 +24,11 @@ To use the Python VM:
 python kvm_runner/generate.py mode=pyvm ntok=30 prompt="tell me a funny joke about cookies"
 
 ```
+
+Op-level testing:
+
+```bash
+
+python kvm_runner/test_kvm.py stop_after_op=qkv
+
+```
