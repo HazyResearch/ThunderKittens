@@ -31,6 +31,7 @@ class ScriptConfig(pydra.Config):
 
 def main(config: ScriptConfig):
     kvm_func = get_kvm_func(config.kvm_path)
+    torch.cuda.set_device(config.device)
 
     extra_config = ExtraModelConfig(
         interleave_rope=True,
