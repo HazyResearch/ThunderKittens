@@ -7,35 +7,28 @@ namespace kittens::prototype::vm {
     
     template<typename config, typename globals> 
     struct attention_partial {
-        static constexpr int GQA_PARTIAL_OPCODE = 2;
-        static constexpr int GQA_REDUCTION_OPCODE = 3;
-        static constexpr int NUM_BLOCKS = 148;
-        static constexpr int ATTN_BLOCK_SIZE = 16;
-        static constexpr int HEAD_DIM = 64;
-        static constexpr int NUM_Q_HEADS = 32;
-        static constexpr int NUM_KV_HEADS = 8;
-        static constexpr int GQA_RATIO = NUM_Q_HEADS / NUM_KV_HEADS;
-        static constexpr int opcode = GQA_PARTIAL_OPCODE;
+        static constexpr int opcode = OPCODE_PartialAttention;
         static constexpr int NUM_STAGES = 3;
+        static constexpr int GQA_RATIO = LLAMA_1B_NUM_ATTENTION_HEADS / LLAMA_1B_NUM_KV_HEADS;
         
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
-        
-        using q_rt = rt_bf<16, HEAD_DIM>;                 // only 4 rows are used
-        using q_st = st_bf<16, HEAD_DIM>;                 // only 4 rows are used
-        using k_rt = rt_bf<ATTN_BLOCK_SIZE, HEAD_DIM>;
-        using v_rt = rt_bf<ATTN_BLOCK_SIZE, HEAD_DIM, col_l>;
-        using kv_st = st_bf<ATTN_BLOCK_SIZE, HEAD_DIM>;
-        using attn_fl_rt = rt_fl<16, ATTN_BLOCK_SIZE>;    // only 4 values are used
-        using attn_bf_rt = rt_bf<16, ATTN_BLOCK_SIZE>;    // only 4 values are used
-        using max_vec_rv = col_vec<rt_fl<16, HEAD_DIM>>;  // only 4 values are used
+
+        using q_rt = rt_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using q_st = st_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using k_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
+        using v_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM, col_l>;
+        using kv_st = st_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
+        using attn_fl_rt = rt_fl<16, LLAMA_1B_KV_BLOCK_SIZE>;    // only 4 values are used
+        using attn_bf_rt = rt_bf<16, LLAMA_1B_KV_BLOCK_SIZE>;    // only 4 values are used
+        using max_vec_rv = col_vec<rt_fl<16, LLAMA_1B_HEAD_DIM>>;  // only 4 values are used
         using max_vec_sv = sv_fl<16>;                     // only 4 values are used
-        using norm_vec_rv = col_vec<rt_fl<16, HEAD_DIM>>; // only 4 values are used
+        using norm_vec_rv = col_vec<rt_fl<16, LLAMA_1B_HEAD_DIM>>; // only 4 values are used
         using norm_vec_sv = sv_fl<16>;                    // only 4 values are used
-        using l_rv = col_vec<rt_fl<16, HEAD_DIM>>;        // only 4 values are used
+        using l_rv = col_vec<rt_fl<16, LLAMA_1B_HEAD_DIM>>;        // only 4 values are used
         using l_sv = sv_fl<16>;                           // only 4 values are used
-        using o_rt = rt_fl<16, HEAD_DIM>;                 // only 4 rows are used
-        using o_sv = sv_fl<HEAD_DIM>;
+        using o_rt = rt_fl<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using o_sv = sv_fl<LLAMA_1B_HEAD_DIM>;
 
         struct parsed_instruction {
             int layer_idx;
@@ -199,22 +192,22 @@ namespace kittens::prototype::vm {
         //   1. Ignores Q global dimensions
         //   2. Only loads 4 rows of Q, not 16 (assumes GQA_RATIO == 4) --> only 32 calls needed, so single call per thread
         __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx/*0, 4, 8, ...*/) {
-            static_assert(HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
+            static_assert(LLAMA_1B_HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
-            constexpr int memcpy_per_row = HEAD_DIM / elem_per_memcpy; // 8
+            constexpr int memcpy_per_row = LLAMA_1B_HEAD_DIM / elem_per_memcpy; // 8
 
-            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * HEAD_DIM];
-            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * HEAD_DIM]));
+            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * LLAMA_1B_HEAD_DIM];
+            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * LLAMA_1B_HEAD_DIM]));
 
             int laneid = warp::laneid();
             int row = laneid / memcpy_per_row;
-            int col = (laneid * elem_per_memcpy) % HEAD_DIM;
+            int col = (laneid * elem_per_memcpy) % LLAMA_1B_HEAD_DIM;
         
             // everything should fit!
             asm volatile(
                 "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
-                :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * HEAD_DIM + col])
+                :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * LLAMA_1B_HEAD_DIM + col])
                 : "memory"
             );
             asm volatile("cp.async.commit_group;\n" ::: "memory");
@@ -247,14 +240,14 @@ namespace kittens::prototype::vm {
                     // Setup
                     parsed_instruction inst{s};
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
+                    int total_attn_blocks = (seq_len + LLAMA_1B_KV_BLOCK_SIZE - 1) / LLAMA_1B_KV_BLOCK_SIZE;
                     int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                     int start_blk_idx = inst.partial_idx * blocks_per_partial;
                     int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + inst.kv_head_idx}] != 4 || // K
-                        *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, NUM_Q_HEADS + NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] != 4 || // K
+                           *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
                         __nanosleep(20);
 
                     // Run the pipeline!
@@ -302,7 +295,7 @@ namespace kittens::prototype::vm {
                     // Setup
                     int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + ATTN_BLOCK_SIZE - 1) / ATTN_BLOCK_SIZE;
+                    int total_attn_blocks = (seq_len + LLAMA_1B_KV_BLOCK_SIZE - 1) / LLAMA_1B_KV_BLOCK_SIZE;
                     int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
                     int start_blk_idx = inst.partial_idx * blocks_per_partial;
                     int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
@@ -344,8 +337,8 @@ namespace kittens::prototype::vm {
                         warp::arrive(K_finished(s, stage));
 
                         // Mask out invalid positions at the end
-                        if ((i + start_blk_idx + 1) * ATTN_BLOCK_SIZE > seq_len)
-                            right_fill(attn_fl_reg, attn_fl_reg, seq_len % ATTN_BLOCK_SIZE, -999999999999.f);
+                        if ((i + start_blk_idx + 1) * LLAMA_1B_KV_BLOCK_SIZE > seq_len)
+                            right_fill(attn_fl_reg, attn_fl_reg, seq_len % LLAMA_1B_KV_BLOCK_SIZE, -999999999999.f);
 
                         // Obtain maximums per row (which is per head)
                         warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max
@@ -436,7 +429,7 @@ namespace kittens::prototype::vm {
                     tma::store_async_wait();
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.Bar[{inst.layer_idx, GQA_REDUCTION_OPCODE - 1, q_head_start_idx}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_AttentionReduction - 1, q_head_start_idx}], 1);
                 }
                 warp::sync();
             }
