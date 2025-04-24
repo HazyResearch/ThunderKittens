@@ -31,7 +31,6 @@ class ScriptConfig(pydra.Config):
 
 def main(config: ScriptConfig):
     kvm_func = get_kvm_func(config.kvm_path)
-    sm_count = get_sm_count(config.device)
 
     extra_config = ExtraModelConfig(
         interleave_rope=True,
@@ -83,8 +82,8 @@ def main(config: ScriptConfig):
         else:
             starting_instructions = []
 
-    tensorize_instructions(globs_for_kvm, instructions, sm_count)
-    tensorize_instructions(globs_for_pyvm, instructions, sm_count)
+    tensorize_instructions(globs_for_kvm, instructions)
+    tensorize_instructions(globs_for_pyvm, instructions)
 
     if len(starting_instructions) > 0:
         print("running starting instructions...")
@@ -140,6 +139,8 @@ def main(config: ScriptConfig):
     test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
     test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
+
+    breakpoint()
 
 
 if __name__ == "__main__":
