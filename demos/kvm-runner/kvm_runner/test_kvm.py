@@ -8,7 +8,6 @@ from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
 from kvm_runner.scheduler import (
     make_globals,
-    schedule_layer,
     schedule_model,
     tensorize_instructions,
 )
@@ -24,9 +23,9 @@ class ScriptConfig(pydra.Config):
     device: str = "cuda:0"
     prompt_len: int = 10
     ntok: int = 10
-    full_model: bool = False
     stop_after_op: str | None = None
     start_after_op: str | None = None
+    layer_limit: int | None = 1
 
 
 def main(config: ScriptConfig):
@@ -62,38 +61,30 @@ def main(config: ScriptConfig):
     normal_(globs_for_pyvm.v_cache)
     globs_for_kvm.v_cache.copy_(globs_for_pyvm.v_cache)
 
-    if config.full_model:
-        instructions = schedule_model(
-            globals=globs_for_pyvm,
+    _, instructions = schedule_model(
+        prompt_len=config.prompt_len,
+        ntok=config.ntok,
+        globs=globs_for_pyvm,
+        stop_after_op=config.stop_after_op,
+        layer_limit=config.layer_limit,
+    )
+
+    if config.start_after_op is not None:
+        _, starting_instructions = schedule_model(
             prompt_len=config.prompt_len,
             ntok=config.ntok,
+            globs=globs_for_pyvm,
+            stop_after_op=config.start_after_op,
+            layer_limit=config.layer_limit,
         )
-        starting_instructions = []
+
+        assert len(starting_instructions) < len(instructions)
+        for i, i2 in zip(starting_instructions, instructions):
+            assert i == i2
+
+        instructions = instructions[len(starting_instructions) :]
     else:
-        instructions = schedule_layer(
-            globals=globs_for_pyvm,
-            layer_idx=0,
-            prompt_len=config.prompt_len,
-            ntok=config.ntok,
-            stop_after_op=config.stop_after_op,
-        )
-
-        if config.start_after_op is not None:
-            starting_instructions = schedule_layer(
-                globals=globs_for_pyvm,
-                layer_idx=0,
-                prompt_len=config.prompt_len,
-                ntok=config.ntok,
-                stop_after_op=config.start_after_op,
-            )
-
-            assert len(starting_instructions) < len(instructions)
-            for i, i2 in zip(starting_instructions, instructions):
-                assert i == i2
-
-            instructions = instructions[len(starting_instructions) :]
-        else:
-            starting_instructions = []
+        starting_instructions = []
 
     tensorize_instructions(globs_for_kvm, instructions)
     tensorize_instructions(globs_for_pyvm, instructions)
