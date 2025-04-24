@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import List
 
+import torch
 from kvm_runner.model_types import DeviceType
 from safetensors import safe_open
 from torch import Tensor
@@ -96,3 +97,8 @@ def trepr(t: Tensor):
     Tensor representation.
     """
     return f"shape={t.shape}, sum={t.sum()}, vals={t}"
+
+
+def get_sm_count(device: str) -> int:
+    device_props = torch.cuda.get_device_properties(device)
+    return device_props.multi_processor_count

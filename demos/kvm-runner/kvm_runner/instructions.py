@@ -1,6 +1,8 @@
 from dataclasses import dataclass, fields
 from typing import Optional
 
+from kvm_runner.model_types import DeviceType
+from kvm_runner.utils import get_sm_count
 from torch import Tensor
 
 
@@ -29,15 +31,9 @@ class Globals:
     attn_out_intermediates: Tensor
     silu_out: Tensor
 
-    barriers: Tensor
-
     pos_id: int
     attn_scale: float
     rms_norm_eps: float
-
-    # the vm stuff (instructions and timing)
-    instructions: Tensor
-    timings: Tensor
 
     # block size constants
     up_gate_proj_block_size: int
@@ -56,10 +52,15 @@ class Globals:
     hidden_size: int
     intermediate_size: int
 
-    # max sizes
-    max_attn_partials: int
-    max_instructions: int
-    max_timings: int
+    device: DeviceType
+
+    # the vm stuff (instructions and timing) - sizes dependent on the generated instructions
+    instructions: Tensor | None = None
+    timings: Tensor | None = None
+    barriers: Tensor | None = None
+
+    def sm_count(self) -> int:
+        return get_sm_count(self.device)
 
 
 @dataclass
@@ -137,7 +138,7 @@ class AttentionReduction(Instruction):
 class MatVecAdd(Instruction):
     layer_idx: int
     output_block_idx: int
-    reduction_idx: int # in units of 2048
+    reduction_idx: int  # in units of 2048
 
 
 # denoting these with separate opcodes so that know what inputs to read from
