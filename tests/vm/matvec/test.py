@@ -14,7 +14,7 @@ DEPTH = 4
 W = (torch.randn((2048, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.bfloat16)
 A = (torch.randn((1, 2048), device=0, dtype=torch.float32) / 2048**.25).to(torch.bfloat16)
 O =  torch.zeros((1, 2048), device=0, dtype=torch.bfloat16)  # noqa: E741
-Bar = torch.ones((1, 6, 32), device=0, dtype=torch.int32)
+Bar = torch.zeros((1, 6, 32), device=0, dtype=torch.int32)
 
 print("Input tensors created, of shapes", A.shape, W.shape, O.shape, Bar.shape)
 
