@@ -103,7 +103,7 @@ namespace kittens::prototype::vm {
 
                     auto& InputActivations = g.*InputActivationsPtr;      // object in global memory
                     kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
-                }\
+                }
                 else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
                 {
                     int unused_page = s.pid(kittens::laneid());

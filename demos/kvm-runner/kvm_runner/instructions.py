@@ -43,6 +43,7 @@ class Globals:
     up_gate_proj_block_size: int
     down_proj_block_size: int
     o_proj_block_size: int
+    matvec_reduction_size: int
     qkv_block_size: int
     attn_kv_block_size: int
 
@@ -135,6 +136,7 @@ class AttentionReduction(Instruction):
 class MatVecAdd(Instruction):
     layer_idx: int
     output_block_idx: int
+    reduction_idx: int # in units of 2048
 
 
 # denoting these with separate opcodes so that know what inputs to read from
