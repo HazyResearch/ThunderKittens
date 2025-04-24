@@ -146,12 +146,13 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                int local_q_head = warp::laneid();
-                if (local_q_head < Q_HEADS_PER_INSTRUCTION)
+                auto laneid = warp::laneid();
+                if (laneid < Q_HEADS_PER_INSTRUCTION)
                 {
                     parsed_instruction inst{s};
+                    int local_q_head = laneid;
 
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] < inst.num_partials)
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + local_q_head}] < inst.num_partials)
                     {
                         __nanosleep(20);
                     }
@@ -179,9 +180,9 @@ namespace kittens::prototype::vm
                             O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
                     }
                 }
-                else if (local_q_head - (Q_HEADS_PER_INSTRUCTION - 1) < config::NUM_PAGES)
+                else if (laneid < config::NUM_PAGES)
                 {
-                    arrive(s.page_finished[s.pid(local_q_head - (Q_HEADS_PER_INSTRUCTION - 1))], config::NUM_CONSUMER_WARPS);
+                    arrive(s.page_finished[s.pid(laneid)], config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
             }
