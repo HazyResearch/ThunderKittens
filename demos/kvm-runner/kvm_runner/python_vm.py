@@ -73,7 +73,7 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
 
     # Barrier check
     op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    assert(op_barriers[0] == 32) # the dumb way
+    assert(op_barriers[0] == globals.num_attention_heads // globals.attn_reduction_size)
 
     matvec_with_residual(
         mat=globals.o_proj[instruction.layer_idx],
@@ -266,11 +266,11 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
 
 def attention_reduction(globals: Globals, instruction: AttentionReduction):
 
-    head_idx = instruction.head_idx
+    head_start_idx = instruction.head_start_idx
 
     # Barrier check
     op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    assert(op_barriers[head_idx] == instruction.num_partials)
+    assert(op_barriers[head_start_idx] == instruction.num_partials)
 
     indices_to_reduce = torch.tensor(
         instruction.reduction_list,
@@ -278,24 +278,34 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
         device=globals.hidden_states.device,
     )
 
-    lses = globals.attn_lse_intermediates[head_idx, indices_to_reduce]
-    outs = globals.attn_out_intermediates[head_idx, indices_to_reduce]
+    lses = globals.attn_lse_intermediates[
+        head_start_idx:head_start_idx+globals.attn_reduction_size, indices_to_reduce
+    ]
+    outs = globals.attn_out_intermediates[
+        head_start_idx:head_start_idx+globals.attn_reduction_size, indices_to_reduce
+    ]
 
-    max_lse = torch.max(lses)
+    max_lse = torch.max(lses, dim=-1, keepdim=True).values
 
     adjusted_factors = (lses - max_lse).exp()
-    new_denominator = adjusted_factors.sum()
+    new_denominator = adjusted_factors.sum(dim=-1, keepdim=True)
 
-    reduced = (outs * adjusted_factors.unsqueeze(1)).sum(dim=0) / new_denominator
+    reduced = (outs * adjusted_factors.unsqueeze(-1)).sum(dim=1) / new_denominator
 
     if instruction.is_terminal:
-        globals.attn_out.view(globals.num_attention_heads, -1)[head_idx] = reduced
+        globals.attn_out.view(globals.num_attention_heads, -1)[
+            head_start_idx:head_start_idx+globals.attn_reduction_size
+        ] = reduced
     else:
         new_lse = new_denominator.log()
         output_slot = instruction.output_partial_idx
-        globals.attn_lse_intermediates[head_idx, output_slot] = new_lse
-        globals.attn_out_intermediates[head_idx, output_slot] = reduced
-    
+        globals.attn_lse_intermediates[
+            head_start_idx:head_start_idx+globals.attn_reduction_size, output_slot
+        ] = new_lse
+        globals.attn_out_intermediates[
+            head_start_idx:head_start_idx+globals.attn_reduction_size, output_slot
+        ] = reduced
+
     # Barrier update
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
     next_op_barriers[0] += 1 # the dumb way

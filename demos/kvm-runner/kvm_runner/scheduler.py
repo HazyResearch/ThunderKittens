@@ -76,6 +76,7 @@ def make_globals(
         o_proj_block_size=16,
         matvec_reduction_size=2048,
         attn_kv_block_size=16,
+        attn_reduction_size=4,
         # misc buffers
         instructions=make_buffer(max_instructions),
         barriers=make_buffer(
@@ -157,11 +158,11 @@ def schedule_layer(
         return instructions
 
     # HACK: one reduction stage, for correctness
-    for head_idx in range(globals.num_attention_heads):
+    for head_start_idx in range(0, globals.num_attention_heads, globals.attn_reduction_size):
         instructions.append(
             AttentionReduction(
                 layer_idx=layer_idx,
-                head_idx=head_idx,
+                head_start_idx=head_start_idx,
                 is_terminal=True,
                 num_partials=num_attention_partitions,
                 reduction_list=list(range(num_attention_partitions)),
@@ -206,7 +207,7 @@ def schedule_layer(
 
     num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
     for down_block_idx in range(num_down_blocks):
-        for reduction_idx in range(4):
+        for reduction_idx in range(4): # 2048 columns per op
             instructions.append(
                 DownProjResidual(
                     layer_idx=layer_idx,

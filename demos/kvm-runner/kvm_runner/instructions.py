@@ -46,6 +46,7 @@ class Globals:
     matvec_reduction_size: int
     qkv_block_size: int
     attn_kv_block_size: int
+    attn_reduction_size: int
 
     # model constants
     num_hidden_layers: int
@@ -120,7 +121,7 @@ class PartialAttention(Instruction):
 @dataclass
 class AttentionReduction(Instruction):
     layer_idx: int
-    head_idx: int
+    head_start_idx: int
     # the original number of attention partitions
     num_partials: int
     is_terminal: bool
