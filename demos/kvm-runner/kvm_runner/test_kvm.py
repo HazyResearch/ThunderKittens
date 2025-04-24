@@ -53,6 +53,7 @@ def main(config: ScriptConfig):
 
     globs_for_pyvm.hidden_states = torch.randn_like(globs_for_pyvm.hidden_states)
     globs_for_kvm.hidden_states = globs_for_pyvm.hidden_states.clone()
+    print("hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
     globs_for_pyvm.k_cache = torch.randn_like(globs_for_pyvm.k_cache)
     globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
@@ -151,9 +152,12 @@ def main(config: ScriptConfig):
     test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-    print("attn out", globs_for_pyvm.attn_out[:128])
-    print("attn out kvm", globs_for_kvm.attn_out[:128])
-    breakpoint()
+    print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
+    print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
+
+    # print("attn out", globs_for_pyvm.attn_out[:128])
+    # print("attn out kvm", globs_for_kvm.attn_out[:128])
+    # breakpoint()
 
 
 if __name__ == "__main__":
