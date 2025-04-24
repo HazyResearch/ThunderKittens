@@ -77,7 +77,10 @@ namespace kittens::prototype::vm
 
         __device__ static inline void wait_shared_page(state<Config> &s)
         {
-            s.wait_page_ready(s.pid(SHARED_DATA_PAGE));
+            if (warp::laneid() == 0)
+            {
+                s.wait_page_ready(s.pid(SHARED_DATA_PAGE));
+            }
         }
         __device__ static inline void finish_shared_page(state<Config> &s)
         {
