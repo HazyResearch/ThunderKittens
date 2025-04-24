@@ -25,9 +25,9 @@ def make_globals(
     dtype = model.dtype
 
     max_attn_partials = 1024
-    max_barriers = 1024 * 128
     max_instructions = 1024 * 128
     max_timings = 1024 * 128
+    num_ops = 6
 
     def make_buffer(shape, buffer_dtype=dtype):
         return torch.zeros(shape, device=device, dtype=buffer_dtype)
@@ -63,24 +63,31 @@ def make_globals(
         pos_id=0,
         softmax_temp=1 / math.sqrt(config.head_dim),
         rms_norm_eps=config.rms_norm_eps,
+        num_hidden_layers=config.num_hidden_layers,
         num_attention_heads=config.num_attention_heads,
         num_kv_heads=config.num_key_value_heads,
         head_dim=config.head_dim,
         hidden_size=config.hidden_size,
         intermediate_size=config.intermediate_size,
         # block sizes
-        up_gate_proj_block_size=128,
-        down_proj_block_size=128,
-        qkv_block_size=128,
-        o_proj_block_size=128,
+        up_gate_proj_block_size=16,
+        down_proj_block_size=16,
+        qkv_block_size=16,
+        o_proj_block_size=16,
         attn_kv_block_size=16,
         # misc buffers
         instructions=make_buffer(max_instructions),
-        barriers=make_buffer(max_barriers),
+        barriers=make_buffer(
+            [
+                config.num_hidden_layers,
+                num_ops,
+                config.num_attention_heads + config.num_key_value_heads * 2,
+            ],
+            buffer_dtype=torch.int32,
+        ),  # pytorch does not support + for uint32, but our kernel uses uint32
         timings=make_buffer(max_timings),
         # max sizes
         max_attn_partials=max_attn_partials,
-        max_barriers=max_barriers,
         max_instructions=max_instructions,
         max_timings=max_timings,
     )

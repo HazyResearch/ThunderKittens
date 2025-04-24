@@ -474,11 +474,6 @@ namespace kittens::prototype::vm
                 // Store partial attention output to global memory
                 if (laneid == 0)
                 {
-                    parsed_instruction inst{s};
-                    int laneid = warp::laneid();
-                    int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
-                    int q_head_vec_start_idx = q_head_start_idx % 16;
-
                     // Store partial attention output to global memory
                     if (laneid == 0)
                     {
@@ -518,3 +513,4 @@ namespace kittens::prototype::vm
             };
         };
     };
+}
