@@ -147,6 +147,16 @@ namespace kittens::prototype::vm
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 auto laneid = warp::laneid();
+
+                if (laneid == 0) {
+                    wait_shared_page(s);
+                } else if (laneid < Config::NUM_PAGES)
+                {
+                    s.wait_page_ready(s.pid(laneid));
+                    arrive(s.page_finished[s.pid(laneid)], Config::NUM_CONSUMER_WARPS);
+                }
+                warp::sync(); // Have to make sure lane 0 finished waiting
+
                 if (laneid < Q_HEADS_PER_INSTRUCTION)
                 {
                     parsed_instruction inst{s};
@@ -156,8 +166,6 @@ namespace kittens::prototype::vm
                     {
                         __nanosleep(20);
                     }
-
-                    wait_shared_page(s);
 
                     l_partial_sv &L_smem = get_L_partial_smem(s, local_q_head);
                     tma::expect(L_partial_all_arrived(s, local_q_head), L_smem);
@@ -179,10 +187,6 @@ namespace kittens::prototype::vm
                         tma::load_async<cache_policy::EVICT_FIRST>(
                             O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
                     }
-                }
-                else if (laneid < config::NUM_PAGES)
-                {
-                    arrive(s.page_finished[s.pid(laneid)], config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
             }
