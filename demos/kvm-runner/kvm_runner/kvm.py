@@ -14,8 +14,8 @@ def get_kvm_func(kvm_dir: Path):
 
 
 def interpret_with_kvm(
-    kvm_func,
     globs: Globals,
+    kvm_func,
 ):
     kvm_func(
         # vm stuff

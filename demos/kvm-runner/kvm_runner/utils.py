@@ -2,11 +2,10 @@ import json
 from pathlib import Path
 from typing import List
 
+from kvm_runner.model_types import DeviceType
 from safetensors import safe_open
 from torch import Tensor
 from tqdm import tqdm
-
-from kvm_runner.types import DeviceType
 
 
 def compute_shard_bounds(
