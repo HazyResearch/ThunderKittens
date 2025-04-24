@@ -12,7 +12,6 @@ from kvm_runner.scheduler import (
     schedule_model,
     tensorize_instructions,
 )
-from kvm_runner.utils import get_sm_count
 from torch import Tensor
 
 
@@ -30,6 +29,8 @@ class ScriptConfig(pydra.Config):
 
 
 def main(config: ScriptConfig):
+    torch.manual_seed(0)
+
     kvm_func = get_kvm_func(config.kvm_path)
 
     extra_config = ExtraModelConfig(
@@ -46,8 +47,17 @@ def main(config: ScriptConfig):
         model=model,
     )
 
+    globs_for_pyvm.pos_id = config.prompt_len + config.ntok
+    globs_for_kvm.pos_id = config.prompt_len + config.ntok
+
     globs_for_pyvm.hidden_states = torch.randn_like(globs_for_pyvm.hidden_states)
     globs_for_kvm.hidden_states = globs_for_pyvm.hidden_states.clone()
+
+    globs_for_pyvm.k_cache = torch.randn_like(globs_for_pyvm.k_cache)
+    globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
+
+    globs_for_pyvm.v_cache = torch.randn_like(globs_for_pyvm.v_cache)
+    globs_for_kvm.v_cache = globs_for_pyvm.v_cache.clone()
 
     if config.full_model:
         instructions = schedule_model(
@@ -140,6 +150,8 @@ def main(config: ScriptConfig):
     test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
+    print("attn out", globs_for_pyvm.attn_out[:128])
+    print("attn out kvm", globs_for_kvm.attn_out[:128])
     breakpoint()
 
 
