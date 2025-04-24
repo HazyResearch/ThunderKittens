@@ -29,12 +29,21 @@ Op-level testing:
 
 ```bash
 
+# individual ops
 python kvm_runner/test_kvm.py stop_after_op=qkv
 python kvm_runner/test_kvm.py stop_after_op=partial_attn start_after_op=qkv
 python kvm_runner/test_kvm.py stop_after_op=attn_reduction start_after_op=partial_attn
 python kvm_runner/test_kvm.py stop_after_op=o_proj start_after_op=attn_reduction
 python kvm_runner/test_kvm.py stop_after_op=up_gate start_after_op=o_proj
 python kvm_runner/test_kvm.py stop_after_op=down_proj start_after_op=up_gate
+
+# cumulative
+python kvm_runner/test_kvm.py stop_after_op=qkv
+python kvm_runner/test_kvm.py stop_after_op=partial_attn
+python kvm_runner/test_kvm.py stop_after_op=attn_reduction
+python kvm_runner/test_kvm.py stop_after_op=o_proj
+python kvm_runner/test_kvm.py stop_after_op=up_gate
+python kvm_runner/test_kvm.py stop_after_op=down_proj
 
 
 ```
