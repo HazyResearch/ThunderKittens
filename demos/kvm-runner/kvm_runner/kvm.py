@@ -2,7 +2,8 @@ import sys
 from pathlib import Path
 
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import Globals, schedule_model
+from kvm_runner.scheduler import Globals, schedule_model, tensorize_instructions
+import torch
 from torch import Tensor
 
 
@@ -47,6 +48,7 @@ def interpret_with_kvm(
         globs.attn_scale,
         globs.rms_norm_eps,
     )
+    torch.cuda.synchronize()
 
 
 class KVM_Runner:
@@ -69,6 +71,7 @@ class KVM_Runner:
             prompt_len=prompt_len,
             ntok=ntok,
         )
+        tensorize_instructions(self.globals, self.instructions)
 
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
@@ -83,7 +86,7 @@ class KVM_Runner:
 
         self.globals.barriers.zero_()
 
-        interpret_with_kvm(self.kvm_func, self.globals)
+        interpret_with_kvm(self.globals, self.kvm_func)
 
         output_hiddens = self.globals.hidden_states
 
