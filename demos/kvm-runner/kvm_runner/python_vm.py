@@ -314,7 +314,7 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
 
     # Barrier update
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1  # the dumb way
+    next_op_barriers[0] += globals.attn_reduction_size  # the dumb way
 
 
 def print_state(globals: Globals, instruction: PrintState):
