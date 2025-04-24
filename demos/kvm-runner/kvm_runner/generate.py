@@ -4,9 +4,9 @@ import pydra
 import torch
 from kvm_runner.kvm import KVM_Runner
 from kvm_runner.llama import LlamaForCausalLM
+from kvm_runner.model_types import BatchState, ExtraModelConfig
 from kvm_runner.python_vm import PyVM_Runner
 from kvm_runner.scheduler import PrintInfo
-from kvm_runner.types import BatchState, ExtraModelConfig
 from tabulate import tabulate
 from torch import Tensor
 from tqdm import tqdm

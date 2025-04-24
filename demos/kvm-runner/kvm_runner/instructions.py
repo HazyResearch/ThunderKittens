@@ -32,7 +32,7 @@ class Globals:
     barriers: Tensor
 
     pos_id: int
-    softmax_temp: float
+    attn_scale: float
     rms_norm_eps: float
 
     # the vm stuff (instructions and timing)
@@ -73,19 +73,17 @@ class Instruction:
             if name == "global_idx":
                 continue
             attr = getattr(self, name)
-            match field.type:
-                case int():
-                    words.append(attr)
-                case tuple():
-                    assert all(isinstance(a, int) for a in attr)
-                    words.append(len(attr))
-                    words.extend(attr)
-                case list():
-                    assert all(isinstance(a, int) for a in attr)
-                    words.append(len(attr))
-                    words.extend(attr)
-                case _:
-                    raise ValueError(f"Unsupported field type: {field.type}")
+
+            if isinstance(attr, int):
+                words.append(attr)
+            elif isinstance(attr, tuple):
+                words.append(len(attr))
+                words.extend(attr)
+            elif isinstance(attr, list):
+                words.append(len(attr))
+                words.extend(attr)
+            else:
+                raise ValueError(f"Unsupported field type: {field.type}")
 
         return words
 
