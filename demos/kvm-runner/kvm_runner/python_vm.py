@@ -210,8 +210,8 @@ def layer_norm_matvec_rope_append(
         ]
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[instruction.output_block_idx // 4] += 1
+    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    barriers[instruction.output_block_idx // 4] += 1
 
 
 def partial_attention(globals: Globals, instruction: PartialAttention):
@@ -268,8 +268,8 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = out
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[head_start:head_end] += 1
+    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    barriers[head_start:head_end] += 1
 
 
 def attention_reduction(globals: Globals, instruction: AttentionReduction):
