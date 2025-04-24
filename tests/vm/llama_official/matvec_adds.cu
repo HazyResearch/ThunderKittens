@@ -203,7 +203,7 @@ namespace kittens::prototype::vm {
 
      template<typename Config, typename Globals>
     struct downproj : MatVecAddOp<
-        128, 
+        llama_1b_globals::intermediate_dim / llama_1b_globals::matvec_block_size, 
         &Globals::down_weights, 
         &Globals::silu_out,   /// TODO: CHECK
         &Globals::hidden_states, 
@@ -213,7 +213,7 @@ namespace kittens::prototype::vm {
 
     template<typename Config, typename Globals>
     struct o_proj : MatVecAddOp<
-        128, 
+        llama_1b_globals::num_attention_heads, 
         &Globals::o_weights, 
         &Globals::attn_out, 
         &Globals::hidden_states, 
