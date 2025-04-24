@@ -25,11 +25,11 @@ namespace kittens::prototype::vm
         struct parsed_instruction
         {
             int layer;
-            int start_col;
+            int output_block_idx;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];
-                start_col = instruction[2];
+                output_block_idx = instruction[2];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -106,7 +106,7 @@ namespace kittens::prototype::vm
                     auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
                     tma::expect(up_arrived(s, laneid()), chunk);
                     tma::load_async(chunk, g.up_weights,
-                                    {inst.layer, inst.start_col / 16, laneid()},
+                                    {0, inst.layer, inst.output_block_idx, laneid()},
                                     up_arrived(s, laneid()));
                 }
 
@@ -119,9 +119,8 @@ namespace kittens::prototype::vm
                     auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
                     tma::expect(gate_arrived(s, idx), chunk);
                     tma::load_async(chunk, g.gate_weights,
-                                    {inst.layer, inst.start_col / 16, idx},
+                                    {0, inst.layer, inst.output_block_idx, idx},
                                     gate_arrived(s, idx));
-
                 }
 
                 // 4) INPUT page
@@ -134,7 +133,7 @@ namespace kittens::prototype::vm
                         __nanosleep(20);
                     auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
-                    tma::load_async(buf, g.attn_out, {}, in_arrived(s)); // TODO: SA check
+                    tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
                 }
 
                 // 5) RMS SCALE
@@ -242,10 +241,6 @@ namespace kittens::prototype::vm
                 warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
-                // if (warpid() == 0 and laneid() == 0) {
-                //     printf("got to up matvec\n");
-                // }
-
                 //--------------------------------------------------
                 // UP MATVEC
                 //--------------------------------------------------
@@ -262,7 +257,6 @@ namespace kittens::prototype::vm
                 warp::row_sum(output_col_format, broadcast_activations);
                 warp::copy(output, output_col_format);
                 warp::sync();
-
 
                 // if (warpid() == 0 and laneid() == 0) {
                 //     printf("got to gate matvec\n");
@@ -288,13 +282,15 @@ namespace kittens::prototype::vm
                 float *scratch_f32 = (float *)s.scratch();
                 if (laneid() < 16)
                 {
-                    atomicAdd(&scratch_f32[laneid()], float(output[0][0]));           // up
-                    atomicAdd(&scratch_f32[laneid() + 16], float(gate_output[0][0])); // gate
+                    float upout = output[0][0];
+                    float gateout = gate_output[0][0];
+                    atomicAdd(&scratch_f32[laneid()], upout);           // up
+                    atomicAdd(&scratch_f32[laneid() + 16], gateout); // gate
+
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
-            
-            
+
                 // if (warpid() == 0 and laneid() == 0) {
                 //     printf("got to storer\n");
                 // }
@@ -320,14 +316,15 @@ namespace kittens::prototype::vm
                     {
                         float up = scratch_f32[i];
                         float gate = scratch_f32[i + 16];
+
                         float silu = gate / (1.f + expf(-gate));
                         scratch_bf16[i] = bf16(up * silu);
                     }
 
                     sv_bf<16> &vec = *reinterpret_cast<sv_bf<16> *>(scratch_bf16);
-                    tma::store_async(g.silu_out, vec, {inst.start_col / 16});
-                    tma::store_async_wait();
 
+                    tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
+                    tma::store_async_wait();
                 }
 
                 warp::sync();
