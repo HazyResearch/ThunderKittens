@@ -77,8 +77,8 @@ def matvec_with_residual(
 
 def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     # Barrier check
-    op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    assert(op_barriers[0] == globals.num_attention_heads // globals.attn_reduction_size)
+    op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
+    assert op_barriers[0] == globals.num_attention_heads // globals.attn_reduction_size
 
     matvec_with_residual(
         mat=globals.o_proj[instruction.layer_idx],
@@ -91,13 +91,13 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     )
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
     next_op_barriers[0] += 1
 
 
 def down_proj_residual(globals: Globals, instruction: DownProjResidual):
     # Barrier check
-    op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
     assert op_barriers[0] == 512  # 8192 / 16
 
     matvec_with_residual(
@@ -110,17 +110,15 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         reduction_idx=instruction.reduction_idx,
     )
 
-    # Barrier update (the first op on the next layer)
-    if instruction.layer_idx < globals.num_hidden_layers - 1:
-        next_op_barriers = globals.barriers[instruction.layer_idx + 1, 0]
-        next_op_barriers[0] += 1
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    next_op_barriers[0] += 1
 
 
 def layer_norm_double_matvec_silu(
     globals: Globals, instruction: LayerNormDoubleMatVecSiLU
 ):
     # Barrier check
-    op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
     assert op_barriers[0] == 128
 
     post_ln = rms_norm(
@@ -150,7 +148,7 @@ def layer_norm_double_matvec_silu(
     globals.silu_out[start:end] = post_silu
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
     next_op_barriers[0] += 1
 
 
@@ -161,7 +159,7 @@ def layer_norm_matvec_rope_append(
 
     # Barrier check
     if layer_idx > 0:
-        op_barriers = globals.barriers[layer_idx, instruction.opcode() - 1]
+        op_barriers = globals.barriers[layer_idx - 1, instruction.prev_opcode() - 1]
         assert op_barriers[0] == 512
 
     post_ln = rms_norm(
@@ -212,7 +210,7 @@ def layer_norm_matvec_rope_append(
         ]
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
     next_op_barriers[instruction.output_block_idx // 4] += 1
 
 
@@ -220,7 +218,7 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
 
     # Barrier check
-    op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+    op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
     for i in range(gqa_ratio):
         assert op_barriers[instruction.kv_head_idx * gqa_ratio + i] == 4
     assert op_barriers[globals.num_attention_heads + instruction.kv_head_idx] == 4
@@ -269,7 +267,7 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = out
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
     next_op_barriers[head_start:head_end] += 1
 
 
@@ -277,8 +275,8 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
     head_start_idx = instruction.head_start_idx
 
     # Barrier check
-    op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    assert(op_barriers[head_start_idx] == instruction.num_partials)
+    op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
+    assert op_barriers[head_start_idx] == instruction.num_partials
 
     indices_to_reduce = torch.tensor(
         instruction.reduction_list,
@@ -287,10 +285,10 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
     )
 
     lses = globals.attn_lse_intermediates[
-        head_start_idx:head_start_idx+globals.attn_reduction_size, indices_to_reduce
+        head_start_idx : head_start_idx + globals.attn_reduction_size, indices_to_reduce
     ]
     outs = globals.attn_out_intermediates[
-        head_start_idx:head_start_idx+globals.attn_reduction_size, indices_to_reduce
+        head_start_idx : head_start_idx + globals.attn_reduction_size, indices_to_reduce
     ]
 
     max_lse = torch.max(lses, dim=-1, keepdim=True).values
@@ -302,20 +300,20 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
 
     if instruction.is_terminal:
         globals.attn_out.view(globals.num_attention_heads, -1)[
-            head_start_idx:head_start_idx+globals.attn_reduction_size
+            head_start_idx : head_start_idx + globals.attn_reduction_size
         ] = reduced
     else:
         new_lse = new_denominator.log()
         output_slot = instruction.output_partial_idx
         globals.attn_lse_intermediates[
-            head_start_idx:head_start_idx+globals.attn_reduction_size, output_slot
+            head_start_idx : head_start_idx + globals.attn_reduction_size, output_slot
         ] = new_lse
         globals.attn_out_intermediates[
-            head_start_idx:head_start_idx+globals.attn_reduction_size, output_slot
+            head_start_idx : head_start_idx + globals.attn_reduction_size, output_slot
         ] = reduced
 
     # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode()]
+    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
     next_op_barriers[0] += 1  # the dumb way
 
 
