@@ -10,9 +10,16 @@ namespace kittens::prototype::vm
     using globals = llama_1b_globals;
     using config = default_config;
 
-    using block_rt = rt_bf<16, 128>;
+    // using block_rt = rt_bf<16, 128>;
+    using block_rt = rt_fl<16, 128>;
     using block_st = st_bf<16, 128>;
-    using block_rv = rv_bf<16>;
+    using out_sv = sv_bf<16>;
+    using out_rv = rv_bf<16>;
+    using weight_tile_st = st_bf<16, 512>;
+
+    // float for numerical precision
+    using activation_tile_sv = sv_fl<128>;
+    using activation_sv = sv_fl<2048>;
 
     template <typename Config, typename Globals>
     struct rms_upgate_silu
@@ -64,7 +71,7 @@ namespace kittens::prototype::vm
                 //     14,
                 //     0, 1, 2, 3, 4, 5};
 
-                // TODO the above is too long (we only have 12 pages), get proper order later
+                // TODO the above is too long (we only have 13 pages), get proper order later
                 int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
 
                 return ret_order[query];
@@ -103,7 +110,7 @@ namespace kittens::prototype::vm
                 {
                     int pg = get_up_page(s, laneid());
                     s.wait_page_ready(pg);
-                    auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
+                    auto &chunk = reinterpret_cast<weight_tile_st &>(s.pages[pg]);
                     tma::expect(up_arrived(s, laneid()), chunk);
                     tma::load_async(chunk, g.up_weights,
                                     {0, inst.layer, inst.output_block_idx, laneid()},
@@ -116,7 +123,7 @@ namespace kittens::prototype::vm
                     int idx = laneid() - UP_PAGES;
                     int pg = get_gate_page(s, idx);
                     s.wait_page_ready(pg);
-                    auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
+                    auto &chunk = reinterpret_cast<weight_tile_st &>(s.pages[pg]);
                     tma::expect(gate_arrived(s, idx), chunk);
                     tma::load_async(chunk, g.gate_weights,
                                     {0, inst.layer, inst.output_block_idx, idx},
@@ -131,7 +138,7 @@ namespace kittens::prototype::vm
                     // wait on barrier from previous op
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
-                    auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
+                    auto &buf = reinterpret_cast<activation_sv &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
                     tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
                 }
@@ -141,7 +148,7 @@ namespace kittens::prototype::vm
                 {
                     int rms_scale_page = get_rms_scale_page(s);
                     s.wait_page_ready(rms_scale_page);
-                    auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[rms_scale_page]);
+                    auto &rms_scale = reinterpret_cast<activation_sv &>(s.pages[rms_scale_page]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.mlp_norm_weights, {}, rms_scale_arrived(s));
                 }
@@ -180,14 +187,15 @@ namespace kittens::prototype::vm
                 int warp_id = warpgroup::warpid();
 
                 // Setup register memory for silu mlp
-                block_rt weights, gate_weights, broadcast_activations, gate_broadcast_activations;
+                block_rt weights, gate_weights; 
+                block_rt broadcast_activations, gate_broadcast_activations;
                 typename block_rt::row_vec activations_vec;
                 typename block_rt::col_vec output_col_format, gate_output_col_format;
-                block_rv output, gate_output;
+                out_rv output, gate_output;
 
                 // setup for rms norm
                 typename block_rt::row_vec rms_scale_vec;
-                typename rt_fl<16, 128>::row_vec float_activations;
+                typename block_rt::row_vec float_activations;
                 rv_fl<Config::NUM_CONSUMER_WARPS> rms_partial_sums;
                 // reinterpret cast!
                 shared_allocator al((int *)s.scratch());
@@ -196,16 +204,12 @@ namespace kittens::prototype::vm
 
                 // Next we need to load the activations
                 wait(in_arrived(s), 0);
-                // reinterpret the activations page as sv_bf<128>[16]
+                // reinterpret the activations page as activation_tile_sv[16]
                 int activation_page = get_input_page(s);
-                sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
+                activation_tile_sv(&activations_smem)[16] = reinterpret_cast<activation_tile_sv(&)[16]>(s.pages[activation_page]);
                 warp::load(activations_vec, activations_smem[warpid()]);
                 warp::sync();
                 warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
-
-                // if (warpid() == 0 and laneid() == 0) {
-                //     printf("got to rms norm\n");
-                // }
 
                 //---------------------------------------------------
                 // RMS NORM
@@ -235,7 +239,7 @@ namespace kittens::prototype::vm
                 // multiply by rms scale
                 wait(rms_scale_arrived(s), 0);
                 int rms_scale_page = get_rms_scale_page(s);
-                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
+                activation_tile_sv(&rms_scale_smem)[16] = reinterpret_cast<activation_tile_sv(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
                 warp::sync();
                 warp::arrive(s.page_finished[rms_scale_page]);
@@ -257,10 +261,6 @@ namespace kittens::prototype::vm
                 warp::row_sum(output_col_format, broadcast_activations);
                 warp::copy(output, output_col_format);
                 warp::sync();
-
-                // if (warpid() == 0 and laneid() == 0) {
-                //     printf("got to gate matvec\n");
-                // }
 
                 //--------------------------------------------------
                 // GATE MATVEC
@@ -290,10 +290,6 @@ namespace kittens::prototype::vm
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
-
-                // if (warpid() == 0 and laneid() == 0) {
-                //     printf("got to storer\n");
-                // }
             }
         };
 
@@ -321,7 +317,7 @@ namespace kittens::prototype::vm
                         scratch_bf16[i] = bf16(up * silu);
                     }
 
-                    sv_bf<16> &vec = *reinterpret_cast<sv_bf<16> *>(scratch_bf16);
+                    out_sv &vec = *reinterpret_cast<out_sv *>(scratch_bf16);
 
                     tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
                     tma::store_async_wait();

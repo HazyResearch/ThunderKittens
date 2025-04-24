@@ -17,9 +17,9 @@ namespace kittens::prototype::vm {
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
         using q_rt = rt_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
-        using q_st = st_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using q_st = st_fl<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
         using k_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
-        using v_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM, col_l>;
+        using v_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
         using kv_st = st_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
         using attn_fl_rt = rt_fl<16, LLAMA_1B_KV_BLOCK_SIZE>;    // only 4 values are used
         using attn_bf_rt = rt_bf<16, LLAMA_1B_KV_BLOCK_SIZE>;    // only 4 values are used
