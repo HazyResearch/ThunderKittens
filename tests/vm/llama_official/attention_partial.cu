@@ -268,7 +268,7 @@ namespace kittens::prototype::vm {
                         tma::expect(V_arrived(s, stage), V_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
-                } else if (laneid < config::NUM_PAGES) {
+                } else if (laneid >= 2 && laneid < config::NUM_PAGES) {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
                     arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS);
