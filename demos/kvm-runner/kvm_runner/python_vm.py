@@ -30,11 +30,22 @@ def get_start_end(block_size: int, block_idx: int):
     return start, end
 
 
-def matvec(mat: Tensor, vec: Tensor, block_size: int, block_idx: int):
+def matvec(
+    mat: Tensor, vec: Tensor, 
+    block_size: int, block_idx: int, 
+    reduce: bool = False,
+    reduction_size: int = 0, 
+    reduction_idx: int = 0
+):
     start, end = get_start_end(block_size, block_idx)
+    if reduce:
+        red_start, red_end = get_start_end(reduction_size, reduction_idx)
+        mat = mat[start:end, red_start:red_end]
+        vec = vec[red_start:red_end]
+    else:
+        mat = mat[start:end]
 
-    sliced_mat = mat[start:end]
-    out = einsum(sliced_mat, vec, "o i, i -> o")
+    out = einsum(mat, vec, "o i, i -> o")
     return out, start, end
 
 
@@ -48,9 +59,13 @@ def rms_norm(inp: Tensor, weight: Tensor, eps: float):
 
 
 def matvec_with_residual(
-    mat: Tensor, vec: Tensor, residual: Tensor, block_size: int, block_idx: int
+    mat: Tensor, vec: Tensor, residual: Tensor, 
+    block_size: int, block_idx: int, 
+    reduction_size: int, reduction_idx: int
 ):
-    matvec_out, start, end = matvec(mat, vec, block_size, block_idx)
+    matvec_out, start, end = matvec(
+        mat, vec, block_size, block_idx, True, reduction_size, reduction_idx
+    )
     residual[start:end] += matvec_out
 
 
@@ -66,6 +81,8 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
         residual=globals.hidden_states,
         block_size=globals.o_proj_block_size,
         block_idx=instruction.output_block_idx,
+        reduction_size=globals.matvec_reduction_size,
+        reduction_idx=instruction.reduction_idx,
     )
 
     # Barrier update
@@ -85,6 +102,8 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         residual=globals.hidden_states,
         block_size=globals.down_proj_block_size,
         block_idx=instruction.output_block_idx,
+        reduction_size=globals.matvec_reduction_size,
+        reduction_idx=instruction.reduction_idx,
     )
 
     # Barrier update (the first op on the next layer)
@@ -139,7 +158,7 @@ def layer_norm_matvec_rope_append(
     # Barrier check
     if (layer_idx > 0):
         op_barriers = globals.barriers[layer_idx, instruction.opcode() - 1]
-        assert(op_barriers[0] == 128)
+        assert(op_barriers[0] == 512)
 
     post_ln = rms_norm(
         inp=globals.hidden_states,

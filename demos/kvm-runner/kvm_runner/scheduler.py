@@ -73,6 +73,7 @@ def make_globals(
         down_proj_block_size=16,
         qkv_block_size=16,
         o_proj_block_size=16,
+        matvec_reduction_size=2048,
         attn_kv_block_size=16,
         # misc buffers
         instructions=make_buffer(max_instructions),
@@ -174,6 +175,7 @@ def schedule_layer(
             O_ProjResidual(
                 layer_idx=layer_idx,
                 output_block_idx=o_block_idx,
+                reduction_idx=0,
             )
         )
 
@@ -200,12 +202,14 @@ def schedule_layer(
 
     num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
     for down_block_idx in range(num_down_blocks):
-        instructions.append(
-            DownProjResidual(
-                layer_idx=layer_idx,
-                output_block_idx=down_block_idx,
+        for reduction_idx in range(4):
+            instructions.append(
+                DownProjResidual(
+                    layer_idx=layer_idx,
+                    output_block_idx=down_block_idx,
+                    reduction_idx=reduction_idx,
+                )
             )
-        )
 
     maybe_add_print(layer_idx, "down_proj")
 
