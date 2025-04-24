@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
 from einops import rearrange
-from kvm_runner.types import (
+from kvm_runner.model_types import (
     BatchState,
     DeviceType,
     ExtraModelConfig,
