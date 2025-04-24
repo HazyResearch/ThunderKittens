@@ -54,8 +54,8 @@ namespace kittens::prototype::vm
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
-        using attn_out_intermediates_t = gl<float, -1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
-        using attn_lse_intermediates_t = gl<float, 1, -1, num_attention_heads, sm_count, sv_fl<16>>;
+        using attn_out_intermediates_t = gl<float, 1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
+        using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, sm_count, sv_fl<16>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
