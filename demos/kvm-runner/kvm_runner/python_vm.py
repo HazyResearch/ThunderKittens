@@ -122,7 +122,7 @@ def layer_norm_double_matvec_silu(
     post_ln = rms_norm(
         inp=globals.hidden_states,
         weight=globals.mlp_ln_weight[instruction.layer_idx],
-        eps=globals.ln_eps,
+        eps=globals.rms_norm_eps,
     )
 
     block_size = globals.up_gate_proj_block_size
@@ -163,7 +163,7 @@ def layer_norm_matvec_rope_append(
     post_ln = rms_norm(
         inp=globals.hidden_states,
         weight=globals.attn_ln_weight[layer_idx],
-        eps=globals.ln_eps,
+        eps=globals.rms_norm_eps,
     )
 
     matmul_output = einsum(

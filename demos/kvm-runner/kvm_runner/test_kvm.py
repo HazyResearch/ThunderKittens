@@ -1,12 +1,21 @@
+from pathlib import Path
+
 import pydra
-from kvm_runner.kvm import interpret_with_kvm
+import torch
+from kvm_runner.kvm import get_kvm_func, interpret_with_kvm
 from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
-from kvm_runner.scheduler import make_globals, schedule_layer, schedule_model
+from kvm_runner.scheduler import (
+    instructions_to_tensor,
+    make_globals,
+    schedule_layer,
+    schedule_model,
+)
 from torch import Tensor
 
 
 class ScriptConfig(pydra.Config):
+    kvm_path: Path
     model: str = "meta-llama/Llama-3.2-1B-Instruct"
     device: str = "cuda:0"
     prompt_len: int = 10
@@ -15,7 +24,15 @@ class ScriptConfig(pydra.Config):
     stop_after_op: str | None = None
 
 
+def get_sm_count(device: str) -> int:
+    device_props = torch.cuda.get_device_properties(device)
+    return device_props.multi_processor_count
+
+
 def main(config: ScriptConfig):
+    kvm_func = get_kvm_func(config.kvm_path)
+    sm_count = get_sm_count(config.device)
+
     extra_config = ExtraModelConfig(
         interleave_rope=True,
     )
@@ -46,8 +63,12 @@ def main(config: ScriptConfig):
             stop_after_op=config.stop_after_op,
         )
 
+    serialized = instructions_to_tensor(instructions, sm_count, ints_per_instruction=32)
+
+    globs_for_kvm.instructions = serialized
+
     interpret_with_pyvm(instructions, globs_for_pyvm)
-    interpret_with_kvm(instructions, globs_for_kvm)
+    interpret_with_kvm(kvm_func, globs_for_kvm)
 
     def test_tensors(a: Tensor, b: Tensor, name: str):
         diff = a - b
