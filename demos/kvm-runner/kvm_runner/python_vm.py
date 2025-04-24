@@ -67,10 +67,10 @@ def matvec_with_residual(
     block_size: int,
     block_idx: int,
     reduction_size: int,
-    reduction_idx: int,
+    reduction_block_idx: int,
 ):
     matvec_out, start, end = matvec(
-        mat, vec, block_size, block_idx, True, reduction_size, reduction_idx
+        mat, vec, block_size, block_idx, True, reduction_size, reduction_block_idx
     )
     residual[start:end] += matvec_out
 
@@ -78,7 +78,7 @@ def matvec_with_residual(
 def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     # Barrier check
     op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
-    assert op_barriers[0] == globals.num_attention_heads // globals.attn_reduction_size
+    assert op_barriers[0] == globals.num_attention_heads
 
     matvec_with_residual(
         mat=globals.o_proj[instruction.layer_idx],
@@ -87,7 +87,7 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
         block_size=globals.o_proj_block_size,
         block_idx=instruction.output_block_idx,
         reduction_size=globals.matvec_reduction_size,
-        reduction_idx=instruction.reduction_idx,
+        reduction_block_idx=instruction.reduction_block_idx,
     )
 
     # Barrier update
@@ -107,7 +107,7 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         block_size=globals.down_proj_block_size,
         block_idx=instruction.output_block_idx,
         reduction_size=globals.matvec_reduction_size,
-        reduction_idx=instruction.reduction_idx,
+        reduction_block_idx=instruction.reduction_block_idx,
     )
 
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
@@ -316,7 +316,7 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
 
     # Barrier update
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1  # the dumb way
+    next_op_barriers[0] += globals.attn_reduction_size  # the dumb way
 
 
 def print_state(globals: Globals, instruction: PrintState):

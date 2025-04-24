@@ -148,7 +148,7 @@ namespace kittens::prototype::vm {
                 {
                     parsed_instruction inst{s};
 
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] != inst.num_partials)
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx}] < inst.num_partials)
                     {
                         __nanosleep(20);
                     }
@@ -277,7 +277,11 @@ namespace kittens::prototype::vm {
                     tma::store_async_read_wait();
                     finish_shared_page(s);
 
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);
+                    // atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);
+                    
+                    // simple signalling strat for now
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], 1);
+
                 }
                 warp::sync();
             }

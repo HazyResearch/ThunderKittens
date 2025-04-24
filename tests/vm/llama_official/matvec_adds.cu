@@ -2,7 +2,8 @@
 
 #include "llama.cuh"
 
-namespace kittens::prototype::vm {
+namespace kittens::prototype::vm
+{
 
     template <
         int _EXPECTED_ARRIVAL_COUNT,
@@ -20,12 +21,14 @@ namespace kittens::prototype::vm {
         static constexpr int EXPECTED_ARRIVAL_COUNT = _EXPECTED_ARRIVAL_COUNT;
         struct parsed_instruction
         {
-            int layer, start_output_col, start_reduction_col;
+            int layer, output_block_idx, reduction_block_idx, start_output_col, start_reduction_col;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];               // in units of 1
-                start_output_col = instruction[2];    // in units of 1 (0, 16, 32, ..., 2032)
-                start_reduction_col = instruction[3]; // in units of 1 (0, 2048, 4096, 6144)
+                output_block_idx = instruction[2];    // in units of 1 (0, 16, 32, ..., 2032)
+                reduction_block_idx = instruction[3]; // in units of 2048 (0, 2048, 4096, 6144)
+                start_output_col = output_block_idx * llama_1b_globals::matvec_block_size;
+                start_reduction_col = reduction_block_idx * llama_1b_globals::hidden_dim;
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -88,8 +91,11 @@ namespace kittens::prototype::vm {
                     auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
                     kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
 
-                    auto& weights_global = g.*WeightsPtr;      // object in global memory
+                    auto &weights_global = g.*WeightsPtr; // object in global memory
                     kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+
+                    // auto& weights_global = g.*WeightsPtr;      // object in global memory
+                    // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
                 }
                 else if (kittens::laneid() == 31)
                 {
@@ -101,7 +107,7 @@ namespace kittens::prototype::vm {
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                     kittens::tma::expect(activations_arrived(s), activations);
 
-                    auto& InputActivations = g.*InputActivationsPtr;      // object in global memory
+                    auto &InputActivations = g.*InputActivationsPtr; // object in global memory
                     kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
                 }
                 else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
@@ -180,8 +186,8 @@ namespace kittens::prototype::vm {
                     void *scratch = s.scratch();
                     sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
 
-                    auto& OutputActivations = g.*OutputActivationsPtr;      // object in global memory
-                    kittens::tma::store_add_async(OutputActivations, output, {inst.start_output_col / 16});
+                    auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
+                    kittens::tma::store_add_async(OutputActivations, output, {inst.output_block_idx});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
                 }
@@ -201,23 +207,27 @@ namespace kittens::prototype::vm {
         };
     };
 
-     template<typename Config, typename Globals>
+    template <typename Config, typename Globals>
     struct downproj : MatVecAddOp<
-        128, 
-        &Globals::down_weights, 
-        &Globals::silu_out,   /// TODO: CHECK
-        &Globals::hidden_states, 
-        OPCODE_DownProjResidual, 
-        OPCODE_DownProjResidual - 1,
-        Config> { };
+                          llama_1b_globals::intermediate_dim / llama_1b_globals::matvec_block_size,
+                          &Globals::down_weights,
+                          &Globals::silu_out, /// TODO: CHECK
+                          &Globals::hidden_states,
+                          OPCODE_DownProjResidual,
+                          OPCODE_DownProjResidual - 1,
+                          Config>
+    {
+    };
 
-    template<typename Config, typename Globals>
+    template <typename Config, typename Globals>
     struct o_proj : MatVecAddOp<
-        128, 
-        &Globals::o_weights, 
-        &Globals::attn_out, 
-        &Globals::hidden_states, 
-        OPCODE_O_ProjResidual, 
-        OPCODE_O_ProjResidual - 1,
-        Config> { };
+                        llama_1b_globals::num_attention_heads,
+                        &Globals::o_weights,
+                        &Globals::attn_out,
+                        &Globals::hidden_states,
+                        OPCODE_O_ProjResidual,
+                        OPCODE_O_ProjResidual - 1,
+                        Config>
+    {
+    };
 }
