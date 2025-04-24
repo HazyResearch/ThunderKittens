@@ -15,7 +15,9 @@ from torch import Tensor
 
 
 class ScriptConfig(pydra.Config):
-    kvm_path: Path
+    kvm_path: Path = (
+        Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
+    )
     model: str = "meta-llama/Llama-3.2-1B-Instruct"
     device: str = "cuda:0"
     prompt_len: int = 10
@@ -63,12 +65,14 @@ def main(config: ScriptConfig):
             stop_after_op=config.stop_after_op,
         )
 
-    serialized = instructions_to_tensor(instructions, sm_count, ints_per_instruction=32)
+    serialized = instructions_to_tensor(
+        instructions, sm_count, ints_per_instruction=32
+    ).to(config.device)
 
     globs_for_kvm.instructions = serialized
 
-    interpret_with_pyvm(instructions, globs_for_pyvm)
-    interpret_with_kvm(kvm_func, globs_for_kvm)
+    interpret_with_pyvm(globs_for_pyvm, instructions)
+    interpret_with_kvm(globs_for_kvm, kvm_func)
 
     def test_tensors(a: Tensor, b: Tensor, name: str):
         diff = a - b
