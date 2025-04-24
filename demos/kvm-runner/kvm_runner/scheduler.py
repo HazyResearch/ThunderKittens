@@ -169,7 +169,7 @@ def schedule_layer(
             O_ProjResidual(
                 layer_idx=layer_idx,
                 output_block_idx=o_block_idx,
-                reduction_idx=0,
+                reduction_block_idx=0,
             )
         )
 
@@ -201,7 +201,7 @@ def schedule_layer(
                 DownProjResidual(
                     layer_idx=layer_idx,
                     output_block_idx=down_block_idx,
-                    reduction_idx=reduction_idx,
+                    reduction_block_idx=reduction_idx,
                 )
             )
 

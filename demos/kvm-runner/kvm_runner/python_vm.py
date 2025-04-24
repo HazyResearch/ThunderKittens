@@ -67,10 +67,10 @@ def matvec_with_residual(
     block_size: int,
     block_idx: int,
     reduction_size: int,
-    reduction_idx: int,
+    reduction_block_idx: int,
 ):
     matvec_out, start, end = matvec(
-        mat, vec, block_size, block_idx, True, reduction_size, reduction_idx
+        mat, vec, block_size, block_idx, True, reduction_size, reduction_block_idx
     )
     residual[start:end] += matvec_out
 
@@ -87,7 +87,7 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
         block_size=globals.o_proj_block_size,
         block_idx=instruction.output_block_idx,
         reduction_size=globals.matvec_reduction_size,
-        reduction_idx=instruction.reduction_idx,
+        reduction_block_idx=instruction.reduction_block_idx,
     )
 
     # Barrier update
@@ -107,7 +107,7 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         block_size=globals.down_proj_block_size,
         block_idx=instruction.output_block_idx,
         reduction_size=globals.matvec_reduction_size,
-        reduction_idx=instruction.reduction_idx,
+        reduction_block_idx=instruction.reduction_block_idx,
     )
 
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
