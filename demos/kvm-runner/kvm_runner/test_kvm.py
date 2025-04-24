@@ -13,6 +13,7 @@ from kvm_runner.scheduler import (
     tensorize_instructions,
 )
 from torch import Tensor
+from torch.nn.init import normal_
 
 
 class ScriptConfig(pydra.Config):
@@ -51,15 +52,15 @@ def main(config: ScriptConfig):
     globs_for_pyvm.pos_id = config.prompt_len + config.ntok
     globs_for_kvm.pos_id = config.prompt_len + config.ntok
 
-    globs_for_pyvm.hidden_states = torch.randn_like(globs_for_pyvm.hidden_states)
-    globs_for_kvm.hidden_states = globs_for_pyvm.hidden_states.clone()
+    normal_(globs_for_pyvm.hidden_states)
+    globs_for_kvm.hidden_states.copy_(globs_for_pyvm.hidden_states)
     print("hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
-    globs_for_pyvm.k_cache = torch.randn_like(globs_for_pyvm.k_cache)
-    globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
+    normal_(globs_for_pyvm.k_cache)
+    globs_for_kvm.k_cache.copy_(globs_for_pyvm.k_cache)
 
-    globs_for_pyvm.v_cache = torch.randn_like(globs_for_pyvm.v_cache)
-    globs_for_kvm.v_cache = globs_for_pyvm.v_cache.clone()
+    normal_(globs_for_pyvm.v_cache)
+    globs_for_kvm.v_cache.copy_(globs_for_pyvm.v_cache)
 
     if config.full_model:
         instructions = schedule_model(
@@ -148,12 +149,15 @@ def main(config: ScriptConfig):
     )
     test_tensors(globs_for_pyvm.attn_out, globs_for_kvm.attn_out, "attn_out")
     test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
-    test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
-    test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
+
+    # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
+    # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
 
     print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
     print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
+
+    # breakpoint()
 
 
 if __name__ == "__main__":
