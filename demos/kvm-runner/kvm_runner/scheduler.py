@@ -77,9 +77,6 @@ def make_globals(
         o_proj_block_size=16,
         matvec_reduction_size=2048,
         attn_kv_block_size=16,
-        # max sizes
-        max_attn_partials=max_attn_partials,
-        max_timings=TIMING_SLOTS,
         device=device,
     )
 
