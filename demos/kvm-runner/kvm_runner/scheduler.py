@@ -14,6 +14,7 @@ from kvm_runner.instructions import (
     PrintState,
 )
 from kvm_runner.llama import LlamaForCausalLM
+from torch import Tensor
 
 
 def make_globals(
@@ -61,7 +62,7 @@ def make_globals(
         # scalars
         pos_id=0,
         softmax_temp=1 / math.sqrt(config.head_dim),
-        ln_eps=config.rms_norm_eps,
+        rms_norm_eps=config.rms_norm_eps,
         num_attention_heads=config.num_attention_heads,
         num_kv_heads=config.num_key_value_heads,
         head_dim=config.head_dim,
@@ -233,3 +234,35 @@ def schedule_model(
         )
 
     return globals, instructions
+
+
+def serialize_and_pad(instruction: Instruction, ints_per_instruction: int):
+    serialized = instruction.serialize()
+    num_padding = ints_per_instruction - len(serialized)
+    assert num_padding >= 0
+    return serialized + [0] * num_padding
+
+
+def instructions_to_tensor(
+    instructions: list[Instruction], num_sms: int, ints_per_instruction: int
+) -> Tensor:
+    instruction_queues = [[] for _ in range(num_sms)]
+    for i, instruction in enumerate(instructions):
+        instruction_queues[i % num_sms].append(
+            serialize_and_pad(instruction, ints_per_instruction)
+        )
+
+    empty_instruction = [0] * ints_per_instruction
+
+    max_queue_len = max(len(queue) for queue in instruction_queues)
+    for queue in instruction_queues:
+        queue.extend([empty_instruction] * (max_queue_len - len(queue)))
+
+    flattened = []
+    for queue in instruction_queues:
+        for instruction in queue:
+            flattened.extend(instruction)
+
+    return torch.tensor(flattened, dtype=torch.int32).view(
+        num_sms, -1, ints_per_instruction
+    )
