@@ -19,13 +19,6 @@ using downproj_op = downproj<default_config, llama_1b_globals>;
 using o_proj_op = o_proj<default_config, llama_1b_globals>;
 using rms_upgate_silu_op = rms_upgate_silu<default_config, llama_1b_globals>;
 
-// kittens::py::bind_kernel<kvm<config, llama_1b_globals,
-//                              attention_partial<>,
-//                              attention_reduction<>,
-//                              rms_qkv_rope_append<>,
-//                              downproj<>,
-//                              o_proj<>,
-//                              rms_upgate_silu<>>>(
 
 PYBIND11_MODULE(kvm_llama, m)
 {
