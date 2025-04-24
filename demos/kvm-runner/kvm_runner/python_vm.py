@@ -259,7 +259,8 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     # casting the output of the softmax to 16-bit causes small numerical differences
     softmax = torch.softmax(scaled_qk, dim=-1)
 
-    lse = torch.logsumexp(scaled_qk, dim=-1)
+    # lse = torch.logsumexp(scaled_qk, dim=-1)
+    lse = torch.log2(torch.sum(torch.exp(scaled_qk), dim=-1))
 
     out = einsum(softmax.float(), v.float(), "h k, k o -> h o")
 
@@ -293,7 +294,8 @@ def attention_reduction(globals: Globals, instruction: AttentionReduction):
 
     max_lse = torch.max(lses, dim=-1, keepdim=True).values
 
-    adjusted_factors = (lses - max_lse).exp()
+    # adjusted_factors = (lses - max_lse).exp()
+    adjusted_factors = (lses - max_lse).exp2()
     new_denominator = adjusted_factors.sum(dim=-1, keepdim=True)
 
     reduced = (outs * adjusted_factors.unsqueeze(-1)).sum(dim=1) / new_denominator

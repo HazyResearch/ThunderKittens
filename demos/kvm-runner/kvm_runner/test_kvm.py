@@ -32,6 +32,7 @@ def main(config: ScriptConfig):
     torch.manual_seed(0)
 
     kvm_func = get_kvm_func(config.kvm_path)
+    torch.cuda.set_device(config.device)
 
     extra_config = ExtraModelConfig(
         interleave_rope=True,

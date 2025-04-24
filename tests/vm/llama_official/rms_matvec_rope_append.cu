@@ -72,7 +72,7 @@ namespace kittens::prototype::vm {
                 } else if (laneid() == 4) {
                     // Activation
                     s.wait_page_ready(get_activation_page(s));
-                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx, opcode - 1, 0}] != 512) __nanosleep(20);
+                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_DownProjResidual - 1, 0}] != 512) __nanosleep(20);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
@@ -251,7 +251,7 @@ namespace kittens::prototype::vm {
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
                 if (warp::laneid() == 0)
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode, inst.qkv_block_idx / 4}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
             }
         };
     };
