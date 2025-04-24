@@ -1,6 +1,8 @@
+import time
 from pathlib import Path
 
 import pydra
+import torch
 from kvm_runner.kvm import get_kvm_func, interpret_with_kvm
 from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
@@ -44,6 +46,9 @@ def main(config: ScriptConfig):
         model=model,
     )
 
+    globs_for_pyvm.hidden_states = torch.randn_like(globs_for_pyvm.hidden_states)
+    globs_for_kvm.hidden_states = globs_for_pyvm.hidden_states.clone()
+
     if config.full_model:
         instructions = schedule_model(
             globals=globs_for_pyvm,
@@ -62,13 +67,26 @@ def main(config: ScriptConfig):
     tensorize_instructions(globs_for_kvm, instructions, sm_count)
     tensorize_instructions(globs_for_pyvm, instructions, sm_count)
 
+    print("interpreting with pyvm...")
+    start = time.time()
     interpret_with_pyvm(globs_for_pyvm, instructions)
+    torch.cuda.synchronize()
+    end = time.time()
+    print(f"pyvm time: {end - start}")
+
+    print("interpreting with kvm...")
+    start = time.time()
     interpret_with_kvm(globs_for_kvm, kvm_func)
+    torch.cuda.synchronize()
+    end = time.time()
+    print(f"kvm time: {end - start}")
+
+    print("done! diffing tensors:")
 
     def test_tensors(a: Tensor, b: Tensor, name: str):
         diff = a - b
         adiff = diff.abs()
-        rdiff = 2 * adiff / (a.abs() + b.abs())
+        rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
         print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
 
     test_tensors(
