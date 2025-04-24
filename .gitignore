@@ -11,3 +11,4 @@ local/
 *.ncu-rep
 __pycache__/
 */printouts/*
+.vscode/
