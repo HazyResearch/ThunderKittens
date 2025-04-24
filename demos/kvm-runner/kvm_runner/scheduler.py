@@ -214,16 +214,25 @@ def schedule_layer(
 
 
 def schedule_model(
-    model: LlamaForCausalLM,
     prompt_len: int,
     ntok: int,
     print_info: PrintInfo | None = None,
+    globs: Globals | None = None,
+    model: LlamaForCausalLM | None = None,
+    layer_limit: int | None = None,
+    stop_after_op: str | None = None,
 ):
-    config = model.config
-    globals = make_globals(model)
+    if globs is None:
+        globals = make_globals(model)
+    else:
+        globals = globs
+
     instructions = []
 
-    for layer_idx in range(config.num_hidden_layers):
+    if layer_limit is None:
+        layer_limit = globals.num_hidden_layers
+
+    for layer_idx in range(layer_limit):
         instructions.extend(
             schedule_layer(
                 globals=globals,
@@ -231,6 +240,7 @@ def schedule_model(
                 prompt_len=prompt_len,
                 ntok=ntok,
                 print_info=print_info,
+                stop_after_op=stop_after_op,
             )
         )
 
