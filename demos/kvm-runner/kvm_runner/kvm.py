@@ -67,7 +67,7 @@ class KVM_Runner:
         self.model = model
 
         self.globals, self.instructions = schedule_model(
-            self.model,
+            model=self.model,
             prompt_len=prompt_len,
             ntok=ntok,
         )

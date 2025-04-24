@@ -5,7 +5,7 @@ def make_instructions(DEPTH=1):
 
     instruction_idx = 0
     for i in range(128): # ceil
-        arr[instruction_idx%148].append([2, 0, 16*i]+[0]*29)
+        arr[instruction_idx%148].append([2, 0, 16*i, 0]+[0]*28)
         instruction_idx += 1
     while instruction_idx%148 != 0:
         arr[instruction_idx%148].append([0]*32)
