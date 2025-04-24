@@ -2,7 +2,7 @@
 NVCC?=nvcc
 GPU=B200
 
-TARGET=llama
+TARGET=kvm_llama
 SRC=llama.cu
 
 # Python version configuration
