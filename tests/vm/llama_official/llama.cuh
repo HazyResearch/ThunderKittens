@@ -47,8 +47,8 @@ namespace kittens::prototype::vm
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matvec_block_size, 512>>;                 // assumed to be N by 2048 (X@W.T).
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matvec_block_size, 512>>; // assumed to be N by 2048 (X@W.T).
 
-        using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>>;
+        using activations_t = gl<float, 1, 1, 1, hidden_dim, sv_fl<hidden_dim>, sv_fl<head_dim>, sv_fl<16>>;
+        using activations_big_indim_t = gl<float, 1, 1, 1, intermediate_dim, sv_fl<intermediate_dim>, sv_fl<hidden_dim>, sv_fl<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
