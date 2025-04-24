@@ -65,7 +65,7 @@ namespace kittens::prototype::vm
                 //     0, 1, 2, 3, 4, 5};
 
                 // TODO the above is too long (we only have 12 pages), get proper order later
-                int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+                int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
 
                 return ret_order[query];
             }
@@ -327,12 +327,14 @@ namespace kittens::prototype::vm
                     sv_bf<16> &vec = *reinterpret_cast<sv_bf<16> *>(scratch_bf16);
                     tma::store_async(g.silu_out, vec, {inst.start_col / 16});
                     tma::store_async_wait();
+
                 }
 
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;");
                 if (laneid() == 0)
                 {
+
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
                     // if constexpr (opcode == g.Bar.rows() - 1)
                     //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
