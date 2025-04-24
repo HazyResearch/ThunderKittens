@@ -155,10 +155,6 @@ def main(config: ScriptConfig):
     print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
     print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
-    # print("attn out", globs_for_pyvm.attn_out[:128])
-    # print("attn out kvm", globs_for_kvm.attn_out[:128])
-    # breakpoint()
-
 
 if __name__ == "__main__":
     pydra.run(main)
