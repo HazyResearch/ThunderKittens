@@ -273,7 +273,7 @@ namespace kittens::prototype::vm {
 
                     o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
                     wait(final_O_ready(s, q_head_local_idx), 0);
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, inst.q_head_start_idx + q_head_local_idx, 0, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, 0, inst.q_head_start_idx + q_head_local_idx});
                     tma::store_async_read_wait();
                     finish_shared_page(s);
 
