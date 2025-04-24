@@ -88,6 +88,8 @@ def kvm_generate(
     prompt_len: int,
 ):
     assert config.kvm_dir is not None
+    torch.cuda.set_device(config.device)
+
     runner = KVM_Runner(
         model,
         kvm_dir=config.kvm_dir,
