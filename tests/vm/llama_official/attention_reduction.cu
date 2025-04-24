@@ -4,8 +4,8 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-
-namespace kittens::prototype::vm {
+namespace kittens::prototype::vm
+{
 
     using globals = llama_1b_globals;
 
@@ -59,7 +59,7 @@ namespace kittens::prototype::vm {
         {
             return s.semaphores()[O_partial_sem_idx(q_head_local_idx, stage, true)];
         }
-        __device__ static inline semaphore &L_partial_all_arrived(state<config> &s, int q_head_local_idx) 
+        __device__ static inline semaphore &L_partial_all_arrived(state<config> &s, int q_head_local_idx)
         {
             return s.semaphores()[L_partial_sem_idx(q_head_local_idx, false)];
         }
@@ -92,27 +92,30 @@ namespace kittens::prototype::vm {
         static constexpr size_t size_per_head = sizeof(l_partial_sv) + NUM_STAGES * sizeof(o_sv) + sizeof(o_final_sv);
         static constexpr size_t total_smem_needed = Q_HEADS_PER_INSTRUCTION * size_per_head;
         static_assert(total_smem_needed <= config::PAGE_SIZE,
-            "Required shared memory exceeds configured page size.");
-    
-        __device__ static inline l_partial_sv &get_L_partial_smem(state<config> &s, int q_head_local_idx) {
+                      "Required shared memory exceeds configured page size.");
+
+        __device__ static inline l_partial_sv &get_L_partial_smem(state<config> &s, int q_head_local_idx)
+        {
             int pid = s.pid(SHARED_DATA_PAGE);
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
             char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
-            return *reinterpret_cast<l_partial_sv*>(head_base_ptr);
+            return *reinterpret_cast<l_partial_sv *>(head_base_ptr);
         }
-        __device__ static inline o_sv &get_O_partial_smem(state<config> &s, int q_head_local_idx, int stage) {
+        __device__ static inline o_sv &get_O_partial_smem(state<config> &s, int q_head_local_idx, int stage)
+        {
             int pid = s.pid(SHARED_DATA_PAGE);
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
             char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
             size_t offset = sizeof(l_partial_sv) + stage * sizeof(o_sv);
-            return *reinterpret_cast<o_sv*>(head_base_ptr + offset);
+            return *reinterpret_cast<o_sv *>(head_base_ptr + offset);
         }
-        __device__ static inline o_final_sv &get_O_final_smem(state<config> &s, int q_head_local_idx) {
+        __device__ static inline o_final_sv &get_O_final_smem(state<config> &s, int q_head_local_idx)
+        {
             int pid = s.pid(SHARED_DATA_PAGE);
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
             char *head_base_ptr = page_base_ptr + q_head_local_idx * size_per_head;
             size_t offset = sizeof(l_partial_sv) + NUM_STAGES * sizeof(o_sv);
-            return *reinterpret_cast<o_final_sv*>(head_base_ptr + offset);
+            return *reinterpret_cast<o_final_sv *>(head_base_ptr + offset);
         }
 
         struct controller
@@ -132,7 +135,7 @@ namespace kittens::prototype::vm {
                     }
                     init_semaphore(L_partial_all_arrived(s, q_head), 0, 1);
                     init_semaphore(L_partial_all_finished(s, q_head), 0, 1);
-    
+
                     init_semaphore(final_O_ready(s, q_head), 0, 1);
                 }
                 return 4 * ((NUM_STAGES * 2) + 3);
@@ -165,7 +168,7 @@ namespace kittens::prototype::vm {
                         int stage = i % NUM_STAGES;
                         o_sv &O_smem = get_O_partial_smem(s, local_q_head, stage);
 
-                        if (i >= NUM_STAGES) 
+                        if (i >= NUM_STAGES)
                         {
                             int prev_phase = (i / NUM_STAGES - 1) % 2;
                             wait(O_partial_finished(s, local_q_head, stage), prev_phase);
@@ -175,8 +178,8 @@ namespace kittens::prototype::vm {
                         tma::load_async<cache_policy::EVICT_FIRST>(
                             O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
                     }
-                } 
-                else if (local_q_head - (Q_HEADS_PER_INSTRUCTION - 1) < config::NUM_PAGES) 
+                }
+                else if (local_q_head - (Q_HEADS_PER_INSTRUCTION - 1) < config::NUM_PAGES)
                 {
                     arrive(s.page_finished[s.pid(local_q_head - (Q_HEADS_PER_INSTRUCTION - 1))], config::NUM_CONSUMER_WARPS);
                 }
@@ -200,7 +203,7 @@ namespace kittens::prototype::vm {
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warpid() < Q_HEADS_PER_INSTRUCTION) 
+                if (warpid() < Q_HEADS_PER_INSTRUCTION)
                 {
                     parsed_instruction inst{s};
                     int q_head_local_idx = warpid();
@@ -266,9 +269,9 @@ namespace kittens::prototype::vm {
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                parsed_instruction inst{s};
                 if (warp::laneid() < Q_HEADS_PER_INSTRUCTION)
                 {
-                    parsed_instruction inst{s};
                     int q_head_local_idx = warp::laneid();
 
                     o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
@@ -278,15 +281,20 @@ namespace kittens::prototype::vm {
                     finish_shared_page(s);
 
                     // atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);
-                    
-                    // simple signalling strat for now
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], 1);
-
                 }
+                warp::sync();
+
+                asm volatile("fence.acq_rel.gpu;");
+
+                if (warp::laneid() == 0)
+                {
+                    // simple signalling strat for now
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], Q_HEADS_PER_INSTRUCTION);
+                }
+
                 warp::sync();
             }
         };
     };
 
 }
-
