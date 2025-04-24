@@ -199,16 +199,16 @@ template<int N> auto make_unsafe_gl_arg(int param) { // typename std::conditiona
 template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t data, int b, int d, int r, int c) {
     if constexpr (safe) {
         if(GL::__b__ > 0 && b != GL::__b__) {
-            throw std::runtime_error("Batch dimension mismatch.");
+            throw std::runtime_error("Batch dimension mismatch. Expected: " + std::to_string(GL::__b__) + ", Got: " + std::to_string(b));
         }
         if(GL::__d__ > 0 && d != GL::__d__) {
-            throw std::runtime_error("Depth dimension mismatch.");
+            throw std::runtime_error("Depth dimension mismatch. Expected: " + std::to_string(GL::__d__) + ", Got: " + std::to_string(d));
         }
         if(GL::__r__ > 0 && r != GL::__r__) {
-            throw std::runtime_error("Row dimension mismatch.");
+            throw std::runtime_error("Row dimension mismatch. Expected: " + std::to_string(GL::__r__) + ", Got: " + std::to_string(r));
         }
         if(GL::__c__ > 0 && c != GL::__c__) {
-            throw std::runtime_error("Column dimension mismatch.");
+            throw std::runtime_error("Column dimension mismatch. Expected: " + std::to_string(GL::__c__) + ", Got: " + std::to_string(c));
         }
     }
     return GL(
