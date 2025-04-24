@@ -71,7 +71,7 @@ namespace kittens::prototype::vm
                 //     14,
                 //     0, 1, 2, 3, 4, 5};
 
-                // TODO the above is too long (we only have 12 pages), get proper order later
+                // TODO the above is too long (we only have 13 pages), get proper order later
                 int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
 
                 return ret_order[query];
