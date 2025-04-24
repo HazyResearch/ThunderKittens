@@ -26,6 +26,7 @@ class ScriptConfig(pydra.Config):
     ntok: int = 10
     full_model: bool = False
     stop_after_op: str | None = None
+    start_after_op: str | None = None
 
 
 def main(config: ScriptConfig):
@@ -55,6 +56,7 @@ def main(config: ScriptConfig):
             prompt_len=config.prompt_len,
             ntok=config.ntok,
         )
+        starting_instructions = []
     else:
         instructions = schedule_layer(
             globals=globs_for_pyvm,
@@ -64,8 +66,36 @@ def main(config: ScriptConfig):
             stop_after_op=config.stop_after_op,
         )
 
+        if config.start_after_op is not None:
+            starting_instructions = schedule_layer(
+                globals=globs_for_pyvm,
+                layer_idx=0,
+                prompt_len=config.prompt_len,
+                ntok=config.ntok,
+                stop_after_op=config.start_after_op,
+            )
+
+            assert len(starting_instructions) < len(instructions)
+            for i, i2 in zip(starting_instructions, instructions):
+                assert i == i2
+
+            instructions = instructions[len(starting_instructions) :]
+        else:
+            starting_instructions = []
+
     tensorize_instructions(globs_for_kvm, instructions, sm_count)
     tensorize_instructions(globs_for_pyvm, instructions, sm_count)
+
+    if len(starting_instructions) > 0:
+        print("running starting instructions...")
+
+        # run all the starting instructions with pyvm
+        start = time.time()
+        interpret_with_pyvm(globs_for_pyvm, starting_instructions)
+        interpret_with_pyvm(globs_for_kvm, starting_instructions)
+        torch.cuda.synchronize()
+        end = time.time()
+        print(f"starting instructions time: {end - start}")
 
     print("interpreting with pyvm...")
     start = time.time()
