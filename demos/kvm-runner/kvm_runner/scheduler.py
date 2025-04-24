@@ -14,7 +14,11 @@ from kvm_runner.instructions import (
     PrintState,
 )
 from kvm_runner.llama import LlamaForCausalLM
-from torch import Tensor
+from kvm_runner.utils import get_sm_count
+
+INTS_PER_INSTRUCTION = 32
+TIMING_SLOTS = 128
+NUM_OPS = 6
 
 
 def make_globals(
@@ -24,10 +28,7 @@ def make_globals(
     device = model.device
     dtype = model.dtype
 
-    max_attn_partials = 1024
-    max_instructions = 1024 * 128
-    max_timings = 1024 * 128
-    num_ops = 6
+    max_attn_partials = get_sm_count(device)
 
     def make_buffer(shape, buffer_dtype=dtype):
         return torch.zeros(shape, device=device, dtype=buffer_dtype)
@@ -76,21 +77,10 @@ def make_globals(
         o_proj_block_size=16,
         matvec_reduction_size=2048,
         attn_kv_block_size=16,
-        # misc buffers
-        instructions=make_buffer(max_instructions),
-        barriers=make_buffer(
-            [
-                config.num_hidden_layers,
-                num_ops,
-                config.num_attention_heads + config.num_key_value_heads * 2,
-            ],
-            buffer_dtype=torch.int32,
-        ),  # pytorch does not support + for uint32, but our kernel uses uint32
-        timings=make_buffer(max_timings),
         # max sizes
         max_attn_partials=max_attn_partials,
-        max_instructions=max_instructions,
-        max_timings=max_timings,
+        max_timings=TIMING_SLOTS,
+        device=device,
     )
 
 
@@ -247,23 +237,21 @@ def schedule_model(
     return globals, instructions
 
 
-def serialize_and_pad(instruction: Instruction, ints_per_instruction: int):
+def serialize_and_pad(instruction: Instruction):
     serialized = instruction.serialize()
-    num_padding = ints_per_instruction - len(serialized)
+    num_padding = INTS_PER_INSTRUCTION - len(serialized)
     assert num_padding >= 0
     return serialized + [0] * num_padding
 
 
-def instructions_to_tensor(
-    instructions: list[Instruction], num_sms: int, ints_per_instruction: int
-) -> Tensor:
+def tensorize_instructions(
+    globs: Globals, instructions: list[Instruction], num_sms: int
+):
     instruction_queues = [[] for _ in range(num_sms)]
     for i, instruction in enumerate(instructions):
-        instruction_queues[i % num_sms].append(
-            serialize_and_pad(instruction, ints_per_instruction)
-        )
+        instruction_queues[i % num_sms].append(serialize_and_pad(instruction))
 
-    empty_instruction = [0] * ints_per_instruction
+    empty_instruction = [0] * INTS_PER_INSTRUCTION
 
     max_queue_len = max(len(queue) for queue in instruction_queues)
     for queue in instruction_queues:
@@ -274,6 +262,28 @@ def instructions_to_tensor(
         for instruction in queue:
             flattened.extend(instruction)
 
-    return torch.tensor(flattened, dtype=torch.int32).view(
-        num_sms, -1, ints_per_instruction
+    device = globs.device
+
+    serialized = torch.tensor(flattened, dtype=torch.int32, device=device).view(
+        num_sms, -1, INTS_PER_INSTRUCTION
     )
+
+    timings = torch.zeros(
+        [num_sms, max_queue_len, TIMING_SLOTS],
+        dtype=torch.int32,
+        device=device,
+    )
+
+    barriers = torch.zeros(
+        [
+            globs.num_hidden_layers,
+            NUM_OPS,
+            globs.num_attention_heads + globs.num_kv_heads * 2,
+        ],
+        dtype=torch.int32,
+        device=device,
+    )
+
+    globs.instructions = serialized
+    globs.timings = timings
+    globs.barriers = barriers

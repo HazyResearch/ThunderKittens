@@ -1,16 +1,16 @@
 from pathlib import Path
 
 import pydra
-import torch
 from kvm_runner.kvm import get_kvm_func, interpret_with_kvm
 from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
 from kvm_runner.scheduler import (
-    instructions_to_tensor,
     make_globals,
     schedule_layer,
     schedule_model,
+    tensorize_instructions,
 )
+from kvm_runner.utils import get_sm_count
 from torch import Tensor
 
 
@@ -24,11 +24,6 @@ class ScriptConfig(pydra.Config):
     ntok: int = 10
     full_model: bool = False
     stop_after_op: str | None = None
-
-
-def get_sm_count(device: str) -> int:
-    device_props = torch.cuda.get_device_properties(device)
-    return device_props.multi_processor_count
 
 
 def main(config: ScriptConfig):
@@ -52,7 +47,6 @@ def main(config: ScriptConfig):
     if config.full_model:
         instructions = schedule_model(
             globals=globs_for_pyvm,
-            layer_idx=0,
             prompt_len=config.prompt_len,
             ntok=config.ntok,
         )
@@ -65,11 +59,8 @@ def main(config: ScriptConfig):
             stop_after_op=config.stop_after_op,
         )
 
-    serialized = instructions_to_tensor(
-        instructions, sm_count, ints_per_instruction=32
-    ).to(config.device)
-
-    globs_for_kvm.instructions = serialized
+    tensorize_instructions(globs_for_kvm, instructions, sm_count)
+    tensorize_instructions(globs_for_pyvm, instructions, sm_count)
 
     interpret_with_pyvm(globs_for_pyvm, instructions)
     interpret_with_kvm(globs_for_kvm, kvm_func)
