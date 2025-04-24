@@ -205,6 +205,7 @@ namespace kittens::prototype::vm {
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
+                        warp::sync();
                         bf16 pair_val = __shfl_sync(MASK_ALL, qkv_proj[0][0], laneid() + mod);
 
                         // Compute RoPE in-place
@@ -255,5 +256,4 @@ namespace kittens::prototype::vm {
             }
         };
     };
-
 }

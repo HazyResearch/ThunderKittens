@@ -247,8 +247,11 @@ namespace kittens::prototype::vm {
                            *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
                         __nanosleep(20);
 
-                    // Run the pipeline!
+                    // Wait for the KV page
                     wait_KV_page(s);
+                    if (start_blk_idx == end_blk_idx) finish_KV_page(s);
+
+                    // Run the pipeline!
                     for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                         int stage = i % NUM_STAGES;
                         kv_st &K_smem = get_K_smem(s, stage);
@@ -334,6 +337,7 @@ namespace kittens::prototype::vm {
                         warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
                         warp::load(K_reg, K_smem);
                         warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
+                        warp::sync();
                         warp::arrive(K_finished(s, stage));
 
                         // Mask out invalid positions at the end
@@ -361,6 +365,7 @@ namespace kittens::prototype::vm {
                         warp::load(V_reg, V_smem);
                         warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                         warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
+                        warp::sync();
                         warp::arrive(V_finished(s, stage));
 
                         // Normalize and accumulate demoniator
@@ -372,8 +377,9 @@ namespace kittens::prototype::vm {
                     }
 
                     // Finish
-                    finish_KV_page(s);
+                    warp::sync();
                     if (start_blk_idx < end_blk_idx) {
+                        finish_KV_page(s);
                         warp::div_row(O_reg, O_reg, norm_vec_reg);
                         warp::log2(L_reg, norm_vec_reg);
                         warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
