@@ -125,7 +125,8 @@ namespace kittens::prototype::vm
         {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                return query;
+                int ret_order[13] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0};
+                return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
@@ -199,10 +200,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                // launcher does nothing here, since this doesn't use tensor cores.
+                if (warp::laneid() == 0)
                 {
                     s.wait_tensor_ready();
-                    kittens::warp::arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
                 }
             }
         };

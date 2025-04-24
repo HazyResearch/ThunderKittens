@@ -215,7 +215,7 @@ namespace kittens::prototype::vm {
 
         struct controller {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
-                int ret_order[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+                int ret_order[13] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 1};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const globals &g, state<config> &s) {
@@ -276,7 +276,13 @@ namespace kittens::prototype::vm {
             }
         };
         struct launcher {
-            static __device__ void run(const globals &g, state<config> &s) { }
+            static __device__ void run(const globals &g, state<config> &s) { 
+                if (warp::laneid() == 0)
+                {
+                    s.wait_tensor_ready();
+                    arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
+                }
+            }
         };
         struct consumer {
             static __device__ void run(const globals &g, state<config> &s) {
