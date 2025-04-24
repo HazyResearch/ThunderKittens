@@ -69,6 +69,10 @@ class Instruction:
     def opcode(cls) -> int:
         raise NotImplementedError
 
+    @classmethod
+    def prev_opcode(cls) -> int:
+        raise NotImplementedError
+
     def serialize(self):
         words = [self.opcode()]
         for field in fields(self):
@@ -107,6 +111,10 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     def opcode(cls) -> int:
         return 1
 
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return DownProjResidual.opcode()
+
 
 @dataclass
 class PartialAttention(Instruction):
@@ -118,6 +126,10 @@ class PartialAttention(Instruction):
     @classmethod
     def opcode(cls) -> int:
         return 2
+
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return LayerNorm_QKV_MatVecRopeAppend.opcode()
 
 
 @dataclass
@@ -136,6 +148,10 @@ class AttentionReduction(Instruction):
     def opcode(cls) -> int:
         return 3
 
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return PartialAttention.opcode()
+
 
 @dataclass
 class MatVecAdd(Instruction):
@@ -153,6 +169,10 @@ class O_ProjResidual(MatVecAdd):
     def opcode(cls) -> int:
         return 4
 
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return AttentionReduction.opcode()
+
 
 @dataclass
 class LayerNormDoubleMatVecSiLU(Instruction):
@@ -167,12 +187,20 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     def opcode(cls) -> int:
         return 5
 
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return O_ProjResidual.opcode()
+
 
 @dataclass
 class DownProjResidual(MatVecAdd):
     @classmethod
     def opcode(cls) -> int:
         return 6
+
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return LayerNormDoubleMatVecSiLU.opcode()
 
 
 @dataclass
