@@ -9,7 +9,7 @@ namespace kittens::prototype::vm
     using tile_st = st_bf<16, 128>;
     using tile_sv = sv_bf<128>;
     using out_rv = rv_bf<16>;
-    using out_sv = sv_bf<16>;
+    using out_sv = sv_fl<16>;
     using weights_st = st_bf<16, 512>;
     using activation_sv = sv_fl<2048>;
 
@@ -101,9 +101,6 @@ namespace kittens::prototype::vm
 
                     auto &weights_global = g.*WeightsPtr; // object in global memory
                     kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
-
-                    // auto& weights_global = g.*WeightsPtr;      // object in global memory
-                    // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
                 }
                 else if (kittens::laneid() == 31)
                 {

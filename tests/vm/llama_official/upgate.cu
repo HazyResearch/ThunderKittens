@@ -13,13 +13,14 @@ namespace kittens::prototype::vm
     // using block_rt = rt_bf<16, 128>;
     using block_rt = rt_fl<16, 128>;
     using block_st = st_bf<16, 128>;
-    using out_sv = sv_bf<16>;
+    using upgate_out_sv = sv_fl<16>;
     using out_rv = rv_bf<16>;
     using weight_tile_st = st_bf<16, 512>;
 
     // float for numerical precision
     using activation_tile_sv = sv_fl<128>;
     using activation_sv = sv_fl<2048>;
+    using rms_scale_sv = sv_bf<2048>;
 
     template <typename Config, typename Globals>
     struct rms_upgate_silu
@@ -148,7 +149,7 @@ namespace kittens::prototype::vm
                 {
                     int rms_scale_page = get_rms_scale_page(s);
                     s.wait_page_ready(rms_scale_page);
-                    auto &rms_scale = reinterpret_cast<activation_sv &>(s.pages[rms_scale_page]);
+                    auto &rms_scale = reinterpret_cast<rms_scale_sv &>(s.pages[rms_scale_page]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.mlp_norm_weights, {}, rms_scale_arrived(s));
                 }
@@ -317,7 +318,7 @@ namespace kittens::prototype::vm
                         scratch_bf16[i] = bf16(up * silu);
                     }
 
-                    out_sv &vec = *reinterpret_cast<out_sv *>(scratch_bf16);
+                    upgate_out_sv &vec = *reinterpret_cast<upgate_out_sv *>(scratch_bf16);
 
                     tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
                     tma::store_async_wait();
