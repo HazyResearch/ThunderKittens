@@ -19,7 +19,7 @@ from kvm_runner.llama import (
     LlamaForCausalLM,
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import PrintInfo, schedule_model
+from kvm_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
 from kvm_runner.utils import trepr
 from torch import Tensor
 
@@ -363,6 +363,8 @@ class PyVM_Runner:
             ntok=ntok,
             print_info=print_info,
         )
+
+        tensorize_instructions(self.globals, self.instructions)
 
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(

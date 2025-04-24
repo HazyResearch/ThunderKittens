@@ -145,7 +145,9 @@ def schedule_layer(
         return instructions
 
     # HACK: one reduction stage, for correctness
-    for head_start_idx in range(0, globals.num_attention_heads, globals.attn_reduction_size):
+    for head_start_idx in range(
+        0, globals.num_attention_heads, globals.attn_reduction_size
+    ):
         instructions.append(
             AttentionReduction(
                 layer_idx=layer_idx,
@@ -194,7 +196,7 @@ def schedule_layer(
 
     num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
     for down_block_idx in range(num_down_blocks):
-        for reduction_idx in range(4): # 2048 columns per op
+        for reduction_idx in range(4):  # 2048 columns per op
             instructions.append(
                 DownProjResidual(
                     layer_idx=layer_idx,
@@ -242,9 +244,8 @@ def serialize_and_pad(instruction: Instruction):
     return serialized + [0] * num_padding
 
 
-def tensorize_instructions(
-    globs: Globals, instructions: list[Instruction], num_sms: int
-):
+def tensorize_instructions(globs: Globals, instructions: list[Instruction]):
+    num_sms = get_sm_count(globs.device)
     instruction_queues = [[] for _ in range(num_sms)]
     for i, instruction in enumerate(instructions):
         instruction_queues[i % num_sms].append(serialize_and_pad(instruction))
