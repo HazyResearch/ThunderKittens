@@ -84,10 +84,10 @@ namespace kittens::prototype::vm
         // activation buffers
         activations_t hidden_states;
         activations_t q_post_rope;
-        activations_fl_t attn_out;
+        activations_t attn_out;
         attn_lse_intermediates_t attn_lse_intermediates;
         attn_out_intermediates_t attn_out_intermediates;
-        activations_big_indim_fl_t silu_out;
+        activations_big_indim_t silu_out;
 
         unsigned int pos_id;
         float attn_scale;
