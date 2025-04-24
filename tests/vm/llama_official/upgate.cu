@@ -10,8 +10,8 @@ namespace kittens::prototype::vm
     using globals = llama_1b_globals;
     using config = default_config;
 
-    using block_rt = rt_bf<16, 128>;
-    using block_rt_fl = rt_fl<16, 128>;
+    // using block_rt = rt_bf<16, 128>;
+    using block_rt = rt_fl<16, 128>;
     using block_st = st_bf<16, 128>;
     using out_sv = sv_bf<16>;
     using out_rv = rv_bf<16>;
@@ -195,7 +195,7 @@ namespace kittens::prototype::vm
 
                 // setup for rms norm
                 typename block_rt::row_vec rms_scale_vec;
-                typename block_rt_fl::row_vec float_activations;
+                typename block_rt::row_vec float_activations;
                 rv_fl<Config::NUM_CONSUMER_WARPS> rms_partial_sums;
                 // reinterpret cast!
                 shared_allocator al((int *)s.scratch());

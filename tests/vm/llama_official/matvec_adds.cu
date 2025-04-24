@@ -5,7 +5,7 @@
 namespace kittens::prototype::vm
 {
 
-    using tile_rt = rt_bf<16, 128>;
+    using tile_rt = rt_fl<16, 128>;
     using tile_st = st_bf<16, 128>;
     using tile_sv = sv_bf<128>;
     using out_rv = rv_bf<16>;
@@ -173,7 +173,7 @@ namespace kittens::prototype::vm
                 if (laneid() < 16)
                 { // this might be a bad idea but yolo, it's probably an okay start
                     // and fortunately this is code where ncu will tell us if it's bad..
-                    atomicAdd(&((bf16 *)s.scratch())[kittens::laneid()], output[0][0]);
+                    atomicAdd(&((float *)s.scratch())[kittens::laneid()], output[0][0]);
                 }
                 kittens::warp::sync();
                 kittens::warp::arrive(outputs_arrived(s));
