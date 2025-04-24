@@ -429,6 +429,7 @@ namespace kittens::prototype::vm {
                     asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
                 }
                 warp::sync(); // ensure all writes are committed
+                asm volatile("fence.acq_rel.gpu;");
 
                 // Wait and finish
                 if (laneid == 0) {
