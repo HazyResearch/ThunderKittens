@@ -233,7 +233,8 @@ namespace kittens::prototype::vm {
         };
         struct loader {
             static __device__ void run(const globals &g, state<config> &s) {
-                if (warp::laneid() == 0) {
+                auto laneid = warp::laneid();
+                if (laneid == 0) {
                     // Setup
                     parsed_instruction inst{s};
                     int seq_len = g.pos_id + 1;
@@ -267,8 +268,8 @@ namespace kittens::prototype::vm {
                         tma::expect(V_arrived(s, stage), V_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
-                } else if (warp::laneid() >= 2 && warp::laneid() <= 12) {
-                    int unused_page = s.pid(warp::laneid());
+                } else if (laneid < config::NUM_PAGES) {
+                    int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
                     arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS);
                 }
@@ -432,11 +433,11 @@ namespace kittens::prototype::vm {
                 asm volatile("fence.acq_rel.gpu;");
 
                 // Wait and finish
-                if (laneid == 0) {
+                if (laneid < GQA_RATIO) {
                     tma::store_async_wait();
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
                 }
                 warp::sync();
             }
