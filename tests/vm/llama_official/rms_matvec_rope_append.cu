@@ -136,7 +136,7 @@ namespace kittens::prototype::vm {
                 sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
                 warp::load(activations_vec, activations_smem[warpid()]); // 128 elements per warp
                 warp::sync();
-                warp::arrive(s.page_finished[activation_page]);
+                // warp::arrive(s.page_finished[activation_page]);
 
                 // Step 2: Apply RMS normalization
                 warp::copy(fl_activations_vec, activations_vec); // cast to float      
@@ -164,7 +164,7 @@ namespace kittens::prototype::vm {
                 sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
                 warp::sync();
-                warp::arrive(s.page_finished[rms_scale_page]);
+                // warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
                 // Step 3: Load QKV projection weights into register
@@ -173,7 +173,7 @@ namespace kittens::prototype::vm {
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
                 warp::load(weights, weights_smem[warp_id]);
                 warp::sync();
-                warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
+                // warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
             
                 // Steo 4: Apply QKV projection
                 warp::broadcast_col(broadcast_activations, activations_vec);
@@ -198,13 +198,13 @@ namespace kittens::prototype::vm {
                         sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                         wait(rope_cos_arrived(s), 0);
                         warp::load(rope_cos, rope_cos_smem);
-                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
                         
                         int rope_sin_page = get_rope_sin_page(s);
                         sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
                         warp::load(rope_sin, rope_sin_smem);
-                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                        // warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -256,6 +256,15 @@ namespace kittens::prototype::vm {
 
                 if (warp::laneid() == 0)
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
+
+                // TODO
+                // I have commented out all the page_finished stuff in consumer and moved them here.
+                // Currently, the way we do it in consumer is incorrect. I have moved them here 
+                // so I can get the entire thing running first
+                if (laneid() < 8) {
+                    s.wait_page_ready(s.pid(laneid()));
+                    arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
+                }
             }
         };
     };
