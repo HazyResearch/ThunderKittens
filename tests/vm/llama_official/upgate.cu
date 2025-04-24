@@ -4,9 +4,9 @@ using namespace kittens;
 using namespace kittens::prototype;
 // using namespace kittens::prototype::vm;
 
+namespace kittens::prototype::vm
+{
 
-namespace kittens::prototype::vm {
-    
     using globals = llama_1b_globals;
     using config = default_config;
 
@@ -53,16 +53,20 @@ namespace kittens::prototype::vm {
         __device__ static inline int get_gate_page(state<Config> &s, int i) { return s.pid(UP_PAGES + i); }
         __device__ static inline int get_input_page(state<Config> &s) { return s.pid(PAGE_INPUT); }
         __device__ static inline int get_output_page(state<Config> &s) { return s.pid(PAGE_OUTPUT); }
-        __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE ); }
+        __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE); }
 
         struct controller
         {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                int ret_order[] = {
-                    6, 7, 8, 9, 10, 11, 12, 13,
-                    14,
-                    0, 1, 2, 3, 4, 5};
+                // int ret_order[] = {
+                //     6, 7, 8, 9, 10, 11, 12, 13,
+                //     14,
+                //     0, 1, 2, 3, 4, 5};
+
+                // TODO the above is too long (we only have 12 pages), get proper order later
+                int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
@@ -73,6 +77,7 @@ namespace kittens::prototype::vm {
                     init_semaphore(up_arrived(s, i), 1);
                 for (int i = 0; i < GATE_PAGES; i++)
                     init_semaphore(gate_arrived(s, i), 1);
+
                 init_semaphore(in_arrived(s), 1);
                 // output must wait for all 4 consumer warps
                 init_semaphore(out_arrived(s), 16);
@@ -116,6 +121,7 @@ namespace kittens::prototype::vm {
                     tma::load_async(chunk, g.gate_weights,
                                     {inst.layer, inst.start_col / 16, idx},
                                     gate_arrived(s, idx));
+
                 }
 
                 // 4) INPUT page
@@ -142,7 +148,8 @@ namespace kittens::prototype::vm {
                 }
 
                 // 5) UNUSED pages: release them immediately so consumer warps can retire
-                else if (laneid() >= PAGE_RMS_SCALE + 1 && laneid() < SEM_COUNT)
+                // else if (laneid() >= PAGE_RMS_SCALE + 1 && laneid() < SEM_COUNT)
+                else if (laneid() < config::NUM_PAGES)
                 {
                     int pg = s.pid(laneid());
                     s.wait_page_ready(pg);
@@ -197,6 +204,10 @@ namespace kittens::prototype::vm {
                 warp::sync();
                 warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
 
+                // if (warpid() == 0 and laneid() == 0) {
+                //     printf("got to rms norm\n");
+                // }
+
                 //---------------------------------------------------
                 // RMS NORM
                 //---------------------------------------------------
@@ -231,6 +242,10 @@ namespace kittens::prototype::vm {
                 warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
+                // if (warpid() == 0 and laneid() == 0) {
+                //     printf("got to up matvec\n");
+                // }
+
                 //--------------------------------------------------
                 // UP MATVEC
                 //--------------------------------------------------
@@ -247,6 +262,11 @@ namespace kittens::prototype::vm {
                 warp::row_sum(output_col_format, broadcast_activations);
                 warp::copy(output, output_col_format);
                 warp::sync();
+
+
+                // if (warpid() == 0 and laneid() == 0) {
+                //     printf("got to gate matvec\n");
+                // }
 
                 //--------------------------------------------------
                 // GATE MATVEC
@@ -273,6 +293,11 @@ namespace kittens::prototype::vm {
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
+            
+            
+                // if (warpid() == 0 and laneid() == 0) {
+                //     printf("got to storer\n");
+                // }
             }
         };
 
@@ -289,8 +314,8 @@ namespace kittens::prototype::vm {
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
-    /* fuse up * SiLU(gate) once, in float, then cast */
-    #pragma unroll
+/* fuse up * SiLU(gate) once, in float, then cast */
+#pragma unroll
                     for (int i = 0; i < 16; ++i)
                     {
                         float up = scratch_f32[i];
