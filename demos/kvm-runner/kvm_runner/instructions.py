@@ -85,8 +85,11 @@ class Instruction:
             elif isinstance(attr, list):
                 words.append(len(attr))
                 words.extend(attr)
+            # for convenience
+            elif attr is None:
+                words.append(0)
             else:
-                raise ValueError(f"Unsupported field type: {field.type}")
+                raise ValueError(f"Unsupported field type: {attr}")
 
         return words
 
