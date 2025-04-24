@@ -115,6 +115,19 @@ def schedule_layer(
             )
 
     num_qkv_blocks = assert_div(qkv_outdim, globals.qkv_block_size)
+
+    # # order the blocks so that entire heads finish together
+    # # (so we can start partial attention with them)
+    # block_ordering = []
+    # for kv_head_idx in range(globals.num_kv_heads):
+    #     # the q blocks
+    #     block_ordering.extend(
+    #         [
+    #             kv_head_idx + i
+    #             for i in range(globals.num_attention_heads // globals.num_kv_heads)
+    #         ]
+    #     )
+
     for qkv_block_idx in range(num_qkv_blocks):
         instructions.append(
             LayerNorm_QKV_MatVecRopeAppend(
@@ -144,7 +157,7 @@ def schedule_layer(
     if stop_after_op == "partial_attn":
         return instructions
 
-    # HACK: one reduction stage, for correctness
+    # TODO: harcoding one reduction stage, not seqlen dependent
     for head_start_idx in range(
         0, globals.num_attention_heads, globals.attn_reduction_size
     ):
