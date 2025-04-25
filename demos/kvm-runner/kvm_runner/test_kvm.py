@@ -7,6 +7,7 @@ from kvm_runner.kvm import get_kvm_func, interpret_with_kvm
 from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
 from kvm_runner.scheduler import (
+    Globals,
     make_globals,
     schedule_model,
     tensorize_instructions,
@@ -48,18 +49,22 @@ def main(config: ScriptConfig):
         model=model,
     )
 
-    globs_for_pyvm.pos_id = config.prompt_len + config.ntok
-    globs_for_kvm.pos_id = config.prompt_len + config.ntok
+    pos_id = config.prompt_len + config.ntok
+
+    globs_for_pyvm.pos_id = pos_id
+    globs_for_kvm.pos_id = pos_id
 
     normal_(globs_for_pyvm.hidden_states)
     globs_for_kvm.hidden_states.copy_(globs_for_pyvm.hidden_states)
     print("hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
+    # NOTE: important to clone the KV caches since these originally come from the model
+    # and so are the same tensor.
     normal_(globs_for_pyvm.k_cache)
-    globs_for_kvm.k_cache.copy_(globs_for_pyvm.k_cache)
+    globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
 
     normal_(globs_for_pyvm.v_cache)
-    globs_for_kvm.v_cache.copy_(globs_for_pyvm.v_cache)
+    globs_for_kvm.v_cache = globs_for_pyvm.v_cache.clone()
 
     _, instructions = schedule_model(
         prompt_len=config.prompt_len,
@@ -100,12 +105,24 @@ def main(config: ScriptConfig):
         end = time.time()
         print(f"starting instructions time: {end - start}")
 
+    def summarize_caches(globs: Globals, name: str):
+        k_cache_summary = globs.k_cache[:, pos_id].float().sum(-1).sum(-1)
+        print(f"{name} k_cache_summary:", k_cache_summary)
+        v_cache_summary = globs.v_cache[:, pos_id].float().sum(-1).sum(-1)
+        print(f"{name} v_cache_summary:", v_cache_summary)
+
+    # summarize_caches(globs_for_pyvm, "pyvm")
+    # summarize_caches(globs_for_kvm, "kvm")
+
     print("interpreting with pyvm...")
     start = time.time()
     interpret_with_pyvm(globs_for_pyvm, instructions)
     torch.cuda.synchronize()
     end = time.time()
     print(f"pyvm time: {end - start}")
+
+    # summarize_caches(globs_for_pyvm, "pyvm")
+    # summarize_caches(globs_for_kvm, "kvm")
 
     print("interpreting with kvm...")
     start = time.time()
@@ -142,13 +159,17 @@ def main(config: ScriptConfig):
     test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-    # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
-    # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
+    test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
+    test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
 
     print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
     print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
-    # breakpoint()
+    # print("pyvm", globs_for_pyvm.attn_out_intermediates[0].view(-1)[:128])
+    # print("kvm", globs_for_kvm.attn_out_intermediates[0].view(-1)[:128])
+
+    # summarize_caches(globs_for_pyvm, "pyvm")
+    # summarize_caches(globs_for_kvm, "kvm")
 
 
 if __name__ == "__main__":
