@@ -37,22 +37,21 @@ namespace kittens::prototype::vm
         static constexpr int UP_PAGES = 4;
         static constexpr int GATE_PAGES = 4;
         static constexpr int PAGE_INPUT = UP_PAGES + GATE_PAGES; // = 8
-        static constexpr int PAGE_OUTPUT = PAGE_INPUT + 1;       // = 9
-        static constexpr int PAGE_RMS_SCALE = PAGE_OUTPUT + 1;   // = 10
+        static constexpr int PAGE_RMS_SCALE = PAGE_INPUT + 1;    // = 9
+        static constexpr int PAGE_OUTPUT = PAGE_RMS_SCALE + 1;   // = 10  (because we don't use a vm page for page_output, this MUST come last)
         static constexpr int SEM_COUNT = PAGE_RMS_SCALE + 1;     // = 11
 
         //  semaphores
         __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
         __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[UP_PAGES + i]; }
         __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[PAGE_INPUT]; }
-        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[PAGE_OUTPUT]; }
         __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[PAGE_RMS_SCALE]; }
+        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[PAGE_OUTPUT]; }
 
         // getters
         __device__ static inline int get_up_page(state<Config> &s, int i) { return s.pid(i); }
         __device__ static inline int get_gate_page(state<Config> &s, int i) { return s.pid(UP_PAGES + i); }
         __device__ static inline int get_input_page(state<Config> &s) { return s.pid(PAGE_INPUT); }
-        __device__ static inline int get_output_page(state<Config> &s) { return s.pid(PAGE_OUTPUT); }
         __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE); }
 
         struct controller
@@ -200,12 +199,16 @@ namespace kittens::prototype::vm
 
                 // Next we need to load the activations
                 wait(in_arrived(s), 0);
+                wait(rms_scale_arrived(s), 0);
                 if (laneid() == 0)
                     s.record(32 + warpid());
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_input_page(s);
+                int rms_scale_page = get_rms_scale_page(s);
                 sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
+                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(activations_vec, activations_smem[warpid()]);
+                warp::load(rms_scale_vec, rms_scale_smem[warpid()]); // no idea why yet but we must load this here, otherwise deadlock
                 warp::sync();
                 warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
 
@@ -235,13 +238,6 @@ namespace kittens::prototype::vm
                 warp::copy(activations_vec, float_activations); // back to bf16
 
                 // multiply by rms scale
-                wait(rms_scale_arrived(s), 0);
-                if (laneid() == 0)
-                    s.record(48 + warpid());
-                int rms_scale_page = get_rms_scale_page(s);
-                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
-                warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
-                warp::sync();
                 warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
@@ -310,8 +306,8 @@ namespace kittens::prototype::vm
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
-/* fuse up * SiLU(gate) once, in float, then cast */
-#pragma unroll
+                    /* fuse up * SiLU(gate) once, in float, then cast */
+                    #pragma unroll
                     for (int i = 0; i < 16; ++i)
                     {
                         float up = scratch_f32[i];
