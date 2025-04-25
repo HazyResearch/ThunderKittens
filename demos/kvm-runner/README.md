@@ -25,6 +25,14 @@ python kvm_runner/generate.py mode=pyvm ntok=30 prompt="tell me a funny joke abo
 
 ```
 
+To use the kvm:
+
+```bash
+
+python kvm_runner/generate.py mode=kvm ntok=30 prompt="tell me a funny joke about cookies"
+
+```
+
 Op-level testing:
 
 ```bash
