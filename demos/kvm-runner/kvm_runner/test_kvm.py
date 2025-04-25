@@ -14,6 +14,7 @@ from kvm_runner.scheduler import (
 )
 from torch import Tensor
 from torch.nn.init import normal_
+from tqdm import tqdm
 
 
 class ScriptConfig(pydra.Config):
@@ -28,7 +29,9 @@ class ScriptConfig(pydra.Config):
     start_after_op: str | None = None
     layer_limit: int | None = 1
     skip_pyvm: bool = False
-    reps: int = 1
+    instruction_reps: int = 1
+    exec_reps: int = 1
+    skip_starting_instructions: bool = False
 
 
 def main(config: ScriptConfig):
@@ -95,90 +98,93 @@ def main(config: ScriptConfig):
     else:
         starting_instructions = []
 
-    if config.reps > 1:
-        print(f"repeating instructions {config.reps} times")
-        instructions = instructions * config.reps
+    if config.instruction_reps > 1:
+        print(f"repeating instructions {config.instruction_reps} times")
+        instructions = instructions * config.instruction_reps
 
     tensorize_instructions(globs_for_kvm, instructions)
     tensorize_instructions(globs_for_pyvm, instructions)
 
-    if len(starting_instructions) > 0:
-        print("running starting instructions...")
+    for _ in tqdm(range(config.exec_reps)):
+        if len(starting_instructions) > 0 and not config.skip_starting_instructions:
+            print("running starting instructions...")
 
-        # run all the starting instructions with pyvm
+            # run all the starting instructions with pyvm
+            start = time.time()
+            interpret_with_pyvm(globs_for_pyvm, starting_instructions)
+            interpret_with_pyvm(globs_for_kvm, starting_instructions)
+            torch.cuda.synchronize()
+            end = time.time()
+            print(f"starting instructions time: {end - start}")
+
+        def summarize_caches(globs: Globals, name: str):
+            k_cache_summary = globs.k_cache[:, pos_id].float().sum(-1).sum(-1)
+            print(f"{name} k_cache_summary:", k_cache_summary)
+            v_cache_summary = globs.v_cache[:, pos_id].float().sum(-1).sum(-1)
+            print(f"{name} v_cache_summary:", v_cache_summary)
+
+        # summarize_caches(globs_for_pyvm, "pyvm")
+        # summarize_caches(globs_for_kvm, "kvm")
+
+        if not config.skip_pyvm:
+            print("interpreting with pyvm...")
+            start = time.time()
+            interpret_with_pyvm(globs_for_pyvm, instructions)
+            torch.cuda.synchronize()
+            end = time.time()
+            print(f"pyvm time: {end - start}")
+
+        # summarize_caches(globs_for_pyvm, "pyvm")
+        # summarize_caches(globs_for_kvm, "kvm")
+
+        print("interpreting with kvm...")
         start = time.time()
-        interpret_with_pyvm(globs_for_pyvm, starting_instructions)
-        interpret_with_pyvm(globs_for_kvm, starting_instructions)
+        interpret_with_kvm(globs_for_kvm, kvm_func)
         torch.cuda.synchronize()
         end = time.time()
-        print(f"starting instructions time: {end - start}")
+        print(f"kvm time: {end - start}")
 
-    def summarize_caches(globs: Globals, name: str):
-        k_cache_summary = globs.k_cache[:, pos_id].float().sum(-1).sum(-1)
-        print(f"{name} k_cache_summary:", k_cache_summary)
-        v_cache_summary = globs.v_cache[:, pos_id].float().sum(-1).sum(-1)
-        print(f"{name} v_cache_summary:", v_cache_summary)
+        print("done! diffing tensors:")
 
-    # summarize_caches(globs_for_pyvm, "pyvm")
-    # summarize_caches(globs_for_kvm, "kvm")
+        def test_tensors(a: Tensor, b: Tensor, name: str):
+            diff = a - b
+            adiff = diff.abs()
+            rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
+            print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
 
-    if not config.skip_pyvm:
-        print("interpreting with pyvm...")
-        start = time.time()
-        interpret_with_pyvm(globs_for_pyvm, instructions)
-        torch.cuda.synchronize()
-        end = time.time()
-        print(f"pyvm time: {end - start}")
+        test_tensors(
+            globs_for_pyvm.hidden_states, globs_for_kvm.hidden_states, "hidden_states"
+        )
+        test_tensors(
+            globs_for_pyvm.post_ln_rope_q,
+            globs_for_kvm.post_ln_rope_q,
+            "post_ln_rope_q",
+        )
+        test_tensors(
+            globs_for_pyvm.attn_lse_intermediates,
+            globs_for_kvm.attn_lse_intermediates,
+            "attn_lse_intermediates",
+        )
+        test_tensors(
+            globs_for_pyvm.attn_out_intermediates,
+            globs_for_kvm.attn_out_intermediates,
+            "attn_out_intermediates",
+        )
+        test_tensors(globs_for_pyvm.attn_out, globs_for_kvm.attn_out, "attn_out")
+        test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
+        test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-    # summarize_caches(globs_for_pyvm, "pyvm")
-    # summarize_caches(globs_for_kvm, "kvm")
+        # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
+        # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
 
-    print("interpreting with kvm...")
-    start = time.time()
-    interpret_with_kvm(globs_for_kvm, kvm_func)
-    torch.cuda.synchronize()
-    end = time.time()
-    print(f"kvm time: {end - start}")
+        print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
+        print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
-    print("done! diffing tensors:")
+        # print("pyvm", globs_for_pyvm.attn_out_intermediates[0].view(-1)[:128])
+        # print("kvm", globs_for_kvm.attn_out_intermediates[0].view(-1)[:128])
 
-    def test_tensors(a: Tensor, b: Tensor, name: str):
-        diff = a - b
-        adiff = diff.abs()
-        rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
-        print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
-
-    test_tensors(
-        globs_for_pyvm.hidden_states, globs_for_kvm.hidden_states, "hidden_states"
-    )
-    test_tensors(
-        globs_for_pyvm.post_ln_rope_q, globs_for_kvm.post_ln_rope_q, "post_ln_rope_q"
-    )
-    test_tensors(
-        globs_for_pyvm.attn_lse_intermediates,
-        globs_for_kvm.attn_lse_intermediates,
-        "attn_lse_intermediates",
-    )
-    test_tensors(
-        globs_for_pyvm.attn_out_intermediates,
-        globs_for_kvm.attn_out_intermediates,
-        "attn_out_intermediates",
-    )
-    test_tensors(globs_for_pyvm.attn_out, globs_for_kvm.attn_out, "attn_out")
-    test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
-    test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
-
-    # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
-    # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
-
-    print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
-    print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
-
-    # print("pyvm", globs_for_pyvm.attn_out_intermediates[0].view(-1)[:128])
-    # print("kvm", globs_for_kvm.attn_out_intermediates[0].view(-1)[:128])
-
-    # summarize_caches(globs_for_pyvm, "pyvm")
-    # summarize_caches(globs_for_kvm, "kvm")
+        # summarize_caches(globs_for_pyvm, "pyvm")
+        # summarize_caches(globs_for_kvm, "kvm")
 
 
 if __name__ == "__main__":
