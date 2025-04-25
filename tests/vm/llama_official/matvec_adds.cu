@@ -5,14 +5,6 @@
 namespace kittens::prototype::vm
 {
 
-    using tile_rt = rt_fl<16, 128>;
-    using tile_st = st_bf<16, 128>;
-    using tile_sv = sv_bf<128>;
-    using out_rv = rv_bf<16>;
-    using out_sv = sv_fl<16>;
-    using weights_st = st_bf<16, 512>;
-    using activation_sv = sv_fl<2048>;
-
     template <
         int _EXPECTED_ARRIVAL_COUNT,
         auto WeightsPtr,
@@ -96,11 +88,14 @@ namespace kittens::prototype::vm
                 {
                     s.wait_page_ready(get_weight_page(s, kittens::laneid()));
                     s.record(16 + kittens::laneid());
-                    auto &weight_chunk = reinterpret_cast<weights_st &>(s.pages[get_weight_page(s, kittens::laneid())]);
+                    auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
                     kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
 
                     auto &weights_global = g.*WeightsPtr; // object in global memory
                     kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+
+                    // auto& weights_global = g.*WeightsPtr;      // object in global memory
+                    // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
                 }
                 else if (kittens::laneid() == 31)
                 {
@@ -109,7 +104,7 @@ namespace kittens::prototype::vm
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
                     s.record(24);
-                    auto &activations = reinterpret_cast<activation_sv &>(s.pages[activation_page]);
+                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                     kittens::tma::expect(activations_arrived(s), activations);
 
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
@@ -136,18 +131,18 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                tile_rt weights, broadcast_activations;
-                typename tile_rt::row_vec activations_vec;
-                typename tile_rt::col_vec output_col_format;
-                out_rv output;
+                kittens::rt_fl<16, 128> weights, broadcast_activations;
+                typename kittens::rt_fl<16, 128>::row_vec activations_vec;
+                typename kittens::rt_fl<16, 128>::col_vec output_col_format;
+                kittens::rv_fl<16> output;
                 int group_id = kittens::warpgroup::groupid();
                 int warp_id = kittens::warpgroup::warpid(); // id within the warpgroup
                 wait(inputs_arrived(s, group_id), 0);
                 if (laneid() == 0)
                     s.record(32 + warpid());
-                // Reinterpret the page as a tile_st[4], which turns out to be a valid recast of the layout.
+                // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
                 int weight_page = get_weight_page(s, group_id);
-                tile_st(&weights_smem)[4] = reinterpret_cast<tile_st(&)[4]>(s.pages[weight_page]);
+                st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
                 kittens::warp::load(weights, weights_smem[warp_id]);
                 kittens::warp::sync();
                 kittens::warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
@@ -155,9 +150,9 @@ namespace kittens::prototype::vm
                 wait(activations_arrived(s), 0);
                 if (laneid() == 0)
                     s.record(64 + warpid());
-                // reinterpret the activations page as tile_sv[16]
+                // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
-                tile_sv(&activations_smem)[16] = reinterpret_cast<tile_sv(&)[16]>(s.pages[activation_page]);
+                kittens::sv_bf<128>(&activations_smem)[16] = reinterpret_cast<kittens::sv_bf<128>(&)[16]>(s.pages[activation_page]);
                 kittens::warp::load(activations_vec, activations_smem[kittens::warpid()]);
                 kittens::warp::sync();
                 kittens::warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
@@ -184,15 +179,30 @@ namespace kittens::prototype::vm
             static __device__ void run(const globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
+
+
+                void *scratch = s.scratch();
+               
+                // Convert to bf and put back in shared memory
+                sv_fl<16> &output = *reinterpret_cast<sv_fl<16> *>(scratch);
+                sv_bf<16> &output_bf = *reinterpret_cast<sv_bf<16> *>(scratch);
+                
+                rv_bf<16> output_reg_bf;
+
+                wait(outputs_arrived(s), 0);
+
+                warp::load(output_reg_bf, output);
+                warp::sync();
+                warp::store(output_bf, output_reg_bf);
+                warp::sync();
+
+
                 if (laneid() == 0)
                 {
-                    wait(outputs_arrived(s), 0);
                     s.record(125);
-                    void *scratch = s.scratch();
-                    out_sv &output = *reinterpret_cast<out_sv *>(scratch);
 
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
-                    kittens::tma::store_add_async(OutputActivations, output, {inst.output_block_idx});
+                    kittens::tma::store_add_async(OutputActivations, output_bf, {inst.output_block_idx});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
                 }
@@ -216,7 +226,7 @@ namespace kittens::prototype::vm
     struct downproj : MatVecAddOp<
                           llama_1b_globals::intermediate_dim / llama_1b_globals::matvec_block_size,
                           &Globals::down_weights,
-                          &Globals::silu_out,
+                          &Globals::silu_out, /// TODO: CHECK
                           &Globals::hidden_states,
                           OPCODE_DownProjResidual,
                           OPCODE_DownProjResidual - 1,

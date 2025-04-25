@@ -17,7 +17,7 @@ namespace kittens::prototype::vm {
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
         using q_rt = rt_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
-        using q_st = st_fl<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using q_st = st_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
         using k_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
         using v_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM, col_l>;
         using kv_st = st_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
@@ -228,6 +228,7 @@ namespace kittens::prototype::vm {
                     init_semaphore(K_finished(s, i), 0, 1);
                     init_semaphore(V_finished(s, i), 0, 1);
                 }
+                s.record(1);
                 return 3 + 4 * NUM_STAGES;
             }
         };
@@ -247,9 +248,11 @@ namespace kittens::prototype::vm {
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] != 4 || // K
                            *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
                         __nanosleep(20);
-
+                    s.record(16);
+                    
                     // Wait for the KV page
                     wait_KV_page(s);
+                    s.record(17);
                     if (start_blk_idx == end_blk_idx) finish_KV_page(s);
 
                     // Run the pipeline!
@@ -262,6 +265,7 @@ namespace kittens::prototype::vm {
                             wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                             wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         }
+                        if (i < 16) s.record(18 + i);
 
                         tma::expect(K_arrived(s, stage), K_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
@@ -296,9 +300,11 @@ namespace kittens::prototype::vm {
                            *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 3}] != 4)
                         __nanosleep(20);
                     warp::sync();
+                    s.record(40);
 
                     // Initiate the load on Q
                     wait_QOL_page(s);
+                    if (group<16>::laneid() == 0) s.record(41);
                     q_st &Q_smem = get_Q_smem(s);
                     load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
 
@@ -331,6 +337,7 @@ namespace kittens::prototype::vm {
 
                     // Wait for Q to arrive
                     warp::load_async_wait();
+                    if (laneid() == 0) s.record(42);
                     warp::load(Q_reg, Q_smem);
 
                     // Run the pipeline!
@@ -342,6 +349,7 @@ namespace kittens::prototype::vm {
                         // Perform Q @ K.T 
                         warp::zero(attn_fl_reg);
                         warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
+                        if (laneid() == 0 && i < 16) s.record(43 + i);
                         warp::load(K_reg, K_smem);
                         warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
                         warp::sync();
@@ -369,6 +377,7 @@ namespace kittens::prototype::vm {
                         // Normalize and accumulate numerator (A @ V)
                         warp::mul_row(O_reg, O_reg, diff_scaled_max_vec_reg);
                         warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2);
+                        if (laneid() == 0 && i < 16) s.record(59 + i);
                         warp::load(V_reg, V_smem);
                         warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                         warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
@@ -385,6 +394,7 @@ namespace kittens::prototype::vm {
 
                     // Finish
                     warp::sync();
+                    if (laneid() == 0) s.record(75);
                     if (start_blk_idx < end_blk_idx) {
                         finish_KV_page(s);
                         warp::div_row(O_reg, O_reg, norm_vec_reg);
@@ -399,6 +409,7 @@ namespace kittens::prototype::vm {
                     // Store the results
                     store_4_rows(O_smem, O_reg, q_head_local_idx);
                     warp::sync();
+                    if (laneid() == 0) s.record(76);
                     warp::arrive(O_arrived(s));
                     warp::store(L_smem, L_reg);
                     warp::sync();
@@ -417,6 +428,7 @@ namespace kittens::prototype::vm {
                 if (laneid == 0) {
                     o_sv (&O_smem)[4] = get_O_smem(s);
                     wait(O_arrived(s), 0);
+                    s.record(118);
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
@@ -427,6 +439,7 @@ namespace kittens::prototype::vm {
                 if (laneid < GQA_RATIO) {
                     l_sv &L_smem = get_L_smem(s);
                     wait(L_arrived(s), 0);
+                    if (laneid == 0) s.record(119 + laneid);
                     // Can't do anything fancy with writing 4 spread-out values.
                     // We can do this in the consumer if we want to (without using smem)
                     float tmp;
@@ -441,11 +454,13 @@ namespace kittens::prototype::vm {
                 // Wait and finish
                 if (laneid < GQA_RATIO) {
                     tma::store_async_wait();
+                    if (laneid == 0) s.record(123 + laneid);
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
                     atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
                 }
                 warp::sync();
+                if (laneid == 0) s.record(127);
             }
         };
     };
