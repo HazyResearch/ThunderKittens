@@ -10,9 +10,9 @@ namespace kittens::prototype::vm
     using globals = llama_1b_globals;
     using config = default_config;
 
-    using block_rt = rt_bf<16, 128>;
+    using block_rt = rt_fl<16, 128>;
     using block_st = st_bf<16, 128>;
-    using block_rv = rv_bf<16>;
+    using block_rv = rv_fl<16>;
 
     template <typename Config, typename Globals>
     struct rms_upgate_silu
