@@ -203,10 +203,14 @@ namespace kittens::prototype::vm {
 
                 // Step 5: Apply RoPE
                 if (warpid() == 0) { // only a single warp needed from here!
+
+                    // even for V, we need to cast from float to bf16
+                    sv_fl<16> &qkv_proj_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
+                    sv_bf<16> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<16> *>(s.scratch());
+                    warp::load(qkv_proj, qkv_proj_smem);
+                    warp::sync();
+
                     if (inst.qkv_block_idx < V_BLK_START) { // only Q & K need RoPE
-                        sv_fl<16> &qkv_proj_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
-                        sv_bf<16> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<16> *>(s.scratch());
-                        warp::load(qkv_proj, qkv_proj_smem);
 
                         int rope_cos_page = get_rope_cos_page(s);
                         sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
@@ -233,14 +237,11 @@ namespace kittens::prototype::vm {
                         if (laneid() < 16)
                             // will clean this up later
                             qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
-
-                        // Store back to the scratch
-
-                        // this sync to make sure all the fp32 stuff has been read before overwriting the bf16 values
-                        warp::sync();
-                        warp::store(qkv_proj_smem_bf, qkv_proj);
-                        warp::sync();
                     }
+
+                    // Store back to the scratch
+                    warp::store(qkv_proj_smem_bf, qkv_proj);
+                    warp::sync();
 
                     warp::arrive(outputs_arrived(s));
                     if (kittens::group<16>::laneid() == 0)
