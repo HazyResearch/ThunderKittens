@@ -114,14 +114,14 @@ namespace kittens::prototype::vm {
             static __device__ void run(const Globals &g, state<Config> &s) {
                 // Setup
                 parsed_instruction inst{s};
-                rt_bf<16, 128> weights, broadcast_activations;
-                typename rt_bf<16, 128>::row_vec activations_vec;
+                rt_fl<16, 128> weights, broadcast_activations;
+                typename rt_fl<16, 128>::row_vec activations_vec;
                 typename rt_fl<16, 128>::row_vec fl_activations_vec;            
                 rv_fl<Config::NUM_CONSUMER_WARPS> rms_partial_sums;
-                typename rt_bf<16, 128>::row_vec rms_scale_vec;
-                typename rt_bf<16, 128>::col_vec qkv_proj_partial_col_format;
-                rv_bf<16> qkv_proj_partial;
-                rv_bf<16> qkv_proj;
+                typename rt_fl<16, 128>::row_vec rms_scale_vec;
+                typename rt_fl<16, 128>::col_vec qkv_proj_partial_col_format;
+                rv_fl<16> qkv_proj_partial;
+                rv_fl<16> qkv_proj;
                 rv_fl<16> rope_cos;
                 rv_fl<16> rope_sin;
                 shared_allocator al((int*)s.scratch());
@@ -184,14 +184,15 @@ namespace kittens::prototype::vm {
                 if (laneid() < 16) {
                     // this might be a bad idea but yolo, it's probably an okay start
                     // and fortunately this is code where ncu will tell us if it's bad..
-                    atomicAdd(&((bf16 *)s.scratch())[laneid()], qkv_proj_partial[0][0]);
+                    atomicAdd(&((float *)s.scratch())[laneid()], qkv_proj_partial[0][0]);
                 }
                 group<16>::sync(1); // must wait for all warps to finish atomic add
 
                 // Step 5: Apply RoPE
                 if (warpid() == 0) { // only a single warp needed from here!
                     if (inst.qkv_block_idx < V_BLK_START) { // only Q & K need RoPE
-                        sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
+                        sv_fl<16> &qkv_proj_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
+                        sv_bf<16> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                         warp::load(qkv_proj, qkv_proj_smem);
 
                         int rope_cos_page = get_rope_cos_page(s);
@@ -209,15 +210,15 @@ namespace kittens::prototype::vm {
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
                         warp::sync();
-                        bf16 pair_val = __shfl_sync(MASK_ALL, qkv_proj[0][0], laneid() + mod);
+                        float pair_val = __shfl_sync(MASK_ALL, qkv_proj[0][0], laneid() + mod);
 
                         // Compute RoPE in-place
                         if (laneid() < 16)
                             // will clean this up later
-                            qkv_proj[0][0] = __bfloat162float(float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0]);
+                            qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
 
                         // Store back to the scratch
-                        warp::store(qkv_proj_smem, qkv_proj);
+                        warp::store(qkv_proj_smem_bf, qkv_proj);
                         warp::sync();
                     }
 
