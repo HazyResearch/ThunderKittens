@@ -131,10 +131,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                kittens::rt_bf<16, 128> weights, broadcast_activations;
-                typename kittens::rt_bf<16, 128>::row_vec activations_vec;
-                typename kittens::rt_bf<16, 128>::col_vec output_col_format;
-                kittens::rv_bf<16> output;
+                kittens::rt_fl<16, 128> weights, broadcast_activations;
+                typename kittens::rt_fl<16, 128>::row_vec activations_vec;
+                typename kittens::rt_fl<16, 128>::col_vec output_col_format;
+                kittens::rv_fl<16> output;
                 int group_id = kittens::warpgroup::groupid();
                 int warp_id = kittens::warpgroup::warpid(); // id within the warpgroup
                 wait(inputs_arrived(s, group_id), 0);
@@ -165,7 +165,7 @@ namespace kittens::prototype::vm
                 if (laneid() < 16)
                 { // this might be a bad idea but yolo, it's probably an okay start
                     // and fortunately this is code where ncu will tell us if it's bad..
-                    atomicAdd(&((bf16 *)s.scratch())[kittens::laneid()], output[0][0]);
+                    atomicAdd(&((float *)s.scratch())[kittens::laneid()], output[0][0]);
                 }
                 kittens::warp::sync();
                 kittens::warp::arrive(outputs_arrived(s));
@@ -179,15 +179,30 @@ namespace kittens::prototype::vm
             static __device__ void run(const globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
+
+
+                void *scratch = s.scratch();
+               
+                // Convert to bf and put back in shared memory
+                sv_fl<16> &output = *reinterpret_cast<sv_fl<16> *>(scratch);
+                sv_bf<16> &output_bf = *reinterpret_cast<sv_bf<16> *>(scratch);
+                
+                rv_bf<16> output_reg_bf;
+
+                wait(outputs_arrived(s), 0);
+
+                warp::load(output_reg_bf, output);
+                warp::sync();
+                warp::store(output_bf, output_reg_bf);
+                warp::sync();
+
+
                 if (laneid() == 0)
                 {
-                    wait(outputs_arrived(s), 0);
                     s.record(125);
-                    void *scratch = s.scratch();
-                    sv_bf<16> &output = *reinterpret_cast<sv_bf<16> *>(scratch);
 
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
-                    kittens::tma::store_add_async(OutputActivations, output, {inst.output_block_idx});
+                    kittens::tma::store_add_async(OutputActivations, output_bf, {inst.output_block_idx});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
                 }
