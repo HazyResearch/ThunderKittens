@@ -147,7 +147,7 @@ namespace kittens::prototype::vm
                     s.record(16 + laneid());
                     auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[rms_scale_page]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
-                    tma::load_async(rms_scale, g.mlp_norm_weights, {}, rms_scale_arrived(s));
+                    tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
                 }
 
                 // 5) UNUSED pages: release them immediately so consumer warps can retire
@@ -288,13 +288,11 @@ namespace kittens::prototype::vm
                 {
                     float upout = output[0][0];
                     float gateout = gate_output[0][0];
-                    atomicAdd(&scratch_f32[laneid()], upout);           // up
+                    atomicAdd(&scratch_f32[laneid()], upout);        // up
                     atomicAdd(&scratch_f32[laneid() + 16], gateout); // gate
-
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
-
             }
         };
 
