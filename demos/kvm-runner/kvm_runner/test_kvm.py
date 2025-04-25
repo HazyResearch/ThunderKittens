@@ -32,6 +32,7 @@ class ScriptConfig(pydra.Config):
     instruction_reps: int = 1
     exec_reps: int = 1
     skip_starting_instructions: bool = False
+    barrier_init_val: int = 0
 
 
 def main(config: ScriptConfig):
@@ -102,8 +103,12 @@ def main(config: ScriptConfig):
         print(f"repeating instructions {config.instruction_reps} times")
         instructions = instructions * config.instruction_reps
 
-    tensorize_instructions(globs_for_kvm, instructions)
-    tensorize_instructions(globs_for_pyvm, instructions)
+    tensorize_instructions(
+        globs_for_kvm, instructions, barrier_init_val=config.barrier_init_val
+    )
+    tensorize_instructions(
+        globs_for_pyvm, instructions, barrier_init_val=config.barrier_init_val
+    )
 
     for _ in tqdm(range(config.exec_reps)):
         if len(starting_instructions) > 0 and not config.skip_starting_instructions:

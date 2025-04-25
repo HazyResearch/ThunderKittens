@@ -269,7 +269,9 @@ def serialize_and_pad(instruction: Instruction):
     return serialized + [0] * num_padding
 
 
-def tensorize_instructions(globs: Globals, instructions: list[Instruction]):
+def tensorize_instructions(
+    globs: Globals, instructions: list[Instruction], barrier_init_val: int = 0
+):
     num_sms = get_sm_count(globs.device)
     instruction_queues = [[] for _ in range(num_sms)]
     for i, instruction in enumerate(instructions):
@@ -298,14 +300,17 @@ def tensorize_instructions(globs: Globals, instructions: list[Instruction]):
         device=device,
     )
 
-    barriers = torch.zeros(
-        [
-            globs.num_hidden_layers,
-            NUM_OPS,
-            globs.num_attention_heads + globs.num_kv_heads * 2,
-        ],
-        dtype=torch.int32,
-        device=device,
+    barriers = (
+        torch.ones(
+            [
+                globs.num_hidden_layers,
+                NUM_OPS,
+                globs.num_attention_heads + globs.num_kv_heads * 2,
+            ],
+            dtype=torch.int32,
+            device=device,
+        )
+        * barrier_init_val
     )
 
     globs.instructions = serialized
