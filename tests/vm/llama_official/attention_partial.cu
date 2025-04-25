@@ -299,13 +299,16 @@ namespace kittens::prototype::vm
 
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4 ||                        // K
-                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] != 4) // V
+                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] < 4) // V
+                    {
                         __nanosleep(20);
+                    }
                     s.record(16);
 
                     // Wait for the KV page
                     wait_KV_page(s);
                     s.record(17);
+
                     if (start_blk_idx == end_blk_idx)
                         finish_KV_page(s);
 
@@ -358,11 +361,13 @@ namespace kittens::prototype::vm
                     // Wait for the previous ops to finish1
                     parsed_instruction inst{s};
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 0}] != 4 ||
-                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 1}] != 4 ||
-                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 2}] != 4 ||
-                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 3}] != 4)
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 0}] < 4 ||
+                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 1}] < 4 ||
+                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 2}] < 4 ||
+                           *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 3}] < 4)
+                    {
                         __nanosleep(20);
+                    }
                     warp::sync();
                     s.record(40);
 
