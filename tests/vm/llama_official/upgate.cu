@@ -38,15 +38,16 @@ namespace kittens::prototype::vm
         static constexpr int GATE_PAGES = 4;
         static constexpr int PAGE_INPUT = UP_PAGES + GATE_PAGES; // = 8
         static constexpr int PAGE_RMS_SCALE = PAGE_INPUT + 1;    // = 9
-        static constexpr int PAGE_OUTPUT = PAGE_RMS_SCALE + 1;   // = 10  (because we don't use a vm page for page_output, this MUST come last)
-        static constexpr int SEM_COUNT = PAGE_RMS_SCALE + 1;     // = 11
+        static constexpr int SEM_OUTPUT = PAGE_RMS_SCALE + 1;   // = 10 (no vm page for sems, but we need one for the output)
+        static constexpr int PAGE_COUNT = UP_PAGES + GATE_PAGES + 2; // sems for input page, rms page
+        static constexpr int SEM_COUNT = UP_PAGES + GATE_PAGES + 3; // sems for input page, rms page, signalling output (even if we don't use a page for output)
 
         //  semaphores
         __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
         __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[UP_PAGES + i]; }
         __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[PAGE_INPUT]; }
         __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[PAGE_RMS_SCALE]; }
-        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[PAGE_OUTPUT]; }
+        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[SEM_OUTPUT]; }
 
         // getters
         __device__ static inline int get_up_page(state<Config> &s, int i) { return s.pid(i); }
