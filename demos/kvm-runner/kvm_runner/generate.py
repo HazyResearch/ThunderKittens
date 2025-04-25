@@ -25,7 +25,9 @@ class ScriptConfig(pydra.Config):
     print_name_filter: list[str] | None = None
     print_state_filter: list[str] | None = None
     interleave_rope: bool = True
-    kvm_dir: Path | None = None
+    kvm_dir: Path = (
+        Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
+    )
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
