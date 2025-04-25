@@ -17,7 +17,7 @@ namespace kittens::prototype::vm {
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
         using q_rt = rt_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
-        using q_st = st_fl<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
+        using q_st = st_bf<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
         using k_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
         using v_rt = rt_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM, col_l>;
         using kv_st = st_bf<LLAMA_1B_KV_BLOCK_SIZE, LLAMA_1B_HEAD_DIM>;
@@ -391,7 +391,7 @@ namespace kittens::prototype::vm {
                         // Save for next iteration
                         warp::copy(last_scaled_max_vec_reg, scaled_max_vec_reg);
                     }
-                    
+
                     // Finish
                     warp::sync();
                     if (laneid() == 0) s.record(75);
