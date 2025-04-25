@@ -27,6 +27,8 @@ class ScriptConfig(pydra.Config):
     stop_after_op: str | None = None
     start_after_op: str | None = None
     layer_limit: int | None = 1
+    skip_pyvm: bool = False
+    reps: int = 1
 
 
 def main(config: ScriptConfig):
@@ -58,13 +60,15 @@ def main(config: ScriptConfig):
     globs_for_kvm.hidden_states.copy_(globs_for_pyvm.hidden_states)
     print("hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
 
+    print("HACK LOW MEM NO KV CACHE GOODNESS")
+
     # NOTE: important to clone the KV caches since these originally come from the model
     # and so are the same tensor.
     normal_(globs_for_pyvm.k_cache)
-    globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
+    # globs_for_kvm.k_cache = globs_for_pyvm.k_cache.clone()
 
     normal_(globs_for_pyvm.v_cache)
-    globs_for_kvm.v_cache = globs_for_pyvm.v_cache.clone()
+    # globs_for_kvm.v_cache = globs_for_pyvm.v_cache.clone()
 
     _, instructions = schedule_model(
         prompt_len=config.prompt_len,
@@ -91,6 +95,10 @@ def main(config: ScriptConfig):
     else:
         starting_instructions = []
 
+    if config.reps > 1:
+        print(f"repeating instructions {config.reps} times")
+        instructions = instructions * config.reps
+
     tensorize_instructions(globs_for_kvm, instructions)
     tensorize_instructions(globs_for_pyvm, instructions)
 
@@ -114,12 +122,13 @@ def main(config: ScriptConfig):
     # summarize_caches(globs_for_pyvm, "pyvm")
     # summarize_caches(globs_for_kvm, "kvm")
 
-    print("interpreting with pyvm...")
-    start = time.time()
-    interpret_with_pyvm(globs_for_pyvm, instructions)
-    torch.cuda.synchronize()
-    end = time.time()
-    print(f"pyvm time: {end - start}")
+    if not config.skip_pyvm:
+        print("interpreting with pyvm...")
+        start = time.time()
+        interpret_with_pyvm(globs_for_pyvm, instructions)
+        torch.cuda.synchronize()
+        end = time.time()
+        print(f"pyvm time: {end - start}")
 
     # summarize_caches(globs_for_pyvm, "pyvm")
     # summarize_caches(globs_for_kvm, "kvm")
@@ -159,8 +168,8 @@ def main(config: ScriptConfig):
     test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
     test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-    test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
-    test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
+    # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
+    # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
 
     print("kvm hidden states sum:", globs_for_kvm.hidden_states.float().sum())
     print("pyvm hidden states sum:", globs_for_pyvm.hidden_states.float().sum())
