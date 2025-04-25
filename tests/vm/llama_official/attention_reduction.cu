@@ -161,6 +161,7 @@ namespace kittens::prototype::vm
                     arrive(s.page_finished[s.pid(laneid)], Config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync(); // Have to make sure lane 0 finished waiting
+                s.record(16);
 
                 if (laneid < Q_HEADS_PER_INSTRUCTION)
                 {
@@ -171,6 +172,7 @@ namespace kittens::prototype::vm
                     {
                         __nanosleep(20);
                     }
+                    s.record(17 + laneid);
 
                     l_partial_sv &L_smem = get_L_partial_smem(s, local_q_head);
                     tma::expect(L_partial_all_arrived(s, local_q_head), L_smem);
@@ -187,7 +189,7 @@ namespace kittens::prototype::vm
                             int prev_phase = (i / NUM_STAGES - 1) % 2;
                             wait(O_partial_finished(s, local_q_head, stage), prev_phase);
                         }
-                        s.record(16 + (laneid * inst.num_partials) + i);
+                        s.record(21 + (laneid * inst.num_partials) + i);
 
                         tma::expect(O_partial_arrived(s, local_q_head, stage), O_smem);
                         tma::load_async<cache_policy::EVICT_FIRST>(
@@ -228,6 +230,7 @@ namespace kittens::prototype::vm
                     warp::zero(accumulated_out);
 
                     warp::wait(L_partial_all_arrived(s, q_head_local_idx), 0);
+                    if (laneid() == 0) s.record(40 + q_head_local_idx);
                     l_partial_sv &L_smem = get_L_partial_smem(s, q_head_local_idx);
 
                     // --- Reduction Pipeline ---
@@ -235,7 +238,7 @@ namespace kittens::prototype::vm
                     {
                         int stage = i % NUM_STAGES;
                         warp::wait(O_partial_arrived(s, q_head_local_idx, stage), (i / NUM_STAGES) % 2);
-                        if (laneid() == 0) s.record(40 + (q_head_local_idx * inst.num_partials) + i);
+                        if (laneid() == 0) s.record(44 + (q_head_local_idx * inst.num_partials) + i);
 
                         o_sv &O_smem = get_O_partial_smem(s, q_head_local_idx, stage);
 
@@ -288,7 +291,7 @@ namespace kittens::prototype::vm
 
                     o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
                     wait(final_O_ready(s, q_head_local_idx), 0);
-                    if (laneid() == 0) s.record(126);
+                    if (laneid() == 0) s.record(123 + q_head_local_idx);
 
                     tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, 0, inst.q_head_start_idx + q_head_local_idx});
                     tma::store_async_read_wait();
