@@ -439,7 +439,7 @@ namespace kittens::prototype::vm {
                 if (laneid < GQA_RATIO) {
                     l_sv &L_smem = get_L_smem(s);
                     wait(L_arrived(s), 0);
-                    if (laneid() == 0) s.record(119 + laneid);
+                    if (laneid == 0) s.record(119 + laneid);
                     // Can't do anything fancy with writing 4 spread-out values.
                     // We can do this in the consumer if we want to (without using smem)
                     float tmp;
@@ -454,13 +454,13 @@ namespace kittens::prototype::vm {
                 // Wait and finish
                 if (laneid < GQA_RATIO) {
                     tma::store_async_wait();
-                    if (laneid() == 0) s.record(123 + laneid);
+                    if (laneid == 0) s.record(123 + laneid);
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
                     atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
                 }
                 warp::sync();
-                if (laneid() == 0) s.record(127);
+                if (laneid == 0) s.record(127);
             }
         };
     };
