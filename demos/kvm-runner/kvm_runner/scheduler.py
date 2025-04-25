@@ -243,9 +243,11 @@ def schedule_model(
     instructions = []
 
     if layer_limit is None:
-        layer_limit = globals.num_hidden_layers
+        nlayers = globals.num_hidden_layers
+    else:
+        nlayers = layer_limit
 
-    for layer_idx in range(layer_limit):
+    for layer_idx in range(nlayers):
         instructions.extend(
             schedule_layer(
                 globals=globals,
