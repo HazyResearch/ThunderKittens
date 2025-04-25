@@ -274,7 +274,6 @@ namespace kittens::prototype::vm
                     warp::sync();
 
                     warp::arrive(final_O_ready(s, q_head_local_idx));
-                    finish_shared_page(s);
                 }
             }
         };
