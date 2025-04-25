@@ -12,7 +12,7 @@ namespace kittens::prototype::vm
     using l_partial_sv = sv_fl<16>;
     using o_sv = sv_fl<globals::head_dim>;
     using o_rv = rv_fl<globals::head_dim>;
-    using o_final_sv = sv_fl<globals::head_dim>;
+    using o_final_sv = sv_bf<globals::head_dim>;
 
     constexpr int Q_HEADS_PER_INSTRUCTION = 4;
 
