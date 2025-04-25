@@ -106,6 +106,7 @@ namespace kittens::prototype::vm
                 {
                     int activation_page = get_activation_page(s);
                     s.wait_page_ready(activation_page);
+                    s.record(23);
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
                     s.record(24);
@@ -175,7 +176,7 @@ namespace kittens::prototype::vm
                 kittens::warp::sync();
                 kittens::warp::arrive(outputs_arrived(s));
                 if (kittens::group<16>::laneid() == 0)
-                    s.record(124);
+                    s.record(96);
             }
         };
         struct storer

@@ -111,6 +111,7 @@ namespace kittens::prototype::vm
                 {
                     int pg = get_up_page(s, laneid());
                     s.wait_page_ready(pg);
+                    s.record(16 + laneid());
                     auto &chunk = reinterpret_cast<weight_tile_st &>(s.pages[pg]);
                     tma::expect(up_arrived(s, laneid()), chunk);
                     tma::load_async(chunk, g.up_weights,
@@ -124,6 +125,7 @@ namespace kittens::prototype::vm
                     int idx = laneid() - UP_PAGES;
                     int pg = get_gate_page(s, idx);
                     s.wait_page_ready(pg);
+                    s.record(16 + laneid());
                     auto &chunk = reinterpret_cast<weight_tile_st &>(s.pages[pg]);
                     tma::expect(gate_arrived(s, idx), chunk);
                     tma::load_async(chunk, g.gate_weights,
@@ -136,6 +138,7 @@ namespace kittens::prototype::vm
                 {
                     int pg = get_input_page(s);
                     s.wait_page_ready(pg);
+                    s.record(16 + laneid());
                     // wait on barrier from previous op
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
@@ -149,6 +152,7 @@ namespace kittens::prototype::vm
                 {
                     int rms_scale_page = get_rms_scale_page(s);
                     s.wait_page_ready(rms_scale_page);
+                    s.record(16 + laneid());
                     auto &rms_scale = reinterpret_cast<rms_scale_sv &>(s.pages[rms_scale_page]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.mlp_norm_weights, {}, rms_scale_arrived(s));
@@ -205,6 +209,8 @@ namespace kittens::prototype::vm
 
                 // Next we need to load the activations
                 wait(in_arrived(s), 0);
+                if (laneid() == 0)
+                    s.record(32 + warpid());
                 // reinterpret the activations page as activation_tile_sv[16]
                 int activation_page = get_input_page(s);
                 activation_tile_sv(&activations_smem)[16] = reinterpret_cast<activation_tile_sv(&)[16]>(s.pages[activation_page]);
@@ -239,6 +245,8 @@ namespace kittens::prototype::vm
 
                 // multiply by rms scale
                 wait(rms_scale_arrived(s), 0);
+                if (laneid() == 0)
+                    s.record(48 + warpid());
                 int rms_scale_page = get_rms_scale_page(s);
                 activation_tile_sv(&rms_scale_smem)[16] = reinterpret_cast<activation_tile_sv(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
@@ -250,6 +258,8 @@ namespace kittens::prototype::vm
                 // UP MATVEC
                 //--------------------------------------------------
                 wait(up_arrived(s, group_id), 0);
+                if (laneid() == 0)
+                    s.record(64 + warpid());
                 int weight_page = get_up_page(s, group_id);
                 block_st(&weights_smem)[4] = reinterpret_cast<block_st(&)[4]>(s.pages[weight_page]);
                 warp::load(weights, weights_smem[warp_id]);
@@ -267,6 +277,8 @@ namespace kittens::prototype::vm
                 // GATE MATVEC
                 //--------------------------------------------------
                 wait(gate_arrived(s, group_id), 0);
+                if (laneid() == 0)
+                    s.record(80 + warpid());
                 int gate_weight_page = get_gate_page(s, group_id);
                 block_st(&gate_weights_smem)[4] = reinterpret_cast<block_st(&)[4]>(s.pages[gate_weight_page]);
                 warp::load(gate_weights, gate_weights_smem[warp_id]);
@@ -291,6 +303,8 @@ namespace kittens::prototype::vm
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
+                if (kittens::group<16>::laneid() == 0)
+                    s.record(112);
             }
         };
 
@@ -304,6 +318,7 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     wait(out_arrived(s), 0);
+                    s.record(125);
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
@@ -322,6 +337,7 @@ namespace kittens::prototype::vm
 
                     tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
                     tma::store_async_wait();
+                    s.record(126);
                 }
 
                 warp::sync();
@@ -334,6 +350,7 @@ namespace kittens::prototype::vm
                     //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
                     // else
                     //     atomicAdd(&g.Bar[{inst.layer, opcode + 1, 0}], 1);
+                    s.record(127);
                 }
             }
         };
