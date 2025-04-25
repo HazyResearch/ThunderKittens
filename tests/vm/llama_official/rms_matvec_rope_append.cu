@@ -235,6 +235,9 @@ namespace kittens::prototype::vm {
                             qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
 
                         // Store back to the scratch
+
+                        // this sync to make sure all the fp32 stuff has been read before overwriting the bf16 values
+                        warp::sync();
                         warp::store(qkv_proj_smem_bf, qkv_proj);
                         warp::sync();
                     }
