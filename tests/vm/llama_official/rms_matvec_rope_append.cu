@@ -75,7 +75,7 @@ namespace kittens::prototype::vm {
                     // Activation
                     s.wait_page_ready(get_activation_page(s));
                     s.record(23);
-                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] != 512) __nanosleep(20);
+                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512) __nanosleep(20);
                     s.record(24);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                     tma::expect(activations_arrived(s), activations);
