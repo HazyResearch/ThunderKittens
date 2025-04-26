@@ -291,6 +291,7 @@ namespace kittens::prototype::vm {
                     s.wait_page_ready(s.pid(laneid()));
                     arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
                 }
+                kittens::warp::sync();
                 if (laneid() == 0)
                     s.record(127);
             }
