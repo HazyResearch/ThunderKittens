@@ -293,7 +293,7 @@ namespace kittens::prototype::vm
                     if (laneid() == 0) s.record(123 + q_head_local_idx);
 
                     tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, 0, inst.q_head_start_idx + q_head_local_idx});
-                    tma::store_async_read_wait();
+                    tma::store_async_wait();
                     finish_shared_page(s);
 
                     // atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);
