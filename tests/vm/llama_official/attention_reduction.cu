@@ -308,7 +308,7 @@ namespace kittens::prototype::vm
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], Q_HEADS_PER_INSTRUCTION);
                 }
 
-                warp::sync();
+                kittens::warp::sync();
                 if (laneid() == 0) s.record(127);
             }
         };
