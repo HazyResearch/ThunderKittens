@@ -100,6 +100,7 @@ def kvm_generate(
     )
 
     for i in tqdm(range(1, config.ntok)):
+        print(i)
         input_ids = output_tokens[i - 1 : i]
         output_ids = runner.run(input_ids, pos_id=prompt_len + i)
         output_tokens[i] = output_ids

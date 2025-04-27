@@ -50,6 +50,7 @@ PYBIND11_MODULE(kvm_llama, m)
                                                       &llama_1b_globals::hidden_states,
                                                       &llama_1b_globals::q_post_rope,
                                                       &llama_1b_globals::attn_out,
+                                                      &llama_1b_globals::o_out,
                                                       &llama_1b_globals::attn_lse_intermediates,
                                                       &llama_1b_globals::attn_out_intermediates,
                                                       &llama_1b_globals::silu_out,

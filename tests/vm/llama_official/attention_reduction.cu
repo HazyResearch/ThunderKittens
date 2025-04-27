@@ -177,7 +177,7 @@ namespace kittens::prototype::vm
                     l_partial_sv &L_smem = get_L_partial_smem(s, local_q_head);
                     tma::expect(L_partial_all_arrived(s, local_q_head), L_smem);
                     tma::load_async<cache_policy::EVICT_FIRST>(
-                        L_smem, g.attn_lse_intermediates, {0, 0, inst.q_head_start_idx + local_q_head, 0}, L_partial_all_arrived(s, local_q_head));
+                        L_smem, g.attn_lse_intermediates, {0, inst.layer_idx, inst.q_head_start_idx + local_q_head, 0}, L_partial_all_arrived(s, local_q_head));
 
                     for (int i = 0; i < inst.num_partials; ++i)
                     {
@@ -193,7 +193,7 @@ namespace kittens::prototype::vm
 
                         tma::expect(O_partial_arrived(s, local_q_head, stage), O_smem);
                         tma::load_async<cache_policy::EVICT_FIRST>(
-                            O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
+                            O_smem, g.attn_out_intermediates, {inst.layer_idx, inst.q_head_start_idx + local_q_head, i, 0}, O_partial_arrived(s, local_q_head, stage));
                     }
                 }
                 warp::sync();
@@ -292,7 +292,7 @@ namespace kittens::prototype::vm
                     wait(final_O_ready(s, q_head_local_idx), 0);
                     if (laneid() == 0) s.record(123 + q_head_local_idx);
 
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, 0, inst.q_head_start_idx + q_head_local_idx});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, inst.layer_idx, inst.q_head_start_idx + q_head_local_idx});
                     tma::store_async_wait();
                     
                     // atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.q_head_start_idx + q_head_local_idx}], 1);

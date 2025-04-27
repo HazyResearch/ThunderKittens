@@ -27,6 +27,7 @@ class Globals:
     hidden_states: Tensor
     post_ln_rope_q: Tensor
     attn_out: Tensor
+    o_out: Tensor
     attn_lse_intermediates: Tensor
     attn_out_intermediates: Tensor
     silu_out: Tensor

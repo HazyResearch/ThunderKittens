@@ -40,6 +40,7 @@ def interpret_with_kvm(
         globs.hidden_states,
         globs.post_ln_rope_q,
         globs.attn_out,
+        globs.o_out,
         globs.attn_lse_intermediates,
         globs.attn_out_intermediates,
         globs.silu_out,
@@ -88,7 +89,7 @@ class KVM_Runner:
 
         interpret_with_kvm(self.globals, self.kvm_func)
 
-        output_hiddens = self.globals.hidden_states
+        output_hiddens = self.globals.hidden_states[0]
 
         post_embedding.hidden_states = output_hiddens
 

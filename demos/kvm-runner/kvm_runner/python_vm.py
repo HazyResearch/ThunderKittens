@@ -78,6 +78,7 @@ def matvec_with_residual(
 def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     # Barrier check
     op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
+    print(op_barriers)
     assert op_barriers[0] == globals.num_attention_heads
 
     matvec_with_residual(

@@ -79,7 +79,7 @@ namespace kittens::prototype::vm {
                     s.record(24);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                     tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
+                    tma::load_async(activations, g.hidden_states, {inst.layer_idx, 0}, activations_arrived(s));
                 } else if (laneid() == 5) {
                     // RMS scale
                     s.wait_page_ready(get_rms_scale_page(s));
@@ -93,14 +93,14 @@ namespace kittens::prototype::vm {
                     s.record(28);
                     auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
                     tma::expect(rope_cos_arrived(s), rope_cos);
-                    tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
+                    tma::load_async(rope_cos, g.rope_cos, {0, inst.layer_idx, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
                 } else if (laneid() == 7) {
                     // Rope sin
                     s.wait_page_ready(get_rope_sin_page(s));
                     s.record(30);
                     auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
                     tma::expect(rope_sin_arrived(s), rope_sin);
-                    tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
+                    tma::load_async(rope_sin, g.rope_sin, {0, inst.layer_idx, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
                 } else if (laneid() >= 8 && laneid() <= 12) {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
@@ -260,7 +260,7 @@ namespace kittens::prototype::vm {
                     s.record(125);
 
                     if (inst.qkv_block_idx < K_BLK_START) { // Q
-                        tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
+                        tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem, {0, 0, inst.layer_idx, inst.qkv_block_idx});
                     } else if (inst.qkv_block_idx < V_BLK_START) { // K
                         int base_index = (inst.qkv_block_idx - K_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;

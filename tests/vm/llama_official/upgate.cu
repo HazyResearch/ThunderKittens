@@ -136,7 +136,7 @@ namespace kittens::prototype::vm
                         __nanosleep(20);
                     auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
-                    tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
+                    tma::load_async(buf, g.o_out, {inst.layer, 0}, in_arrived(s)); // TODO: SA check
                 }
 
                 // 5) RMS SCALE
@@ -320,7 +320,7 @@ namespace kittens::prototype::vm
 
                     sv_bf<16> &vec = *reinterpret_cast<sv_bf<16> *>(scratch_bf16);
 
-                    tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
+                    tma::store_async(g.silu_out, vec, {0, 0, inst.layer, inst.output_block_idx});
                     tma::store_async_wait();
                     s.record(126);
                 }

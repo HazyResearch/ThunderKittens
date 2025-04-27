@@ -238,14 +238,14 @@ namespace kittens::prototype::vm
         // Mainly two things are different:
         //   1. Ignores Q global dimensions
         //   2. Only loads 4 rows of Q, not 16 (assumes GQA_RATIO == 4) --> only 32 calls needed, so single call per thread
-        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/)
+        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int layer_idx, const int q_head_start_idx /*0, 4, 8, ...*/)
         {
             static_assert(LLAMA_1B_HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
             constexpr int memcpy_per_row = LLAMA_1B_HEAD_DIM / elem_per_memcpy;            // 8
 
-            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * LLAMA_1B_HEAD_DIM];
+            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[layer_idx * LLAMA_1B_HIDDEN_DIM + q_head_start_idx * LLAMA_1B_HEAD_DIM];
             uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * LLAMA_1B_HEAD_DIM]));
 
             int laneid = warp::laneid();
@@ -376,7 +376,7 @@ namespace kittens::prototype::vm
                     if (group<16>::laneid() == 0)
                         s.record(41);
                     q_st &Q_smem = get_Q_smem(s);
-                    load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
+                    load_Q_async(Q_smem, g.q_post_rope, inst.layer_idx, q_head_start_idx);
 
                     // Setup
                     int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
@@ -511,10 +511,10 @@ namespace kittens::prototype::vm
                     o_sv(&O_smem)[4] = get_O_smem(s);
                     wait(O_arrived(s), 0);
                     s.record(118);
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {0, q_head_start_idx + 3, inst.partial_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {inst.layer_idx, q_head_start_idx + 0, inst.partial_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {inst.layer_idx, q_head_start_idx + 1, inst.partial_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {inst.layer_idx, q_head_start_idx + 2, inst.partial_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {inst.layer_idx, q_head_start_idx + 3, inst.partial_idx, 0});
                 }
 
                 // Store LSE to global memory
@@ -528,7 +528,7 @@ namespace kittens::prototype::vm
                     // We can do this in the consumer if we want to (without using smem)
                     float tmp;
                     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
-                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
+                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[inst.layer_idx * g.attn_lse_intermediates.rows() * g.attn_lse_intermediates.cols() + (q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
                     asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
                     asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
                 }

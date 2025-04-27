@@ -108,7 +108,7 @@ namespace kittens::prototype::vm
                     kittens::tma::expect(activations_arrived(s), activations);
 
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
-                    kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
+                    kittens::tma::load_async(activations, InputActivations, coord<>{inst.layer, inst.start_reduction_col}, activations_arrived(s));
                 }
                 else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
                 {
@@ -202,7 +202,10 @@ namespace kittens::prototype::vm
                     s.record(125);
 
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
-                    kittens::tma::store_add_async(OutputActivations, output_bf, {inst.output_block_idx});
+                    if (opcode == OPCODE_O_ProjResidual)
+                        kittens::tma::store_add_async(OutputActivations, output_bf, {inst.layer, inst.output_block_idx});
+                    else if (opcode == OPCODE_DownProjResidual)
+                        kittens::tma::store_add_async(OutputActivations, output_bf, {inst.layer + 1, inst.output_block_idx});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                     s.record(126);
                 }
@@ -239,7 +242,7 @@ namespace kittens::prototype::vm
                         llama_1b_globals::num_attention_heads,
                         &Globals::o_weights,
                         &Globals::attn_out,
-                        &Globals::hidden_states,
+                        &Globals::o_out,
                         OPCODE_O_ProjResidual,
                         OPCODE_O_ProjResidual - 1,
                         Config>
