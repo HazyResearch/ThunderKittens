@@ -36,11 +36,11 @@ namespace kittens::prototype::vm
 
         static constexpr int UP_PAGES = 4;
         static constexpr int GATE_PAGES = 4;
-        static constexpr int PAGE_INPUT = UP_PAGES + GATE_PAGES; // = 8
-        static constexpr int PAGE_RMS_SCALE = PAGE_INPUT + 1;    // = 9
-        static constexpr int SEM_OUTPUT = PAGE_RMS_SCALE + 1;   // = 10 (no vm page for sems, but we need one for the output)
+        static constexpr int PAGE_INPUT = UP_PAGES + GATE_PAGES;     // = 8
+        static constexpr int PAGE_RMS_SCALE = PAGE_INPUT + 1;        // = 9
+        static constexpr int SEM_OUTPUT = PAGE_RMS_SCALE + 1;        // = 10 (no vm page for sems, but we need one for the output)
         static constexpr int PAGE_COUNT = UP_PAGES + GATE_PAGES + 2; // sems for input page, rms page
-        static constexpr int SEM_COUNT = UP_PAGES + GATE_PAGES + 3; // sems for input page, rms page, signalling output (even if we don't use a page for output)
+        static constexpr int SEM_COUNT = UP_PAGES + GATE_PAGES + 3;  // sems for input page, rms page, signalling output (even if we don't use a page for output)
 
         //  semaphores
         __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
@@ -99,49 +99,46 @@ namespace kittens::prototype::vm
                 warp::sync(); // done, now we can proceed to other things.
 
                 // 1) UP projections
-                if (laneid() < UP_PAGES)
+                if (laneid() == 0)
                 {
-                    int pg = get_up_page(s, laneid());
-                    s.wait_page_ready(pg);
-                    s.record(16 + laneid());
-                    auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
-                    tma::expect(up_arrived(s, laneid()), chunk);
-                    tma::load_async(chunk, g.up_weights,
-                                    {0, inst.layer, inst.output_block_idx, laneid()},
-                                    up_arrived(s, laneid()));
-                }
 
-                // 2) GATE projections
-                else if (laneid() < UP_PAGES + GATE_PAGES)
-                {
-                    int idx = laneid() - UP_PAGES;
-                    int pg = get_gate_page(s, idx);
-                    s.wait_page_ready(pg);
-                    s.record(16 + laneid());
-                    auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
-                    tma::expect(gate_arrived(s, idx), chunk);
-                    tma::load_async(chunk, g.gate_weights,
-                                    {0, inst.layer, inst.output_block_idx, idx},
-                                    gate_arrived(s, idx));
-                }
+                    for (int i = 0; i < UP_PAGES; i++)
+                    {
 
-                // 4) INPUT page
-                else if (laneid() == PAGE_INPUT)
-                {
+                        int pg = get_up_page(s, i);
+                        s.wait_page_ready(pg);
+                        s.record(16 + i);
+                        auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
+                        tma::expect(up_arrived(s, i), chunk);
+                        tma::load_async(chunk, g.up_weights,
+                                        {0, inst.layer, inst.output_block_idx, i},
+                                        up_arrived(s, i));
+                    }
+
+                    for (int i = UP_PAGES; i < UP_PAGES + GATE_PAGES; i++)
+                    {
+
+                        int idx = i - UP_PAGES;
+                        int pg = get_gate_page(s, idx);
+                        s.wait_page_ready(pg);
+                        // s.record(16 + laneid());
+                        auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
+                        tma::expect(gate_arrived(s, idx), chunk);
+                        tma::load_async(chunk, g.gate_weights,
+                                        {0, inst.layer, inst.output_block_idx, idx},
+                                        gate_arrived(s, idx));
+                    }
+
                     int pg = get_input_page(s);
                     s.wait_page_ready(pg);
-                    s.record(16 + laneid());
+                    // s.record(16 + laneid());
                     // wait on barrier from previous op
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
                     auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
                     tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
-                }
 
-                // 5) RMS SCALE
-                else if (laneid() == PAGE_RMS_SCALE)
-                {
                     int rms_scale_page = get_rms_scale_page(s);
                     s.wait_page_ready(rms_scale_page);
                     s.record(16 + laneid());
@@ -152,7 +149,7 @@ namespace kittens::prototype::vm
 
                 // 5) UNUSED pages: release them immediately so consumer warps can retire
                 // else if (laneid() >= PAGE_RMS_SCALE + 1 && laneid() < SEM_COUNT)
-                else if (laneid() < config::NUM_PAGES)
+                else if (laneid() >= PAGE_COUNT && laneid() < config::NUM_PAGES)
                 {
                     int pg = s.pid(laneid());
                     s.wait_page_ready(pg);
@@ -307,8 +304,8 @@ namespace kittens::prototype::vm
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
-                    /* fuse up * SiLU(gate) once, in float, then cast */
-                    #pragma unroll
+/* fuse up * SiLU(gate) once, in float, then cast */
+#pragma unroll
                     for (int i = 0; i < 16; ++i)
                     {
                         float up = scratch_f32[i];

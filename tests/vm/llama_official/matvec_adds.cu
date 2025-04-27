@@ -84,21 +84,25 @@ namespace kittens::prototype::vm
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 ((int *)s.scratch())[kittens::laneid()] = 0;
                 kittens::warp::sync(); // done, now we can proceed to other things.
-                if (kittens::laneid() < 4)
-                {
-                    s.wait_page_ready(get_weight_page(s, kittens::laneid()));
-                    s.record(16 + kittens::laneid());
-                    auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
-                    kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
 
-                    auto &weights_global = g.*WeightsPtr; // object in global memory
-                    kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
-
-                    // auto& weights_global = g.*WeightsPtr;      // object in global memory
-                    // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
-                }
-                else if (kittens::laneid() == 31)
+                if (kittens::laneid() == 0)
                 {
+
+                    for (int i = 0; i < 4; i++)
+                    {
+
+                        s.wait_page_ready(get_weight_page(s, i));
+                        s.record(16 + i);
+                        auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, i)]);
+                        kittens::tma::expect(inputs_arrived(s, i), weight_chunk);
+
+                        auto &weights_global = g.*WeightsPtr; // object in global memory
+                        kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * i}, inputs_arrived(s, i));
+
+                        // auto& weights_global = g.*WeightsPtr;      // object in global memory
+                        // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+                    }
+
                     int activation_page = get_activation_page(s);
                     s.wait_page_ready(activation_page);
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
@@ -116,6 +120,39 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(unused_page);
                     kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
                 }
+
+                // if (kittens::laneid() < 4)
+                // {
+                //     s.wait_page_ready(get_weight_page(s, kittens::laneid()));
+                //     s.record(16 + kittens::laneid());
+                //     auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
+                //     kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
+
+                //     auto &weights_global = g.*WeightsPtr; // object in global memory
+                //     kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+
+                //     // auto& weights_global = g.*WeightsPtr;      // object in global memory
+                //     // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
+                // }
+                // else if (kittens::laneid() == 31)
+                // {
+                //     int activation_page = get_activation_page(s);
+                //     s.wait_page_ready(activation_page);
+                //     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                //         __nanosleep(20);
+                //     s.record(24);
+                //     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
+                //     kittens::tma::expect(activations_arrived(s), activations);
+
+                //     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
+                //     kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
+                // }
+                // else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
+                // {
+                //     int unused_page = s.pid(kittens::laneid());
+                //     s.wait_page_ready(unused_page);
+                //     kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+                // }
             }
         };
         struct launcher
@@ -180,13 +217,12 @@ namespace kittens::prototype::vm
             {
                 parsed_instruction inst{s};
 
-
                 void *scratch = s.scratch();
-               
+
                 // Convert to bf and put back in shared memory
                 sv_fl<16> &output = *reinterpret_cast<sv_fl<16> *>(scratch);
                 sv_bf<16> &output_bf = *reinterpret_cast<sv_bf<16> *>(scratch);
-                
+
                 rv_bf<16> output_reg_bf;
 
                 wait(outputs_arrived(s), 0);
@@ -195,7 +231,6 @@ namespace kittens::prototype::vm
                 warp::sync();
                 warp::store(output_bf, output_reg_bf);
                 warp::sync();
-
 
                 if (laneid() == 0)
                 {
