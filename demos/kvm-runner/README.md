@@ -72,4 +72,16 @@ python kvm_runner/test_kvm.py stop_after_op=up_gate start_after_op=o_proj skip_p
 python kvm_runner/test_kvm.py stop_after_op=o_proj start_after_op=attn_reduction skip_pyvm=T instruction_reps=100 exec_reps=1000 skip_starting_instructions=T
 
 
+python kvm_runner/test_kvm.py stop_after_op=qkv
+python kvm_runner/test_kvm.py stop_after_op=partial_attn start_after_op=qkv
+python kvm_runner/test_kvm.py stop_after_op=attn_reduction start_after_op=partial_attn
+python kvm_runner/test_kvm.py stop_after_op=o_proj start_after_op=attn_reduction
+python kvm_runner/test_kvm.py stop_after_op=up_gate start_after_op=o_proj
+python kvm_runner/test_kvm.py stop_after_op=down_proj start_after_op=up_gate
+
+python kvm_runner/test_kvm.py stop_after_op=o_proj start_after_op=attn_reduction skip_pyvm=T instruction_reps=1000 exec_reps=1000000000 barrier_init_val=100000 skip_starting_instructions=T
+
+
+python kvm_runner/test_kvm.py skip_pyvm=T layer_limit=None barrier_init_val=100000 exec_reps=100000 diff_tensors=F
+
 ```
