@@ -53,7 +53,6 @@ namespace kittens
                                 opcode, g, kvms);
                         }
                         arrive(kvms.semaphores_ready);
-                        arrive(kvms.instruction_finished[kvms.instruction_ring]); // We can also signal now that we, too, have done our part.
                         if (kvms.instruction_index > 0)
                         {
                             int last_ring = ring_retreat<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring);
