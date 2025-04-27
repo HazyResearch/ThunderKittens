@@ -187,7 +187,7 @@ def schedule_layer(
 
     # INSTRUCTION 5
     if instruction_5:
-        print("We love upgate!")
+        # print("We love upgate!")
         num_up_gate_blocks = assert_div(
             globals.intermediate_size, globals.up_gate_proj_block_size
         )
