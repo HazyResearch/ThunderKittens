@@ -10,17 +10,29 @@ namespace vm {
 namespace controller {
 template<typename config, typename globals>
 __device__ void inline load_instructions(int *instruction, int instruction_index, const globals &g, kittens::semaphore &bar) {
-    constexpr int bytes = config::INSTRUCTION_WIDTH*sizeof(int);
-    ::kittens::tma::expect_bytes(bar, bytes);
-    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
-    uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(instruction));
-    uint64_t src_ptr  = (uint64_t)(&g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}]);
-    asm volatile (
-        "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %3, [%2];\n"
-        :
-        : "r"(dst_ptr), "l"(src_ptr), "r"(mbar_ptr), "n"(bytes)
-        : "memory"
-    );
+
+    auto src_ptr = &g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}];
+    // static assert it's an int*
+    static_assert(std::is_same<decltype(src_ptr), int*>::value, "src_ptr is not an int*");
+
+    // Load instructions using a simple for loop from global memory
+    for (int i = 0; i < config::INSTRUCTION_WIDTH; i++) {
+        instruction[i] = src_ptr[i];
+    }
+    
+    arrive(bar, 1);
+
+    // constexpr int bytes = config::INSTRUCTION_WIDTH*sizeof(int);
+    // ::kittens::tma::expect_bytes(bar, bytes);
+    // uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+    // uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(instruction));
+    // uint64_t src_ptr  = (uint64_t)(&g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}]);
+    // asm volatile (
+    //     "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %3, [%2];\n"
+    //     :
+    //     : "r"(dst_ptr), "l"(src_ptr), "r"(mbar_ptr), "n"(bytes)
+    //     : "memory"
+    // );
 }
 
 template<typename config, typename globals> __device__ void inline instruction_fetch_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms) {
