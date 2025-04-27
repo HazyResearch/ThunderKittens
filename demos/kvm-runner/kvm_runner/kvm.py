@@ -48,7 +48,6 @@ def interpret_with_kvm(
         globs.attn_scale,
         globs.rms_norm_eps,
     )
-    torch.cuda.synchronize()
 
 
 class KVM_Runner:
