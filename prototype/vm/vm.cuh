@@ -62,7 +62,7 @@ __device__ inline void kvm_internal(const globals &g) {
     }
     
     if(threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES) {
-        init_semaphore(instruction_arrived[threadIdx.x], 3); // One arrival for instruction arriving, one for timing writeout finishing.
+        init_semaphore(instruction_arrived[threadIdx.x], 2); // One arrival for instruction arriving, one for timing writeout finishing.
         init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS); // All warps but the controller warp arrive here, and the semaphore initializer thread also arrives here.
     }
     if(threadIdx.x < config::NUM_PAGES) {
@@ -74,6 +74,9 @@ __device__ inline void kvm_internal(const globals &g) {
         arrive(tensor_finished, config::NUM_CONSUMER_WARPS); // Flip to state 0, to mark that it starts as available.
         init_semaphore(semaphores_ready, 1);
     }
+
+    __threadfence_system();
+    __syncthreads();
 
     if(config::CLUSTER_BLOCKS == 1) everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
     else everyone::tma::cluster::sync();

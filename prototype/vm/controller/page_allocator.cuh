@@ -22,18 +22,18 @@ template<typename config, typename globals, typename... ops> __device__ void inl
     static_assert(config::INSTRUCTION_PIPELINE_STAGES <= 16, "This would be an absurd thing to do.");
     constexpr uint32_t membermask = 0xFFFFFFFF >> (32-config::NUM_PAGES);
     int num_iters = g.instructions.rows();
-    uint32_t semaphore_bitfield = 0xFFFF0000;
     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
          kvms.instruction_index < num_iters;
          kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring)) {
-        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
-        update_phasebit<1>(semaphore_bitfield, kvms.instruction_ring);
+        
+        int phasebit = (kvms.instruction_index / config::INSTRUCTION_PIPELINE_STAGES - 1) & 1;
+        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], phasebit);
+
         int next_pid;
         if(kvms.instruction_index == 0) next_pid = laneid();
         else {
             int last_instruction_ring = (kvms.instruction_ring+config::INSTRUCTION_PIPELINE_STAGES-1)%config::INSTRUCTION_PIPELINE_STAGES;
-            wait(kvms.instruction_arrived[last_instruction_ring], get_phasebit<0>(semaphore_bitfield, last_instruction_ring));
-            update_phasebit<0>(semaphore_bitfield, last_instruction_ring);
+            wait(kvms.instruction_arrived[last_instruction_ring], ((kvms.instruction_index - 1) / config::INSTRUCTION_PIPELINE_STAGES) & 1);
             int lane = laneid();
             int opcode = kvms.all_instructions[last_instruction_ring].instructions[0];
             int lid = dispatch_op<page_allocator_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, config::instruction_t, int>(

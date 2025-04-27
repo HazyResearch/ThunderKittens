@@ -26,15 +26,12 @@ __device__ void inline load_instructions(int *instruction, int instruction_index
 template<typename config, typename globals> __device__ void inline instruction_fetch_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms) {
     static_assert(config::INSTRUCTION_PIPELINE_STAGES <= 16, "This would be an absurd thing to do.");
     int num_iters = g.instructions.rows();
-    uint32_t semaphore_bitfield = 0xFFFF0000;
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0; kvms.instruction_index < num_iters; kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring)) {
-        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
-        update_phasebit<1>(semaphore_bitfield, kvms.instruction_ring);
+        int phasebit = (kvms.instruction_index / config::INSTRUCTION_PIPELINE_STAGES - 1) & 1;
+        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], phasebit);
         load_instructions<config, globals>(&kvms.instruction()[0], kvms.instruction_index, g, kvms.instruction_arrived[kvms.instruction_ring]);
 
-        // TODO: fix this after fixing timings arrival
-        arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
-
+        // TODO: fix after fixing timings arrival
         // if(kvms.instruction_index < config::INSTRUCTION_PIPELINE_STAGES) {
         //     /* This requires some explanation.
         //      * 

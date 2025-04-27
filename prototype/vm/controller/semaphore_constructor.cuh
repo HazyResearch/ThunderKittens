@@ -22,12 +22,12 @@ template<typename config, typename globals, typename... ops> __device__ void inl
     static_assert(config::INSTRUCTION_PIPELINE_STAGES == 2, "Need to be changed.");
     int num_iters = g.instructions.rows();
     int tic = 0;
-    uint32_t semaphore_bitfield = 0x00000000;
     int last_num_semaphores;
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0;
          kvms.instruction_index < num_iters;
          kvms.instruction_index++, kvms.instruction_ring=ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring), tic=1-tic) {
-        wait(kvms.instruction_arrived[kvms.instruction_ring], get_phasebit<0>(semaphore_bitfield, kvms.instruction_ring));
+
+        wait(kvms.instruction_arrived[kvms.instruction_ring], (kvms.instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1);
         int opcode = kvms.instruction()[0];
         int next_num_semaphores;
         if(opcode == 0) {
@@ -41,18 +41,17 @@ template<typename config, typename globals, typename... ops> __device__ void inl
         arrive(kvms.instruction_finished[kvms.instruction_ring]); // We can also signal now that we, too, have done our part.
         if(kvms.instruction_index > 0) {
             int last_ring = ring_retreat<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring);
-            wait(kvms.instruction_finished[last_ring], get_phasebit<0>(semaphore_bitfield, last_ring));
+            wait(kvms.instruction_finished[last_ring], ((kvms.instruction_index - 1) / config::INSTRUCTION_PIPELINE_STAGES) & 1);
             for(int i = 0; i < last_num_semaphores; i++) {
                 invalidate_semaphore(kvms.all_instructions[last_ring].semaphores[i]);
             }
-            update_phasebit<0>(semaphore_bitfield, last_ring);
         }
         last_num_semaphores = next_num_semaphores;
     }
     // if(blockIdx.x == 0) printf("110\n");
     if(num_iters > 0) {
         int last_ring = ring_retreat<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring);
-        wait(kvms.instruction_finished[last_ring], get_phasebit<0>(semaphore_bitfield, last_ring));
+        wait(kvms.instruction_finished[last_ring], ((kvms.instruction_index - 1) / config::INSTRUCTION_PIPELINE_STAGES) & 1);
         for(int i = 0; i < last_num_semaphores; i++) {
             invalidate_semaphore(kvms.all_instructions[last_ring].semaphores[i]);
         }
