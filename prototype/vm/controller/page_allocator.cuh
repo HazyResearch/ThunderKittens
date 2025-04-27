@@ -26,7 +26,7 @@ template<typename config, typename globals, typename... ops> __device__ void inl
     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
          kvms.instruction_index < num_iters;
          kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring)) {
-        wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
+        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
         update_phasebit<1>(semaphore_bitfield, kvms.instruction_ring);
         int next_pid;
         if(kvms.instruction_index == 0) next_pid = laneid();

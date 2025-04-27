@@ -28,22 +28,26 @@ template<typename config, typename globals> __device__ void inline instruction_f
     int num_iters = g.instructions.rows();
     uint32_t semaphore_bitfield = 0xFFFF0000;
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0; kvms.instruction_index < num_iters; kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring)) {
-        wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
+        if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES) wait(kvms.instruction_finished[kvms.instruction_ring], get_phasebit<1>(semaphore_bitfield, kvms.instruction_ring));
         update_phasebit<1>(semaphore_bitfield, kvms.instruction_ring);
         load_instructions<config, globals>(&kvms.instruction()[0], kvms.instruction_index, g, kvms.instruction_arrived[kvms.instruction_ring]);
-        if(kvms.instruction_index < config::INSTRUCTION_PIPELINE_STAGES) {
-            /* This requires some explanation.
-             * 
-             * For an instruction stage to be ready to use, two things must happen:
-             * 1. The instruction must be loaded.
-             * 2. Any previous timing writeout must be finished.
-             * 
-             * Correspondingly, the instruction_arrived semaphore takes two separate arrivals.
-             * One is triggered by this thread, and the other is triggered by the timing store thread.
-             * However, for the first N stages, there is no timing store, so we need to trigger the arrival manually.
-             */
-            arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
-        }
+
+        // TODO: fix this after fixing timings arrival
+        arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
+
+        // if(kvms.instruction_index < config::INSTRUCTION_PIPELINE_STAGES) {
+        //     /* This requires some explanation.
+        //      * 
+        //      * For an instruction stage to be ready to use, two things must happen:
+        //      * 1. The instruction must be loaded.
+        //      * 2. Any previous timing writeout must be finished.
+        //      * 
+        //      * Correspondingly, the instruction_arrived semaphore takes two separate arrivals.
+        //      * One is triggered by this thread, and the other is triggered by the timing store thread.
+        //      * However, for the first N stages, there is no timing store, so we need to trigger the arrival manually.
+        //      */
+        //     arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
+        // }
     }
 }
 
