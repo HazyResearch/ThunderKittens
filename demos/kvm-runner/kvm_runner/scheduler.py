@@ -114,12 +114,12 @@ def schedule_layer(
                 )
             )
 
-    instruction_1 = False
-    instruction_2 = False
-    instruction_3 = False
+    instruction_1 = True
+    instruction_2 = True
+    instruction_3 = True
     instruction_4 = True
-    instruction_5 = False
-    instruction_6 = False
+    instruction_5 = True
+    instruction_6 = True
 
     # INSTRUCTION 1
     if instruction_1:
@@ -219,8 +219,8 @@ def schedule_layer(
             return instructions
 
     # sleep
-    import time
-    time.sleep(1)
+    # import time
+    # time.sleep(1)
 
     return instructions
 

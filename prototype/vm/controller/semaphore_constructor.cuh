@@ -13,7 +13,9 @@ template<typename config, typename globals> struct semaphore_constructor_op_disp
     template<typename op>
     struct dispatcher {
         __device__ static inline int run(const globals &g, ::kittens::prototype::vm::state<config> &kvms) {
-            return op::controller::init_semaphores(g, kvms);
+            auto out = op::controller::init_semaphores(g, kvms);
+            asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
+            return out;
         }
     };
 };

@@ -75,7 +75,7 @@ __device__ inline void kvm_internal(const globals &g) {
         init_semaphore(semaphores_ready, 1);
     }
 
-    __threadfence_system();
+    asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
     __syncthreads();
 
     if(config::CLUSTER_BLOCKS == 1) everyone::sync(15); // all warps must arrive here, confirming semaphore initialization is visible to all threads.
