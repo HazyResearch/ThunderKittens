@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
 
+import torch
 from kvm_runner.llama import BatchState, LlamaForCausalLM
 from kvm_runner.scheduler import Globals, schedule_model, tensorize_instructions
-import torch
 from torch import Tensor
 
 
@@ -48,7 +48,6 @@ def interpret_with_kvm(
         globs.attn_scale,
         globs.rms_norm_eps,
     )
-    torch.cuda.synchronize()
 
 
 class KVM_Runner:
