@@ -99,6 +99,13 @@ class Instruction:
 
 
 @dataclass
+class NoOp(Instruction):
+    @classmethod
+    def opcode(cls) -> int:
+        return 0
+
+
+@dataclass
 class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     """
     attention: layernorm + qkv matvec + rope on q and k + append k and v to kv cache
