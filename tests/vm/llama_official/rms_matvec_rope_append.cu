@@ -148,6 +148,10 @@ namespace kittens::prototype::vm {
         };
         struct consumer {
             static __device__ void run(const Globals &g, state<Config> &s) {
+                if (warp::laneid() == 0) {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
+                
                 // Setup
                 parsed_instruction inst{s};
                 rt_fl<16, 128> weights, broadcast_activations;
@@ -167,9 +171,6 @@ namespace kittens::prototype::vm {
 
                 // Step 1: Load hidden states into register
                 wait(activations_arrived(s), 0);
-                if (laneid() == 0) {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
 
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
@@ -290,12 +291,15 @@ namespace kittens::prototype::vm {
         struct storer {
             // Uses 4 full pages for outputs.
             static __device__ void run(const Globals &g, state<Config> &s) {
+                if (warp::laneid() == 0) {
+                    s.record(TEVENT_STORE_START);
+                }
+
                 parsed_instruction inst{s};
 
                 if (warp::laneid() == 0) {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
-                    s.record(125);
 
                     if (inst.qkv_block_idx < K_BLK_START) { // Q
                         tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
