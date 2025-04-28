@@ -278,7 +278,6 @@ namespace kittens::prototype::vm
                     init_semaphore(K_finished(s, i), 0, 1);
                     init_semaphore(V_finished(s, i), 0, 1);
                 }
-                s.record(1);
                 return 3 + 4 * NUM_STAGES;
             }
         };
@@ -286,6 +285,11 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_START);
+                }
+
                 auto laneid = warp::laneid();
                 if (laneid == 0)
                 {
@@ -297,13 +301,16 @@ namespace kittens::prototype::vm
                     int start_blk_idx = inst.partial_idx * blocks_per_partial;
                     int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
+                    s.record(TEVENT_AT_GMEM_WAIT);
+
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4 ||                        // K
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4 ||                       // K
                            *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] < 4) // V
                     {
                         __nanosleep(20);
                     }
-                    s.record(16);
+
+                    s.record(TEVENT_DONE_GMEM_WAIT);
 
                     // Wait for the KV page
                     wait_KV_page(s);
@@ -339,6 +346,12 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(unused_page);
                     arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS);
                 }
+
+                warp::sync();
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
+                }
             }
         };
         struct launcher
@@ -356,6 +369,12 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
+
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
+
                 if (warpid() == 0)
                 {
                     // Wait for the previous ops to finish1
@@ -407,8 +426,12 @@ namespace kittens::prototype::vm
 
                     // Wait for Q to arrive
                     warp::load_async_wait();
+
                     if (laneid() == 0)
-                        s.record(42);
+                    {
+                        s.record(TEVENT_CONSUMER_START + 16);
+                    }
+
                     warp::load(Q_reg, Q_smem);
 
                     // Run the pipeline!
@@ -422,7 +445,7 @@ namespace kittens::prototype::vm
                         warp::zero(attn_fl_reg);
                         warp::wait(K_arrived(s, stage), (i / NUM_STAGES) % 2);
                         if (laneid() == 0 && i < 16)
-                            s.record(43 + i);
+                            s.record(TEVENT_CONSUMER_START + 32 + i);
                         warp::load(K_reg, K_smem);
                         warp::mma_ABt(attn_fl_reg, Q_reg, K_reg, attn_fl_reg);
                         warp::sync();
@@ -451,7 +474,7 @@ namespace kittens::prototype::vm
                         warp::mul_row(O_reg, O_reg, diff_scaled_max_vec_reg);
                         warp::wait(V_arrived(s, stage), (i / NUM_STAGES) % 2);
                         if (laneid() == 0 && i < 16)
-                            s.record(59 + i);
+                            s.record(TEVENT_CONSUMER_START + 48 + i);
                         warp::load(V_reg, V_smem);
                         warp::copy(attn_bf_reg, attn_fl_reg); // Convert to bf16 to do matmul
                         warp::mma_AB(O_reg, attn_bf_reg, V_reg, O_reg);
@@ -469,7 +492,7 @@ namespace kittens::prototype::vm
                     // Finish
                     warp::sync();
                     if (laneid() == 0)
-                        s.record(75);
+                        s.record(TEVENT_CONSUMER_START + 64);
                     if (start_blk_idx < end_blk_idx)
                     {
                         finish_KV_page(s);
@@ -488,11 +511,18 @@ namespace kittens::prototype::vm
                     store_4_rows(O_smem, O_reg, q_head_local_idx);
                     warp::sync();
                     if (laneid() == 0)
-                        s.record(76);
+                    {
+                        s.record(TEVENT_CONSUMER_START + 65);
+                    }
                     warp::arrive(O_arrived(s));
                     warp::store(L_smem, L_reg);
                     warp::sync();
                     warp::arrive(L_arrived(s));
+                }
+
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END + warpid());
                 }
             }
         };
@@ -504,6 +534,11 @@ namespace kittens::prototype::vm
                 int laneid = warp::laneid();
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
                 int q_head_vec_start_idx = q_head_start_idx % 16;
+
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_STORE_START);
+                }
 
                 // Store partial attention output to global memory
                 if (laneid == 0)
@@ -547,7 +582,9 @@ namespace kittens::prototype::vm
                 }
                 warp::sync();
                 if (laneid == 0)
-                    s.record(127);
+                {
+                    s.record(TEVENT_STORE_END);
+                }
             }
         };
     };
