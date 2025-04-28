@@ -1,3 +1,4 @@
+import pickle
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class ScriptConfig(pydra.Config):
     barrier_init_val: int = 0
     truncate_instructions: int | None = None
     bp: bool = False
+    outfile: Path | None = None
 
 
 def main(config: ScriptConfig):
@@ -197,8 +199,18 @@ def main(config: ScriptConfig):
         # summarize_caches(globs_for_pyvm, "pyvm")
         # summarize_caches(globs_for_kvm, "kvm")
 
-        if config.bp:
-            breakpoint()
+    if config.bp:
+        breakpoint()
+
+    if config.outfile is not None:
+        outdata = {
+            "timings": globs_for_kvm.timings.cpu(),
+            "instructions": instructions,
+            "tensor_instructions": globs_for_kvm.instructions.cpu(),
+        }
+
+        with open(config.outfile, "wb") as f:
+            pickle.dump(outdata, f)
 
 
 if __name__ == "__main__":
