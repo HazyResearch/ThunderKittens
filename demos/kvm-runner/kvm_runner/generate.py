@@ -110,6 +110,8 @@ def kvm_generate(
 
 
 def main(config: ScriptConfig):
+    torch.cuda.set_device(config.device)
+
     tokenizer = AutoTokenizer.from_pretrained(config.model)
     extra_config = ExtraModelConfig(
         interleave_rope=config.interleave_rope,
