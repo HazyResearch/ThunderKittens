@@ -142,7 +142,6 @@ namespace kittens::prototype::vm
 
                     init_semaphore(final_O_ready(s, q_head), 0, 1);
                 }
-                s.record(1);
                 return 4 * ((NUM_STAGES * 2) + 3);
             }
         };
@@ -151,22 +150,29 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_START);
+                }
+
                 auto laneid = warp::laneid();
 
-                if (laneid == 0) {
+                if (laneid == 0)
+                {
                     wait_shared_page(s);
-                } else if (laneid < Config::NUM_PAGES)
+                }
+                else if (laneid < Config::NUM_PAGES)
                 {
                     s.wait_page_ready(s.pid(laneid));
                     arrive(s.page_finished[s.pid(laneid)], Config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync(); // Have to make sure lane 0 finished waiting
-                s.record(16);
 
                 if (laneid == 0)
                 {
                     parsed_instruction inst{s};
 
+                    s.record(TEVENT_AT_GMEM_WAIT);
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + 0}] < inst.num_partials ||
                            *(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + 1}] < inst.num_partials ||
                            *(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + 2}] < inst.num_partials ||
@@ -174,9 +180,10 @@ namespace kittens::prototype::vm
                     {
                         __nanosleep(20);
                     }
-                    s.record(17);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
 
-                    for (int i = 0; i < 4; ++i) {
+                    for (int i = 0; i < 4; ++i)
+                    {
                         l_partial_sv &L_smem = get_L_partial_smem(s, i);
                         tma::expect(L_partial_all_arrived(s, i), L_smem);
                         tma::load_async<cache_policy::EVICT_FIRST>(
@@ -186,16 +193,16 @@ namespace kittens::prototype::vm
                     for (int i = 0; i < inst.num_partials; ++i)
                     {
                         int stage = i % NUM_STAGES;
-                        for (int j = 0; j < 4; ++j) {
+                        for (int j = 0; j < 4; ++j)
+                        {
                             o_sv &O_smem = get_O_partial_smem(s, j, stage);
-    
+
                             if (i >= NUM_STAGES)
                             {
                                 int prev_phase = (i / NUM_STAGES - 1) % 2;
                                 wait(O_partial_finished(s, j, stage), prev_phase);
                             }
-                            s.record(21 + i);
-    
+
                             tma::expect(O_partial_arrived(s, j, stage), O_smem);
                             tma::load_async<cache_policy::EVICT_FIRST>(
                                 O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + j, i, 0}, O_partial_arrived(s, j, stage));
@@ -203,6 +210,10 @@ namespace kittens::prototype::vm
                     }
                 }
                 warp::sync();
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
+                }
             }
         };
 
@@ -222,8 +233,14 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+
+                if (laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
                 if (warpid() < Q_HEADS_PER_INSTRUCTION)
                 {
+
                     parsed_instruction inst{s};
                     int q_head_local_idx = warpid();
 
@@ -236,7 +253,8 @@ namespace kittens::prototype::vm
                     warp::zero(accumulated_out);
 
                     warp::wait(L_partial_all_arrived(s, q_head_local_idx), 0);
-                    if (laneid() == 0) s.record(40 + q_head_local_idx);
+                    if (laneid() == 0)
+                        s.record(TEVENT_CONSUMER_START + 16 + warpid());
                     l_partial_sv &L_smem = get_L_partial_smem(s, q_head_local_idx);
 
                     // --- Reduction Pipeline ---
@@ -244,7 +262,6 @@ namespace kittens::prototype::vm
                     {
                         int stage = i % NUM_STAGES;
                         warp::wait(O_partial_arrived(s, q_head_local_idx, stage), (i / NUM_STAGES) % 2);
-                        if (laneid() == 0) s.record(44 + (q_head_local_idx * inst.num_partials) + i);
 
                         o_sv &O_smem = get_O_partial_smem(s, q_head_local_idx, stage);
 
@@ -281,6 +298,11 @@ namespace kittens::prototype::vm
 
                     warp::arrive(final_O_ready(s, q_head_local_idx));
                 }
+
+                if (laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END + warpid());
+                }
             }
         };
 
@@ -289,6 +311,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_START);
+                }
                 parsed_instruction inst{s};
                 if (warp::laneid() < Q_HEADS_PER_INSTRUCTION)
                 {
@@ -296,7 +322,6 @@ namespace kittens::prototype::vm
 
                     o_final_sv &O_final_smem = get_O_final_smem(s, q_head_local_idx);
                     wait(final_O_ready(s, q_head_local_idx), 0);
-                    if (laneid() == 0) s.record(123 + q_head_local_idx);
 
                     tma::store_async<cache_policy::NORMAL>(g.attn_out, O_final_smem, {0, 0, 0, inst.q_head_start_idx + q_head_local_idx});
                     tma::store_async_wait();
@@ -316,7 +341,11 @@ namespace kittens::prototype::vm
                 }
 
                 warp::sync();
-                if (laneid() == 0) s.record(127);
+
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_END);
+                }
             }
         };
     };
