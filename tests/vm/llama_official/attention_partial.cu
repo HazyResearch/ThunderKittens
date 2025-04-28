@@ -309,7 +309,7 @@ namespace kittens::prototype::vm
                     wait_KV_page(s);
                     s.record(17);
 
-                    if (start_blk_idx == end_blk_idx)
+                    if (start_blk_idx >= end_blk_idx)
                         finish_KV_page(s);
 
                     // Run the pipeline!
