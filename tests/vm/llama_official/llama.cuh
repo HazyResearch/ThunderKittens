@@ -20,8 +20,18 @@
 #define LLAMA_1B_MATVEC_BLOCK_SIZE 16
 #define SM_COUNT 148
 
-// template <int hidden_dim, int intermediate_dim, int head_dim, int num_attention_heads, int num_kv_heads, int kv_block_size, int matvec_block_size, int sm_count>
-// struct llama_globals
+// timing event convention
+#define TEVENT_LOADER_START 16
+#define TEVENT_AT_GMEM_WAIT 17
+#define TEVENT_DONE_GMEM_WAIT 18
+#define TEVENT_LOADER_END 19
+
+#define TEVENT_CONSUMER_START 24
+#define TEVENT_CONSUMER_END 88
+
+#define TEVENT_STORE_START 104
+#define TEVENT_STORE_END 126
+
 
 namespace kittens::prototype::vm
 {
