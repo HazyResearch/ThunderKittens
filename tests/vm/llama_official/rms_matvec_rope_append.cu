@@ -13,6 +13,15 @@ namespace kittens::prototype::vm {
     struct rms_qkv_rope_append {
         static constexpr int opcode = OPCODE_RMS_QKV_MatVecRopeAppend; // Op index within the layer -- controls which barrier to listen to.
         static constexpr int NUM_WEIGHT_PAGES = 4;
+
+
+        static constexpr int PAGE_RMS_SCALE = 0;
+        static constexpr int PAGE_ROPE_COS = PAGE_RMS_SCALE + 1;
+        static constexpr int PAGE_ROPE_SIN = PAGE_ROPE_COS + 1;
+        static constexpr int PAGE_WEIGHT_START = PAGE_ROPE_SIN + 1;
+        static constexpr int PAGE_ACTIVATION = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
+        static constexpr int PAGE_COUNT = PAGE_ACTIVATION + 1; // 8
+
         static constexpr int K_BLK_START = 2048 / Globals::matvec_block_size;
         static constexpr int V_BLK_START = 2560 / Globals::matvec_block_size;
 
@@ -43,7 +52,9 @@ namespace kittens::prototype::vm {
 
         struct controller {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
-                int ret_order[13] = {8, 9, 10, 11, 12, 0, 1, 2, 3, 4, 5, 6, 7};
+
+                // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
+                int ret_order[13] = {8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_RMS_SCALE, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s) {
@@ -65,23 +76,6 @@ namespace kittens::prototype::vm {
                 warp::sync(); // done, now we can proceed to other things.
 
                 if (laneid() == 0) {
-                    for (int i = 0; i < 4; ++i) {
-                        // QKV projection weights
-                        s.wait_page_ready(get_weight_page(s, i));
-                        s.record(16 + i);
-                        auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[get_weight_page(s, i)]);
-                        tma::expect(weights_arrived(s, i), weight_chunk);
-                        tma::load_async(weight_chunk, g.qkv_weights, {inst.layer_idx, inst.qkv_block_idx, i}, weights_arrived(s, i));
-                    }
-
-                    // Activation
-                    s.wait_page_ready(get_activation_page(s));
-                    s.record(23);
-                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512) __nanosleep(20);
-                    s.record(24);
-                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
-                    tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
 
                     // RMS scale
                     s.wait_page_ready(get_rms_scale_page(s));
@@ -89,6 +83,18 @@ namespace kittens::prototype::vm {
                     auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[get_rms_scale_page(s)]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
+
+
+                    for (int i = 0; i < 4; i++) {
+                        // QKV projection weights
+                        auto page_id = get_weight_page(s, i);
+
+                        s.wait_page_ready(page_id);
+                        s.record(16 + i);
+                        auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[page_id]);
+                        tma::expect(weights_arrived(s, i), weight_chunk);
+                        tma::load_async(weight_chunk, g.qkv_weights, {inst.layer_idx, inst.qkv_block_idx, i}, weights_arrived(s, i));
+                    }
 
                     // Rope cos
                     s.wait_page_ready(get_rope_cos_page(s));
@@ -103,7 +109,17 @@ namespace kittens::prototype::vm {
                     auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
+
+                    // Activation
+                    s.wait_page_ready(get_activation_page(s));
+                    s.record(23);
+                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512) __nanosleep(20);
+                    s.record(24);
+                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
+                    tma::expect(activations_arrived(s), activations);
+                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
+
                 else if (laneid() >= 8 && laneid() <= 12) {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
