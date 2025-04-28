@@ -78,7 +78,6 @@ namespace kittens::prototype::vm
                 }
                 kittens::init_semaphore(outputs_arrived(s), 16); // outputs arrived.
                 kittens::init_semaphore(activations_arrived(s), 1);
-                s.record(1);
                 return 6;
             }
         };
@@ -93,6 +92,7 @@ namespace kittens::prototype::vm
 
                 if (kittens::laneid() == 0)
                 {
+                    s.record(TEVENT_LOADER_START);
 
                     for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
@@ -111,9 +111,12 @@ namespace kittens::prototype::vm
 
                     int activation_page = get_activation_page(s);
                     s.wait_page_ready(activation_page);
+
+                    s.record(TEVENT_AT_GMEM_WAIT);
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
-                    s.record(24);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
                     kittens::tma::expect(activations_arrived(s), activations);
 
@@ -125,6 +128,12 @@ namespace kittens::prototype::vm
                     int unused_page = s.pid(kittens::laneid());
                     s.wait_page_ready(unused_page);
                     kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+                }
+
+                warp::sync();
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
                 }
 
                 // if (kittens::laneid() < 4)
@@ -174,6 +183,12 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<Config> &s)
             {
+
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
+
                 kittens::rt_fl<16, 128> weights, broadcast_activations;
                 typename kittens::rt_fl<16, 128>::row_vec activations_vec;
                 typename kittens::rt_fl<16, 128>::col_vec output_col_format;
@@ -181,8 +196,7 @@ namespace kittens::prototype::vm
                 int group_id = kittens::warpgroup::groupid();
                 int warp_id = kittens::warpgroup::warpid(); // id within the warpgroup
                 wait(inputs_arrived(s, group_id), 0);
-                if (laneid() == 0)
-                    s.record(32 + warpid());
+
                 // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
                 int weight_page = get_weight_page(s, group_id);
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
@@ -191,8 +205,7 @@ namespace kittens::prototype::vm
                 kittens::warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
                 // Next we need to load the activations
                 wait(activations_arrived(s), 0);
-                if (laneid() == 0)
-                    s.record(64 + warpid());
+
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
                 kittens::sv_bf<128>(&activations_smem)[16] = reinterpret_cast<kittens::sv_bf<128>(&)[16]>(s.pages[activation_page]);
@@ -212,8 +225,11 @@ namespace kittens::prototype::vm
                 }
                 kittens::warp::sync();
                 kittens::warp::arrive(outputs_arrived(s));
-                if (kittens::group<16>::laneid() == 0)
-                    s.record(124);
+
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END + warpid());
+                }
             }
         };
         struct storer
@@ -221,6 +237,11 @@ namespace kittens::prototype::vm
             // Uses 4 full pages for outputs.
             static __device__ void run(const globals &g, state<Config> &s)
             {
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_START);
+                }
+
                 parsed_instruction inst{s};
 
                 void *scratch = s.scratch();
@@ -240,12 +261,9 @@ namespace kittens::prototype::vm
 
                 if (laneid() == 0)
                 {
-                    s.record(125);
-
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
                     kittens::tma::store_add_async(OutputActivations, output_bf, {inst.output_block_idx});
                     kittens::tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                    s.record(126);
                 }
                 kittens::warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
@@ -257,8 +275,12 @@ namespace kittens::prototype::vm
                     // else
                     //     atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
                 }
-                if (laneid() == 0)
-                    s.record(127);
+
+                warp::sync();
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_END);
+                }
             }
         };
     };
