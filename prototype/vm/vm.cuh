@@ -76,7 +76,7 @@ namespace kittens
 
                 if (threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES)
                 {
-                    init_semaphore(instruction_arrived[threadIdx.x], 2);
+                    init_semaphore(instruction_arrived[threadIdx.x], 1);
                     init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS - 1);
                 }
                 if (threadIdx.x < config::NUM_PAGES)

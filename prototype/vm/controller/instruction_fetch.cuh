@@ -13,7 +13,7 @@ namespace kittens
             namespace controller
             {
                 template <typename config, typename globals>
-                __device__ void inline load_instructions(int *instruction, int instruction_index, const globals &g, kittens::semaphore &bar)
+                __device__ void inline load_instructions(int *instruction, int instruction_index, const globals &g)
                 {
 
                     auto src_ptr = &g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}];
@@ -26,7 +26,7 @@ namespace kittens
                         instruction[i] = src_ptr[i];
                     }
 
-                    arrive(bar, 1);
+                    // arrive(bar, 1);
 
                     // constexpr int bytes = config::INSTRUCTION_WIDTH*sizeof(int);
                     // ::kittens::tma::expect_bytes(bar, bytes);

@@ -96,7 +96,7 @@ template<typename config> struct state {
         return all_instructions[instruction_ring].semaphores;
     }
     __device__ inline void await_instruction() {
-        wait_semaphores_ready(); // if semaphores are ready, instructions are ready
+        wait(instruction_arrived[instruction_ring], (instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1);
         #pragma unroll
         for(int i = 0; i < config::NUM_PAGES; i++) {
             reg_pid_order[i] = pid_order()[i];
