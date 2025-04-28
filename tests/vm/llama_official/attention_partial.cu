@@ -314,7 +314,6 @@ namespace kittens::prototype::vm
 
                     // Wait for the KV page
                     wait_KV_page(s);
-                    s.record(17);
 
                     if (start_blk_idx >= end_blk_idx)
                         finish_KV_page(s);
@@ -331,8 +330,6 @@ namespace kittens::prototype::vm
                             wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                             wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         }
-                        if (i < 16)
-                            s.record(18 + i);
 
                         tma::expect(K_arrived(s, stage), K_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
@@ -388,12 +385,10 @@ namespace kittens::prototype::vm
                         __nanosleep(20);
                     }
                     warp::sync();
-                    s.record(40);
 
                     // Initiate the load on Q
                     wait_QOL_page(s);
-                    if (group<16>::laneid() == 0)
-                        s.record(41);
+
                     q_st &Q_smem = get_Q_smem(s);
                     load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
 
@@ -530,22 +525,21 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
-                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
-                int q_head_vec_start_idx = q_head_start_idx % 16;
-
                 if (laneid == 0)
                 {
                     s.record(TEVENT_STORE_START);
                 }
+
+                parsed_instruction inst{s};
+                int laneid = warp::laneid();
+                int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
+                int q_head_vec_start_idx = q_head_start_idx % 16;
 
                 // Store partial attention output to global memory
                 if (laneid == 0)
                 {
                     o_sv(&O_smem)[4] = get_O_smem(s);
                     wait(O_arrived(s), 0);
-                    s.record(118);
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
@@ -557,8 +551,7 @@ namespace kittens::prototype::vm
                 {
                     l_sv &L_smem = get_L_smem(s);
                     wait(L_arrived(s), 0);
-                    if (laneid == 0)
-                        s.record(119 + laneid);
+
                     // Can't do anything fancy with writing 4 spread-out values.
                     // We can do this in the consumer if we want to (without using smem)
                     float tmp;
