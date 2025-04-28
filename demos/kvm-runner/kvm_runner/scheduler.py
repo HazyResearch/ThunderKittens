@@ -95,7 +95,16 @@ def schedule_layer(
     stop_after_op: str | None = None,
     print_info: PrintInfo | None = None,
 ):
-    num_attention_partitions = 2
+    min_chunk_size = 16
+    full_len = prompt_len + ntok
+    sm_count = get_sm_count(globals.device)
+
+    num_divisions = math.ceil(full_len / min_chunk_size)
+
+    # num_attention_partitions = min(sm_count, num_divisions)
+
+    # TODO limitation until we have a better reduction tree
+    num_attention_partitions = min(num_divisions, 24)
     add_print_instructions = print_info is not None
 
     instructions: list[Instruction] = []
