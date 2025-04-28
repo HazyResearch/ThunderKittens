@@ -17,6 +17,7 @@ namespace kittens
             namespace controller
             {
 
+
                 template <typename config, typename globals, typename... ops>
                 __device__ void main_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms)
                 {
@@ -25,8 +26,9 @@ namespace kittens
                         return;
 
                     int num_iters = g.instructions.rows();
-                    int num_semaphores[2];
+                    int num_semaphores[config::INSTRUCTION_PIPELINE_STAGES];
 
+                    int last_timing_writeout_instruction_index = 0;
                     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
                          kvms.instruction_index < num_iters;
                          kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring))
@@ -35,15 +37,18 @@ namespace kittens
                         // Step 0. if the slot was used in the previous iteration, wait for the previous instruction to complete & invalidate its semaphores
                         if (kvms.instruction_index >= config::INSTRUCTION_PIPELINE_STAGES)
                         {
-                            int phasebit = (kvms.instruction_index / config::INSTRUCTION_PIPELINE_STAGES - 1) & 1;
+                            auto last_slot_instruction_index = kvms.instruction_index - config::INSTRUCTION_PIPELINE_STAGES;
+
+                            int phasebit = (last_slot_instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1;
                             wait(kvms.instruction_finished[kvms.instruction_ring], phasebit);
                             for (int i = 0; i < num_semaphores[kvms.instruction_ring]; i++)
+                            {
                                 invalidate_semaphore(kvms.all_instructions[kvms.instruction_ring].semaphores[i]);
+                            }
 
-                            store_timings<config, globals>(&kvms.timing()[0], kvms.instruction_index, g);
-                            kittens::tma::store_async_read_wait();
-                            uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&kvms.timing()[0]));
-                            asm volatile("st.bulk.weak [%0], %1, 0;\n" ::"r"(src_ptr), "n"(config::TIMING_WIDTH * sizeof(int))); // Reinitialize timing memory as zeros.
+                            store_timings_and_reset<config, globals>(&kvms.timing()[0], last_slot_instruction_index, g);
+
+                            last_timing_writeout_instruction_index = last_slot_instruction_index;
                         }
 
                         // Step 1. Load instructions (no semaphores used)
@@ -81,6 +86,29 @@ namespace kittens
 
                         // Step 4. Let the rest of the world know that next instruction is ready to roll!
                         arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
+                    }
+
+                    // invalidate remaining semaphores and write out remaining timings
+                    for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES; i++)
+                    {
+                        auto instruction_index = num_iters - config::INSTRUCTION_PIPELINE_STAGES + i;
+                        if (instruction_index < 0)
+                        {
+                            continue;
+                        }
+
+                        auto instruction_ring = instruction_index % config::INSTRUCTION_PIPELINE_STAGES;
+
+                        auto phasebit = (instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1;
+                        wait(kvms.instruction_finished[instruction_ring], phasebit);
+
+                        for (int j = 0; j < num_semaphores[instruction_ring]; j++)
+                        {
+                            invalidate_semaphore(kvms.all_instructions[instruction_ring].semaphores[j]);
+                        }
+
+                        // technically don't need to reset, whatevs?
+                        store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
                     }
 
                     // At this point, we still have the last 2 sets of semaphores not yet invalidated.

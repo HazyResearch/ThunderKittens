@@ -25,6 +25,16 @@ namespace kittens
                         : "l"(dst_ptr), "r"(src_ptr), "n"(bytes)
                         : "memory");
                     kittens::tma::store_commit_group();
+                    
+                }
+
+                template <typename config, typename globals>
+                __device__ void inline store_timings_and_reset(int *timings, int instruction_index, const globals &g)
+                {
+                    store_timings<config, globals>(timings, instruction_index, g);
+                    kittens::tma::store_async_read_wait();
+                    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(timings));
+                    asm volatile("st.bulk.weak [%0], %1, 0;\n" ::"r"(src_ptr), "n"(config::TIMING_WIDTH * sizeof(int))); // Reinitialize timing memory as zeros.   
                 }
 
                 template <typename config, typename globals>
