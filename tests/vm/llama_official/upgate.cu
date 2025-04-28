@@ -34,26 +34,27 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        static constexpr int UP_PAGES = 4;
-        static constexpr int GATE_PAGES = 4;
-        static constexpr int PAGE_INPUT = UP_PAGES + GATE_PAGES;     // = 8
-        static constexpr int PAGE_RMS_SCALE = PAGE_INPUT + 1;        // = 9
-        static constexpr int SEM_OUTPUT = PAGE_RMS_SCALE + 1;        // = 10 (no vm page for sems, but we need one for the output)
-        static constexpr int PAGE_COUNT = UP_PAGES + GATE_PAGES + 2; // sems for input page, rms page
-        static constexpr int SEM_COUNT = UP_PAGES + GATE_PAGES + 3;  // sems for input page, rms page, signalling output (even if we don't use a page for output)
+        static constexpr int NUM_UP_PAGES = 4;
+        static constexpr int NUM_GATE_PAGES = 4;
+        static constexpr int PAGE_RMS_SCALE = 0;
+        static constexpr int PAGE_UP_START = PAGE_RMS_SCALE + 1;
+        static constexpr int PAGE_GATE_START = PAGE_UP_START + NUM_UP_PAGES;
+        static constexpr int PAGE_INPUT = PAGE_GATE_START + NUM_GATE_PAGES;
+        static constexpr int PAGE_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 2;
+        static constexpr int SEM_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 3;
 
         //  semaphores
         __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
-        __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[UP_PAGES + i]; }
-        __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[PAGE_INPUT]; }
-        __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[PAGE_RMS_SCALE]; }
-        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[SEM_OUTPUT]; }
+        __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[NUM_UP_PAGES + i]; }
+        __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES]; }
+        __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 1]; }
+        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 2]; }
 
         // getters
-        __device__ static inline int get_up_page(state<Config> &s, int i) { return s.pid(i); }
-        __device__ static inline int get_gate_page(state<Config> &s, int i) { return s.pid(UP_PAGES + i); }
-        __device__ static inline int get_input_page(state<Config> &s) { return s.pid(PAGE_INPUT); }
         __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE); }
+        __device__ static inline int get_up_page(state<Config> &s, int i) { return s.pid(PAGE_UP_START + i); }
+        __device__ static inline int get_gate_page(state<Config> &s, int i) { return s.pid(PAGE_GATE_START + i); }
+        __device__ static inline int get_input_page(state<Config> &s) { return s.pid(PAGE_INPUT); }
 
         struct controller
         {
@@ -65,7 +66,12 @@ namespace kittens::prototype::vm
                 //     0, 1, 2, 3, 4, 5};
 
                 // TODO the above is too long (we only have 12 pages), get proper order later
-                int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+                // int ret_order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+
+                // first the pages we don't use (we use 10 pages)
+                // then input, then rms scale, then up, then gate
+
+                int ret_order[] = {10, 11, 12, PAGE_INPUT, PAGE_RMS_SCALE, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
 
                 return ret_order[query];
             }
@@ -73,10 +79,14 @@ namespace kittens::prototype::vm
             {
 
                 // each weight page and the input page needs exactly 1 “ready” signal
-                for (int i = 0; i < UP_PAGES; i++)
+                for (int i = 0; i < NUM_UP_PAGES; i++)
+                {
                     init_semaphore(up_arrived(s, i), 1);
-                for (int i = 0; i < GATE_PAGES; i++)
+                }
+                for (int i = 0; i < NUM_GATE_PAGES; i++)
+                {
                     init_semaphore(gate_arrived(s, i), 1);
+                }
 
                 init_semaphore(in_arrived(s), 1);
                 // output must wait for all 4 consumer warps
@@ -98,11 +108,17 @@ namespace kittens::prototype::vm
                 ((int *)s.scratch())[laneid()] = 0;
                 warp::sync(); // done, now we can proceed to other things.
 
-                // 1) UP projections
                 if (laneid() == 0)
                 {
 
-                    for (int i = 0; i < UP_PAGES; i++)
+                    int rms_scale_page = get_rms_scale_page(s);
+                    s.wait_page_ready(rms_scale_page);
+                    // s.record(16 + laneid());
+                    auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[rms_scale_page]);
+                    tma::expect(rms_scale_arrived(s), rms_scale);
+                    tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
+
+                    for (int i = 0; i < NUM_UP_PAGES; i++)
                     {
 
                         int pg = get_up_page(s, i);
@@ -115,13 +131,13 @@ namespace kittens::prototype::vm
                                         up_arrived(s, i));
                     }
 
-                    for (int i = UP_PAGES; i < UP_PAGES + GATE_PAGES; i++)
+                    for (int i = NUM_UP_PAGES; i < NUM_UP_PAGES + NUM_GATE_PAGES; i++)
                     {
 
-                        int idx = i - UP_PAGES;
+                        int idx = i - NUM_UP_PAGES;
                         int pg = get_gate_page(s, idx);
                         s.wait_page_ready(pg);
-                        // s.record(16 + laneid());
+                        s.record(16 + i);
                         auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
                         tma::expect(gate_arrived(s, idx), chunk);
                         tma::load_async(chunk, g.gate_weights,
@@ -129,6 +145,7 @@ namespace kittens::prototype::vm
                                         gate_arrived(s, idx));
                     }
 
+                    // activations last, since there's a data dependency
                     int pg = get_input_page(s);
                     s.wait_page_ready(pg);
                     // s.record(16 + laneid());
@@ -138,13 +155,6 @@ namespace kittens::prototype::vm
                     auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
                     tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
-
-                    int rms_scale_page = get_rms_scale_page(s);
-                    s.wait_page_ready(rms_scale_page);
-                    s.record(16 + laneid());
-                    auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[rms_scale_page]);
-                    tma::expect(rms_scale_arrived(s), rms_scale);
-                    tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
                 }
 
                 // 5) UNUSED pages: release them immediately so consumer warps can retire
@@ -197,16 +207,13 @@ namespace kittens::prototype::vm
 
                 // Next we need to load the activations
                 wait(in_arrived(s), 0);
-                wait(rms_scale_arrived(s), 0);
                 if (laneid() == 0)
                     s.record(32 + warpid());
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_input_page(s);
-                int rms_scale_page = get_rms_scale_page(s);
+
                 sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
-                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(activations_vec, activations_smem[warpid()]);
-                warp::load(rms_scale_vec, rms_scale_smem[warpid()]); // no idea why yet but we must load this here, otherwise deadlock
                 warp::sync();
                 warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
 
@@ -235,8 +242,15 @@ namespace kittens::prototype::vm
                 warp::mul(float_activations, float_activations, rms_scale);
                 warp::copy(activations_vec, float_activations); // back to bf16
 
-                // multiply by rms scale
+                wait(rms_scale_arrived(s), 0);
+                int rms_scale_page = get_rms_scale_page(s);
+                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
+                warp::load(rms_scale_vec, rms_scale_smem[warpid()]); // no idea why yet but we must load this here, otherwise deadlock
+                warp::sync();
+
                 warp::arrive(s.page_finished[rms_scale_page]);
+
+                // multiply by rms scale
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
                 //--------------------------------------------------
