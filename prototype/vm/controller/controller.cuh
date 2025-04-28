@@ -17,18 +17,17 @@ namespace kittens
             namespace controller
             {
 
-
                 template <typename config, typename globals, typename... ops>
                 __device__ void main_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms)
                 {
-                    static_assert(config::INSTRUCTION_PIPELINE_STAGES == 2, "Need to change.");
                     if (kittens::laneid() > 0)
+                    {
                         return;
+                    }
 
                     int num_iters = g.instructions.rows();
                     int num_semaphores[config::INSTRUCTION_PIPELINE_STAGES];
 
-                    int last_timing_writeout_instruction_index = 0;
                     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
                          kvms.instruction_index < num_iters;
                          kvms.instruction_index++, kvms.instruction_ring = ring_advance<config::INSTRUCTION_PIPELINE_STAGES>(kvms.instruction_ring))
@@ -46,9 +45,7 @@ namespace kittens
                                 invalidate_semaphore(kvms.all_instructions[kvms.instruction_ring].semaphores[i]);
                             }
 
-                            store_timings_and_reset<config, globals>(&kvms.timing()[0], last_slot_instruction_index, g);
-
-                            last_timing_writeout_instruction_index = last_slot_instruction_index;
+                            store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
                         }
 
                         // Step 1. Load instructions (no semaphores used)
@@ -56,16 +53,24 @@ namespace kittens
 
                         // Step 2. Establish physical page order
                         int last_instruction_ring = (kvms.instruction_ring + config::INSTRUCTION_PIPELINE_STAGES - 1) % config::INSTRUCTION_PIPELINE_STAGES;
-                        auto last_opcode = kvms.all_instructions[last_instruction_ring].instructions[0];
 
-                        for (int i = 0; i < config::NUM_PAGES; i++)
+                        if (kvms.instruction_index == 0)
                         {
-                            if (kvms.instruction_index == 0)
-                                kvms.pid_order()[i] = i;
-                            else
+                            for (int i = 0; i < config::NUM_PAGES; i++)
                             {
+                                kvms.pid_order()[i] = i;
+                            }
+                        }
+                        else
+                        {
+                            auto last_opcode = kvms.all_instructions[last_instruction_ring].instructions[0];
+
+                            for (int i = 0; i < config::NUM_PAGES; i++)
+                            {
+
                                 int lid = dispatch_op<page_allocator_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, config::instruction_t, int>(
                                     last_opcode, g, kvms.all_instructions[last_instruction_ring].instructions, i);
+
                                 kvms.pid_order()[i] = kvms.all_instructions[last_instruction_ring].pid_order[lid];
                             }
                         }
@@ -81,8 +86,6 @@ namespace kittens
                             num_semaphores[kvms.instruction_ring] = dispatch_op<semaphore_constructor_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, ::kittens::prototype::vm::state<config>>(
                                 opcode, g, kvms);
                         }
-
-                        last_opcode = opcode;
 
                         // Step 4. Let the rest of the world know that next instruction is ready to roll!
                         arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
@@ -110,9 +113,6 @@ namespace kittens
                         // technically don't need to reset, whatevs?
                         store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
                     }
-
-                    // At this point, we still have the last 2 sets of semaphores not yet invalidated.
-                    // Not sure if that is necessary as we are done with the kernel. So omitting it for now.
                 }
 
             } // namespace controller

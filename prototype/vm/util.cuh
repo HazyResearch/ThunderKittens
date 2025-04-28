@@ -59,8 +59,6 @@ template<typename config> struct mini_page {
 };
 
 template<typename config> struct state {
-    static_assert(config::INSTRUCTION_PIPELINE_STAGES == 2, "Things would have to be changed here.");
-
     using instruction_state_array_t = instruction_state_t<config>[config::INSTRUCTION_PIPELINE_STAGES];
     instruction_state_array_t &all_instructions;
     using instruction_semaphore_array_t = kittens::semaphore[config::INSTRUCTION_PIPELINE_STAGES];
