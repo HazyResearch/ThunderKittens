@@ -30,6 +30,8 @@ class ScriptConfig(pydra.Config):
         Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
     )
     token_details: bool = False
+    num_warmup: int = 5
+    num_iters: int = 10
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -140,21 +142,30 @@ def main(config: ScriptConfig):
     output_tokens = torch.zeros(config.ntok, device=model.device, dtype=torch.long)
     output_tokens[0] = new_input_token
 
-    start = time.time()
+    def go():
+        match config.mode:
+            case "model":
+                pytorch_model_generate(config, model, output_tokens, prompt_len)
+            case "pyvm":
+                pyvm_generate(config, model, output_tokens, prompt_len)
+            case "kvm":
+                kvm_generate(config, model, output_tokens, prompt_len)
+            case _:
+                raise ValueError(f"Invalid mode: {config.mode}")
 
-    match config.mode:
-        case "model":
-            pytorch_model_generate(config, model, output_tokens, prompt_len)
-        case "pyvm":
-            pyvm_generate(config, model, output_tokens, prompt_len)
-        case "kvm":
-            kvm_generate(config, model, output_tokens, prompt_len)
-        case _:
-            raise ValueError(f"Invalid mode: {config.mode}")
+    times = []
+    for _ in tqdm(range(config.num_warmup + config.num_iters)):
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        go()
+        end_event.record()
+        torch.cuda.synchronize()
+        times.append(start_event.elapsed_time(end_event) / 1000)
 
-    torch.cuda.synchronize()
-    end = time.time()
-    elapsed = end - start
+    non_warmup_times = times[config.num_warmup :]
+    elapsed = sum(non_warmup_times) / len(non_warmup_times)
+    print(f"Average time: {elapsed:.2f}s")
 
     to_cpu = output_tokens.cpu()
     print("Output ids: ", to_cpu)
