@@ -282,7 +282,7 @@ namespace kittens::prototype::vm {
 
                     warp::arrive(outputs_arrived(s));
                     if (kittens::group<16>::laneid() == 0) {
-                        s.record(TEVENT_CONSUMER_END + 50);
+                        s.record(TEVENT_CONSUMER_END);
                     }
                 }
             }
@@ -295,7 +295,7 @@ namespace kittens::prototype::vm {
                 if (warp::laneid() == 0) {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
-                    s.record(125);
+                    s.record(TEVENT_STORE_START);
 
                     if (inst.qkv_block_idx < K_BLK_START) { // Q
                         tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
@@ -329,8 +329,9 @@ namespace kittens::prototype::vm {
                     s.wait_page_ready(s.pid(laneid()));
                     arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
                 }
+                warp::sync();
                 if (laneid() == 0)
-                    s.record(127);
+                    s.record(TEVENT_STORE_END);
             }
         };
     };
