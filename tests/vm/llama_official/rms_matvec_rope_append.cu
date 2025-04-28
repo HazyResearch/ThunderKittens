@@ -94,7 +94,7 @@ namespace kittens::prototype::vm {
                         auto page_id = get_weight_page(s, i);
 
                         s.wait_page_ready(page_id);
-                        s.record(16 + i);
+                        // s.record(16 + i);
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[page_id]);
                         tma::expect(weights_arrived(s, i), weight_chunk);
                         tma::load_async(weight_chunk, g.qkv_weights, {inst.layer_idx, inst.qkv_block_idx, i}, weights_arrived(s, i));
@@ -102,14 +102,14 @@ namespace kittens::prototype::vm {
 
                     // Rope cos
                     s.wait_page_ready(get_rope_cos_page(s));
-                    s.record(28);
+                    // s.record(28);
                     auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
                     tma::expect(rope_cos_arrived(s), rope_cos);
                     tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
 
                     // Rope sin
                     s.wait_page_ready(get_rope_sin_page(s));
-                    s.record(30);
+                    // s.record(30);
                     auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
