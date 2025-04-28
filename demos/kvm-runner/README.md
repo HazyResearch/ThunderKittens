@@ -84,4 +84,7 @@ python kvm_runner/test_kvm.py stop_after_op=o_proj start_after_op=attn_reduction
 
 python kvm_runner/test_kvm.py skip_pyvm=T layer_limit=None barrier_init_val=100000 exec_reps=100000 diff_tensors=F
 
+
+python kvm_runner/test_kvm.py stop_after_op=qkv instruction_reps=20 skip_pyvm=T 
+
 ```
