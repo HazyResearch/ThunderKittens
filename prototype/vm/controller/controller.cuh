@@ -125,6 +125,10 @@ namespace kittens
                             invalidate_semaphore(kvms.all_instructions[instruction_ring].semaphores[j]);
                         }
 
+
+                        kvms.instruction_index = instruction_index;
+                        kvms.instruction_ring = instruction_ring;
+                        // record using the current ring
                         kvms.record(TEVENT_CONTROLLER_END);
 
                         // technically don't need to reset, whatevs?
