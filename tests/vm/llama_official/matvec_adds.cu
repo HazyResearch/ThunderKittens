@@ -19,6 +19,12 @@ namespace kittens::prototype::vm
         static constexpr int opcode = _opcode;
         static constexpr int prev_opcode = _prev_opcode;
         static constexpr int EXPECTED_ARRIVAL_COUNT = _EXPECTED_ARRIVAL_COUNT;
+
+        static constexpr int NUM_WEIGHT_PAGES = 4;
+        static constexpr int PAGE_WEIGHT_START = 0;
+        static constexpr int PAGE_ACTIVATION = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
+        static constexpr int PAGE_COUNT = PAGE_ACTIVATION + 1; // 5
+
         struct parsed_instruction
         {
             int layer, output_block_idx, reduction_block_idx, start_output_col, start_reduction_col;
@@ -61,7 +67,7 @@ namespace kittens::prototype::vm
         {
             static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                int ret_order[] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
+                int ret_order[] = {5, 6, 7, 8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const globals &g, state<Config> &s)
@@ -88,7 +94,7 @@ namespace kittens::prototype::vm
                 if (kittens::laneid() == 0)
                 {
 
-                    for (int i = 0; i < 4; i++)
+                    for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
 
                         s.wait_page_ready(get_weight_page(s, i));
