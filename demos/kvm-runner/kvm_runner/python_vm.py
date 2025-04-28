@@ -360,10 +360,10 @@ class PyVM_Runner:
         self.model = model
 
         self.globals, self.instructions = schedule_model(
-            self.model,
             prompt_len=prompt_len,
             ntok=ntok,
             print_info=print_info,
+            model=self.model,
         )
 
         tensorize_instructions(self.globals, self.instructions)
