@@ -98,7 +98,6 @@ namespace kittens::prototype::vm
                     {
 
                         s.wait_page_ready(get_weight_page(s, i));
-                        s.record(16 + i);
                         auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, i)]);
                         kittens::tma::expect(inputs_arrived(s, i), weight_chunk);
 
