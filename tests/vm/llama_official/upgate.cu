@@ -92,7 +92,6 @@ namespace kittens::prototype::vm
                 // output must wait for all 4 consumer warps
                 init_semaphore(out_arrived(s), 16);
                 init_semaphore(rms_scale_arrived(s), 1);
-                s.record(1);
 
                 return SEM_COUNT;
             }
@@ -102,6 +101,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_START);
+                }
 
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
@@ -113,7 +116,6 @@ namespace kittens::prototype::vm
 
                     int rms_scale_page = get_rms_scale_page(s);
                     s.wait_page_ready(rms_scale_page);
-                    // s.record(16 + laneid());
                     auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[rms_scale_page]);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
@@ -123,7 +125,6 @@ namespace kittens::prototype::vm
 
                         int pg = get_up_page(s, i);
                         s.wait_page_ready(pg);
-                        s.record(16 + i);
                         auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
                         tma::expect(up_arrived(s, i), chunk);
                         tma::load_async(chunk, g.up_weights,
@@ -137,7 +138,6 @@ namespace kittens::prototype::vm
                         int idx = i - NUM_UP_PAGES;
                         int pg = get_gate_page(s, idx);
                         s.wait_page_ready(pg);
-                        s.record(16 + i);
                         auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
                         tma::expect(gate_arrived(s, idx), chunk);
                         tma::load_async(chunk, g.gate_weights,
@@ -148,10 +148,13 @@ namespace kittens::prototype::vm
                     // activations last, since there's a data dependency
                     int pg = get_input_page(s);
                     s.wait_page_ready(pg);
-                    // s.record(16 + laneid());
+
                     // wait on barrier from previous op
+                    s.record(TEVENT_AT_GMEM_WAIT);
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                         __nanosleep(20);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+
                     auto &buf = reinterpret_cast<sv_bf<2048> &>(s.pages[pg]);
                     tma::expect(in_arrived(s), buf);
                     tma::load_async(buf, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
@@ -164,6 +167,12 @@ namespace kittens::prototype::vm
                     int pg = s.pid(laneid());
                     s.wait_page_ready(pg);
                     arrive(s.page_finished[pg], Config::NUM_CONSUMER_WARPS);
+                }
+
+                warp::sync();
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
                 }
             }
         };
@@ -183,6 +192,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
 
                 //--------------------------------------------------
                 // LOAD INPUT ACTIVATIONS
@@ -207,8 +220,6 @@ namespace kittens::prototype::vm
 
                 // Next we need to load the activations
                 wait(in_arrived(s), 0);
-                if (laneid() == 0)
-                    s.record(32 + warpid());
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_input_page(s);
 
@@ -253,12 +264,16 @@ namespace kittens::prototype::vm
                 // multiply by rms scale
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + 16 + warpid());
+                }
+
                 //--------------------------------------------------
                 // UP MATVEC
                 //--------------------------------------------------
                 wait(up_arrived(s, group_id), 0);
-                if (laneid() == 0)
-                    s.record(64 + warpid());
+
                 int weight_page = get_up_page(s, group_id);
                 block_st(&weights_smem)[4] = reinterpret_cast<block_st(&)[4]>(s.pages[weight_page]);
                 warp::load(weights, weights_smem[warp_id]);
@@ -272,12 +287,15 @@ namespace kittens::prototype::vm
                 warp::copy(output, output_col_format);
                 warp::sync();
 
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + 32 + warpid());
+                }
+
                 //--------------------------------------------------
                 // GATE MATVEC
                 //--------------------------------------------------
                 wait(gate_arrived(s, group_id), 0);
-                if (laneid() == 0)
-                    s.record(80 + warpid());
                 int gate_weight_page = get_gate_page(s, group_id);
                 block_st(&gate_weights_smem)[4] = reinterpret_cast<block_st(&)[4]>(s.pages[gate_weight_page]);
                 warp::load(gate_weights, gate_weights_smem[warp_id]);
@@ -301,6 +319,11 @@ namespace kittens::prototype::vm
                 }
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
+
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END + warpid());
+                }
             }
         };
 
@@ -309,12 +332,16 @@ namespace kittens::prototype::vm
 
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_START);
+                }
+
                 parsed_instruction inst{s};
 
                 if (laneid() == 0)
                 {
                     wait(out_arrived(s), 0);
-                    s.record(125);
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
@@ -333,7 +360,6 @@ namespace kittens::prototype::vm
 
                     tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
                     tma::store_async_wait();
-                    s.record(126);
                 }
 
                 warp::sync();
@@ -346,7 +372,12 @@ namespace kittens::prototype::vm
                     //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
                     // else
                     //     atomicAdd(&g.Bar[{inst.layer, opcode + 1, 0}], 1);
-                    s.record(127);
+                }
+
+                warp::sync();
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_END);
                 }
             }
         };
