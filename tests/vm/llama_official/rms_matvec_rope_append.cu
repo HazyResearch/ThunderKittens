@@ -64,12 +64,16 @@ namespace kittens::prototype::vm {
                 init_semaphore(rope_cos_arrived(s), 1);
                 init_semaphore(rope_sin_arrived(s), 1);
                 init_semaphore(outputs_arrived(s), 1);
-                s.record(1);
                 return 9;
             }
         };
         struct loader {
-            static __device__ void run(const Globals &g, state<Config> &s) {
+            static __device__ void run(const Globals &g, state<Config> &s)
+            {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_START);
+                }
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 ((int *)s.scratch())[laneid()] = 0;
@@ -112,9 +116,9 @@ namespace kittens::prototype::vm {
 
                     // Activation
                     s.wait_page_ready(get_activation_page(s));
-                    s.record(23);
+                    s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512) __nanosleep(20);
-                    s.record(24);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
@@ -124,6 +128,12 @@ namespace kittens::prototype::vm {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
                     arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
+                }
+
+                warp::sync();
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
                 }
             }
         };
@@ -157,8 +167,10 @@ namespace kittens::prototype::vm {
 
                 // Step 1: Load hidden states into register
                 wait(activations_arrived(s), 0);
-                if (laneid() == 0)
-                    s.record(32 + warpid());
+                if (laneid() == 0) {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
+
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
                 sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
@@ -175,6 +187,7 @@ namespace kittens::prototype::vm {
                 if (laneid() == 0) {
                     smem_rms_partial_sums[warpid()] = partial_sum;
                 }
+
                 group<16>::sync(0);
                 warp::load(rms_partial_sums, smem_rms_partial_sums);
                 warp::sync();
@@ -188,8 +201,6 @@ namespace kittens::prototype::vm {
 
                 // multiply by rms scale
                 wait(rms_scale_arrived(s), 0);
-                if (laneid() == 0)
-                    s.record(48 + warpid());
                 int rms_scale_page = get_rms_scale_page(s);
                 sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
@@ -197,10 +208,13 @@ namespace kittens::prototype::vm {
                 // warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
+                if (laneid() == 0) {
+                    s.record(TEVENT_CONSUMER_START + 16 + warpid());
+                }
+
                 // Step 3: Load QKV projection weights into register
                 wait(weights_arrived(s, group_id), 0);
-                if (laneid() == 0)
-                    s.record(64 + warpid());
+
                 int weight_page = get_weight_page(s, group_id);
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
                 warp::load(weights, weights_smem[warp_id]);
@@ -220,6 +234,10 @@ namespace kittens::prototype::vm {
                 }
                 group<16>::sync(1); // must wait for all warps to finish atomic add
 
+                if (laneid() == 0) {
+                    s.record(TEVENT_CONSUMER_START + 32 + warpid());
+                }
+
                 // Step 5: Apply RoPE
                 if (warpid() == 0) { // only a single warp needed from here!
 
@@ -235,7 +253,7 @@ namespace kittens::prototype::vm {
                         sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
-                            s.record(80);
+                            s.record(TEVENT_CONSUMER_START + 48);
                         warp::load(rope_cos, rope_cos_smem);
                         // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
                         
@@ -243,7 +261,7 @@ namespace kittens::prototype::vm {
                         sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
-                            s.record(81);
+                            s.record(TEVENT_CONSUMER_START + 49);
                         warp::load(rope_sin, rope_sin_smem);
                         // warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
 
@@ -263,8 +281,9 @@ namespace kittens::prototype::vm {
                     warp::sync();
 
                     warp::arrive(outputs_arrived(s));
-                    if (kittens::group<16>::laneid() == 0)
-                        s.record(96);
+                    if (kittens::group<16>::laneid() == 0) {
+                        s.record(TEVENT_CONSUMER_END + 50);
+                    }
                 }
             }
         };
