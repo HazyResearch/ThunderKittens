@@ -33,6 +33,7 @@ class ScriptConfig(pydra.Config):
     exec_reps: int = 1
     skip_starting_instructions: bool = False
     barrier_init_val: int = 0
+    truncate_instructions: int | None = None
 
 
 def main(config: ScriptConfig):
@@ -102,6 +103,10 @@ def main(config: ScriptConfig):
     if config.instruction_reps > 1:
         print(f"repeating instructions {config.instruction_reps} times")
         instructions = instructions * config.instruction_reps
+
+    if config.truncate_instructions is not None:
+        print(f"truncating instructions to {config.truncate_instructions}")
+        instructions = instructions[: config.truncate_instructions]
 
     tensorize_instructions(
         globs_for_kvm, instructions, barrier_init_val=config.barrier_init_val
