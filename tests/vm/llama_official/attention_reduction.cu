@@ -6,15 +6,17 @@ using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
-
     using globals = llama_1b_globals;
 
-    using l_partial_sv = sv_fl<16>;
+    constexpr int Q_HEADS_PER_INSTRUCTION = 4;
+    constexpr int MAX_ATTN_PARTIALS = globals::sm_count;   
+    constexpr int ROUNDED_MAX_ATTN_PARTIALS = ((MAX_ATTN_PARTIALS + 15) / 16) * 16;
+
+    using l_partial_sv = sv_fl<ROUNDED_MAX_ATTN_PARTIALS>;
     using o_sv = sv_fl<globals::head_dim>;
     using o_rv = rv_fl<globals::head_dim>;
     using o_final_sv = sv_bf<globals::head_dim>;
 
-    constexpr int Q_HEADS_PER_INSTRUCTION = 4;
 
     template <typename Config, typename Globals>
     struct attention_reduction
@@ -29,11 +31,26 @@ namespace kittens::prototype::vm
             int layer_idx;
             int q_head_start_idx;
             int num_partials;
+            int is_terminal;
+            int reduction_list_length;
+            int reduction_list[ROUNDED_MAX_ATTN_PARTIALS];
+
             __device__ inline parsed_instruction(state<Config> &s)
             {
                 layer_idx = s.instruction()[1];
                 q_head_start_idx = s.instruction()[2];
                 num_partials = s.instruction()[3];
+                is_terminal = s.instruction()[4]; // not used
+                reduction_list_length = s.instruction()[5];
+                
+                #pragma unroll
+                for (int k = 0; k < MAX_ATTN_PARTIALS; ++k) 
+                {
+                    if (k < reduction_list_length) 
+                    {
+                        reduction_list[k] = s.instruction()[6 + k];
+                    }
+                }
             }
         };
 
@@ -193,6 +210,7 @@ namespace kittens::prototype::vm
                     for (int i = 0; i < inst.num_partials; ++i)
                     {
                         int stage = i % NUM_STAGES;
+                        int cur_partial_idx = inst.reduction_list[i];
                         for (int j = 0; j < 4; ++j)
                         {
                             o_sv &O_smem = get_O_partial_smem(s, j, stage);
@@ -205,7 +223,9 @@ namespace kittens::prototype::vm
 
                             tma::expect(O_partial_arrived(s, j, stage), O_smem);
                             tma::load_async<cache_policy::EVICT_FIRST>(
-                                O_smem, g.attn_out_intermediates, {0, inst.q_head_start_idx + j, i, 0}, O_partial_arrived(s, j, stage));
+                                O_smem, g.attn_out_intermediates, 
+                                {0, inst.q_head_start_idx + j, cur_partial_idx, 0}, 
+                                O_partial_arrived(s, j, stage));
                         }
                     }
                 }
@@ -266,7 +286,8 @@ namespace kittens::prototype::vm
                         o_sv &O_smem = get_O_partial_smem(s, q_head_local_idx, stage);
 
                         // Load cur L_partial value
-                        uint32_t src_ptr_L = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[i]));
+                        int cur_partial_idx = inst.reduction_list[i];
+                        uint32_t src_ptr_L = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[cur_partial_idx]));
                         move<float>::lds(current_lse, src_ptr_L);
                         // Load O_partial_reg
                         warp::load(current_out, O_smem);
@@ -349,5 +370,4 @@ namespace kittens::prototype::vm
             }
         };
     };
-
 }
