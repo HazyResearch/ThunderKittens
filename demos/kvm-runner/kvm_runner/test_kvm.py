@@ -34,6 +34,7 @@ class ScriptConfig(pydra.Config):
     skip_starting_instructions: bool = False
     barrier_init_val: int = 0
     truncate_instructions: int | None = None
+    bp: bool = False
 
 
 def main(config: ScriptConfig):
@@ -195,6 +196,9 @@ def main(config: ScriptConfig):
 
         # summarize_caches(globs_for_pyvm, "pyvm")
         # summarize_caches(globs_for_kvm, "kvm")
+
+        if config.bp:
+            breakpoint()
 
 
 if __name__ == "__main__":
