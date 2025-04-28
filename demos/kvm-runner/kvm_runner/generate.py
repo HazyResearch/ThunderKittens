@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pydra
@@ -28,6 +29,7 @@ class ScriptConfig(pydra.Config):
     kvm_dir: Path = (
         Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
     )
+    token_details: bool = False
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -138,6 +140,8 @@ def main(config: ScriptConfig):
     output_tokens = torch.zeros(config.ntok, device=model.device, dtype=torch.long)
     output_tokens[0] = new_input_token
 
+    start = time.time()
+
     match config.mode:
         case "model":
             pytorch_model_generate(config, model, output_tokens, prompt_len)
@@ -148,20 +152,28 @@ def main(config: ScriptConfig):
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
+    torch.cuda.synchronize()
+    end = time.time()
+    elapsed = end - start
+
     to_cpu = output_tokens.cpu()
     print("Output ids: ", to_cpu)
     print("Output text: ", tokenizer.decode(to_cpu))
 
-    ids_list = to_cpu.tolist()
-    tokens = tokenizer.convert_ids_to_tokens(ids_list)
+    if config.token_details:
+        ids_list = to_cpu.tolist()
+        tokens = tokenizer.convert_ids_to_tokens(ids_list)
 
-    table = []
-    for i, token in enumerate(tokens):
-        pos_id = i + prompt_len
-        table.append([i, pos_id, token])
+        table = []
+        for i, token in enumerate(tokens):
+            pos_id = i + prompt_len
+            table.append([i, pos_id, token])
 
-    print("More detailed output:")
-    print(tabulate(table, headers=["output id", "position id", "token"]))
+        print("More detailed output:")
+        print(tabulate(table, headers=["output id", "position id", "token"]))
+
+    tokens_per_second = config.ntok / elapsed
+    print(f"Tokens per second: {tokens_per_second:.2f}")
 
 
 if __name__ == "__main__":
