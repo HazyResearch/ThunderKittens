@@ -8,6 +8,12 @@
 #include "semaphore_constructor.cuh"
 #include "page_allocator.cuh"
 
+#define TEVENT_CONTROLLER_START 0
+#define TEVENT_IFETCH_DONE 1
+#define TEVENT_PAGE_ALLOC_DONE 2
+#define TEVENT_SEMS_SETUP 3
+#define TEVENT_CONTROLLER_END 15
+
 namespace kittens
 {
     namespace prototype
@@ -44,12 +50,17 @@ namespace kittens
                             {
                                 invalidate_semaphore(kvms.all_instructions[kvms.instruction_ring].semaphores[i]);
                             }
+                            kvms.record(TEVENT_CONTROLLER_END);
 
                             store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
                         }
 
+                        kvms.record(TEVENT_CONTROLLER_START);
+
                         // Step 1. Load instructions (no semaphores used)
                         load_instructions<config, globals>(&kvms.instruction()[0], kvms.instruction_index, g);
+
+                        kvms.record(TEVENT_IFETCH_DONE);
 
                         // Step 2. Establish physical page order
                         int last_instruction_ring = (kvms.instruction_ring + config::INSTRUCTION_PIPELINE_STAGES - 1) % config::INSTRUCTION_PIPELINE_STAGES;
@@ -75,6 +86,8 @@ namespace kittens
                             }
                         }
 
+                        kvms.record(TEVENT_PAGE_ALLOC_DONE);
+
                         // Step 3. Construct semaphores
                         int opcode = kvms.instruction()[0];
                         if (opcode == 0)
@@ -86,6 +99,8 @@ namespace kittens
                             num_semaphores[kvms.instruction_ring] = dispatch_op<semaphore_constructor_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, ::kittens::prototype::vm::state<config>>(
                                 opcode, g, kvms);
                         }
+
+                        kvms.record(TEVENT_SEMS_SETUP);
 
                         // Step 4. Let the rest of the world know that next instruction is ready to roll!
                         arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
@@ -109,6 +124,8 @@ namespace kittens
                         {
                             invalidate_semaphore(kvms.all_instructions[instruction_ring].semaphores[j]);
                         }
+
+                        kvms.record(TEVENT_CONTROLLER_END);
 
                         // technically don't need to reset, whatevs?
                         store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
