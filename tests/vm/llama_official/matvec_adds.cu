@@ -252,6 +252,10 @@ namespace kittens::prototype::vm
                 rv_bf<16> output_reg_bf;
 
                 wait(outputs_arrived(s), 0);
+                if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_OUTPUT_READY);
+                }
 
                 warp::load(output_reg_bf, output);
                 warp::sync();

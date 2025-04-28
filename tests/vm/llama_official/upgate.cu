@@ -342,6 +342,7 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     wait(out_arrived(s), 0);
+                    s.record(TEVENT_OUTPUT_READY);
 
                     float *scratch_f32 = (float *)s.scratch();
                     bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias

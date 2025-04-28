@@ -325,6 +325,7 @@ namespace kittens::prototype::vm
                 {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
+                    s.record(TEVENT_OUTPUT_READY);
 
                     if (inst.qkv_block_idx < K_BLK_START)
                     { // Q

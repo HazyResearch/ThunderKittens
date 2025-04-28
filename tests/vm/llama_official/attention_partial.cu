@@ -540,6 +540,7 @@ namespace kittens::prototype::vm
                 {
                     o_sv(&O_smem)[4] = get_O_smem(s);
                     wait(O_arrived(s), 0);
+                    s.record(TEVENT_OUTPUT_READY);
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
                     tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
