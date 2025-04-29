@@ -45,3 +45,5 @@ class ExtraModelConfig:
     rope_scaling: dict | None = None
 
     interleave_rope: bool = False
+
+    max_len_override: int | None = None

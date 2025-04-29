@@ -550,7 +550,8 @@ class LlamaForCausalLM(nn.Module):
         k_cache = torch.zeros(
             (
                 self.config.num_hidden_layers,
-                self.config.max_position_embeddings,
+                self.extra_config.max_len_override
+                or self.config.max_position_embeddings,
                 self.config.num_key_value_heads,
                 self.config.head_dim,
             ),
