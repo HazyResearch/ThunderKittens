@@ -29,10 +29,12 @@ class ScriptConfig(pydra.Config):
         Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
     )
     token_details: bool = False
+    tokens: bool = True
     num_warmup: int = 5
     num_iters: int = 10
     barrier_fill_val: int = 0
     max_len_override: int | None = 16384
+    noops: bool = False
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -187,6 +189,8 @@ def main(config: ScriptConfig):
             model = PyVMRunner(config, model, output_tokens, prompt_len)
         case "kvm":
             model = KVMRunner(config, model, output_tokens, prompt_len)
+            if config.noops:
+                model.runner.globals.instructions.zero_()
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
@@ -204,9 +208,10 @@ def main(config: ScriptConfig):
     elapsed = sum(non_warmup_times) / len(non_warmup_times)
     print(f"Average time: {elapsed:.2f}s")
 
-    to_cpu = output_tokens.cpu()
-    print("Output ids: ", to_cpu)
-    print("Output text: ", tokenizer.decode(to_cpu))
+    if config.tokens:
+        to_cpu = output_tokens.cpu()
+        print("Output ids: ", to_cpu)
+        print("Output text: ", tokenizer.decode(to_cpu))
 
     if config.token_details:
         ids_list = to_cpu.tolist()
