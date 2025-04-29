@@ -261,21 +261,29 @@ namespace kittens::prototype::vm
 
                 parsed_instruction inst{s};
 
+                sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
+                sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>(s.scratch());
+
+                wait(outputs_arrived(s), 0);
+
+                rv_fl<16> logits_rv;
+                warp::load(logits_rv, logits_smem);
+                warp::sync();
+                warp::store(logits_smem_bf, logits_rv);
+
                 if (warp::laneid() == 0)
                 {
-                    sv_bf<16> &logits_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     // if (blockIdx.x == 0)
                     // {
                     //     printf("logit store weight start: %p\n", logits_smem);
                     // }
-                    wait(outputs_arrived(s), 0);
                     // if (blockIdx.x == 0)
                     // {
                     //     printf("logit store weight end: %p\n", logits_smem);
                     // }
                     s.record(TEVENT_MATVEC_OUTPUT_READY);
 
-                    tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem, {0, 0, 0, inst.out_block_idx});
+                    tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, inst.out_block_idx});
 
                     tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
                 }
