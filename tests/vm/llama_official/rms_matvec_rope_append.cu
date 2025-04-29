@@ -46,11 +46,11 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &outputs_arrived(state<Config> &s) { return s.semaphores()[NUM_WEIGHT_PAGES + 4]; }
 
         // Pages (very naive for now, no fine-grained usage)
-        __device__ static inline int get_weight_page(state<Config> &s, int offset) { return s.pid(offset); }
-        __device__ static inline int get_activation_page(state<Config> &s) { return s.pid(NUM_WEIGHT_PAGES); }
-        __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(NUM_WEIGHT_PAGES + 1); }
-        __device__ static inline int get_rope_cos_page(state<Config> &s) { return s.pid(NUM_WEIGHT_PAGES + 2); }
-        __device__ static inline int get_rope_sin_page(state<Config> &s) { return s.pid(NUM_WEIGHT_PAGES + 3); }
+        __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE); }
+        __device__ static inline int get_weight_page(state<Config> &s, int offset) { return s.pid(PAGE_WEIGHT_START + offset); }
+        __device__ static inline int get_rope_cos_page(state<Config> &s) { return s.pid(PAGE_ROPE_COS); }
+        __device__ static inline int get_rope_sin_page(state<Config> &s) { return s.pid(PAGE_ROPE_SIN); }
+        __device__ static inline int get_activation_page(state<Config> &s) { return s.pid(PAGE_ACTIVATION); }
 
         struct controller
         {
@@ -63,8 +63,11 @@ namespace kittens::prototype::vm
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
+                {
                     init_semaphore(weights_arrived(s, i), 1);
+                }
+
                 init_semaphore(activations_arrived(s), 1);
                 init_semaphore(rms_scale_arrived(s), 1);
                 init_semaphore(rope_cos_arrived(s), 1);
@@ -109,26 +112,29 @@ namespace kittens::prototype::vm
                     }
 
                     // Rope cos
-                    s.wait_page_ready(get_rope_cos_page(s));
+                    auto cos_page_id = get_rope_cos_page(s);
+                    s.wait_page_ready(cos_page_id);
                     // s.record(28);
-                    auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
+                    auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[cos_page_id]);
                     tma::expect(rope_cos_arrived(s), rope_cos);
                     tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
 
                     // Rope sin
-                    s.wait_page_ready(get_rope_sin_page(s));
+                    auto sin_page_id = get_rope_sin_page(s);
+                    s.wait_page_ready(sin_page_id);
                     // s.record(30);
-                    auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
+                    auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[sin_page_id]);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
 
                     // Activation
-                    s.wait_page_ready(get_activation_page(s));
+                    auto act_page_id = get_activation_page(s);
+                    s.wait_page_ready(act_page_id);
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
                         __nanosleep(20);
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
+                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[act_page_id]);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
@@ -192,7 +198,7 @@ namespace kittens::prototype::vm
                 sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
                 warp::load(activations_vec, activations_smem[warpid()]); // 128 elements per warp
                 warp::sync();
-                // warp::arrive(s.page_finished[activation_page]);
+                warp::arrive(s.page_finished[activation_page]);
 
                 // Step 2: Apply RMS normalization
                 warp::copy(fl_activations_vec, activations_vec);                       // cast to float
@@ -222,7 +228,7 @@ namespace kittens::prototype::vm
                 sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
                 warp::sync();
-                // warp::arrive(s.page_finished[rms_scale_page]);
+                warp::arrive(s.page_finished[rms_scale_page]);
                 warp::mul(activations_vec, activations_vec, rms_scale_vec);
 
                 if (laneid() == 0)
@@ -237,7 +243,8 @@ namespace kittens::prototype::vm
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
                 warp::load(weights, weights_smem[warp_id]);
                 warp::sync();
-                // warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
+
+                warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
 
                 // Steo 4: Apply QKV projection
                 warp::broadcast_col(broadcast_activations, activations_vec);
@@ -268,24 +275,25 @@ namespace kittens::prototype::vm
                     warp::load(qkv_proj, qkv_proj_smem);
                     warp::sync();
 
+                    int rope_cos_page = get_rope_cos_page(s);
+                    int rope_sin_page = get_rope_sin_page(s);
+
                     if (inst.qkv_block_idx < V_BLK_START)
                     { // only Q & K need RoPE
 
-                        int rope_cos_page = get_rope_cos_page(s);
                         sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
                             s.record(TEVENT_CONSUMER_START + 48);
                         warp::load(rope_cos, rope_cos_smem);
-                        // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
 
-                        int rope_sin_page = get_rope_sin_page(s);
                         sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
                             s.record(TEVENT_CONSUMER_START + 49);
                         warp::load(rope_sin, rope_sin_smem);
-                        // warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -297,13 +305,22 @@ namespace kittens::prototype::vm
                             // will clean this up later
                             qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
                     }
+                    else
+                    {
+                        wait(rope_cos_arrived(s), 0);
+                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+
+                        wait(rope_sin_arrived(s), 0);
+                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                    }
 
                     // Store back to the scratch
                     warp::store(qkv_proj_smem_bf, qkv_proj);
                     warp::sync();
 
                     warp::arrive(outputs_arrived(s));
-                    if (kittens::group<16>::laneid() == 0) {
+                    if (kittens::group<16>::laneid() == 0)
+                    {
                         s.record(TEVENT_CONSUMER_END);
                     }
                 }
@@ -356,15 +373,6 @@ namespace kittens::prototype::vm
                 if (warp::laneid() == 0)
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
 
-                // TODO
-                // I have commented out all the page_finished stuff in consumer and moved them here.
-                // Currently, the way we do it in consumer is incorrect. I have moved them here
-                // so I can get the entire thing running first
-                if (laneid() < 8)
-                {
-                    s.wait_page_ready(s.pid(laneid()));
-                    arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
-                }
                 warp::sync();
                 if (laneid() == 0)
                     s.record(TEVENT_STORE_END);
