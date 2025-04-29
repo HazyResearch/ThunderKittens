@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 
 import pydra
@@ -32,81 +31,117 @@ class ScriptConfig(pydra.Config):
     token_details: bool = False
     num_warmup: int = 5
     num_iters: int = 10
+    barrier_fill_val: int = 0
+    max_len_override: int | None = 16384
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
 
-def pytorch_model_generate(
-    config: ScriptConfig,
-    model: LlamaForCausalLM,
-    output_tokens: Tensor,
-    prompt_len: int,
-):
-    start_position_ids = torch.ones(1, dtype=torch.long, device=model.device) * (
-        prompt_len
-    )
-    for i in tqdm(range(1, config.ntok)):
-        position_ids = start_position_ids + i
-        decode_inp = BatchState(
-            input_ids=output_tokens[i - 1 : i],
-            position_ids=position_ids,
-            seq_len=prompt_len + i + 1,
+class Runner:
+    def go():
+        raise NotImplementedError
+
+
+class PyTorchRunner(Runner):
+    def __init__(
+        self,
+        config: ScriptConfig,
+        model: LlamaForCausalLM,
+        output_tokens: Tensor,
+        prompt_len: int,
+    ):
+        self.config = config
+        self.model = model
+        self.output_tokens = output_tokens
+        self.prompt_len = prompt_len
+        self.start_position_ids = torch.ones(
+            1, dtype=torch.long, device=model.device
+        ) * (prompt_len)
+
+    def go(self):
+        for i in tqdm(range(1, self.config.ntok)):
+            position_ids = self.start_position_ids + i
+            decode_inp = BatchState(
+                input_ids=self.output_tokens[i - 1 : i],
+                position_ids=position_ids,
+                seq_len=self.prompt_len + i + 1,
+            )
+            decode_output: BatchState = self.model(decode_inp)
+            assert decode_output.output_ids is not None
+            self.output_tokens[i] = decode_output.output_ids
+
+
+class PyVMRunner(Runner):
+    def __init__(
+        self,
+        config: ScriptConfig,
+        model: LlamaForCausalLM,
+        output_tokens: Tensor,
+        prompt_len: int,
+    ):
+        self.config = config
+        self.model = model
+        self.output_tokens = output_tokens
+        self.prompt_len = prompt_len
+
+        if config.add_print_instructions:
+            print_info = PrintInfo(
+                layer_filter=config.print_layer_filter,
+                name_filter=config.print_name_filter,
+                state_filter=config.print_state_filter,
+            )
+        else:
+            print_info = None
+
+        runner = PyVM_Runner(
+            model,
+            print_info=print_info,
+            prompt_len=prompt_len,
+            ntok=config.ntok,
         )
-        decode_output: BatchState = model(decode_inp)
-        assert decode_output.output_ids is not None
-        output_tokens[i] = decode_output.output_ids
+
+        self.runner = runner
+
+    def go(self):
+        for i in tqdm(range(1, self.config.ntok)):
+            input_ids = self.output_tokens[i - 1 : i]
+            output_ids = self.runner.run(input_ids, pos_id=self.prompt_len + i)
+            self.output_tokens[i] = output_ids
 
 
-def pyvm_generate(
-    config: ScriptConfig,
-    model: LlamaForCausalLM,
-    output_tokens: Tensor,
-    prompt_len: int,
-):
-    if config.add_print_instructions:
-        print_info = PrintInfo(
-            layer_filter=config.print_layer_filter,
-            name_filter=config.print_name_filter,
-            state_filter=config.print_state_filter,
+class KVMRunner(Runner):
+    def __init__(
+        self,
+        config: ScriptConfig,
+        model: LlamaForCausalLM,
+        output_tokens: Tensor,
+        prompt_len: int,
+    ):
+        self.config = config
+        self.model = model
+        self.output_tokens = output_tokens
+        self.prompt_len = prompt_len
+
+        assert config.kvm_dir is not None
+        torch.cuda.set_device(config.device)
+
+        runner = KVM_Runner(
+            model,
+            kvm_dir=config.kvm_dir,
+            prompt_len=prompt_len,
+            ntok=config.ntok,
+            barrier_fill_val=config.barrier_fill_val,
         )
-    else:
-        print_info = None
 
-    runner = PyVM_Runner(
-        model,
-        print_info=print_info,
-        prompt_len=prompt_len,
-        ntok=config.ntok,
-    )
+        self.runner = runner
 
-    for i in tqdm(range(1, config.ntok)):
-        input_ids = output_tokens[i - 1 : i]
-        output_ids = runner.run(input_ids, pos_id=prompt_len + i)
-        output_tokens[i] = output_ids
-
-
-def kvm_generate(
-    config: ScriptConfig,
-    model: LlamaForCausalLM,
-    output_tokens: Tensor,
-    prompt_len: int,
-):
-    assert config.kvm_dir is not None
-    torch.cuda.set_device(config.device)
-
-    runner = KVM_Runner(
-        model,
-        kvm_dir=config.kvm_dir,
-        prompt_len=prompt_len,
-        ntok=config.ntok,
-    )
-
-    for i in tqdm(range(1, config.ntok)):
-        input_ids = output_tokens[i - 1 : i]
-        output_ids = runner.run(input_ids, pos_id=prompt_len + i)
-        output_tokens[i] = output_ids
+    def go(self):
+        for i in tqdm(range(1, self.config.ntok)):
+            input_ids = self.output_tokens[i - 1 : i]
+            output_ids = self.runner.run(input_ids, pos_id=self.prompt_len + i)
+            self.output_tokens[i] = output_ids
 
 
 def main(config: ScriptConfig):
@@ -115,6 +150,7 @@ def main(config: ScriptConfig):
     tokenizer = AutoTokenizer.from_pretrained(config.model)
     extra_config = ExtraModelConfig(
         interleave_rope=config.interleave_rope,
+        max_len_override=config.max_len_override,
     )
     model = LlamaForCausalLM.from_pretrained(
         config.model, device=config.device, extra_config=extra_config
@@ -144,23 +180,22 @@ def main(config: ScriptConfig):
     output_tokens = torch.zeros(config.ntok, device=model.device, dtype=torch.long)
     output_tokens[0] = new_input_token
 
-    def go():
-        match config.mode:
-            case "model":
-                pytorch_model_generate(config, model, output_tokens, prompt_len)
-            case "pyvm":
-                pyvm_generate(config, model, output_tokens, prompt_len)
-            case "kvm":
-                kvm_generate(config, model, output_tokens, prompt_len)
-            case _:
-                raise ValueError(f"Invalid mode: {config.mode}")
+    match config.mode:
+        case "model":
+            model = PyTorchRunner(config, model, output_tokens, prompt_len)
+        case "pyvm":
+            model = PyVMRunner(config, model, output_tokens, prompt_len)
+        case "kvm":
+            model = KVMRunner(config, model, output_tokens, prompt_len)
+        case _:
+            raise ValueError(f"Invalid mode: {config.mode}")
 
     times = []
     for _ in tqdm(range(config.num_warmup + config.num_iters)):
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
-        go()
+        model.go()
         end_event.record()
         torch.cuda.synchronize()
         times.append(start_event.elapsed_time(end_event) / 1000)
