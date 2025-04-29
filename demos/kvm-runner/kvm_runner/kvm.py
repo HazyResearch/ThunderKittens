@@ -102,14 +102,7 @@ class KVM_Runner:
         if self.skip_rest:
             return input_ids
 
-        # output_hiddens = self.globals.hidden_states
-
-        # post_embedding.hidden_states = output_hiddens
-
-        # post_lm_head: BatchState = self.model.lm_head(post_embedding)
-
         logits = self.globals.logits
-        assert logits is not None
-
         output_ids = torch.argmax(logits, dim=-1)
+
         return output_ids
