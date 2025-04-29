@@ -21,6 +21,7 @@
 #define SM_COUNT 148
 
 // timing event convention
+
 #define TEVENT_LOADER_START 16
 #define TEVENT_AT_GMEM_WAIT 17
 #define TEVENT_DONE_GMEM_WAIT 18
@@ -33,6 +34,9 @@
 #define TEVENT_OUTPUT_READY 110
 #define TEVENT_STORE_END 126
 
+#define TEVENT_TRIPLES_START 100
+#define TEVENT_MATVEC_STORE_START 124
+#define TEVENT_MATVEC_OUTPUT_READY 125
 
 namespace kittens::prototype::vm
 {
