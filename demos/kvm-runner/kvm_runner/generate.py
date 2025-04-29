@@ -35,6 +35,8 @@ class ScriptConfig(pydra.Config):
     barrier_fill_val: int = 0
     max_len_override: int | None = 16384
     noops: bool = False
+    skip_kvm: bool = False
+    skip_rest: bool = False
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -135,6 +137,8 @@ class KVMRunner(Runner):
             prompt_len=prompt_len,
             ntok=config.ntok,
             barrier_fill_val=config.barrier_fill_val,
+            skip_kvm=config.skip_kvm,
+            skip_rest=config.skip_rest,
         )
 
         self.runner = runner
