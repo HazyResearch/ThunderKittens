@@ -339,7 +339,7 @@ namespace kittens::prototype::vm
             {
                 if (warp::laneid() == 0)
                 {
-                    s.record(TEVENT_STORE_START);
+                    s.record(TEVENT_MATVEC_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -348,7 +348,7 @@ namespace kittens::prototype::vm
                 {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
-                    s.record(TEVENT_OUTPUT_READY);
+                    s.record(TEVENT_MATVEC_OUTPUT_READY);
 
                     if (inst.qkv_block_idx < K_BLK_START)
                     { // Q

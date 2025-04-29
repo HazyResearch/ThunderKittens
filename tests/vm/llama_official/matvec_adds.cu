@@ -247,7 +247,7 @@ namespace kittens::prototype::vm
             {
                 if (kittens::laneid() == 0)
                 {
-                    s.record(TEVENT_STORE_START);
+                    s.record(TEVENT_MATVEC_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -263,7 +263,7 @@ namespace kittens::prototype::vm
                 wait(outputs_arrived(s), 0);
                 if (kittens::laneid() == 0)
                 {
-                    s.record(TEVENT_OUTPUT_READY);
+                    s.record(TEVENT_MATVEC_OUTPUT_READY);
                 }
 
                 warp::load(output_reg_bf, output);
