@@ -26,13 +26,13 @@ namespace kittens
                 template <typename config, typename globals, typename... ops>
                 __device__ void main_loop(const globals &g, ::kittens::prototype::vm::state<config> &kvms)
                 {
-                    if (kittens::laneid() > 0)
-                    {
-                        return;
-                    }
-
+                    auto laneid = ::kittens::laneid();
                     int num_iters = g.instructions.rows();
                     int num_semaphores[config::INSTRUCTION_PIPELINE_STAGES];
+
+                    // for warps
+                    static_assert(config::DYNAMIC_SEMAPHORES <= 32);
+                    static_assert(config::NUM_PAGES <= 32);
 
                     for (kvms.instruction_index = 0, kvms.instruction_ring = 0;
                          kvms.instruction_index < num_iters;
@@ -46,47 +46,62 @@ namespace kittens
 
                             int phasebit = (last_slot_instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1;
                             wait(kvms.instruction_finished[kvms.instruction_ring], phasebit);
-                            for (int i = 0; i < num_semaphores[kvms.instruction_ring]; i++)
-                            {
-                                invalidate_semaphore(kvms.all_instructions[kvms.instruction_ring].semaphores[i]);
-                            }
-                            kvms.record(TEVENT_CONTROLLER_END);
 
-                            store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                            if (laneid < num_semaphores[kvms.instruction_ring])
+                            {
+                                invalidate_semaphore(kvms.all_instructions[kvms.instruction_ring].semaphores[laneid]);
+                            }
+
+                            // TODO needed?
+                            warp::sync();
+
+                            if (laneid == 0)
+                            {
+                                kvms.record(TEVENT_CONTROLLER_END);
+                                store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                            }
                         }
 
-                        kvms.record(TEVENT_CONTROLLER_START);
+                        if (laneid == 0)
+                        {
+                            kvms.record(TEVENT_CONTROLLER_START);
+                        }
 
                         // Step 1. Load instructions (no semaphores used)
                         load_instructions<config, globals>(&kvms.instruction()[0], kvms.instruction_index, g);
 
-                        kvms.record(TEVENT_IFETCH_DONE);
+                        if (laneid == 0)
+                        {
+                            kvms.record(TEVENT_IFETCH_DONE);
+                        }
 
                         // Step 2. Establish physical page order
                         int last_instruction_ring = (kvms.instruction_ring + config::INSTRUCTION_PIPELINE_STAGES - 1) % config::INSTRUCTION_PIPELINE_STAGES;
 
                         if (kvms.instruction_index == 0)
                         {
-                            for (int i = 0; i < config::NUM_PAGES; i++)
+                            if (laneid < config::NUM_PAGES)
                             {
-                                kvms.pid_order()[i] = i;
+                                kvms.pid_order()[laneid] = laneid;
                             }
                         }
                         else
                         {
                             auto last_opcode = kvms.all_instructions[last_instruction_ring].instructions[0];
 
-                            for (int i = 0; i < config::NUM_PAGES; i++)
+                            if (laneid < config::NUM_PAGES)
                             {
-
                                 int lid = dispatch_op<page_allocator_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, config::instruction_t, int>(
-                                    last_opcode, g, kvms.all_instructions[last_instruction_ring].instructions, i);
+                                    last_opcode, g, kvms.all_instructions[last_instruction_ring].instructions, laneid);
 
-                                kvms.pid_order()[i] = kvms.all_instructions[last_instruction_ring].pid_order[lid];
+                                kvms.pid_order()[laneid] = kvms.all_instructions[last_instruction_ring].pid_order[lid];
                             }
                         }
 
-                        kvms.record(TEVENT_PAGE_ALLOC_DONE);
+                        if (laneid == 0)
+                        {
+                            kvms.record(TEVENT_PAGE_ALLOC_DONE);
+                        }
 
                         // Step 3. Construct semaphores
                         int opcode = kvms.instruction()[0];
@@ -96,14 +111,24 @@ namespace kittens
                         }
                         else
                         {
-                            num_semaphores[kvms.instruction_ring] = dispatch_op<semaphore_constructor_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, ::kittens::prototype::vm::state<config>>(
-                                opcode, g, kvms);
+                            if (laneid == 0)
+                            {
+                                num_semaphores[kvms.instruction_ring] = dispatch_op<semaphore_constructor_op_dispatcher<config, globals>::dispatcher, ops...>::template run<int, config, globals, ::kittens::prototype::vm::state<config>>(
+                                    opcode, g, kvms);
+                            }
+
+                            auto shfl_val = __shfl_sync(0xffffffff, num_semaphores[kvms.instruction_ring], 0);
+
+                            // broadcast the result to all lanes
+                            num_semaphores[kvms.instruction_ring] = shfl_val;
                         }
 
-                        kvms.record(TEVENT_SEMS_SETUP);
-
-                        // Step 4. Let the rest of the world know that next instruction is ready to roll!
-                        arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
+                        if (laneid == 0)
+                        {
+                            kvms.record(TEVENT_SEMS_SETUP);
+                            // Step 4. Let the rest of the world know that next instruction is ready to roll!
+                            arrive(kvms.instruction_arrived[kvms.instruction_ring], 1);
+                        }
                     }
 
                     // invalidate remaining semaphores and write out remaining timings
@@ -120,19 +145,20 @@ namespace kittens
                         auto phasebit = (instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1;
                         wait(kvms.instruction_finished[instruction_ring], phasebit);
 
-                        for (int j = 0; j < num_semaphores[instruction_ring]; j++)
+                        if (laneid < num_semaphores[instruction_ring])
                         {
-                            invalidate_semaphore(kvms.all_instructions[instruction_ring].semaphores[j]);
+                            invalidate_semaphore(kvms.all_instructions[instruction_ring].semaphores[laneid]);
                         }
-
 
                         kvms.instruction_index = instruction_index;
                         kvms.instruction_ring = instruction_ring;
                         // record using the current ring
-                        kvms.record(TEVENT_CONTROLLER_END);
-
-                        // technically don't need to reset, whatevs?
-                        store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
+                        if (laneid == 0)
+                        {
+                            kvms.record(TEVENT_CONTROLLER_END);
+                            // technically don't need to reset, whatevs?
+                            store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
+                        }
                     }
                 }
 

@@ -15,16 +15,29 @@ namespace kittens
                 template <typename config, typename globals>
                 __device__ void inline load_instructions(int *instruction, int instruction_index, const globals &g)
                 {
+                    auto laneid = ::kittens::laneid();
+                    // if (laneid > 0)
+                    // {
+                    //     return;
+                    // }
 
                     auto src_ptr = &g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}];
                     // static assert it's an int*
                     static_assert(std::is_same<decltype(src_ptr), int *>::value, "src_ptr is not an int*");
 
-                    // Load instructions using a simple for loop from global memory
-                    for (int i = 0; i < config::INSTRUCTION_WIDTH; i++)
+
+                    static_assert(config::INSTRUCTION_WIDTH <= 32);
+
+                    if (laneid < config::INSTRUCTION_WIDTH)
                     {
-                        instruction[i] = src_ptr[i];
+                        instruction[laneid] = src_ptr[laneid];
                     }
+
+                    // // Load instructions using a simple for loop from global memory
+                    // for (int i = 0; i < config::INSTRUCTION_WIDTH; i++)
+                    // {
+                    //     instruction[i] = src_ptr[i];
+                    // }
 
                     // arrive(bar, 1);
 
