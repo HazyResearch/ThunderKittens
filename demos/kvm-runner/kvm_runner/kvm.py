@@ -57,6 +57,7 @@ class KVM_Runner:
         kvm_dir: Path,
         prompt_len: int,
         ntok: int,
+        barrier_fill_val: int = 0,
     ):
         sys.path.append(str(kvm_dir.expanduser().absolute()))
         from kvm_llama import kvm_llama  # type: ignore
@@ -72,6 +73,8 @@ class KVM_Runner:
         )
         tensorize_instructions(self.globals, self.instructions)
 
+        self.barrier_fill_val = barrier_fill_val
+
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
             input_ids=input_ids,
@@ -83,7 +86,7 @@ class KVM_Runner:
         self.globals.hidden_states[:] = hiddens
         self.globals.pos_id = pos_id
 
-        self.globals.barriers.zero_()
+        self.globals.barriers.fill_(self.barrier_fill_val)
 
         interpret_with_kvm(self.globals, self.kvm_func)
 
