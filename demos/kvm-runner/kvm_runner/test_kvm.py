@@ -37,6 +37,7 @@ class ScriptConfig(pydra.Config):
     truncate_instructions: int | None = None
     bp: bool = False
     outfile: Path | None = None
+    noops: bool = False
 
 
 def main(config: ScriptConfig):
@@ -117,6 +118,10 @@ def main(config: ScriptConfig):
     tensorize_instructions(
         globs_for_pyvm, instructions, barrier_init_val=config.barrier_init_val
     )
+
+    if config.noops:
+        globs_for_kvm.instructions.zero_()
+        globs_for_pyvm.instructions.zero_()
 
     for _ in tqdm(range(config.exec_reps)):
         if len(starting_instructions) > 0 and not config.skip_starting_instructions:
