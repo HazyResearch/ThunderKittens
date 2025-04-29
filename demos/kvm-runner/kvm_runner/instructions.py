@@ -16,6 +16,8 @@ class Globals:
     up_proj: Tensor
     gate_proj: Tensor
     down_proj: Tensor
+    lm_head_norm_weights: Tensor
+    lm_head_weights: Tensor
     k_cache: Tensor
     v_cache: Tensor
 
@@ -30,6 +32,7 @@ class Globals:
     attn_lse_intermediates: Tensor
     attn_out_intermediates: Tensor
     silu_out: Tensor
+    logits: Tensor
 
     pos_id: int
     attn_scale: float
@@ -39,6 +42,7 @@ class Globals:
     up_gate_proj_block_size: int
     down_proj_block_size: int
     o_proj_block_size: int
+    lm_head_block_size: int
     matvec_reduction_size: int
     qkv_block_size: int
     attn_kv_block_size: int
@@ -51,6 +55,7 @@ class Globals:
     head_dim: int
     hidden_size: int
     intermediate_size: int
+    vocab_size: int
 
     device: DeviceType
 
@@ -211,6 +216,19 @@ class DownProjResidual(MatVecAdd):
 
 
 @dataclass
+class RMS_LM_Head(Instruction):
+    output_block_idx: int
+
+    @classmethod
+    def opcode(cls) -> int:
+        return 7
+
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return DownProjResidual.opcode()
+
+
+@dataclass
 class PrintInfo:
     layer_filter: list[int] | None = None
     name_filter: list[str] | None = None
@@ -222,13 +240,3 @@ class PrintState(Instruction):
     layer_idx: int
     name: str
     print_info: PrintInfo
-
-
-INSTRUCTIONS_LIST = [
-    LayerNorm_QKV_MatVecRopeAppend,
-    PartialAttention,
-    AttentionReduction,
-    DownProjResidual,
-    O_ProjResidual,
-    LayerNormDoubleMatVecSiLU,
-]

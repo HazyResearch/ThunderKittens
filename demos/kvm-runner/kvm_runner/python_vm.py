@@ -13,6 +13,7 @@ from kvm_runner.instructions import (
     O_ProjResidual,
     PartialAttention,
     PrintState,
+    RMS_LM_Head,
 )
 from kvm_runner.llama import (
     BatchState,
@@ -214,6 +215,29 @@ def layer_norm_matvec_rope_append(
     barriers[instruction.output_block_idx // 4] += 1
 
 
+def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
+    op_barriers = globals.barriers[
+        globals.num_hidden_layers - 1, instruction.prev_opcode() - 1
+    ]
+    assert op_barriers[0] == 512
+
+    post_ln = rms_norm(
+        inp=globals.hidden_states,
+        weight=globals.lm_head_norm_weights,
+        eps=globals.rms_norm_eps,
+    )
+
+    start, end = get_start_end(globals.lm_head_block_size, instruction.output_block_idx)
+
+    matmul_output = einsum(
+        globals.lm_head_weights[start:end],
+        post_ln,
+        "o i, i -> o",
+    )
+
+    globals.logits[start:end] = matmul_output
+
+
 def partial_attention(globals: Globals, instruction: PartialAttention):
     gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
 
@@ -340,6 +364,7 @@ INSTRUCTION_TO_SOLVER = {
     DownProjResidual: down_proj_residual,
     PartialAttention: partial_attention,
     AttentionReduction: attention_reduction,
+    RMS_LM_Head: rms_lm_head,
     PrintState: print_state,
 }
 
