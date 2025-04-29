@@ -51,7 +51,7 @@ namespace kittens::prototype::vm
             {
 
                 // unused pages, then activation, then rms scale, then weights
-                int ret_order[13] = {10, 11, 12, PAGE_ACTIVATION, PAGE_RMS_SCALE, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_WEIGHT_START + 4, PAGE_WEIGHT_START + 5, PAGE_WEIGHT_START + 6, PAGE_WEIGHT_START + 7};
+                int ret_order[13] = {6, 7, 8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_RMS_SCALE, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
@@ -252,7 +252,6 @@ namespace kittens::prototype::vm
         };
         struct storer
         {
-            // Uses 4 full pages for outputs.
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
