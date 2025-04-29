@@ -198,7 +198,7 @@ namespace kittens::prototype::vm
                 wait(inputs_arrived(s, group_id), 0);
                 if (warpgroup::warpid() == 0 && laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_START + 8 + group_id);
+                    s.record(TEVENT_TRIPLES_END + group_id);
                 }
 
                 // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
@@ -211,7 +211,7 @@ namespace kittens::prototype::vm
                 wait(activations_arrived(s), 0);
                 if (warpid() == 0 && laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_START + 8 + 4);
+                    s.record(TEVENT_TRIPLES_END + 4);
                 }
 
                 // reinterpret the activations page as sv_bf<128>[16]
@@ -247,7 +247,7 @@ namespace kittens::prototype::vm
             {
                 if (kittens::laneid() == 0)
                 {
-                    s.record(TEVENT_MATVEC_STORE_START);
+                    s.record(TEVENT_TRIPLES_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -263,7 +263,7 @@ namespace kittens::prototype::vm
                 wait(outputs_arrived(s), 0);
                 if (kittens::laneid() == 0)
                 {
-                    s.record(TEVENT_MATVEC_OUTPUT_READY);
+                    s.record(TEVENT_TRIPLES_OUTPUT_READY);
                 }
 
                 warp::load(output_reg_bf, output);

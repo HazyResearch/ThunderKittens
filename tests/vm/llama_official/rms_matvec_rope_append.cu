@@ -199,7 +199,7 @@ namespace kittens::prototype::vm
                 wait(activations_arrived(s), 0);
                 if (warpid() == 0 && laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_START + 15);
+                    s.record(TEVENT_TRIPLES_END + 7);
                 }
 
                 // reinterpret the activations page as sv_bf<128>[16]
@@ -235,7 +235,7 @@ namespace kittens::prototype::vm
                 wait(rms_scale_arrived(s), 0);
                 if (warpid() == 0 && laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_START + 8);
+                    s.record(TEVENT_TRIPLES_END);
                 }
                 int rms_scale_page = get_rms_scale_page(s);
                 sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
@@ -253,7 +253,7 @@ namespace kittens::prototype::vm
                 wait(weights_arrived(s, group_id), 0);
                 if (warpgroup::warpid() == 0 && laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_START + 9 + group_id);
+                    s.record(TEVENT_TRIPLES_END + 1 + group_id);
                 }
 
                 int weight_page = get_weight_page(s, group_id);
@@ -302,7 +302,7 @@ namespace kittens::prototype::vm
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
                         {
-                            s.record(TEVENT_TRIPLES_START + 13);
+                            s.record(TEVENT_TRIPLES_END + 5);
                             s.record(TEVENT_CONSUMER_START + 48);
                         }
                         warp::load(rope_cos, rope_cos_smem);
@@ -312,7 +312,7 @@ namespace kittens::prototype::vm
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
                         {
-                            s.record(TEVENT_TRIPLES_START + 14);
+                            s.record(TEVENT_TRIPLES_END + 6);
                             s.record(TEVENT_CONSUMER_START + 49);
                         }
                         warp::load(rope_sin, rope_sin_smem);
@@ -356,7 +356,7 @@ namespace kittens::prototype::vm
             {
                 if (warp::laneid() == 0)
                 {
-                    s.record(TEVENT_MATVEC_STORE_START);
+                    s.record(TEVENT_TRIPLES_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -365,7 +365,7 @@ namespace kittens::prototype::vm
                 {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
-                    s.record(TEVENT_MATVEC_OUTPUT_READY);
+                    s.record(TEVENT_TRIPLES_OUTPUT_READY);
 
                     if (inst.qkv_block_idx < K_BLK_START)
                     { // Q
