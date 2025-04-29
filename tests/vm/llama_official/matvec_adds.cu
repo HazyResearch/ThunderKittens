@@ -96,9 +96,9 @@ namespace kittens::prototype::vm
 
                     for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
-
                         s.wait_page_ready(get_weight_page(s, i));
                         auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, i)]);
+                        s.record(TEVENT_TRIPLES_START + i);
                         kittens::tma::expect(inputs_arrived(s, i), weight_chunk);
 
                         auto &weights_global = g.*WeightsPtr; // object in global memory
@@ -117,6 +117,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_DONE_GMEM_WAIT);
 
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
+                    s.record(TEVENT_TRIPLES_START + 4);
                     kittens::tma::expect(activations_arrived(s), activations);
 
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
@@ -195,6 +196,10 @@ namespace kittens::prototype::vm
                 int group_id = kittens::warpgroup::groupid();
                 int warp_id = kittens::warpgroup::warpid(); // id within the warpgroup
                 wait(inputs_arrived(s, group_id), 0);
+                if (warpgroup::warpid() == 0 && laneid() == 0)
+                {
+                    s.record(TEVENT_TRIPLES_START + 8 + group_id);
+                }
 
                 // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
                 int weight_page = get_weight_page(s, group_id);
@@ -204,6 +209,10 @@ namespace kittens::prototype::vm
                 kittens::warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
                 // Next we need to load the activations
                 wait(activations_arrived(s), 0);
+                if (warpid() == 0 && laneid() == 0)
+                {
+                    s.record(TEVENT_TRIPLES_START + 8 + 4);
+                }
 
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);

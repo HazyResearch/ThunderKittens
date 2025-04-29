@@ -93,6 +93,7 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(get_rms_scale_page(s));
                     s.record(26);
                     auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[get_rms_scale_page(s)]);
+                    s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
 
@@ -104,6 +105,7 @@ namespace kittens::prototype::vm
                         s.wait_page_ready(page_id);
                         // s.record(16 + i);
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[page_id]);
+                        s.record(TEVENT_TRIPLES_START + 1 + i);
                         tma::expect(weights_arrived(s, i), weight_chunk);
                         tma::load_async(weight_chunk, g.qkv_weights, {inst.layer_idx, inst.qkv_block_idx, i}, weights_arrived(s, i));
                     }
@@ -112,6 +114,7 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(get_rope_cos_page(s));
                     // s.record(28);
                     auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_cos_page(s)]);
+                    s.record(TEVENT_TRIPLES_START + 5);
                     tma::expect(rope_cos_arrived(s), rope_cos);
                     tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
 
@@ -119,6 +122,7 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(get_rope_sin_page(s));
                     // s.record(30);
                     auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[get_rope_sin_page(s)]);
+                    s.record(TEVENT_TRIPLES_START + 6);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
 
@@ -129,6 +133,7 @@ namespace kittens::prototype::vm
                         __nanosleep(20);
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[get_activation_page(s)]);
+                    s.record(TEVENT_TRIPLES_START + 7);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
@@ -186,6 +191,10 @@ namespace kittens::prototype::vm
 
                 // Step 1: Load hidden states into register
                 wait(activations_arrived(s), 0);
+                if (warpid() == 0 && laneid() == 0)
+                {
+                    s.record(TEVENT_TRIPLES_START + 15);
+                }
 
                 // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
@@ -218,6 +227,10 @@ namespace kittens::prototype::vm
 
                 // multiply by rms scale
                 wait(rms_scale_arrived(s), 0);
+                if (warpid() == 0 && laneid() == 0)
+                {
+                    s.record(TEVENT_TRIPLES_START + 8);
+                }
                 int rms_scale_page = get_rms_scale_page(s);
                 sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
@@ -232,6 +245,10 @@ namespace kittens::prototype::vm
 
                 // Step 3: Load QKV projection weights into register
                 wait(weights_arrived(s, group_id), 0);
+                if (warpgroup::warpid() == 0 && laneid() == 0)
+                {
+                    s.record(TEVENT_TRIPLES_START + 9 + group_id);
+                }
 
                 int weight_page = get_weight_page(s, group_id);
                 st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
@@ -275,7 +292,10 @@ namespace kittens::prototype::vm
                         sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
+                        {
+                            s.record(TEVENT_TRIPLES_START + 13);
                             s.record(TEVENT_CONSUMER_START + 48);
+                        }
                         warp::load(rope_cos, rope_cos_smem);
                         // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
 
@@ -283,7 +303,10 @@ namespace kittens::prototype::vm
                         sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
+                        {
+                            s.record(TEVENT_TRIPLES_START + 14);
                             s.record(TEVENT_CONSUMER_START + 49);
+                        }
                         warp::load(rope_sin, rope_sin_smem);
                         // warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
 
