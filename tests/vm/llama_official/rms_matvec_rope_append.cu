@@ -101,7 +101,7 @@ namespace kittens::prototype::vm
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
 
-                    for (int i = 0; i < 4; i++)
+                    for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
                         // QKV projection weights
                         auto page_id = get_weight_page(s, i);
@@ -189,9 +189,11 @@ namespace kittens::prototype::vm
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
+
                 rms_norm(g, s, activations_vec, get_activation_page(s), get_rms_scale_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
-                matvec<float_rt_t, NUM_WEIGHT_PAGES>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
+                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
+
 
                 group<Config::NUM_CONSUMER_WARPS>::sync(1); // must wait for all warps to finish atomic add
 

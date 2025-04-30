@@ -65,7 +65,7 @@ namespace kittens::prototype::vm
 
                 init_semaphore(activations_arrived(s), 1);
                 init_semaphore(rms_scale_arrived(s), 1);
-                init_semaphore(outputs_arrived(s), 16);
+                init_semaphore(outputs_arrived(s), Config::NUM_CONSUMER_WARPS);
                 return SEM_COUNT;
             }
         };
@@ -163,7 +163,7 @@ namespace kittens::prototype::vm
 
                 rms_norm(g, s, activations_vec, get_activation_page(s), get_rms_scale_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
-                matvec<float_rt_t, NUM_WEIGHT_PAGES>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
+                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();
                 warp::arrive(outputs_arrived(s));

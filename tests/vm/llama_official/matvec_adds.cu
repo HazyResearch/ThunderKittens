@@ -183,7 +183,7 @@ namespace kittens::prototype::vm
                 warp::sync();
                 warp::arrive(s.page_finished[activation_page]);
 
-                matvec<float_rt_t, NUM_WEIGHT_PAGES>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
+                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();
                 warp::arrive(outputs_arrived(s));

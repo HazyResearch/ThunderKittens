@@ -79,7 +79,7 @@ namespace kittens::prototype::vm
 
                 init_semaphore(in_arrived(s), 1);
                 // output must wait for all 4 consumer warps
-                init_semaphore(out_arrived(s), 16);
+                init_semaphore(out_arrived(s), Config::NUM_CONSUMER_WARPS);
                 init_semaphore(rms_scale_arrived(s), 1);
 
                 return SEM_COUNT;
@@ -206,10 +206,10 @@ namespace kittens::prototype::vm
                 rms_norm(g, s, activations_vec, get_input_page(s), get_rms_scale_page(s), in_arrived(s), rms_scale_arrived(s), 32);
 
                 // up matvec
-                matvec<float_rt_t, NUM_UP_PAGES>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);
+                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);
 
                 // gate matvec
-                matvec<float_rt_t, NUM_GATE_PAGES>(g, s, activations_vec, gate_arrived(s, page_index), get_gate_page(s, page_index), 16);
+                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, gate_arrived(s, page_index), get_gate_page(s, page_index), 16);
 
                 using block_rt = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using block_rv = rv_fl<16>;
