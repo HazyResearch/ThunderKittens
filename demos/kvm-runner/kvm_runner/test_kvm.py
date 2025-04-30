@@ -38,6 +38,7 @@ class ScriptConfig(pydra.Config):
     bp: bool = False
     outfile: Path | None = None
     noops: bool = False
+    max_len_override: int | None = 16384
 
 
 def main(config: ScriptConfig):
@@ -48,7 +49,9 @@ def main(config: ScriptConfig):
 
     extra_config = ExtraModelConfig(
         interleave_rope=True,
+        max_len_override=config.max_len_override,
     )
+
     model = LlamaForCausalLM.from_pretrained(
         config.model, extra_config=extra_config, device=config.device
     )
@@ -191,6 +194,8 @@ def main(config: ScriptConfig):
         test_tensors(globs_for_pyvm.attn_out, globs_for_kvm.attn_out, "attn_out")
         test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
         test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
+
+        test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
 
         # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
         # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
