@@ -6,7 +6,7 @@ namespace kittens::prototype::vm
 {
 
     template <typename Config, typename Globals, typename rv_t>
-    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int activation_page, int rms_scale_page, semaphore &activations_arrived, semaphore &rms_scale_arrived)
+    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int activation_page, int rms_scale_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
     {
 
         // Setup
@@ -34,7 +34,7 @@ namespace kittens::prototype::vm
         warp::mul(copy_activations_vec, copy_activations_vec, copy_activations_vec); // square
         float partial_sum = warp::sum(copy_activations_vec);
 
-        auto smem_rms_partial_sums = ((float *)s.scratch()) + 16;
+        auto smem_rms_partial_sums = ((float *)s.scratch()) + scratch_offset;
         // aggregate sums across the consumer warps
         if (laneid() == 0)
         {
@@ -71,16 +71,16 @@ namespace kittens::prototype::vm
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
     }
 
-    template <typename rt_t, int NUM_WEIGHT_PAGES, typename Config, typename Globals, typename rv_t>
-    __device__ inline void matvec(Globals &g, state<Config> &s, rv_t &activations_vec, semaphore &weights_arrived, int weight_pid, int page_index, int index_in_page)
+    template <typename rt_t, int WARPS_PER_PAGE, typename Config, typename Globals, typename rv_t>
+    __device__ inline void matvec(Globals &g, state<Config> &s, rv_t &activations_vec, semaphore &weights_arrived, int weight_pid, int scratch_offset)
     {
 
         rt_t weights, broadcast_activations;
         typename rt_t::col_vec proj_partial_col_format;
         rv<float, rt_t::rows> proj_partial;
 
-        static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
-        constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
+        int page_index = warpid() / WARPS_PER_PAGE;
+        int index_in_page = warpid() % WARPS_PER_PAGE;
 
         wait(weights_arrived, 0);
 
@@ -103,14 +103,15 @@ namespace kittens::prototype::vm
         warp::row_sum(proj_partial_col_format, broadcast_activations);
         warp::copy(proj_partial, proj_partial_col_format);
 
+        auto smem_proj_partials = ((float *)s.scratch()) + scratch_offset;
+
         // now the first 16 threads have the output.
         if (laneid() < 16)
         {
             // this might be a bad idea but yolo, it's probably an okay start
             // and fortunately this is code where ncu will tell us if it's bad..
-            atomicAdd(&((float *)s.scratch())[laneid()], proj_partial[0][0]);
+            atomicAdd(&smem_proj_partials[laneid()], proj_partial[0][0]);
         }
-        group<Config::NUM_CONSUMER_WARPS>::sync(1); // must wait for all warps to finish atomic add
     }
 
 }
