@@ -1,6 +1,10 @@
 #pragma once
 
 #include "llama.cuh"
+#include "utils.cuh"
+
+using namespace kittens;
+using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
@@ -24,6 +28,8 @@ namespace kittens::prototype::vm
         static constexpr int PAGE_WEIGHT_START = 0;
         static constexpr int PAGE_ACTIVATION = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
         static constexpr int PAGE_COUNT = PAGE_ACTIVATION + 1; // 5
+
+        static constexpr int REDUCTION_DIM_PER_WARP = llama_1b_globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         struct parsed_instruction
         {
@@ -76,7 +82,7 @@ namespace kittens::prototype::vm
                 {
                     kittens::init_semaphore(inputs_arrived(s, i), 1); // Inputs arrived.
                 }
-                kittens::init_semaphore(outputs_arrived(s), 16); // outputs arrived.
+                kittens::init_semaphore(outputs_arrived(s), Config::NUM_CONSUMER_WARPS); // outputs arrived.
                 kittens::init_semaphore(activations_arrived(s), 1);
                 return 6;
             }
@@ -87,7 +93,7 @@ namespace kittens::prototype::vm
             {
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
-                ((int *)s.scratch())[kittens::laneid()] = 0;
+                ((uint64_t *)s.scratch())[kittens::laneid()] = 0;
                 kittens::warp::sync(); // done, now we can proceed to other things.
 
                 if (kittens::laneid() == 0)
@@ -135,39 +141,6 @@ namespace kittens::prototype::vm
                 {
                     s.record(TEVENT_LOADER_END);
                 }
-
-                // if (kittens::laneid() < 4)
-                // {
-                //     s.wait_page_ready(get_weight_page(s, kittens::laneid()));
-                //     s.record(16 + kittens::laneid());
-                //     auto &weight_chunk = reinterpret_cast<kittens::st_bf<16, 512> &>(s.pages[get_weight_page(s, kittens::laneid())]);
-                //     kittens::tma::expect(inputs_arrived(s, kittens::laneid()), weight_chunk);
-
-                //     auto &weights_global = g.*WeightsPtr; // object in global memory
-                //     kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
-
-                //     // auto& weights_global = g.*WeightsPtr;      // object in global memory
-                //     // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
-                // }
-                // else if (kittens::laneid() == 31)
-                // {
-                //     int activation_page = get_activation_page(s);
-                //     s.wait_page_ready(activation_page);
-                //     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                //         __nanosleep(20);
-                //     s.record(24);
-                //     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
-                //     kittens::tma::expect(activations_arrived(s), activations);
-
-                //     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
-                //     kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
-                // }
-                // else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
-                // {
-                //     int unused_page = s.pid(kittens::laneid());
-                //     s.wait_page_ready(unused_page);
-                //     kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
-                // }
             }
         };
         struct launcher
@@ -189,50 +162,31 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_CONSUMER_START + warpid());
                 }
 
-                kittens::rt_fl<16, 128> weights, broadcast_activations;
-                typename kittens::rt_fl<16, 128>::row_vec activations_vec;
-                typename kittens::rt_fl<16, 128>::col_vec output_col_format;
-                kittens::rv_fl<16> output;
-                int group_id = kittens::warpgroup::groupid();
-                int warp_id = kittens::warpgroup::warpid(); // id within the warpgroup
-                wait(inputs_arrived(s, group_id), 0);
-                if (warpgroup::warpid() == 0 && laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_END + group_id);
-                }
+                using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
+                using float_rv_t = rv_fl<16>;
 
-                // Reinterpret the page as a st_bf<16, 128>[4], which turns out to be a valid recast of the layout.
-                int weight_page = get_weight_page(s, group_id);
-                st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
-                kittens::warp::load(weights, weights_smem[warp_id]);
-                kittens::warp::sync();
-                kittens::warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // this is called by each warp in the warpgroup
-                // Next we need to load the activations
+                typename float_rt_t::row_vec activations_vec;
+
+                static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
+                constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
+
+                int page_index = warpid() / WARPS_PER_PAGE;
+
+                using sv_slice_t = sv_bf<REDUCTION_DIM_PER_WARP>;
+
                 wait(activations_arrived(s), 0);
-                if (warpid() == 0 && laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_END + 4);
-                }
 
-                // reinterpret the activations page as sv_bf<128>[16]
                 int activation_page = get_activation_page(s);
-                kittens::sv_bf<128>(&activations_smem)[16] = reinterpret_cast<kittens::sv_bf<128>(&)[16]>(s.pages[activation_page]);
-                kittens::warp::load(activations_vec, activations_smem[kittens::warpid()]);
-                kittens::warp::sync();
-                kittens::warp::arrive(s.page_finished[activation_page]); // just 1 is sufficient
-                // broadcast this into a tile
-                kittens::warp::broadcast_col(broadcast_activations, activations_vec);
-                kittens::warp::mul(broadcast_activations, broadcast_activations, weights);
-                kittens::warp::row_sum(output_col_format, broadcast_activations);
-                kittens::warp::copy(output, output_col_format);
-                // Now the first 16 threads have the output.
-                if (laneid() < 16)
-                { // this might be a bad idea but yolo, it's probably an okay start
-                    // and fortunately this is code where ncu will tell us if it's bad..
-                    atomicAdd(&((float *)s.scratch())[kittens::laneid()], output[0][0]);
-                }
-                kittens::warp::sync();
-                kittens::warp::arrive(outputs_arrived(s));
+                sv_slice_t(&activations_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_slice_t(&)[Config::NUM_CONSUMER_WARPS]>(s.pages[activation_page]);
+
+                warp::load(activations_vec, activations_smem[warpid()]);
+                warp::sync();
+                warp::arrive(s.page_finished[activation_page]);
+
+                matvec<float_rt_t, NUM_WEIGHT_PAGES>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
+
+                warp::sync();
+                warp::arrive(outputs_arrived(s));
 
                 if (kittens::laneid() == 0)
                 {
