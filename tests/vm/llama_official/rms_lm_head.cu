@@ -256,7 +256,7 @@ namespace kittens::prototype::vm
             {
                 if (warp::laneid() == 0)
                 {
-                    s.record(TEVENT_MATVEC_STORE_START);
+                    s.record(TEVENT_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -281,7 +281,7 @@ namespace kittens::prototype::vm
                     // {
                     //     printf("logit store weight end: %p\n", logits_smem);
                     // }
-                    s.record(TEVENT_MATVEC_OUTPUT_READY);
+                    s.record(TEVENT_OUTPUT_READY);
 
                     tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, inst.out_block_idx});
 
