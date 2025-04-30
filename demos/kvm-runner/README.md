@@ -87,4 +87,16 @@ python kvm_runner/test_kvm.py skip_pyvm=T layer_limit=None barrier_init_val=1000
 
 python kvm_runner/test_kvm.py stop_after_op=qkv instruction_reps=20 skip_pyvm=T 
 
+python kvm_runner/test_kvm.py skip_pyvm=T layer_limit=None
+
+# lm head testing
+python kvm_runner/test_kvm.py layer_limit=None
+
+python kvm_runner/generate.py mode=kvm ntok=30 prompt="tell me a funny joke about cookies"
+
+python kvm_runner/test_kvm.py layer_limit=None skip_pyvm=T outfile=timings.pt
+
+# testing 8 consumer warps
+
+
 ```
