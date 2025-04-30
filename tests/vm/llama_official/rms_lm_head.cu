@@ -1,8 +1,8 @@
 #include "llama.cuh"
+#include "utils.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
-// using namespace kittens::prototype::vm;
 
 namespace kittens::prototype::vm
 {
@@ -23,6 +23,8 @@ namespace kittens::prototype::vm
         static constexpr int SEM_COUNT = PAGE_COUNT + 1;
 
         static constexpr int EXPECTED_ARRIVAL_COUNT = 512;
+
+        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         struct parsed_instruction
         {
@@ -77,7 +79,7 @@ namespace kittens::prototype::vm
                 }
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
-                ((int *)s.scratch())[laneid()] = 0;
+                ((uint64_t *)s.scratch())[laneid()] = 0;
                 warp::sync(); // done, now we can proceed to other things.
 
                 if (laneid() == 0)
@@ -147,100 +149,22 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_CONSUMER_START + warpid());
                 }
 
+                using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
+                using float_rv_t = rv_fl<16>;
+
                 // Setup
                 parsed_instruction inst{s};
-                rt_fl<16, 128> weights, broadcast_activations;
-                typename rt_fl<16, 128>::row_vec activations_vec;
-                typename rt_fl<16, 128>::row_vec fl_activations_vec;
-                rv_fl<Config::NUM_CONSUMER_WARPS> rms_partial_sums;
-                typename rt_fl<16, 128>::row_vec rms_scale_vec;
-                typename rt_fl<16, 128>::col_vec proj_partial_col_format;
-                rv_fl<16> proj_partial;
-                shared_allocator al((int *)s.scratch());
-                sv_fl<Config::NUM_CONSUMER_WARPS>(&smem_rms_partial_sums) = al.template allocate<sv_fl<Config::NUM_CONSUMER_WARPS>>();
-                int group_id = warpgroup::groupid();
-                int warp_id = warpgroup::warpid();
+                typename float_rt_t::row_vec activations_vec;
 
-                // Step 1: Load hidden states into register
-                wait(activations_arrived(s), 0);
-                if (warpid() == 0 && laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_START + 15);
-                }
+                static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
+                constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
 
-                // reinterpret the activations page as sv_bf<128>[16]
-                int activation_page = get_activation_page(s);
-                sv_bf<128>(&activations_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[activation_page]);
-                warp::load(activations_vec, activations_smem[warpid()]); // 128 elements per warp
-                warp::sync();
-                warp::arrive(s.page_finished[activation_page]);
+                int page_index = warpid() / WARPS_PER_PAGE;
 
-                // Step 2: Apply RMS normalization
-                warp::copy(fl_activations_vec, activations_vec);                       // cast to float
-                warp::mul(fl_activations_vec, fl_activations_vec, fl_activations_vec); // square
-                float partial_sum = warp::sum(fl_activations_vec);
+                rms_norm(g, s, activations_vec, get_activation_page(s), get_rms_scale_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
-                // aggregate sums across the 16 consumer warps
-                if (laneid() == 0)
-                {
-                    smem_rms_partial_sums[warpid()] = partial_sum;
-                }
+                matvec<float_rt_t, NUM_WEIGHT_PAGES>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
-                group<16>::sync(0);
-                warp::load(rms_partial_sums, smem_rms_partial_sums);
-                warp::sync();
-                float full_sum = warp::sum(rms_partial_sums);
-                float variance = full_sum / 2048.0f;
-                float rms_scale = rsqrtf(variance + g.rms_norm_eps);
-
-                warp::copy(fl_activations_vec, activations_vec); // reuse the reg vec
-                warp::mul(fl_activations_vec, fl_activations_vec, rms_scale);
-                warp::copy(activations_vec, fl_activations_vec); // back to bf16
-
-                // multiply by rms scale
-                wait(rms_scale_arrived(s), 0);
-                if (warpid() == 0 && laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_START + 8);
-                }
-                int rms_scale_page = get_rms_scale_page(s);
-                sv_bf<128>(&rms_scale_smem)[16] = reinterpret_cast<sv_bf<128>(&)[16]>(s.pages[rms_scale_page]);
-                warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
-                warp::sync();
-                warp::arrive(s.page_finished[rms_scale_page]);
-                warp::mul(activations_vec, activations_vec, rms_scale_vec);
-
-                if (laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + 16 + warpid());
-                }
-
-                // Step 3: Load weights into register
-                wait(weights_arrived(s, group_id), 0);
-                if (warpgroup::warpid() == 0 && laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_START + 9 + group_id);
-                }
-
-                int weight_page = get_weight_page(s, group_id);
-                st_bf<16, 128>(&weights_smem)[4] = reinterpret_cast<st_bf<16, 128>(&)[4]>(s.pages[weight_page]);
-                warp::load(weights, weights_smem[warp_id]);
-                warp::sync();
-
-                warp::arrive(s.page_finished[weight_page], Config::NUM_CONSUMER_WARPS / 4); // called by each warp in the warpgroup
-
-                // Step 4: run matvec
-                warp::broadcast_col(broadcast_activations, activations_vec);
-                warp::mul(broadcast_activations, broadcast_activations, weights);
-                warp::row_sum(proj_partial_col_format, broadcast_activations);
-                warp::copy(proj_partial, proj_partial_col_format);
-                // now the first 16 threads have the output.
-                if (laneid() < 16)
-                {
-                    // this might be a bad idea but yolo, it's probably an okay start
-                    // and fortunately this is code where ncu will tell us if it's bad..
-                    atomicAdd(&((float *)s.scratch())[laneid()], proj_partial[0][0]);
-                }
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
 
