@@ -69,44 +69,43 @@ namespace kittens::prototype::vm
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
-        using attn_out_intermediates_t = gl<float, 1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
-        using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, sm_count, sv_fl<((sm_count + 15) / 16) * 16>>;
+        // using attn_out_intermediates_t = gl<float, 1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
+        // using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, sm_count, sv_fl<((sm_count + 15) / 16) * 16>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
 
         // vm stuff
-        barriers Bar;
         instruction_layout instructions;
+        barriers Bar;
         timing_layout timings;
 
         // model weights
-        weights_t qkv_weights;
-        norm_weights_t attn_norm_weights;
-        weights_t o_weights;
-        norm_weights_t mlp_norm_weights;
-        weights_t up_weights;
-        weights_t gate_weights;
-        weights_big_indim_t down_weights;
+        // weights_t qkv_weights;
+        // norm_weights_t attn_norm_weights;
+        // weights_t o_weights;
+        // norm_weights_t mlp_norm_weights;
+        // weights_t up_weights;
+        // weights_t gate_weights;
+        // weights_big_indim_t down_weights;
         // kv cache
         kv_cache_t k_cache;
         kv_cache_t v_cache;
 
         // other buffers
-        rope_table_t rope_cos;
-        rope_table_t rope_sin;
+        // rope_table_t rope_cos;
+        // rope_table_t rope_sin;
 
         // activation buffers
-        activations_t hidden_states;
         activations_t q_post_rope;
         activations_t attn_out;
-        attn_lse_intermediates_t attn_lse_intermediates;
-        attn_out_intermediates_t attn_out_intermediates;
-        activations_big_indim_t silu_out;
+        // attn_lse_intermediates_t attn_lse_intermediates;
+        // attn_out_intermediates_t attn_out_intermediates;
+        // activations_big_indim_t silu_out;
 
         unsigned int pos_id;
         float attn_scale;
-        float rms_norm_eps;
+        // float rms_norm_eps;
 
         dim3 grid() { return dim3(sm_count); }
         dim3 block() { return dim3(config::NUM_THREADS); }

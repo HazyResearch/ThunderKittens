@@ -34,7 +34,8 @@ namespace kittens::prototype::vm
         using l_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>;        // only 4 values are used
         using l_sv = sv_fl<16>;                                    // only 4 values are used
         using o_rt = rt_fl<16, LLAMA_70B_HEAD_DIM>;                 // only 4 rows are used
-        using o_sv = sv_fl<LLAMA_70B_HEAD_DIM>;
+        using o_rt_bf = rt_bf<16, LLAMA_70B_HEAD_DIM>;                 // only 4 rows are used
+        using o_sv = sv_bf<LLAMA_70B_HEAD_DIM>;
 
         struct parsed_instruction
         {
@@ -460,7 +461,10 @@ namespace kittens::prototype::vm
                     }
 
                     // Store the results
-                    store_8_rows(O_smem, O_reg);
+                    o_rt_bf O_reg_bf; 
+                    warp::copy(O_reg_bf, O_reg);
+                    store_8_rows(O_smem, O_reg_bf);
+                    
                     warp::sync();
                     if (laneid() == 0)
                     {
@@ -500,7 +504,6 @@ namespace kittens::prototype::vm
                     for (int i = 0; i < 8; ++i)
                     {
                         // TODO: Check indexing here, based on final shape of atttn_out
-                        // tma::store_async<cache_policy::NORMAL>(g.attn_out, O_smem[i], {0, q_head_start_idx + i, 0, 0});
                         tma::store_async<cache_policy::NORMAL>(g.attn_out, O_smem[i], {0, 0, 0, q_head_start_idx + i});
                     }
                 }

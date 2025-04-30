@@ -4,20 +4,21 @@
 #include "vm/vm.cuh"
 #include <iostream>
 
-#define OPCODE_RMS_QKV_MatVecRopeAppend 1
-#define OPCODE_PartialAttention 2
-#define OPCODE_AttentionReduction 3
+#define OPCODE_RMS_NORM 1
+#define OPCODE_QKV_RopeAppend 2
+#define OPCODE_GQA_AttentionDecode 3
 #define OPCODE_O_ProjResidual 4
-#define OPCODE_RMS_DoubleMatVecSiLU 5
-#define OPCODE_DownProjResidual 6
+
+#define OPCODE_RMS_DoubleMatVecSiLU 4
+#define OPCODE_DownProjResidual 5
 
 #define LLAMA_70B_HIDDEN_DIM 8192
 #define LLAMA_70B_INTERMEDIATE_DIM 28672
 #define LLAMA_70B_HEAD_DIM 128
 #define LLAMA_70B_NUM_ATTENTION_HEADS 64
 #define LLAMA_70B_NUM_KV_HEADS 8
-// #define LLAMA_8B_KV_BLOCK_SIZE 16 ??
-// #define LLAMA_8B_MATVEC_BLOCK_SIZE 16 ?? 
+#define LLAMA_70B_KV_BLOCK_SIZE 16
+#define LLAMA_70B_MATVEC_BLOCK_SIZE 16
 #define SM_COUNT 148
 
 // timing event convention
@@ -70,11 +71,9 @@ namespace kittens::prototype::vm
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
-        using attn_out_intermediates_t = gl<float, 1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
-        using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, sm_count, sv_fl<((sm_count + 15) / 16) * 16>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
-        using barriers = gl<uint, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
+        using barriers = gl<uint, 1, -1, 7, num_attention_heads + 2 * num_kv_heads>;
 
         // vm stuff
         barriers Bar;
@@ -115,32 +114,32 @@ namespace kittens::prototype::vm
     };
 
     typedef globals_t<
-        LLAMA_1B_HIDDEN_DIM,
-        LLAMA_1B_INTERMEDIATE_DIM,
-        LLAMA_1B_HEAD_DIM,
-        LLAMA_1B_NUM_ATTENTION_HEADS,
-        LLAMA_1B_NUM_KV_HEADS,
-        LLAMA_1B_KV_BLOCK_SIZE,
-        LLAMA_1B_MATVEC_BLOCK_SIZE,
+        LLAMA_70B_HIDDEN_DIM,
+        LLAMA_70B_INTERMEDIATE_DIM,
+        LLAMA_70B_HEAD_DIM,
+        LLAMA_70B_NUM_ATTENTION_HEADS,
+        LLAMA_70B_NUM_KV_HEADS,
+        LLAMA_70B_KV_BLOCK_SIZE,
+        LLAMA_70B_MATVEC_BLOCK_SIZE,
         SM_COUNT>
-        llama_1b_globals;
+        llama_70b_globals;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct attention_partial;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct attention_reduction;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct rms_qkv_rope_append;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct downproj;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct o_proj;
 
-    template <typename config = config, typename globals = llama_1b_globals>
+    template <typename config = config, typename globals = llama_70b_globals>
     struct rms_upgate_silu;
 
 }
