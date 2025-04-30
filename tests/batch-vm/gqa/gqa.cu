@@ -9,13 +9,15 @@ namespace kittens::prototype::vm
     template <typename config, typename globals>
     struct attention_partial
     {
-        static constexpr int opcode = OPCODE_PartialAttention;
+        static constexpr int opcode = OPCODE_GQA_Attention;
         static constexpr int NUM_STAGES = 3;
         static constexpr int GQA_RATIO = LLAMA_70B_NUM_ATTENTION_HEADS / LLAMA_70B_NUM_KV_HEADS;
         static constexpr int QOL_PAGE = 0;
         static constexpr int KV_PAGE = 1;
+        static constexpr int KV_INDICES_LEN = 0;
+        static constexpr int MAX_KV_INDICES_LEN = 0;
 
-        static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
+        static_assert(GQA_RATIO == 8, "GQA_RATIO must be 8.");
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
         using q_rt = rt_bf<16, LLAMA_70B_HEAD_DIM>; // only 4 rows are used
@@ -38,14 +40,25 @@ namespace kittens::prototype::vm
         {
             int layer_idx;
             int kv_head_idx;
-            int num_partials;
             int partial_idx;
+            int kv_indices_len;
+            int kv_indices[KV_INDICES_LEN]; // actual physical indices to read in from paged KV 
+
             __device__ inline parsed_instruction(typename config::instruction_t &instruction)
             {
                 layer_idx = instruction[1];
                 kv_head_idx = instruction[2];
-                num_partials = instruction[3];
-                partial_idx = instruction[4];
+                kv_indices_len = instruction[3]; // length of number of indices from paged KV cache to read 
+                // partial_idx = instruction[4];
+
+                #pragma unroll
+                for (int k = 0; k < MAX_KV_INDICES_LEN; ++k) 
+                {
+                    if (k < kv_indices_len) 
+                    {
+                        kv_indices[k] = instruction[4 + k];
+                    }
+                }
             }
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -59,25 +72,21 @@ namespace kittens::prototype::vm
         {
             return s.semaphores()[1];
         }
-        __device__ static inline semaphore &L_arrived(state<config> &s)
-        {
-            return s.semaphores()[2];
-        }
         __device__ static inline semaphore &K_arrived(state<config> &s, int stage)
         {
-            return s.semaphores()[3 + stage * 2];
+            return s.semaphores()[2 + stage * 2];
         }
         __device__ static inline semaphore &V_arrived(state<config> &s, int stage)
         {
-            return s.semaphores()[3 + stage * 2 + 1];
+            return s.semaphores()[2 + stage * 2 + 1];
         }
         __device__ static inline semaphore &K_finished(state<config> &s, int stage)
         {
-            return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2];
+            return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2];
         }
         __device__ static inline semaphore &V_finished(state<config> &s, int stage)
         {
-            return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2 + 1];
+            return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2 + 1];
         }
 
         __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
@@ -102,12 +111,6 @@ namespace kittens::prototype::vm
             int pid = s.pid(QOL_PAGE);
             return *reinterpret_cast<o_sv(*)[8]>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st));
-        }
-        __device__ static inline l_sv &get_L_smem(state<config> &s)
-        {
-            int pid = s.pid(QOL_PAGE);
-            return *reinterpret_cast<l_sv *>(
-                reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st) + sizeof(o_sv) * 8);
         }
         __device__ static inline kv_st &get_K_smem(state<config> &s, int stage)
         {
@@ -196,7 +199,7 @@ namespace kittens::prototype::vm
         //   2. Only loads 8 rows of Q, not 16 (assumes GQA_RATIO == 8)
         __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, int q_head_start_idx)
         {
-            static_assert(LLAMA_70B_HEAD_DIM == 128 && GQA_RATIO == 4, "Fix this function.");
+            static_assert(LLAMA_70B_HEAD_DIM == 128 && GQA_RATIO == 8, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
             constexpr int memcpy_per_row = LLAMA_70B_HEAD_DIM / elem_per_memcpy;            // 16
@@ -214,7 +217,7 @@ namespace kittens::prototype::vm
                 int row = base_row_in_group + i * 2;
                 asm volatile(
                     "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::
-                    "r"(dst.idx(dst_prt, {row, col})),
+                    "r"(dst.idx(dst_ptr, {row, col})),
                     "l"(&src_ptr[row * LLAMA_70B_HEAD_DIM + col])
                     : "memory");
             }
@@ -233,7 +236,6 @@ namespace kittens::prototype::vm
             {
                 init_semaphore(Q_arrived(s), 0, 1);
                 init_semaphore(O_arrived(s), 0, 1);
-                init_semaphore(L_arrived(s), 0, 1);
                 for (int i = 0; i < NUM_STAGES; i++)
                 {
                     init_semaphore(K_arrived(s, i), 0, 1);
@@ -259,10 +261,6 @@ namespace kittens::prototype::vm
                     // Setup
                     parsed_instruction inst{s};
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + LLAMA_70B_KV_BLOCK_SIZE - 1) / LLAMA_70B_KV_BLOCK_SIZE;
-                    int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
-                    int start_blk_idx = inst.partial_idx * blocks_per_partial;
-                    int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
 
                     s.record(TEVENT_AT_GMEM_WAIT);
 
@@ -277,12 +275,14 @@ namespace kittens::prototype::vm
 
                     // Wait for the KV page
                     wait_KV_page(s);
-
-                    if (start_blk_idx >= end_blk_idx)
-                        finish_KV_page(s);
+                    
+                    // TODO: Do we still need this case? 
+                    // if (start_blk_idx >= end_blk_idx)
+                    //     finish_KV_page(s);
 
                     // Run the pipeline!
-                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i)
+                    // for (int i = 0; i + start_blk_idx < end_blk_idx; ++i)
+                    for (int i = 0; i < inst.kv_indices_len; ++i)
                     {
                         int stage = i % NUM_STAGES;
                         kv_st &K_smem = get_K_smem(s, stage);
@@ -293,11 +293,13 @@ namespace kittens::prototype::vm
                             wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                             wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         }
-
+                        
+                        int cur_page_idx = inst.kv_indices[i];
+                        // TODO: Need to fix indexing based on k_cache and v_cache shape
                         tma::expect(K_arrived(s, stage), K_smem);
-                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
+                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {inst.layer_idx, cur_page_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
                         tma::expect(V_arrived(s, stage), V_smem);
-                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
+                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, cur_page_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
                 }
                 else if (laneid >= 2 && laneid < config::NUM_PAGES)
@@ -362,15 +364,11 @@ namespace kittens::prototype::vm
                     // Setup
                     int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 8;
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + LLAMA_70B_KV_BLOCK_SIZE - 1) / LLAMA_70B_KV_BLOCK_SIZE;
-                    int blocks_per_partial = (total_attn_blocks + inst.num_partials - 1) / inst.num_partials;
-                    int start_blk_idx = inst.partial_idx * blocks_per_partial;
-                    int end_blk_idx = min(start_blk_idx + blocks_per_partial, total_attn_blocks);
+                    
                     float softmax_temp = g.attn_scale * 1.44269504089f; // 1 / (sqrt(D_h) * ln(2))
                     q_rt Q_reg;
                     k_rt K_reg;
                     v_rt V_reg;
-                    l_rv L_reg;
                     o_rt O_reg;
                     attn_fl_rt attn_fl_reg;
                     attn_bf_rt attn_bf_reg;
@@ -384,7 +382,6 @@ namespace kittens::prototype::vm
                     warp::zero(norm_vec_reg);
                     warp::zero(O_reg);
                     o_sv(&O_smem)[8] = get_O_smem(s);
-                    l_sv &L_smem = get_L_smem(s);
 
                     // Wait for Q to arrive
                     warp::load_async_wait();
@@ -397,9 +394,10 @@ namespace kittens::prototype::vm
                     warp::load(Q_reg, Q_smem);
 
                     // Run the pipeline!
-                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i)
+                    for (int i = 0; i < inst.kv_indices_len; ++i)
                     {
                         int stage = i % NUM_STAGES;
+                        int cur_page_idx = inst.kv_indices[i];
                         kv_st &K_smem = get_K_smem(s, stage);
                         kv_st &V_smem = get_V_smem(s, stage);
 
@@ -414,7 +412,7 @@ namespace kittens::prototype::vm
                         warp::arrive(K_finished(s, stage));
 
                         // Mask out invalid positions at the end
-                        if ((i + start_blk_idx + 1) * LLAMA_70B_KV_BLOCK_SIZE > seq_len)
+                        if ((i + 1) * LLAMA_70B_KV_BLOCK_SIZE > seq_len)
                             right_fill(attn_fl_reg, attn_fl_reg, seq_len % LLAMA_70B_KV_BLOCK_SIZE, -999999999999.f);
 
                         // Obtain maximums per row (which is per head)
@@ -455,31 +453,21 @@ namespace kittens::prototype::vm
                     warp::sync();
                     if (laneid() == 0)
                         s.record(TEVENT_CONSUMER_START + 64);
-                    if (start_blk_idx < end_blk_idx)
+                    if (inst.kv_indices_len > 0)
                     {
                         finish_KV_page(s);
                         warp::div_row(O_reg, O_reg, norm_vec_reg);
-                        warp::log2(L_reg, norm_vec_reg);
-                        warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
-                    }
-                    else
-                    {
-                        // Very edgy case where no blocks are processed.
-                        // Make the math work out during attention reduction!
-                        warp::neg_infty(L_reg);
                     }
 
                     // Store the results
-                    store_8_rows(O_smem, O_reg, q_head_local_idx);
+                    store_8_rows(O_smem, O_reg);
                     warp::sync();
                     if (laneid() == 0)
                     {
                         s.record(TEVENT_CONSUMER_START + 65);
                     }
                     warp::arrive(O_arrived(s));
-                    warp::store(L_smem, L_reg);
                     warp::sync();
-                    warp::arrive(L_arrived(s));
                 }
 
                 if (laneid == 0)
@@ -511,24 +499,12 @@ namespace kittens::prototype::vm
 
                     for (int i = 0; i < 8; ++i)
                     {
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[i], {0, q_head_start_idx + i, inst.partial_idx, 0});
+                        // TODO: Check indexing here, based on final shape of atttn_out
+                        // tma::store_async<cache_policy::NORMAL>(g.attn_out, O_smem[i], {0, q_head_start_idx + i, 0, 0});
+                        tma::store_async<cache_policy::NORMAL>(g.attn_out, O_smem[i], {0, 0, 0, q_head_start_idx + i});
                     }
                 }
 
-                // Store LSE to global memory
-                if (laneid < GQA_RATIO)
-                {
-                    l_sv &L_smem = get_L_smem(s);
-                    wait(L_arrived(s), 0);
-
-                    // Can't do anything fancy with writing 4 spread-out values.
-                    // We can do this in the consumer if we want to (without using smem)
-                    float tmp;
-                    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&L_smem.data[q_head_vec_start_idx + laneid]));
-                    float *dst_ptr = (float *)&g.attn_lse_intermediates.raw_ptr[(q_head_start_idx + laneid) * g.attn_lse_intermediates.cols() + inst.partial_idx];
-                    asm volatile("ld.shared.f32 %0, [%1];\n" : "=f"(tmp) : "r"(src_ptr));
-                    asm volatile("st.global.f32 [%0], %1;\n" : : "l"(dst_ptr), "f"(tmp));
-                }
                 warp::sync(); // ensure all writes are committed
                 asm volatile("fence.acq_rel.gpu;");
 
@@ -540,7 +516,7 @@ namespace kittens::prototype::vm
                         s.record(123 + laneid);
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
+                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_GQA_Attention - 1, q_head_start_idx + laneid}], 1);
                 }
                 warp::sync();
                 if (laneid == 0)
