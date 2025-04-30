@@ -192,6 +192,8 @@ def main(config: ScriptConfig):
         test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
         test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
+        test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
+
         # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
         # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
 

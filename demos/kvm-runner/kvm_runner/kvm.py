@@ -31,6 +31,8 @@ def interpret_with_kvm(
         globs.up_proj,
         globs.gate_proj,
         globs.down_proj,
+        globs.lm_head_norm_weights.data,
+        globs.lm_head_weights.data,
         globs.k_cache,
         globs.v_cache,
         # rope
@@ -43,6 +45,7 @@ def interpret_with_kvm(
         globs.attn_lse_intermediates,
         globs.attn_out_intermediates,
         globs.silu_out,
+        globs.logits,
         # scalars
         globs.pos_id,
         globs.attn_scale,
@@ -58,6 +61,8 @@ class KVM_Runner:
         prompt_len: int,
         ntok: int,
         barrier_fill_val: int = 0,
+        skip_kvm: bool = False,
+        skip_rest: bool = False,
     ):
         sys.path.append(str(kvm_dir.expanduser().absolute()))
         from kvm_llama import kvm_llama  # type: ignore
@@ -74,28 +79,30 @@ class KVM_Runner:
         tensorize_instructions(self.globals, self.instructions)
 
         self.barrier_fill_val = barrier_fill_val
+        self.skip_kvm = skip_kvm
+        self.skip_rest = skip_rest
 
     def run(self, input_ids: Tensor, pos_id: int):
-        batch_state = BatchState(
-            input_ids=input_ids,
-        )
+        if not self.skip_rest:
+            batch_state = BatchState(
+                input_ids=input_ids,
+            )
 
-        post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
-        hiddens = post_embedding.hidden_states
-        assert hiddens is not None
-        self.globals.hidden_states[:] = hiddens
-        self.globals.pos_id = pos_id
+            post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
+            hiddens = post_embedding.hidden_states
+            assert hiddens is not None
+            self.globals.hidden_states[:] = hiddens
+            self.globals.pos_id = pos_id
 
-        self.globals.barriers.fill_(self.barrier_fill_val)
+            self.globals.barriers.fill_(self.barrier_fill_val)
 
-        interpret_with_kvm(self.globals, self.kvm_func)
+        if not self.skip_kvm:
+            interpret_with_kvm(self.globals, self.kvm_func)
 
-        output_hiddens = self.globals.hidden_states
+        if self.skip_rest:
+            return input_ids
 
-        post_embedding.hidden_states = output_hiddens
+        logits = self.globals.logits
+        output_ids = torch.argmax(logits, dim=-1)
 
-        post_lm_head: BatchState = self.model.lm_head(post_embedding)
-
-        output_ids = post_lm_head.output_ids
-        assert output_ids is not None
         return output_ids

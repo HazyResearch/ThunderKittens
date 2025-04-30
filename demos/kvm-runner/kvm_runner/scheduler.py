@@ -12,6 +12,7 @@ from kvm_runner.instructions import (
     PartialAttention,
     PrintInfo,
     PrintState,
+    RMS_LM_Head,
 )
 from kvm_runner.llama import LlamaForCausalLM
 from kvm_runner.utils import get_sm_count
@@ -44,6 +45,8 @@ def make_globals(
         up_proj=stacked_params.up_proj,
         gate_proj=stacked_params.gate_proj,
         down_proj=stacked_params.down_proj,
+        lm_head_norm_weights=model.lm_head.input_norm.weight,
+        lm_head_weights=model.lm_head.lm_head.weight,
         k_cache=model.stacked_kv_cache[0],
         v_cache=model.stacked_kv_cache[1],
         rope_cos=model.model.rope_cos,
@@ -60,6 +63,7 @@ def make_globals(
             [config.num_attention_heads, max_attn_partials], buffer_dtype=torch.float32
         ),
         silu_out=make_buffer(config.intermediate_size),
+        logits=make_buffer(config.vocab_size),
         # scalars
         pos_id=0,
         attn_scale=1 / math.sqrt(config.head_dim),
@@ -75,9 +79,11 @@ def make_globals(
         down_proj_block_size=16,
         qkv_block_size=16,
         o_proj_block_size=16,
+        lm_head_block_size=16,
         matvec_reduction_size=2048,
         attn_kv_block_size=16,
         attn_reduction_size=4,
+        vocab_size=config.vocab_size,
         device=device,
     )
 
@@ -227,10 +233,6 @@ def schedule_layer(
         if stop_after_op == "down_proj":
             return instructions
 
-    # sleep
-    # import time
-    # time.sleep(1)
-
     return instructions
 
 
@@ -266,6 +268,11 @@ def schedule_model(
                 stop_after_op=stop_after_op,
             )
         )
+
+    if nlayers == globals.num_hidden_layers:
+        num_logit_blocks = assert_div(globals.vocab_size, globals.lm_head_block_size)
+        for logit_block_idx in range(num_logit_blocks):
+            instructions.append(RMS_LM_Head(output_block_idx=logit_block_idx))
 
     return globals, instructions
 

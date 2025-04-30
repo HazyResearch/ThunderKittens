@@ -10,7 +10,9 @@
 #define OPCODE_O_ProjResidual 4
 #define OPCODE_RMS_DoubleMatVecSiLU 5
 #define OPCODE_DownProjResidual 6
+#define OPCODE_RMS_LM_Head 7
 
+#define LLAMA_1B_NUM_LAYERS 16
 #define LLAMA_1B_HIDDEN_DIM 2048
 #define LLAMA_1B_INTERMEDIATE_DIM 8192
 #define LLAMA_1B_HEAD_DIM 64
@@ -18,6 +20,8 @@
 #define LLAMA_1B_NUM_KV_HEADS 8
 #define LLAMA_1B_KV_BLOCK_SIZE 16
 #define LLAMA_1B_MATVEC_BLOCK_SIZE 16
+#define LLAMA_1B_LM_HEAD_BLOCK_SIZE 32
+#define LLAMA_1B_VOCAB_SIZE 128256
 #define SM_COUNT 148
 
 // timing event convention
@@ -44,10 +48,11 @@ namespace kittens::prototype::vm
 
     using config = default_config;
 
-    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matvec_block_size, int _sm_count>
+    template <int _num_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matvec_block_size, int _sm_count>
     struct globals_t
     {
 
+        constexpr static unsigned int num_layers = _num_layers;
         constexpr static unsigned int matvec_block_size = _matvec_block_size;
         constexpr static unsigned int kv_block_size = _kv_block_size;
         constexpr static unsigned int head_dim = _head_dim;
@@ -65,6 +70,8 @@ namespace kittens::prototype::vm
 
         using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>>;
         using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>>;
+        using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
+
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
@@ -89,6 +96,8 @@ namespace kittens::prototype::vm
         weights_t up_weights;
         weights_t gate_weights;
         weights_big_indim_t down_weights;
+        norm_weights_t lm_head_norm_weights;
+        weights_t lm_head_weights;
         // kv cache
         kv_cache_t k_cache;
         kv_cache_t v_cache;
@@ -104,6 +113,7 @@ namespace kittens::prototype::vm
         attn_lse_intermediates_t attn_lse_intermediates;
         attn_out_intermediates_t attn_out_intermediates;
         activations_big_indim_t silu_out;
+        logits_t logits;
 
         unsigned int pos_id;
         float attn_scale;
@@ -115,6 +125,7 @@ namespace kittens::prototype::vm
     };
 
     typedef globals_t<
+        LLAMA_1B_NUM_LAYERS,
         LLAMA_1B_HIDDEN_DIM,
         LLAMA_1B_INTERMEDIATE_DIM,
         LLAMA_1B_HEAD_DIM,
