@@ -13,12 +13,13 @@ namespace kittens::prototype::vm
         rv_t copy_activations_vec;
         rv_t rms_scale_vec;
 
-        // Step 1: Load hidden states into register
         wait(activations_arrived, 0);
-        if (warpid() == 0 && laneid() == 0)
-        {
-            s.record(TEVENT_TRIPLES_END + 7);
-        }
+
+        // TODO 
+        // if (warpid() == 0 && laneid() == 0)
+        // {
+        //     s.record(TEVENT_TRIPLES_END + 7);
+        // }
 
         constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
@@ -58,10 +59,12 @@ namespace kittens::prototype::vm
 
         // multiply by rms scale
         wait(rms_scale_arrived, 0);
-        if (warpid() == 0 && laneid() == 0)
-        {
-            s.record(TEVENT_TRIPLES_END);
-        }
+
+        // TODO
+        // if (warpid() == 0 && laneid() == 0)
+        // {
+        //     s.record(TEVENT_TRIPLES_END);
+        // }
 
         sv_slice_t(&rms_scale_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_slice_t(&)[Config::NUM_CONSUMER_WARPS]>(s.pages[rms_scale_page]);
         warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
@@ -96,7 +99,7 @@ namespace kittens::prototype::vm
         warp::load(weights, weights_smem[index_in_page]);
         warp::sync();
 
-        warp::arrive(s.page_finished[weight_pid], Config::NUM_CONSUMER_WARPS / WARPS_PER_PAGE); // called by each warp in the warpgroup
+        warp::arrive(s.page_finished[weight_pid], Config::NUM_CONSUMER_WARPS / WARPS_PER_PAGE);
 
         warp::broadcast_col(broadcast_activations, activations_vec);
         warp::mul(broadcast_activations, broadcast_activations, weights);
