@@ -273,14 +273,6 @@ namespace kittens::prototype::vm
 
                 if (warp::laneid() == 0)
                 {
-                    // if (blockIdx.x == 0)
-                    // {
-                    //     printf("logit store weight start: %p\n", logits_smem);
-                    // }
-                    // if (blockIdx.x == 0)
-                    // {
-                    //     printf("logit store weight end: %p\n", logits_smem);
-                    // }
                     s.record(TEVENT_OUTPUT_READY);
 
                     tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, inst.out_block_idx});
