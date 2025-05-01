@@ -12,16 +12,26 @@ using namespace kittens;
 using global_layout   =  gl<bf16, 1, 1, -1, -1>;
 // using pgl_m  =  pgl_manager<gl<bf16, 1, 1, -1, -1>, true>;
 using kittens_pgl = kittens::pgl<global_layout, 2, true>;
-using rt_tile = kittens::rt<bf16, 16, 16>;
+using rt_tile = kittens::rt<bf16, 16, 32>;
+using rv_vec = kittens::rv<bf16, 64>;
 using st_tile = kittens::st<bf16, 16, 32>;
 
 __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     /*
+    Warp level register vector example
+    */
+    // if (warpid() != 0) return;
+    // rv_vec vec;
+    // kittens::one(vec);
+    // kittens::broadcast(p_o, vec, dev_id, {0, 0});
+
+    /*
     Warp level register tile example
     */
-    // rt_tile tile;
-    // kittens::one(tile);
-    // kittens::atomic_add(p_o, tile, dev_id, {0, 1});
+    if (warpid() != 0) return;
+    rt_tile tile;
+    kittens::one(tile);
+    kittens::store(p_o[dev_id], tile, {0, 0});
 
     /*
     Group level register tile example
@@ -46,13 +56,13 @@ __global__ void all_reduce_int(kittens_pgl p_o, int dev_id) {
     /*
     Group level shared tile example
     */
-    using friends = kittens::group<2>;
-    extern __shared__ kittens::alignment_dummy __shm[];
-    kittens::shared_allocator al((int*)&__shm[0]);
-    st_tile (&s_tile)[2] = al.allocate<st_tile, 2>();
-    friends::one(s_tile[friends::groupid()]);
-    __syncthreads();
-    friends::atomic_add(p_o, s_tile[friends::groupid()], dev_id, {friends::groupid(), 0});
+    // using friends = kittens::group<2>;
+    // extern __shared__ kittens::alignment_dummy __shm[];
+    // kittens::shared_allocator al((int*)&__shm[0]);
+    // st_tile (&s_tile)[2] = al.allocate<st_tile, 2>();
+    // friends::one(s_tile[friends::groupid()]);
+    // __syncthreads();
+    // friends::atomic_add(p_o, s_tile[friends::groupid()], dev_id, {friends::groupid(), 0});
 }
 
 int main() {
@@ -140,6 +150,7 @@ int main() {
     printf("Device 1: \n");
     for (int i = 0; i < N; ++i) {
         if (i % 16 == 0 && i != 0) printf("\n");
+        if (i == 8) printf("\n\n");
         for (int j = 0; j < N; ++j) {
             if (j % 16 == 0 && j != 0) printf(" ");
             printf("%f ", host_mat_1_float[i * N + j]);
@@ -148,16 +159,16 @@ int main() {
     }   
     printf("\n\n");
 
-    printf("Device 2: \n");
-    for (int i = 0; i < N; ++i) {
-        if (i % 16 == 0 && i != 0) printf("\n");
-        for (int j = 0; j < N; ++j) {
-            if (j % 16 == 0 && j != 0) printf(" ");
-            printf("%f ", host_mat_2_float[i * N + j]);
-        }
-        printf("\n");
-    }
-    printf("\n\n");
+    // printf("Device 2: \n");
+    // for (int i = 0; i < N; ++i) {
+    //     if (i % 16 == 0 && i != 0) printf("\n");
+    //     for (int j = 0; j < N; ++j) {
+    //         if (j % 16 == 0 && j != 0) printf(" ");
+    //         printf("%f ", host_mat_2_float[i * N + j]);
+    //     }
+    //     printf("\n");
+    // }
+    // printf("\n\n");
 
     // Check correctness, should be all ones
     // for (int i = 0; i < nelem; ++i) {
