@@ -129,7 +129,7 @@ namespace kittens::prototype::vm
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
                     kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
                 }
-                else if (kittens::laneid() >= 5 && kittens::laneid() <= 12)
+                else if (kittens::laneid() >= PAGE_COUNT && kittens::laneid() < Config::NUM_PAGES)
                 {
                     int unused_page = s.pid(kittens::laneid());
                     s.wait_page_ready(unused_page);
@@ -181,12 +181,17 @@ namespace kittens::prototype::vm
 
                 warp::load(activations_vec, activations_smem[warpid()]);
                 warp::sync();
-                warp::arrive(s.page_finished[activation_page]);
 
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
+
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
+
+                for (int i = 0; i < NUM_WEIGHT_PAGES; i++) {
+                    warp::arrive(s.page_finished[get_weight_page(s, i)]);
+                }
+                warp::arrive(s.page_finished[activation_page]);
 
                 if (kittens::laneid() == 0)
                 {
