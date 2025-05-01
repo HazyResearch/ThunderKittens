@@ -6,8 +6,13 @@ namespace kittens::prototype::vm
 {
 
     template <typename Config, typename Globals, typename rv_t>
-    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int activation_page, int rms_scale_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
+    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
     {
+
+        constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+
+        sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[rms_scale_activation_page].ptr());
+        sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
 
         // Setup
         rv_t copy_activations_vec;
@@ -21,14 +26,8 @@ namespace kittens::prototype::vm
         //     s.record(TEVENT_TRIPLES_END + 7);
         // }
 
-        constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
-
-        using sv_slice_t = sv_bf<REDUCTION_DIM_PER_WARP>;
-        sv_slice_t(&activations_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_slice_t(&)[Config::NUM_CONSUMER_WARPS]>(s.pages[activation_page]);
-
         warp::load(activations_vec, activations_smem[warpid()]);
         warp::sync();
-        warp::arrive(s.page_finished[activation_page]);
 
         // Step 2: Apply RMS normalization
         warp::copy(copy_activations_vec, activations_vec);                           // cast to float
@@ -66,10 +65,8 @@ namespace kittens::prototype::vm
         //     s.record(TEVENT_TRIPLES_END);
         // }
 
-        sv_slice_t(&rms_scale_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_slice_t(&)[Config::NUM_CONSUMER_WARPS]>(s.pages[rms_scale_page]);
         warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
         warp::sync();
-        warp::arrive(s.page_finished[rms_scale_page]);
 
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
     }
@@ -98,8 +95,6 @@ namespace kittens::prototype::vm
         st_slice_t(&weights_smem)[WARPS_PER_PAGE] = reinterpret_cast<st_slice_t(&)[WARPS_PER_PAGE]>(s.pages[weight_pid]);
         warp::load(weights, weights_smem[index_in_page]);
         warp::sync();
-
-        warp::arrive(s.page_finished[weight_pid], Config::NUM_CONSUMER_WARPS / WARPS_PER_PAGE);
 
         warp::broadcast_col(broadcast_activations, activations_vec);
         warp::mul(broadcast_activations, broadcast_activations, weights);

@@ -53,6 +53,8 @@ template<typename config> struct page {
             return *reinterpret_cast<st_fl<64, 64>*>(data);
         }
     }
+    __device__ inline void       *ptr(int byte_offset=0)       { return       (void*)(data + byte_offset / sizeof(int)); }
+    __device__ inline const void *ptr(int byte_offset=0) const { return (const void*)(data + byte_offset / sizeof(int)); }
 };
 template<typename config> struct mini_page {
     int data[config::MINI_PAGE_SIZE / sizeof(int)];
