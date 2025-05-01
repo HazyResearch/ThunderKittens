@@ -296,11 +296,11 @@ namespace kittens::prototype::vm
                         }
                         
                         int cur_page_idx = inst.kv_indices[i];
-                        // TODO: Need to fix indexing based on k_cache and v_cache shape
+                        // TODO: Need to ensure right indexing based on k_cache and v_cache shape
                         tma::expect(K_arrived(s, stage), K_smem);
-                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {inst.layer_idx, cur_page_idx, inst.kv_head_idx, 0}, K_arrived(s, stage));
+                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {cur_page_idx, 0, inst.kv_head_idx, 0}, K_arrived(s, stage));
                         tma::expect(V_arrived(s, stage), V_smem);
-                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, cur_page_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
+                        tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {cur_page_idx, 0, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
                 }
                 else if (laneid >= 2 && laneid < config::NUM_PAGES)
