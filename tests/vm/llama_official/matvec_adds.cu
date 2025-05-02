@@ -133,7 +133,7 @@ namespace kittens::prototype::vm
                 {
                     int unused_page = s.pid(kittens::laneid());
                     s.wait_page_ready(unused_page);
-                    kittens::arrive(s.page_finished[unused_page], Config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+                    s.finish_page(unused_page, Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -181,8 +181,7 @@ namespace kittens::prototype::vm
 
                 warp::load(activations_vec, activations_smem[warpid()]);
                 warp::sync();
-                warp::arrive(s.page_finished[activation_page]);
-
+                s.warp_finish_page(activation_page, 1);
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();

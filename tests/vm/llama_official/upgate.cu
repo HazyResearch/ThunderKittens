@@ -159,7 +159,7 @@ namespace kittens::prototype::vm
                 {
                     int pg = s.pid(laneid());
                     s.wait_page_ready(pg);
-                    arrive(s.page_finished[pg], Config::NUM_CONSUMER_WARPS);
+                    s.finish_page(pg, Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();

@@ -28,8 +28,8 @@ namespace kittens::prototype::vm
 
         warp::load(activations_vec, activations_smem[warpid()]);
         warp::sync();
-        warp::arrive(s.page_finished[activation_page]);
-
+        s.warp_finish_page(activation_page, 1);
+        
         // Step 2: Apply RMS normalization
         warp::copy(copy_activations_vec, activations_vec);                           // cast to float
         warp::mul(copy_activations_vec, copy_activations_vec, copy_activations_vec); // square
@@ -69,7 +69,7 @@ namespace kittens::prototype::vm
         sv_slice_t(&rms_scale_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_slice_t(&)[Config::NUM_CONSUMER_WARPS]>(s.pages[rms_scale_page]);
         warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
         warp::sync();
-        warp::arrive(s.page_finished[rms_scale_page]);
+        s.warp_finish_page(rms_scale_page, 1);
 
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
     }
@@ -99,7 +99,7 @@ namespace kittens::prototype::vm
         warp::load(weights, weights_smem[index_in_page]);
         warp::sync();
 
-        warp::arrive(s.page_finished[weight_pid], Config::NUM_CONSUMER_WARPS / WARPS_PER_PAGE);
+        s.warp_finish_page(weight_pid, Config::NUM_CONSUMER_WARPS / WARPS_PER_PAGE);
 
         warp::broadcast_col(broadcast_activations, activations_vec);
         warp::mul(broadcast_activations, broadcast_activations, weights);

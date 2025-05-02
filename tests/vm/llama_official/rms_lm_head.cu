@@ -118,8 +118,9 @@ namespace kittens::prototype::vm
                 else if (laneid() >= PAGE_COUNT && laneid() < Config::NUM_PAGES)
                 {
                     // Unused pages
-                    s.wait_page_ready(s.pid(laneid()));
-                    arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
+                    auto pid = s.pid(laneid());
+                    s.wait_page_ready(pid);
+                    s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -133,11 +134,8 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.wait_tensor_ready();
-                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
-                }
+                s.wait_tensor_ready();
+                warp::arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
             }
         };
         struct consumer

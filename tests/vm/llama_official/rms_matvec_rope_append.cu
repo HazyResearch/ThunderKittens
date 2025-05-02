@@ -132,6 +132,7 @@ namespace kittens::prototype::vm
                     // Activation
                     auto act_page_id = get_activation_page(s);
                     s.wait_page_ready(act_page_id);
+
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
                         __nanosleep(20);
@@ -145,8 +146,9 @@ namespace kittens::prototype::vm
                 else if (laneid() >= 8 && laneid() <= 12)
                 {
                     // Unused pages
-                    s.wait_page_ready(s.pid(laneid()));
-                    arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
+                    auto pid = s.pid(laneid());
+                    s.wait_page_ready(pid);
+                    s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -189,11 +191,9 @@ namespace kittens::prototype::vm
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-
                 rms_norm(g, s, activations_vec, get_activation_page(s), get_rms_scale_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
-
 
                 group<Config::NUM_CONSUMER_WARPS>::sync(1); // must wait for all warps to finish atomic add
 
@@ -222,7 +222,8 @@ namespace kittens::prototype::vm
                             s.record(TEVENT_CONSUMER_START + 48);
                         }
                         warp::load(rope_cos, rope_cos_smem);
-                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(rope_cos_page, Config::NUM_CONSUMER_WARPS);
 
                         sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
@@ -232,7 +233,7 @@ namespace kittens::prototype::vm
                             s.record(TEVENT_CONSUMER_START + 49);
                         }
                         warp::load(rope_sin, rope_sin_smem);
-                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(rope_sin_page, Config::NUM_CONSUMER_WARPS);
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -241,16 +242,18 @@ namespace kittens::prototype::vm
 
                         // Compute RoPE in-place
                         if (laneid() < 16)
+                        {
                             // will clean this up later
                             qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
+                        }
                     }
                     else
                     {
                         wait(rope_cos_arrived(s), 0);
-                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(rope_cos_page, Config::NUM_CONSUMER_WARPS);
 
                         wait(rope_sin_arrived(s), 0);
-                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(rope_sin_page, Config::NUM_CONSUMER_WARPS);
                     }
 
                     // Store back to the scratch

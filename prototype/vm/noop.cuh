@@ -35,8 +35,9 @@ namespace kittens
                     {
                         if (laneid() < config::NUM_PAGES)
                         { // Release all pages, ASAP.
-                            s.wait_page_ready(s.pid(laneid()));
-                            arrive(s.page_finished[s.pid(laneid())], config::NUM_CONSUMER_WARPS); // Release the unused pages immediately.
+                            auto pid = s.pid(laneid());
+                            s.wait_page_ready(pid);
+                            s.finish_page(pid, config::NUM_CONSUMER_WARPS);
                         }
                     }
                 };

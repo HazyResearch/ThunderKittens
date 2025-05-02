@@ -103,7 +103,7 @@ namespace kittens::prototype::vm
         {
             if (warp::laneid() == 0)
             {
-                arrive(s.page_finished[s.pid(SHARED_DATA_PAGE)], Config::NUM_CONSUMER_WARPS);
+                s.finish_page(s.pid(SHARED_DATA_PAGE), Config::NUM_CONSUMER_WARPS);
             }
         }
 
@@ -181,7 +181,7 @@ namespace kittens::prototype::vm
                 else if (laneid < Config::NUM_PAGES)
                 {
                     s.wait_page_ready(s.pid(laneid));
-                    arrive(s.page_finished[s.pid(laneid)], Config::NUM_CONSUMER_WARPS);
+                    s.finish_page(s.pid(laneid), Config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync(); // Have to make sure lane 0 finished waiting
 
