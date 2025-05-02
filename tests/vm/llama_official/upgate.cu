@@ -103,8 +103,8 @@ namespace kittens::prototype::vm
                 {
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
-                    auto &rms_scale   = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr());
-                    auto &activations = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
+
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
@@ -135,16 +135,6 @@ namespace kittens::prototype::vm
                                         {0, inst.layer, inst.output_block_idx, idx},
                                         gate_arrived(s, idx));
                     }
-
-                    // activations last, since there's a data dependency
-                    // wait on barrier from previous op
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        __nanosleep(20);
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-                    s.record(TEVENT_TRIPLES_START + 9);
-                    tma::expect(in_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
                 }
 
                 // 5) UNUSED pages: release them immediately so consumer warps can retire
@@ -169,9 +159,27 @@ namespace kittens::prototype::vm
             // launcher does nothing here, since this doesn't use tensor cores.
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                s.wait_tensor_ready();
                 if (laneid() == 0)
+                {
+                    s.wait_tensor_ready();
                     arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                    parsed_instruction inst{s};
+
+                    int rms_scale_activation_page = get_rms_scale_activation_page(s);
+                    s.wait_page_ready(rms_scale_activation_page);
+                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+
+                    // activations last, since there's a data dependency
+                    // wait on barrier from previous op
+                    s.record(TEVENT_AT_GMEM_WAIT);
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                        __nanosleep(20);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+                    s.record(TEVENT_TRIPLES_START + 9);
+                    tma::expect(in_arrived(s), activations);
+                    tma::load_async(activations, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
+                }
             }
         };
 
@@ -204,16 +212,17 @@ namespace kittens::prototype::vm
 
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
 
-
                 // gate matvec
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, gate_arrived(s, page_index), get_gate_page(s, page_index), 16);
 
                 // Release pages
                 warp::sync();
-                for (int i = 0; i < NUM_UP_PAGES; i++) {
+                for (int i = 0; i < NUM_UP_PAGES; i++)
+                {
                     s.warp_finish_page(get_up_page(s, i), 1);
                 }
-                for (int i = 0; i < NUM_GATE_PAGES; i++) {
+                for (int i = 0; i < NUM_GATE_PAGES; i++)
+                {
                     s.warp_finish_page(get_gate_page(s, i), 1);
                 }
 

@@ -85,7 +85,7 @@ namespace kittens::prototype::vm
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
                     auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
-                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.lm_head_norm_weights, {}, rms_scale_arrived(s));
@@ -100,14 +100,6 @@ namespace kittens::prototype::vm
                         tma::expect(weights_arrived(s, i), weight_chunk);
                         tma::load_async(weight_chunk, g.lm_head_weights, {inst.out_block_idx, i}, weights_arrived(s, i));
                     }
-
-                    // Activation
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        __nanosleep(20);
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-                    tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
 
                 else if (laneid() >= PAGE_COUNT && laneid() < Config::NUM_PAGES)
@@ -129,8 +121,26 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                s.wait_tensor_ready();
-                warp::arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                if (laneid() == 0)
+                {
+                    s.wait_tensor_ready();
+                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                    parsed_instruction inst{s};
+
+                    int rms_scale_activation_page = get_rms_scale_activation_page(s);
+                    s.wait_page_ready(rms_scale_activation_page);
+                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+
+                    // Activation
+                    s.record(TEVENT_AT_GMEM_WAIT);
+                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                        __nanosleep(20);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+                    tma::expect(activations_arrived(s), activations);
+                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
+                }
             }
         };
         struct consumer

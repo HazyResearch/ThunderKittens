@@ -95,9 +95,8 @@ namespace kittens::prototype::vm
                     // RMS scale
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
-                    
-                    auto &rms_scale = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr());
-                    auto &activations = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+
+                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
@@ -129,15 +128,6 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_TRIPLES_START + 6);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
-
-                    // Activation
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
-                        __nanosleep(20);
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-                    s.record(TEVENT_TRIPLES_START + 7);
-                    tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
 
                 else if (laneid() >= PAGE_COUNT && laneid() < Config::NUM_PAGES)
@@ -163,6 +153,21 @@ namespace kittens::prototype::vm
                 {
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                    parsed_instruction inst{s};
+
+                    // Activation
+                    int rms_scale_activation_page = get_rms_scale_activation_page(s);
+                    s.wait_page_ready(rms_scale_activation_page);
+                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+
+                    s.record(TEVENT_AT_GMEM_WAIT);
+                    while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
+                        __nanosleep(20);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+                    s.record(TEVENT_TRIPLES_START + 7);
+                    tma::expect(activations_arrived(s), activations);
+                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
                 }
             }
         };
@@ -188,7 +193,6 @@ namespace kittens::prototype::vm
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-
                 rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
                 // release the activation page
@@ -199,7 +203,8 @@ namespace kittens::prototype::vm
                 group<Config::NUM_CONSUMER_WARPS>::sync(1); // must wait for all warps to finish atomic add
 
                 // release pages
-                for(int i = 0; i < NUM_WEIGHT_PAGES; i++) {
+                for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
+                {
                     s.warp_finish_page(get_weight_page(s, i), 1);
                 }
 

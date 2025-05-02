@@ -113,21 +113,6 @@ namespace kittens::prototype::vm
                         // auto& weights_global = g.*WeightsPtr;      // object in global memory
                         // kittens::tma::load_async(weight_chunk, weights_global, coord<>{inst.layer, inst.start_output_col, inst.start_reduction_col + 512 * laneid()}, inputs_arrived(s, laneid()));
                     }
-
-                    int activation_page = get_activation_page(s);
-                    s.wait_page_ready(activation_page);
-
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        __nanosleep(20);
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-
-                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
-                    s.record(TEVENT_TRIPLES_START + 4);
-                    kittens::tma::expect(activations_arrived(s), activations);
-
-                    auto &InputActivations = g.*InputActivationsPtr; // object in global memory
-                    kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
                 }
                 else if (kittens::laneid() >= PAGE_COUNT && kittens::laneid() < Config::NUM_PAGES)
                 {
@@ -148,8 +133,28 @@ namespace kittens::prototype::vm
             // launcher does nothing here, since this doesn't use tensor cores.
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                s.wait_tensor_ready();
-                kittens::warp::arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+                if (laneid() == 0)
+                {
+                    parsed_instruction inst{s};
+
+                    s.wait_tensor_ready();
+                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                    int activation_page = get_activation_page(s);
+                    s.wait_page_ready(activation_page);
+
+                    s.record(TEVENT_AT_GMEM_WAIT);
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                        __nanosleep(20);
+                    s.record(TEVENT_DONE_GMEM_WAIT);
+
+                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
+                    s.record(TEVENT_TRIPLES_START + 4);
+                    kittens::tma::expect(activations_arrived(s), activations);
+
+                    auto &InputActivations = g.*InputActivationsPtr; // object in global memory
+                    kittens::tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, activations_arrived(s));
+                }
             }
         };
         struct consumer

@@ -9,14 +9,13 @@ namespace kittens::prototype::vm
     using globals = llama_1b_globals;
 
     constexpr int Q_HEADS_PER_INSTRUCTION = 4;
-    constexpr int MAX_ATTN_PARTIALS = globals::sm_count;   
+    constexpr int MAX_ATTN_PARTIALS = globals::sm_count;
     constexpr int ROUNDED_MAX_ATTN_PARTIALS = ((MAX_ATTN_PARTIALS + 15) / 16) * 16;
 
     using l_partial_sv = sv_fl<ROUNDED_MAX_ATTN_PARTIALS>;
     using o_sv = sv_fl<globals::head_dim>;
     using o_rv = rv_fl<globals::head_dim>;
     using o_final_sv = sv_bf<globals::head_dim>;
-
 
     template <typename Config, typename Globals>
     struct attention_reduction
@@ -42,11 +41,11 @@ namespace kittens::prototype::vm
                 num_partials = s.instruction()[3];
                 is_terminal = s.instruction()[4]; // not used
                 reduction_list_length = s.instruction()[5];
-                
-                #pragma unroll
-                for (int k = 0; k < MAX_ATTN_PARTIALS; ++k) 
+
+#pragma unroll
+                for (int k = 0; k < MAX_ATTN_PARTIALS; ++k)
                 {
-                    if (k < reduction_list_length) 
+                    if (k < reduction_list_length)
                     {
                         reduction_list[k] = s.instruction()[6 + k];
                     }
@@ -187,6 +186,24 @@ namespace kittens::prototype::vm
 
                 if (laneid == 0)
                 {
+                }
+                warp::sync();
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
+                }
+            }
+        };
+
+        struct launcher
+        {
+            static __device__ void run(const Globals &g, state<Config> &s)
+            {
+                if (warp::laneid() == 0)
+                {
+                    s.wait_tensor_ready();
+                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
                     parsed_instruction inst{s};
 
                     s.record(TEVENT_AT_GMEM_WAIT);
@@ -223,28 +240,11 @@ namespace kittens::prototype::vm
 
                             tma::expect(O_partial_arrived(s, j, stage), O_smem);
                             tma::load_async<cache_policy::EVICT_FIRST>(
-                                O_smem, g.attn_out_intermediates, 
-                                {0, inst.q_head_start_idx + j, cur_partial_idx, 0}, 
+                                O_smem, g.attn_out_intermediates,
+                                {0, inst.q_head_start_idx + j, cur_partial_idx, 0},
                                 O_partial_arrived(s, j, stage));
                         }
                     }
-                }
-                warp::sync();
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
-            }
-        };
-
-        struct launcher
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
-                if (warp::laneid() == 0)
-                {
-                    s.wait_tensor_ready();
-                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
                 }
             }
         };

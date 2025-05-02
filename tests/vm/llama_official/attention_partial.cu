@@ -293,6 +293,30 @@ namespace kittens::prototype::vm
                 auto laneid = warp::laneid();
                 if (laneid == 0)
                 {
+                }
+                else if (laneid >= 2 && laneid < config::NUM_PAGES)
+                {
+                    int unused_page = s.pid(laneid);
+                    s.wait_page_ready(unused_page);
+                    s.finish_page(unused_page, config::NUM_CONSUMER_WARPS);
+                }
+
+                warp::sync();
+                if (laneid == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
+                }
+            }
+        };
+        struct launcher
+        {
+            static __device__ void run(const globals &g, state<config> &s)
+            {
+                if (warp::laneid() == 0)
+                {
+                    s.wait_tensor_ready();
+                    arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
+
                     // Setup
                     parsed_instruction inst{s};
                     int seq_len = g.pos_id + 1;
@@ -336,29 +360,6 @@ namespace kittens::prototype::vm
                         tma::expect(V_arrived(s, stage), V_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {inst.layer_idx, i + start_blk_idx, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
-                }
-                else if (laneid >= 2 && laneid < config::NUM_PAGES)
-                {
-                    int unused_page = s.pid(laneid);
-                    s.wait_page_ready(unused_page);
-                    s.finish_page(unused_page, config::NUM_CONSUMER_WARPS);
-                }
-
-                warp::sync();
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
-            }
-        };
-        struct launcher
-        {
-            static __device__ void run(const globals &g, state<config> &s)
-            {
-                if (warp::laneid() == 0)
-                {
-                    s.wait_tensor_ready();
-                    arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
                 }
             }
         };
