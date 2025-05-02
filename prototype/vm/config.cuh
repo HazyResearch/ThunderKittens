@@ -15,6 +15,10 @@ namespace kittens
             {
                 // Instruction pipeline
                 static constexpr int INSTRUCTION_PIPELINE_STAGES = 4;
+
+                // num bits required to represent num pipeline stages
+                static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 2;
+
                 static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
                 using instruction_t = int[INSTRUCTION_WIDTH];
 

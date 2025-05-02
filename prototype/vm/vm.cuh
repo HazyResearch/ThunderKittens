@@ -29,7 +29,7 @@ namespace kittens
                 group<config::NUM_WARPS>::sync(15);
 #endif
                 __shared__ alignas(128) instruction_state_t<config> instruction_state[config::INSTRUCTION_PIPELINE_STAGES];
-                __shared__ kittens::semaphore page_finished[config::NUM_PAGES],
+                __shared__ kittens::semaphore page_finished[config::NUM_PAGES][config::INSTRUCTION_PIPELINE_STAGES_BITS],
                     instruction_arrived[config::INSTRUCTION_PIPELINE_STAGES],
                     instruction_finished[config::INSTRUCTION_PIPELINE_STAGES],
                     tensor_finished,
@@ -81,8 +81,11 @@ namespace kittens
                 }
                 if (threadIdx.x < config::NUM_PAGES)
                 {
-                    init_semaphore(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS);
-                    arrive(page_finished[threadIdx.x], config::NUM_CONSUMER_WARPS); // Flip to state 0, to mark that it starts as available.
+                    for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++)
+                    {
+                        init_semaphore(page_finished[threadIdx.x][i], config::NUM_CONSUMER_WARPS);
+                        arrive(page_finished[threadIdx.x][i], config::NUM_CONSUMER_WARPS);
+                    }
                 }
                 if (threadIdx.x == 0)
                 {

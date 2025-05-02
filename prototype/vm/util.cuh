@@ -115,14 +115,37 @@ template<typename config> struct state {
     using page_array_t = page<config>[config::NUM_PAGES];
     page_array_t &pages;
 
-    using page_semaphore_array_t = kittens::semaphore[config::NUM_PAGES];
+    using page_semaphore_array_t = kittens::semaphore[config::NUM_PAGES][config::INSTRUCTION_PIPELINE_STAGES_BITS];
     page_semaphore_array_t &page_finished;
 
     __device__ inline int pid(int lid) {
         return reg_pid_order[lid];
     }
     __device__ inline void wait_page_ready(int pid) {
-        wait(page_finished[pid], instruction_index%2);
+        #pragma unroll
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
+            auto bit = (instruction_index >> i) & 1;
+            wait(page_finished[pid][i], bit);
+        }
+    }
+
+    __device__ inline void finish_page(int pid, int count) {
+        auto next_instruction_index = instruction_index + 1;
+
+        #pragma unroll
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
+            // auto should_flip = (next_instruction_index % (1 << i)) == 0;
+            bool should_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
+            if (should_flip) {
+                arrive(page_finished[pid][i], count);
+            }
+        }
+    }
+
+    __device__ inline void warp_finish_page(int pid, int count) {
+        if (warp::laneid() == 0) {
+            finish_page(pid, count);
+        }
     }
 
     semaphore &tensor_finished;
