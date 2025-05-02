@@ -1,9 +1,9 @@
 #include "llama.cuh"
 
+#include "rms_matvec_rope_append.cu"
 #include "attention_partial.cu"
 #include "attention_reduction.cu"
 #include "matvec_adds.cu"
-#include "rms_matvec_rope_append.cu"
 #include "upgate.cu"
 #include "rms_lm_head.cu"
 
@@ -13,12 +13,12 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
+using rms_qkv_rope_append_op = rms_qkv_rope_append<default_config, llama_1b_globals>;
 using attention_partial_op = attention_partial<default_config, llama_1b_globals>;
 using attention_reduction_op = attention_reduction<default_config, llama_1b_globals>;
-using rms_qkv_rope_append_op = rms_qkv_rope_append<default_config, llama_1b_globals>;
-using downproj_op = downproj<default_config, llama_1b_globals>;
 using o_proj_op = o_proj<default_config, llama_1b_globals>;
 using rms_upgate_silu_op = rms_upgate_silu<default_config, llama_1b_globals>;
+using downproj_op = downproj<default_config, llama_1b_globals>;
 using rms_lm_head_op = rms_lm_head<default_config, llama_1b_globals>;
 
 PYBIND11_MODULE(kvm_llama, m)
