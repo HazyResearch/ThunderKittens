@@ -181,18 +181,18 @@ namespace kittens::prototype::vm
 
                 warp::load(activations_vec, activations_smem[warpid()]);
                 warp::sync();
-                
+
                 s.warp_finish_page(activation_page, 1);
-                
+
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, inputs_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
 
-                for (int i = 0; i < NUM_WEIGHT_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_weight_page(s, i)]);
+                for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
+                {
+                    s.warp_finish_page(get_weight_page(s, i), 1);
                 }
-                warp::arrive(s.page_finished[activation_page]);
 
                 if (kittens::laneid() == 0)
                 {

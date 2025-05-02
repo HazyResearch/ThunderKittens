@@ -84,8 +84,8 @@ namespace kittens::prototype::vm
                     // RMS scale
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
-                    auto &rms_scale = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr());
-                    auto &activations = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
+                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.lm_head_norm_weights, {}, rms_scale_arrived(s));
@@ -156,17 +156,19 @@ namespace kittens::prototype::vm
 
                 rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
+                // release the activation page
+                s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
 
                 // Release pages.
-                for(int i = 0; i < NUM_WEIGHT_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_weight_page(s, i)]);
+                for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
+                {
+                    s.warp_finish_page(get_weight_page(s, i), 1);
                 }
-                // release the activation page
-                warp::arrive(s.page_finished[get_rms_scale_activation_page(s)]);
 
                 if (laneid() == 0)
                 {

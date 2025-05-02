@@ -95,6 +95,7 @@ namespace kittens::prototype::vm
                     // RMS scale
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
+                    
                     auto &rms_scale = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr());
                     auto &activations = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
                     s.record(TEVENT_TRIPLES_START);
@@ -130,12 +131,6 @@ namespace kittens::prototype::vm
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
 
                     // Activation
-<<<<<<< HEAD
-                    auto act_page_id = get_activation_page(s);
-                    s.wait_page_ready(act_page_id);
-
-=======
->>>>>>> 7f4b79c660f1113f06e5e9a90a03406cf2cacc55
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
                         __nanosleep(20);
@@ -196,16 +191,17 @@ namespace kittens::prototype::vm
 
                 rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
+                // release the activation page
+                s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 group<Config::NUM_CONSUMER_WARPS>::sync(1); // must wait for all warps to finish atomic add
 
                 // release pages
                 for(int i = 0; i < NUM_WEIGHT_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_weight_page(s, i)]);
+                    s.warp_finish_page(get_weight_page(s, i), 1);
                 }
-                // release the activation page
-                warp::arrive(s.page_finished[get_rms_scale_activation_page(s)]);
 
                 // Step 5: Apply RoPE
                 if (warpid() == 0)

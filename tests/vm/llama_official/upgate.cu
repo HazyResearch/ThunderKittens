@@ -202,18 +202,20 @@ namespace kittens::prototype::vm
                 // up matvec
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);
 
+                s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+
+
                 // gate matvec
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, gate_arrived(s, page_index), get_gate_page(s, page_index), 16);
 
                 // Release pages
                 warp::sync();
                 for (int i = 0; i < NUM_UP_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_up_page(s, i)]);
+                    s.warp_finish_page(get_up_page(s, i), 1);
                 }
                 for (int i = 0; i < NUM_GATE_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_gate_page(s, i)]);
+                    s.warp_finish_page(get_gate_page(s, i), 1);
                 }
-                warp::arrive(s.page_finished[get_rms_scale_activation_page(s)]);
 
                 using block_rt = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using block_rv = rv_fl<16>;
