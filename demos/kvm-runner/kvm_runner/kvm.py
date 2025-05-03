@@ -50,6 +50,7 @@ def interpret_with_kvm(
         globs.pos_id,
         globs.attn_scale,
         globs.rms_norm_eps,
+        globs.skip_attn_reduction,
         stream=torch.cuda.current_stream(),
     )
 
