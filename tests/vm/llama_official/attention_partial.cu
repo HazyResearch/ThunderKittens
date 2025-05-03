@@ -285,26 +285,12 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
-
                 auto laneid = warp::laneid();
-                if (laneid == 0)
-                {
-                }
-                else if (laneid >= 2 && laneid < config::NUM_PAGES)
+                if (laneid >= 2 && laneid < config::NUM_PAGES)
                 {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
                     s.finish_page(unused_page, config::NUM_CONSUMER_WARPS);
-                }
-
-                warp::sync();
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
                 }
             }
         };
@@ -368,11 +354,6 @@ namespace kittens::prototype::vm
             static __device__ void run(const globals &g, state<config> &s)
             {
 
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
-
                 if (warpid() == 0)
                 {
                     // Wait for the previous ops to finish1
@@ -422,11 +403,6 @@ namespace kittens::prototype::vm
 
                     // Wait for Q to arrive
                     warp::load_async_wait();
-
-                    if (laneid() == 0)
-                    {
-                        s.record(TEVENT_CONSUMER_START + 16);
-                    }
 
                     warp::load(Q_reg, Q_smem);
 
@@ -487,8 +463,7 @@ namespace kittens::prototype::vm
 
                     // Finish
                     warp::sync();
-                    if (laneid() == 0)
-                        s.record(TEVENT_CONSUMER_START + 64);
+
                     if (start_blk_idx < end_blk_idx)
                     {
                         finish_KV_page(s);
@@ -506,19 +481,11 @@ namespace kittens::prototype::vm
                     // Store the results
                     store_4_rows(O_smem, O_reg, q_head_local_idx);
                     warp::sync();
-                    if (laneid() == 0)
-                    {
-                        s.record(TEVENT_CONSUMER_START + 65);
-                    }
+
                     warp::arrive(O_arrived(s));
                     warp::store(L_smem, L_reg);
                     warp::sync();
                     warp::arrive(L_arrived(s));
-                }
-
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END + warpid());
                 }
             }
         };
@@ -526,11 +493,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_STORE_START);
-                }
-
                 parsed_instruction inst{s};
                 int laneid = warp::laneid();
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
@@ -574,11 +536,6 @@ namespace kittens::prototype::vm
                     finish_QOL_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
                     atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
-                }
-                warp::sync();
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_STORE_END);
                 }
             }
         };

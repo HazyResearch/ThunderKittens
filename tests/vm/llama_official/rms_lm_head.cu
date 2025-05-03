@@ -109,12 +109,6 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(pid);
                     s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
                 }
-
-                warp::sync();
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
             }
         };
         struct launcher
@@ -147,10 +141,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
 
                 using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using float_rv_t = rv_fl<16>;
@@ -190,11 +180,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_START);
-                }
-
                 parsed_instruction inst{s};
 
                 sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
@@ -214,12 +199,6 @@ namespace kittens::prototype::vm
                     tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, inst.out_block_idx});
 
                     tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                }
-
-                warp::sync();
-                if (laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
                 }
             }
         };

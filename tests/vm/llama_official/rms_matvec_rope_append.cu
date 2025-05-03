@@ -80,10 +80,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 ((uint64_t *)s.scratch())[laneid()] = 0;
@@ -137,12 +133,6 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(pid);
                     s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
                 }
-
-                warp::sync();
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
             }
         };
         struct launcher
@@ -175,11 +165,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
-
                 // Setup
                 using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using float_rv_t = rv_fl<16>;
@@ -272,10 +257,6 @@ namespace kittens::prototype::vm
                     warp::sync();
 
                     warp::arrive(outputs_arrived(s));
-                    if (kittens::group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
-                    {
-                        s.record(TEVENT_CONSUMER_END);
-                    }
                 }
             }
         };
@@ -323,12 +304,9 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0)
+                if (warp::laneid() == 0) {
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
-
-                warp::sync();
-                if (laneid() == 0)
-                    s.record(TEVENT_STORE_END);
+                }
             }
         };
     };

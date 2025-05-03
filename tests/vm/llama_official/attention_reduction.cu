@@ -166,11 +166,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
-
                 auto laneid = warp::laneid();
 
                 if (laneid == 0)
@@ -183,15 +178,6 @@ namespace kittens::prototype::vm
                     s.finish_page(s.pid(laneid), Config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync(); // Have to make sure lane 0 finished waiting
-
-                if (laneid == 0)
-                {
-                }
-                warp::sync();
-                if (laneid == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
             }
         };
 
@@ -254,10 +240,6 @@ namespace kittens::prototype::vm
             static __device__ void run(const Globals &g, state<Config> &s)
             {
 
-                if (laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
                 if (warpid() < Q_HEADS_PER_INSTRUCTION)
                 {
 
@@ -319,11 +301,6 @@ namespace kittens::prototype::vm
 
                     warp::arrive(final_O_ready(s, q_head_local_idx));
                 }
-
-                if (laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END + warpid());
-                }
             }
         };
 
@@ -332,10 +309,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_START);
-                }
                 parsed_instruction inst{s};
                 if (warp::laneid() < Q_HEADS_PER_INSTRUCTION)
                 {
@@ -363,13 +336,6 @@ namespace kittens::prototype::vm
                 {
                     // simple signalling strat for now
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], Q_HEADS_PER_INSTRUCTION);
-                }
-
-                warp::sync();
-
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
                 }
             }
         };

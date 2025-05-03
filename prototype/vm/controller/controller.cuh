@@ -8,12 +8,6 @@
 #include "semaphore_constructor.cuh"
 #include "page_allocator.cuh"
 
-#define TEVENT_CONTROLLER_START 0
-#define TEVENT_IFETCH_DONE 1
-#define TEVENT_PAGE_ALLOC_DONE 2
-#define TEVENT_SEMS_SETUP 3
-#define TEVENT_CONTROLLER_END 15
-
 namespace kittens
 {
     namespace prototype

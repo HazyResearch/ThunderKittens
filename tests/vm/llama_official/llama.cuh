@@ -2,6 +2,7 @@
 
 #include "kittens.cuh"
 #include "vm/vm.cuh"
+#include "vm/util.cuh"
 #include <iostream>
 
 #define OPCODE_RMS_QKV_MatVecRopeAppend 1
@@ -24,27 +25,10 @@
 #define LLAMA_1B_VOCAB_SIZE 128256
 #define SM_COUNT 148
 
-// timing event convention
-
-#define TEVENT_LOADER_START 16
-#define TEVENT_AT_GMEM_WAIT 17
-#define TEVENT_DONE_GMEM_WAIT 18
-#define TEVENT_LOADER_END 19
-
-#define TEVENT_CONSUMER_START 24
-#define TEVENT_CONSUMER_END 88
-
-#define TEVENT_STORE_START 104
-#define TEVENT_OUTPUT_READY 110
-#define TEVENT_STORE_END 126
-
-#define TEVENT_TRIPLES_START 100
-#define TEVENT_TRIPLES_END 110
-#define TEVENT_TRIPLES_STORE_START 124
-#define TEVENT_TRIPLES_OUTPUT_READY 125
-
 namespace kittens::prototype::vm
 {
+
+    constexpr int ATOMIC_ADD_START = FREE_SLOTS_START;
 
     using config = default_config;
 

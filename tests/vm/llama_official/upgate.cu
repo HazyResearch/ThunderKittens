@@ -88,11 +88,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
-
                 parsed_instruction inst{s};
 
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
@@ -145,12 +140,6 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(pg);
                     s.finish_page(pg, Config::NUM_CONSUMER_WARPS);
                 }
-
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
             }
         };
 
@@ -187,11 +176,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
-
                 // Setup
                 using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using float_rv_t = rv_fl<16>;
@@ -231,11 +215,6 @@ namespace kittens::prototype::vm
 
                 warp::sync();                 // all adds have landed
                 warp::arrive(out_arrived(s)); // let the storer know we’re done
-
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END + warpid());
-                }
             }
         };
 
@@ -280,12 +259,6 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
-                }
-
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
                 }
             }
         };

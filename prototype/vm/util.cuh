@@ -177,6 +177,31 @@ template<typename config> struct state {
     }
 };
 
+
+// timing event convention
+constexpr int TEVENT_CONTROLLER_START = 0;
+constexpr int TEVENT_IFETCH_DONE = 1;
+constexpr int TEVENT_PAGE_ALLOC_DONE = 2;
+constexpr int TEVENT_SEMS_SETUP = 3;
+constexpr int TEVENT_CONTROLLER_END = 4;
+constexpr int TEVENT_LOADER_START = 5;
+constexpr int TEVENT_LAUNCHER_START = 7;
+constexpr int TEVENT_STORER_START = 9;
+// need NUM_CONSUMER_WARPS * 2 slots here
+constexpr int TEVENT_CONSUMER_START = 11;
+
+constexpr int TEVENT_AT_GMEM_WAIT = 44;
+constexpr int TEVENT_DONE_GMEM_WAIT = 45;
+
+constexpr int TEVENT_OUTPUT_READY = 46;
+
+constexpr int FREE_SLOTS_START = 47;
+
+constexpr int TEVENT_TRIPLES_START = 100;
+constexpr int TEVENT_TRIPLES_END = 110;
+constexpr int TEVENT_TRIPLES_STORE_START = 124;
+constexpr int TEVENT_TRIPLES_OUTPUT_READY = 125;
+
 } // namespace vm
 } // namespace prototype
 } // namespace kittens
@@ -190,7 +215,7 @@ template<typename config> struct state {
 #endif
 
 
-#define MAKE_WORKER(name) \
+#define MAKE_WORKER(name, start_event, is_consumer) \
 namespace kittens { \
 namespace prototype { \
 namespace vm { \
@@ -211,7 +236,23 @@ template<typename config, typename globals, typename... ops> __device__ void mai
     int num_iters = g.instructions.rows(); \
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0; kvms.instruction_index < num_iters; kvms.next_instruction()) { \
         kvms.await_instruction(); \
+        if (laneid() == 0) { \
+            if (is_consumer) { \
+                kvms.record(start_event + warpid()); \
+            } \
+            else { \
+                kvms.record(start_event); \
+            } \
+        } \
         dispatch_op<name##_op_dispatcher<config, globals>::dispatcher, ops...>::template run<void, config, globals, ::kittens::prototype::vm::state<config>>(kvms.instruction()[0], g, kvms); \
+        if (laneid() == 0) { \
+            if (is_consumer) { \
+                kvms.record(start_event + config::NUM_CONSUMER_WARPS + warpid()); \
+            } \
+            else { \
+                kvms.record(start_event + 1); \
+            } \
+        } \
     } \
     __syncwarp(); \
     KVM_DEBUG_PRINT_END(#name); \

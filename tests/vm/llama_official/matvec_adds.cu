@@ -98,8 +98,6 @@ namespace kittens::prototype::vm
 
                 if (kittens::laneid() == 0)
                 {
-                    s.record(TEVENT_LOADER_START);
-
                     for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
                         s.wait_page_ready(get_weight_page(s, i));
@@ -119,12 +117,6 @@ namespace kittens::prototype::vm
                     int unused_page = s.pid(kittens::laneid());
                     s.wait_page_ready(unused_page);
                     s.finish_page(unused_page, Config::NUM_CONSUMER_WARPS);
-                }
-
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
                 }
             }
         };
@@ -161,12 +153,6 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<Config> &s)
             {
-
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
-
                 using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
                 using float_rv_t = rv_fl<16>;
 
@@ -197,11 +183,6 @@ namespace kittens::prototype::vm
                 for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                 {
                     s.warp_finish_page(get_weight_page(s, i), 1);
-                }
-
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END + warpid());
                 }
             }
         };
@@ -247,16 +228,6 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
-                    // if constexpr (OP_IDX == g.Bar.rows() - 1)
-                    //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
-                    // else
-                    //     atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
-                }
-
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
                 }
             }
         };
