@@ -43,6 +43,10 @@ class ScriptConfig(pydra.Config):
         if self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
+    def once(self):
+        self.num_warmup = 0
+        self.num_iters = 1
+
 
 class Runner:
     def go():
