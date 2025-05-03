@@ -37,6 +37,7 @@ class Globals:
     pos_id: int
     attn_scale: float
     rms_norm_eps: float
+    skip_attn_reduction: bool
 
     # block size constants
     up_gate_proj_block_size: int

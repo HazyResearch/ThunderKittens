@@ -61,5 +61,6 @@ PYBIND11_MODULE(kvm_llama, m)
 
                                                   &llama_1b_globals::pos_id,
                                                   &llama_1b_globals::attn_scale,
-                                                  &llama_1b_globals::rms_norm_eps);
+                                                  &llama_1b_globals::rms_norm_eps,
+                                                  &llama_1b_globals::skip_attn_reduction);
 }

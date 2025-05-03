@@ -16,9 +16,7 @@ namespace kittens::prototype::vm
         static constexpr int NUM_WEIGHT_PAGES = 4;
 
         static constexpr int PAGE_RMS_SCALE_ACTIVATION = 0;
-        static constexpr int PAGE_ROPE_COS = PAGE_RMS_SCALE_ACTIVATION + 1;
-        static constexpr int PAGE_ROPE_SIN = PAGE_ROPE_COS + 1;
-        static constexpr int PAGE_WEIGHT_START = PAGE_ROPE_SIN + 1;
+        static constexpr int PAGE_WEIGHT_START = PAGE_RMS_SCALE_ACTIVATION + 1;
         static constexpr int PAGE_COUNT = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
 
         static constexpr int K_BLK_START = 2048 / Globals::matvec_block_size;
@@ -49,8 +47,9 @@ namespace kittens::prototype::vm
         // Pages (very naive for now, no fine-grained usage)
         __device__ static inline int get_rms_scale_activation_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE_ACTIVATION); }
         __device__ static inline int get_weight_page(state<Config> &s, int offset) { return s.pid(PAGE_WEIGHT_START + offset); }
-        __device__ static inline int get_rope_cos_page(state<Config> &s) { return s.pid(PAGE_ROPE_COS); }
-        __device__ static inline int get_rope_sin_page(state<Config> &s) { return s.pid(PAGE_ROPE_SIN); }
+
+        __device__ static inline sv_fl<16> &get_rope_cos(state<Config> &s) { return *reinterpret_cast<sv_fl<16> *>(((float *)s.scratch()) + 32); }
+        __device__ static inline sv_fl<16> &get_rope_sin(state<Config> &s) { return *reinterpret_cast<sv_fl<16> *>(((float *)s.scratch()) + 64); }
 
         struct controller
         {
@@ -58,7 +57,7 @@ namespace kittens::prototype::vm
             {
 
                 // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
-                int ret_order[13] = {7, 8, 9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
+                int ret_order[13] = {5, 6, 7, 8, 9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
@@ -73,7 +72,7 @@ namespace kittens::prototype::vm
                 init_semaphore(rope_cos_arrived(s), 1);
                 init_semaphore(rope_sin_arrived(s), 1);
                 init_semaphore(outputs_arrived(s), 1);
-                return 9;
+                return NUM_WEIGHT_PAGES + 5;
             }
         };
         struct loader
@@ -111,22 +110,16 @@ namespace kittens::prototype::vm
                     }
 
                     // Rope cos
-                    auto cos_page_id = get_rope_cos_page(s);
-                    s.wait_page_ready(cos_page_id);
-                    auto &rope_cos = reinterpret_cast<sv_fl<16> &>(s.pages[cos_page_id]);
+                    auto &rope_cos = get_rope_cos(s);
                     s.record(TEVENT_TRIPLES_START + 5);
                     tma::expect(rope_cos_arrived(s), rope_cos);
                     tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
-                    // arrive(rope_cos_arrived(s), 1);
 
                     // Rope sin
-                    auto sin_page_id = get_rope_sin_page(s);
-                    s.wait_page_ready(sin_page_id);
-                    auto &rope_sin = reinterpret_cast<sv_fl<16> &>(s.pages[sin_page_id]);
+                    auto &rope_sin = get_rope_sin(s);
                     s.record(TEVENT_TRIPLES_START + 6);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
-                    // arrive(rope_sin_arrived(s), 1);
                 }
 
                 else if (laneid() >= PAGE_COUNT && laneid() < Config::NUM_PAGES)
@@ -156,7 +149,9 @@ namespace kittens::prototype::vm
 
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
+                    {
                         __nanosleep(20);
+                    }
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     s.record(TEVENT_TRIPLES_START + 7);
                     tma::expect(activations_arrived(s), activations);
@@ -220,13 +215,12 @@ namespace kittens::prototype::vm
 
                     warp::sync();
 
-                    int rope_cos_page = get_rope_cos_page(s);
-                    int rope_sin_page = get_rope_sin_page(s);
+                    auto &rope_cos_smem = get_rope_cos(s);
+                    auto &rope_sin_smem = get_rope_sin(s);
 
                     if (inst.qkv_block_idx < V_BLK_START)
                     { // only Q & K need RoPE
 
-                        sv_fl<16> &rope_cos_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_cos_page]);
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
                         {
@@ -234,10 +228,7 @@ namespace kittens::prototype::vm
                             s.record(TEVENT_CONSUMER_START + 48);
                         }
                         warp::load(rope_cos, rope_cos_smem);
-                        // warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(rope_cos_page, Config::NUM_CONSUMER_WARPS);
 
-                        sv_fl<16> &rope_sin_smem = reinterpret_cast<sv_fl<16> &>(s.pages[rope_sin_page]);
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
                         {
@@ -245,7 +236,6 @@ namespace kittens::prototype::vm
                             s.record(TEVENT_CONSUMER_START + 49);
                         }
                         warp::load(rope_sin, rope_sin_smem);
-                        s.warp_finish_page(rope_sin_page, Config::NUM_CONSUMER_WARPS);
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -262,10 +252,7 @@ namespace kittens::prototype::vm
                     else
                     {
                         wait(rope_cos_arrived(s), 0);
-                        s.warp_finish_page(rope_cos_page, Config::NUM_CONSUMER_WARPS);
-
                         wait(rope_sin_arrived(s), 0);
-                        s.warp_finish_page(rope_sin_page, Config::NUM_CONSUMER_WARPS);
                     }
 
                     // Store back to the scratch

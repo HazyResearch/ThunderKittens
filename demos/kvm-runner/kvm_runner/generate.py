@@ -43,6 +43,10 @@ class ScriptConfig(pydra.Config):
         if self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
+    def once(self):
+        self.num_warmup = 0
+        self.num_iters = 1
+
 
 class Runner:
     def go():
@@ -200,6 +204,8 @@ def main(config: ScriptConfig):
 
     input_ids = tokenizer(tok_inp, return_tensors="pt")["input_ids"][0].to(model.device)
     prompt_len = input_ids.shape[0]
+
+    print(f"Prompt length: {prompt_len}")
 
     position_ids = torch.arange(prompt_len).to(model.device)
 

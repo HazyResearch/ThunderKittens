@@ -288,12 +288,26 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
 
     out = einsum(softmax.float(), v.float(), "h k, k o -> h o")
 
-    globals.attn_lse_intermediates[head_start:head_end, instruction.partial_idx] = lse
-    globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = out
+    if globals.skip_attn_reduction:
+        globals.attn_out.view(globals.num_attention_heads, -1)[
+            head_start:head_end, :
+        ] = out
+        barriers = globals.barriers[
+            instruction.layer_idx, AttentionReduction.opcode() - 1
+        ]
+        barriers[0] += head_end - head_start
 
-    # Barrier update
-    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    barriers[head_start:head_end] += 1
+    else:
+        globals.attn_lse_intermediates[head_start:head_end, instruction.partial_idx] = (
+            lse
+        )
+        globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = (
+            out
+        )
+
+        # Barrier update
+        barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+        barriers[head_start:head_end] += 1
 
 
 def attention_reduction(globals: Globals, instruction: AttentionReduction):

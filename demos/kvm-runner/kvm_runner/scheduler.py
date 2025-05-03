@@ -22,19 +22,37 @@ TIMING_SLOTS = 128
 NUM_OPS = 6
 
 
+def pick_num_attention_partitions(prompt_len: int, ntok: int, device: torch.device):
+    min_chunk_size = 256
+    full_len = prompt_len + ntok
+
+    sm_count = get_sm_count(device)
+
+    num_divisions = math.ceil(full_len / min_chunk_size)
+
+    # TODO limitation until we have a better reduction tree
+    num_attention_partitions = min(num_divisions, 24)
+    # num_attention_partitions = min(sm_count, num_divisions)
+
+    assert num_attention_partitions >= 1
+
+    return num_attention_partitions
+
+
 def make_globals(
     model: LlamaForCausalLM,
+    skip_attn_reduction: bool = True,
 ):
     config = model.config
     device = model.device
     dtype = model.dtype
 
-    max_attn_partials = get_sm_count(device)
-
     def make_buffer(shape, buffer_dtype=dtype):
         return torch.zeros(shape, device=device, dtype=buffer_dtype)
 
     stacked_params = model.stacked_params
+
+    max_attn_partitions = get_sm_count(device)
 
     return Globals(
         # model params
@@ -56,11 +74,12 @@ def make_globals(
         post_ln_rope_q=make_buffer(config.hidden_size),
         attn_out=make_buffer(config.hidden_size),
         attn_out_intermediates=make_buffer(
-            [config.num_attention_heads, max_attn_partials, config.head_dim],
+            [config.num_attention_heads, max_attn_partitions, config.head_dim],
             buffer_dtype=torch.float32,
         ),
         attn_lse_intermediates=make_buffer(
-            [config.num_attention_heads, max_attn_partials], buffer_dtype=torch.float32
+            [config.num_attention_heads, max_attn_partitions],
+            buffer_dtype=torch.float32,
         ),
         silu_out=make_buffer(config.intermediate_size),
         logits=make_buffer(config.vocab_size),
@@ -68,6 +87,7 @@ def make_globals(
         pos_id=0,
         attn_scale=1 / math.sqrt(config.head_dim),
         rms_norm_eps=config.rms_norm_eps,
+        skip_attn_reduction=skip_attn_reduction,
         num_hidden_layers=config.num_hidden_layers,
         num_attention_heads=config.num_attention_heads,
         num_kv_heads=config.num_key_value_heads,
@@ -101,16 +121,13 @@ def schedule_layer(
     stop_after_op: str | None = None,
     print_info: PrintInfo | None = None,
 ):
-    min_chunk_size = 16
-    full_len = prompt_len + ntok
-    sm_count = get_sm_count(globals.device)
+    if globals.skip_attn_reduction:
+        num_attention_partitions = 1
+    else:
+        num_attention_partitions = pick_num_attention_partitions(
+            prompt_len, ntok, globals.device
+        )
 
-    num_divisions = math.ceil(full_len / min_chunk_size)
-
-    # num_attention_partitions = min(sm_count, num_divisions)
-
-    # TODO limitation until we have a better reduction tree
-    num_attention_partitions = min(num_divisions, 24)
     add_print_instructions = print_info is not None
 
     instructions: list[Instruction] = []
@@ -168,7 +185,7 @@ def schedule_layer(
 
     # INSTRUCTION 3
     # TODO: harcoding one reduction stage, not seqlen dependent
-    if instruction_3:
+    if instruction_3 and not globals.skip_attn_reduction:
         for head_start_idx in range(
             0, globals.num_attention_heads, globals.attn_reduction_size
         ):
