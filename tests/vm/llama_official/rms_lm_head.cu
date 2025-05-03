@@ -129,7 +129,8 @@ namespace kittens::prototype::vm
 
                     // Activation
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT) {
+                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                    {
                         __nanosleep(20);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
@@ -161,7 +162,7 @@ namespace kittens::prototype::vm
                 // release the activation page
                 warp::sync();
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
-             
+
                 warp::copy(activations_vec, activations_vec_naive);
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
@@ -195,6 +196,7 @@ namespace kittens::prototype::vm
                 warp::load(logits_rv, logits_smem);
                 warp::sync();
                 warp::store(logits_smem_bf, logits_rv);
+                warp::sync();
 
                 if (warp::laneid() == 0)
                 {
