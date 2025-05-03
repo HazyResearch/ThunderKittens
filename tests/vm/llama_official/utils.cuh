@@ -25,9 +25,7 @@ namespace kittens::prototype::vm
             s.record(ACT_WAIT_DONE);
         }
 
-        warp::sync();
         warp::load(activations_vec, activations_smem[warpid()]);
-        // warp::sync();
 
         // Step 2: Apply RMS normalization
         warp::copy(copy_activations_vec, activations_vec);                           // cast to float
@@ -75,7 +73,6 @@ namespace kittens::prototype::vm
         //     s.record(TEVENT_TRIPLES_END);
         // }
 
-        warp::sync();
         warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
 
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
