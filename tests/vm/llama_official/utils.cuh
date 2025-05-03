@@ -5,7 +5,7 @@
 namespace kittens::prototype::vm
 {
 
-template<typename Config, kittens::ducks::st::all sv_t> __device__ static inline auto rms_norm(sv_t &rms_scale_smem, sv_t &activations_smem, void* scratch_memory) {
+template<typename Config, kittens::ducks::st::all sv_t> __device__ static inline auto rms_norm(sv_t &rms_scale_smem, sv_t &activations_smem, float rms_norm_eps, void* scratch_memory) {
     using rv_t = rv_fl<sv_t::length>;
     rv_t activations_vec, sq_activations_vec, rms_scale_vec;
 
@@ -26,7 +26,7 @@ template<typename Config, kittens::ducks::st::all sv_t> __device__ static inline
         full_sum += smem_rms_partial_sums[i];
     }
     float variance = full_sum / 2048.0f;
-    float rms_scale = rsqrtf(variance + g.rms_norm_eps);
+    float rms_scale = rsqrtf(variance + rms_norm_eps);
 
     warp::mul(activations_vec, activations_vec, rms_scale);
     warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
@@ -41,17 +41,17 @@ template<typename Config, kittens::ducks::st::all st_t> __device__ static inline
     using rv_t = rv_fl<st_t::rows>;
     using sv_t = sv_bf<st_t::rows>;
 
-    rcv_t col_activations;
+    rcv_t col_activations, col_sum;
     warp::copy(col_activations, activations);
 
     rcv_t broadcast_activations, weights;
     warp::broadcast_col(broadcast_activations, col_activations);
     warp::load(weights, weights_smem);
     warp::mul(broadcast_activations, broadcast_activations, weights);
-    warp::row_sum(proj_partial_col_format, broadcast_activations);
+    warp::row_sum(col_sum, broadcast_activations);
 
     rv_t proj_partial;
-    warp::copy(proj_partial, proj_partial_col_format);
+    warp::copy(proj_partial, col_sum);
 
     if (laneid() < 16)
     {
@@ -123,7 +123,7 @@ template<typename Config, kittens::ducks::st::all st_t> __device__ static inline
 
 
     template <typename Config, typename Globals, typename rv_t>
-    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset, int finish_pages)
+    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
     {
 
         constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
