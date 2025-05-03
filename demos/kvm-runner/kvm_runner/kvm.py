@@ -50,6 +50,7 @@ def interpret_with_kvm(
         globs.pos_id,
         globs.attn_scale,
         globs.rms_norm_eps,
+        stream=torch.cuda.current_stream(),
     )
 
 
@@ -92,10 +93,9 @@ class KVM_Runner:
             hiddens = post_embedding.hidden_states
             assert hiddens is not None
             self.globals.hidden_states[:] = hiddens
-            self.globals.pos_id = pos_id
-
             self.globals.barriers.fill_(self.barrier_fill_val)
 
+        self.globals.pos_id = pos_id
         if not self.skip_kvm:
             interpret_with_kvm(self.globals, self.kvm_func)
 
