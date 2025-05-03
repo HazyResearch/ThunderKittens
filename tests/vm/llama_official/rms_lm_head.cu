@@ -129,8 +129,9 @@ namespace kittens::prototype::vm
 
                     // Activation
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                    while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT) {
                         __nanosleep(20);
+                    }
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     tma::expect(activations_arrived(s), activations);
                     tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
@@ -158,9 +159,10 @@ namespace kittens::prototype::vm
                 rms_norm(g, s, activations_vec_naive, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
                 // release the activation page
+                warp::sync();
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+             
                 warp::copy(activations_vec, activations_vec_naive);
-
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
                 warp::sync();
