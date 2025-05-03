@@ -181,15 +181,16 @@ namespace kittens::prototype::vm
                 using float_rv_t = rv_fl<16>;
 
                 parsed_instruction inst{s};
+                rv_fl<REDUCTION_DIM_PER_WARP> activations_vec_naive;
                 typename float_rt_t::row_vec activations_vec;
-
                 static_assert(NUM_UP_PAGES == NUM_GATE_PAGES, "NUM_UP_PAGES must be equal to NUM_GATE_PAGES");
                 static_assert(Config::NUM_CONSUMER_WARPS % NUM_UP_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_UP_PAGES");
                 constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_UP_PAGES;
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-                rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), in_arrived(s), rms_scale_arrived(s), 32);
+                rms_norm(g, s, activations_vec_naive, get_rms_scale_activation_page(s), in_arrived(s), rms_scale_arrived(s), 32);
+                warp::copy(activations_vec, activations_vec_naive);
 
                 // up matvec
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);

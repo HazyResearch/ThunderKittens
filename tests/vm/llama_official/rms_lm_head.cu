@@ -147,6 +147,7 @@ namespace kittens::prototype::vm
 
                 // Setup
                 parsed_instruction inst{s};
+                rv_fl<REDUCTION_DIM_PER_WARP> activations_vec_naive;
                 typename float_rt_t::row_vec activations_vec;
 
                 static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
@@ -154,10 +155,11 @@ namespace kittens::prototype::vm
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-                rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
+                rms_norm(g, s, activations_vec_naive, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
                 // release the activation page
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+                warp::copy(activations_vec, activations_vec_naive);
 
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
 
