@@ -97,10 +97,7 @@ template<typename config> struct state {
     }
     __device__ inline void await_instruction() {
         wait(instruction_arrived[instruction_ring], (instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1);
-        #pragma unroll
-        for(int i = 0; i < config::NUM_PAGES; i++) {
-            reg_pid_order[i] = pid_order()[i];
-        }
+        pid_order_shared_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&(pid_order()[0])));
     }
     __device__ inline void next_instruction() {
         __syncwarp();
@@ -121,7 +118,9 @@ template<typename config> struct state {
     page_semaphore_array_t &page_finished;
 
     __device__ inline int pid(int lid) {
-        return reg_pid_order[lid];
+        int ret;
+        move<int>::lds(ret, pid_order_shared_addr + lid*sizeof(int));
+        return ret;
     }
     __device__ inline void wait_page_ready(int pid) {
         #pragma unroll
@@ -171,6 +170,8 @@ template<typename config> struct state {
     static constexpr int NCTA_TENSOR_ALLOC = config::CLUSTER_BLOCKS > 1 ? 2 : 1;
     using tensor_allocator_t = ::kittens::tensor_allocator<1, NCTA_TENSOR_ALLOC>;
     tensor_allocator_t &tensor_alloc;
+
+    uint32_t pid_order_shared_addr;
 
     __device__ inline void print() {
         printf("Kittens Virtual Machine State being printed by thread %d, block %d\n  Instruction index: %d, Instruction ring: %d\n", threadIdx.x, blockIdx.x, instruction_index, instruction_ring);
