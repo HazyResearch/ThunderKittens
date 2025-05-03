@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pydra
@@ -150,6 +151,34 @@ class KVMRunner(Runner):
             self.output_tokens[i] = output_ids
 
 
+class GraphedKVMRunner(KVMRunner):
+    def record_graph(self):
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s):  # type: ignore
+            # warmup
+            for _ in tqdm(range(3), desc="CUDA Graph Warmup"):
+                super().go()
+
+        torch.cuda.current_stream().wait_stream(s)
+
+        torch.cuda.synchronize()
+
+        print("Recording CUDA Graph")
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            super().go()
+
+        torch.cuda.synchronize()
+        print("CUDA Graph recorded")
+
+        self.graph = g
+
+    def go(self):
+        self.graph.replay()
+
+
+@torch.inference_mode()
 def main(config: ScriptConfig):
     torch.cuda.set_device(config.device)
 
@@ -195,22 +224,33 @@ def main(config: ScriptConfig):
             model = KVMRunner(config, model, output_tokens, prompt_len)
             if config.noops:
                 model.runner.globals.instructions.zero_()
+        case "gkvm":
+            model = GraphedKVMRunner(config, model, output_tokens, prompt_len)
+            if config.noops:
+                model.runner.globals.instructions.zero_()
+            model.record_graph()
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
     times = []
+    cpu_times = []
     for _ in tqdm(range(config.num_warmup + config.num_iters)):
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
+        cpu_start = time.time()
         model.go()
+        cpu_end = time.time()
         end_event.record()
         torch.cuda.synchronize()
         times.append(start_event.elapsed_time(end_event) / 1000)
+        cpu_times.append(cpu_end - cpu_start)
 
     non_warmup_times = times[config.num_warmup :]
+    non_warmup_cpu_times = cpu_times[config.num_warmup :]
     elapsed = sum(non_warmup_times) / len(non_warmup_times)
-    print(f"Average time: {elapsed:.2f}s")
+    elapsed_cpu = sum(non_warmup_cpu_times) / len(non_warmup_cpu_times)
+    print(f"Average time: {(elapsed * 1000):.2f}ms (CPU: {(elapsed_cpu * 1000):.2f}ms)")
 
     if config.tokens:
         to_cpu = output_tokens.cpu()
@@ -229,7 +269,7 @@ def main(config: ScriptConfig):
         print("More detailed output:")
         print(tabulate(table, headers=["output id", "position id", "token"]))
 
-    tokens_per_second = config.ntok / elapsed
+    tokens_per_second = (config.ntok - 1) / elapsed
     print(f"Tokens per second: {tokens_per_second:.2f}")
 
 
