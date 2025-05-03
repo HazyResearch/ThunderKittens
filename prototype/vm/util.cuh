@@ -160,11 +160,13 @@ template<typename config> struct state {
     }
 
     uint64_t start_clock;
-    
+
     __device__ inline void record(int event_id) {
-        uint64_t current = clock64();
-        int diff = (int)(current - start_clock);
-        timing()[event_id] = diff;
+        if constexpr(config::TIMING_RECORD_ENABLED) {
+            uint64_t current = clock64();
+            int diff = (int)(current - start_clock);
+            timing()[event_id] = diff;
+        }
     }
 
     static constexpr int NCTA_TENSOR_ALLOC = config::CLUSTER_BLOCKS > 1 ? 2 : 1;

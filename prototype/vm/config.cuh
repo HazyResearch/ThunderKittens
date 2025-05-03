@@ -46,6 +46,8 @@ namespace kittens
                 static constexpr int PAGE_SIZE = 16384;
                 static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
                 static_assert(NUM_PAGES == 13, "NUM_PAGES must be 13");
+
+                static constexpr bool TIMING_RECORD_ENABLED = true;
             };
             template <typename config>
             using instruction_layout = gl<int, 1, -1, -1, config::INSTRUCTION_WIDTH>;

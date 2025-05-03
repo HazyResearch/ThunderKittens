@@ -51,8 +51,10 @@ namespace kittens
 
                             if (laneid == 0)
                             {
-                                kvms.record(TEVENT_CONTROLLER_END);
-                                store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                                if constexpr(config::TIMING_RECORD_ENABLED) {
+                                    kvms.record(TEVENT_CONTROLLER_END);
+                                    store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                                }
                             }
                         }
 
