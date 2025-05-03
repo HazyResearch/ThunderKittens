@@ -39,6 +39,13 @@ namespace kittens::prototype::vm
     constexpr int RMS_SCALE_WAIT_DONE = RMS_SCALE_WAIT_START + 1;
     constexpr int RMS_DONE = RMS_SCALE_WAIT_DONE + 1;
 
+    constexpr int TEMP1 = RMS_DONE + 1;
+    constexpr int TEMP2 = TEMP1 + 1;
+    constexpr int TEMP3 = TEMP2 + 1;
+    constexpr int TEMP4 = TEMP3 + 1;
+    constexpr int TEMP5 = TEMP4 + 1;
+    constexpr int TEMP6 = TEMP5 + 1;
+
     using config = default_config;
 
     template <int _num_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matvec_block_size, int _sm_count>
