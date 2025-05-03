@@ -96,6 +96,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
+                    // arrive(rms_scale_arrived(s), 1);
 
                     for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
@@ -116,6 +117,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_TRIPLES_START + 5);
                     tma::expect(rope_cos_arrived(s), rope_cos);
                     tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
+                    // arrive(rope_cos_arrived(s), 1);
 
                     // Rope sin
                     auto sin_page_id = get_rope_sin_page(s);
@@ -124,6 +126,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_TRIPLES_START + 6);
                     tma::expect(rope_sin_arrived(s), rope_sin);
                     tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
+                    // arrive(rope_sin_arrived(s), 1);
                 }
 
                 else if (laneid() >= PAGE_COUNT && laneid() < Config::NUM_PAGES)
@@ -179,10 +182,21 @@ namespace kittens::prototype::vm
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
+                if (group<16>::laneid() == 0)
+                {
+                    s.record(RMS_START);
+                }
+
                 rms_norm(g, s, activations_vec_naive, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
 
+                warp::sync();
                 // release the activation page
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+
+                if (group<16>::laneid() == 0)
+                {
+                    s.record(RMS_DONE);
+                }
 
                 warp::copy(activations_vec, activations_vec_naive);
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
@@ -306,7 +320,8 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0) {
+                if (warp::laneid() == 0)
+                {
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
                 }
             }
