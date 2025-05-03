@@ -149,22 +149,30 @@ namespace kittens::prototype::vm
 
                 // Setup
                 parsed_instruction inst{s};
-                rv_fl<REDUCTION_DIM_PER_WARP> activations_vec_naive;
-                typename float_rt_t::row_vec activations_vec;
 
                 static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
                 constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-                rms_norm(g, s, activations_vec_naive, get_rms_scale_activation_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
+                wait(activations_arrived(s), 0);
+                wait(rms_scale_arrived(s), 0);
 
+                auto rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_rms_scale_activation_page(s)].ptr());
+                auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_rms_scale_activation_page(s)].ptr(sizeof(sv_bf<2048>)));
+
+                auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void*)((uint8_t*)s.scratch()+64));
+                
                 // release the activation page
                 warp::sync();
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
 
-                warp::copy(activations_vec, activations_vec_naive);
-                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, weights_arrived(s, page_index), get_weight_page(s, page_index), 0);
+                int weight_page = get_weight_page(s, page_index);
+                wait(weights_arrived(s, page_index), 0);
+                st_bf<16, REDUCTION_DIM_PER_WARP> &weights = reinterpret_cast<st_bf<16, REDUCTION_DIM_PER_WARP> *>(s.pages[weight_page].ptr())[warpid() % WARPS_PER_PAGE];
+                sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
+
+                matvec(out_smem, weights, activations_vec);
 
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
