@@ -40,6 +40,9 @@ class ScriptConfig(pydra.Config):
     noops: bool = False
     max_len_override: int | None = 16384
 
+    def full(self):
+        self.layer_limit = None
+
 
 def main(config: ScriptConfig):
     torch.manual_seed(0)
@@ -168,10 +171,14 @@ def main(config: ScriptConfig):
         print("done! diffing tensors:")
 
         def test_tensors(a: Tensor, b: Tensor, name: str):
+            a = a.float()
+            b = b.float()
+
             diff = a - b
             adiff = diff.abs()
             rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
             print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
+            return diff, adiff, rdiff
 
         test_tensors(
             globs_for_pyvm.hidden_states, globs_for_kvm.hidden_states, "hidden_states"
@@ -195,7 +202,7 @@ def main(config: ScriptConfig):
         test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
         test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-        test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
+        d, a, r = test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
 
         # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
         # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
