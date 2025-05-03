@@ -195,6 +195,7 @@ namespace kittens::prototype::vm
                 // up matvec
                 matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);
 
+                warp::sync();
                 s.warp_finish_page(get_rms_scale_activation_page(s), 1);
 
                 // gate matvec
