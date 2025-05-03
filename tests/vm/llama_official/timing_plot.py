@@ -55,7 +55,7 @@ EVENT_CATEGORIES = {}
 EVENT_DESCRIPTIONS = {}
 # Event 0: Instruction Launch
 EVENT_CATEGORIES[0], EVENT_DESCRIPTIONS[0] = 'launch', 'Instruction launch'
-EVENT_CATEGORIES[15], EVENT_DESCRIPTIONS[15] = 'end', 'Instruction end'
+EVENT_CATEGORIES[4], EVENT_DESCRIPTIONS[4] = 'end', 'Instruction end'
 # Add event mappings from llama.cuh
 # Using precise numbers based on FREE_SLOTS_START = 47
 # EVENT_CATEGORIES[47], EVENT_DESCRIPTIONS[47] = 'consumer', 'Atomic add start'
@@ -126,7 +126,7 @@ def save_gantt_chart_bokeh(Timings, Instructions, k_slots=VERTICAL_SLOTS_K, save
         for instr in range(num_instructions):
             instr_type = Instructions[proc, instr, 0].item()
             start = timings_us[proc, instr, 0].item()
-            end = timings_us[proc, instr, 15].item()
+            end = timings_us[proc, instr, 4].item()
 
             if start > 0 and end > start :
                 duration = end - start
@@ -389,6 +389,6 @@ if __name__ == '__main__':
         instructions,
         k_slots=4,
         save_all=True,
-        name="example_run_alternating_bg", # Updated name
+        name="llama_layernorm_fixed", # Updated name
         verbose=True
     )
