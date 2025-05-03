@@ -29,6 +29,15 @@ namespace kittens::prototype::vm
 {
 
     constexpr int ATOMIC_ADD_START = FREE_SLOTS_START;
+    constexpr int ATOMIC_ADD_END = ATOMIC_ADD_START + 1;
+    constexpr int EPILOGUE_START = ATOMIC_ADD_END + 1;
+    constexpr int ACT_WAIT_DONE = EPILOGUE_START + 2;
+    constexpr int WEIGHT_WAIT_START = ACT_WAIT_DONE + 3;
+    constexpr int WEIGHT_WAIT_DONE = WEIGHT_WAIT_START + 4;
+    constexpr int RMS_START = WEIGHT_WAIT_DONE + 4;
+    constexpr int RMS_SCALE_WAIT_START = RMS_START + 1;
+    constexpr int RMS_SCALE_WAIT_DONE = RMS_SCALE_WAIT_START + 1;
+    constexpr int RMS_DONE = RMS_SCALE_WAIT_DONE + 1;
 
     using config = default_config;
 

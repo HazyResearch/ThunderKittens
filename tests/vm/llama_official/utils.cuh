@@ -11,8 +11,8 @@ namespace kittens::prototype::vm
 
         constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
-        sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[rms_scale_activation_page].ptr());
-        sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
+        sv_bf<REDUCTION_DIM_PER_WARP> *rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[rms_scale_activation_page].ptr());
+        sv_bf<REDUCTION_DIM_PER_WARP> *activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
 
         // Setup
         rv_t copy_activations_vec;
@@ -20,15 +20,15 @@ namespace kittens::prototype::vm
 
         wait(activations_arrived, 0);
 
-        // TODO 
-        // if (warpid() == 0 && laneid() == 0)
-        // {
-        //     s.record(TEVENT_TRIPLES_END + 7);
-        // }
+        if (group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
+        {
+            s.record(ACT_WAIT_DONE);
+        }
 
-        warp::load(activations_vec, activations_smem[warpid()]);
         warp::sync();
-        
+        warp::load(activations_vec, activations_smem[warpid()]);
+        // warp::sync();
+
         // Step 2: Apply RMS normalization
         warp::copy(copy_activations_vec, activations_vec);                           // cast to float
         warp::mul(copy_activations_vec, copy_activations_vec, copy_activations_vec); // square
@@ -56,8 +56,18 @@ namespace kittens::prototype::vm
         warp::mul(copy_activations_vec, copy_activations_vec, rms_scale);
         warp::copy(activations_vec, copy_activations_vec);
 
+        if (group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
+        {
+            s.record(RMS_SCALE_WAIT_START);
+        }
+
         // multiply by rms scale
         wait(rms_scale_arrived, 0);
+
+        if (group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
+        {
+            s.record(RMS_SCALE_WAIT_DONE);
+        }
 
         // TODO
         // if (warpid() == 0 && laneid() == 0)
@@ -65,8 +75,8 @@ namespace kittens::prototype::vm
         //     s.record(TEVENT_TRIPLES_END);
         // }
 
-        warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
         warp::sync();
+        warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
 
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
     }
@@ -82,13 +92,18 @@ namespace kittens::prototype::vm
         int page_index = warpid() / WARPS_PER_PAGE;
         int index_in_page = warpid() % WARPS_PER_PAGE;
 
+        if (index_in_page == 0 && laneid() == 0)
+        {
+            s.record(WEIGHT_WAIT_START + page_index);
+        }
+
         wait(weights_arrived, 0);
 
         // TODO
-        // if (warpid() % WARPS_PER_PAGE == 0 && laneid() == 0)
-        // {
-        //     s.record(TEVENT_TRIPLES_END + 1 + page_index);
-        // }
+        if (index_in_page == 0 && laneid() == 0)
+        {
+            s.record(WEIGHT_WAIT_DONE + page_index);
+        }
 
         using st_slice_t = st_bf<rt_t::rows, rt_t::cols>;
 
@@ -104,11 +119,24 @@ namespace kittens::prototype::vm
         auto smem_proj_partials = ((float *)s.scratch()) + scratch_offset;
 
         // now the first 16 threads have the output.
+
+        if (group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
+        {
+            s.record(ATOMIC_ADD_START);
+        }
+
         if (laneid() < 16)
         {
             // this might be a bad idea but yolo, it's probably an okay start
             // and fortunately this is code where ncu will tell us if it's bad..
             atomicAdd(&smem_proj_partials[laneid()], proj_partial[0][0]);
+        }
+
+        warp::sync();
+
+        if (group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
+        {
+            s.record(ATOMIC_ADD_END);
         }
     }
 
