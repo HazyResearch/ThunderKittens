@@ -33,6 +33,7 @@ namespace kittens::prototype::vm
         using l_sv = sv_fl<16>;                                    // only 4 values are used
         using o_rt = rt_fl<16, LLAMA_1B_HEAD_DIM>;                 // only 4 rows are used
         using o_sv = sv_fl<LLAMA_1B_HEAD_DIM>;
+        using o_sv_bf = sv_bf<LLAMA_1B_HEAD_DIM>;
 
         struct parsed_instruction
         {
@@ -491,6 +492,56 @@ namespace kittens::prototype::vm
         };
         struct storer
         {
+
+            static inline __device__ void store_o_skip(const globals &g, state<config> &s, int q_head_start_idx)
+            {
+                auto O_smem = get_O_smem(s);
+
+                if (laneid() == 0)
+                {
+                    wait(O_arrived(s), 0);
+                    s.record(TEVENT_OUTPUT_READY);
+                }
+                warp::sync();
+
+                rv_bf<globals::head_dim> O_bf;
+                for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
+                {
+                    auto &smem_fl = O_smem[head_offset];
+                    auto &smem_bf = *reinterpret_cast<o_sv_bf *>(&smem_fl);
+
+                    warp::load(O_bf, smem_fl);
+                    warp::sync();
+                    warp::store(smem_bf, O_bf);
+                    warp::sync();
+                }
+
+                if (laneid() == 0)
+                {
+                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
+                    {
+                        auto &smem_bf = *reinterpret_cast<o_sv_bf *>(&O_smem[head_offset]);
+                        tma::store_async<cache_policy::NORMAL>(g.attn_out, smem_bf, {q_head_start_idx + head_offset});
+                    }
+                }
+            }
+
+            static inline __device__ void store_o_no_skip(const globals &g, state<config> &s, int q_head_start_idx, parsed_instruction &inst)
+            {
+                // Store partial attention output to global memory
+                if (laneid == 0)
+                {
+                    o_sv(&O_smem)[GQA_RATIO] = get_O_smem(s);
+                    wait(O_arrived(s), 0);
+                    s.record(TEVENT_OUTPUT_READY);
+
+                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
+                    {
+                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[head_offset], {0, q_head_start_idx + head_offset, inst.partial_idx, 0});
+                    }
+                }
+            }
+
             static __device__ void run(const globals &g, state<config> &s)
             {
                 parsed_instruction inst{s};
@@ -498,20 +549,19 @@ namespace kittens::prototype::vm
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
                 int q_head_vec_start_idx = q_head_start_idx % 16;
 
-                // Store partial attention output to global memory
-                if (laneid == 0)
+                auto skip_attn_reduction = g.skip_attn_reduction;
+
+                if (skip_attn_reduction)
                 {
-                    o_sv(&O_smem)[4] = get_O_smem(s);
-                    wait(O_arrived(s), 0);
-                    s.record(TEVENT_OUTPUT_READY);
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[0], {0, q_head_start_idx + 0, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[1], {0, q_head_start_idx + 1, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[2], {0, q_head_start_idx + 2, inst.partial_idx, 0});
-                    tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[3], {0, q_head_start_idx + 3, inst.partial_idx, 0});
+                    store_o_skip(g, s, q_head_start_idx);
+                }
+                else
+                {
+                    store_o_no_skip(g, s, q_head_start_idx, inst);
                 }
 
                 // Store LSE to global memory
-                if (laneid < GQA_RATIO)
+                if (laneid < GQA_RATIO && !skip_attn_reduction)
                 {
                     l_sv &L_smem = get_L_smem(s);
                     wait(L_arrived(s), 0);
@@ -527,15 +577,25 @@ namespace kittens::prototype::vm
                 warp::sync(); // ensure all writes are committed
                 asm volatile("fence.acq_rel.gpu;");
 
+                tma::store_async_wait();
+                if (laneid == 0)
+                {
+                    s.record(123 + laneid);
+                    finish_QOL_page(s);
+                }
+
                 // Wait and finish
                 if (laneid < GQA_RATIO)
                 {
-                    tma::store_async_wait();
-                    if (laneid == 0)
-                        s.record(123 + laneid);
-                    finish_QOL_page(s);
-                    // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
-                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_PartialAttention - 1, q_head_start_idx + laneid}], 1);
+                    if (skip_attn_reduction)
+                    {
+                        atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_AttentionReduction - 1, 0}], 1);
+                    }
+                    else
+                    {
+                        // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
+                        atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + laneid}], 1);
+                    }
                 }
             }
         };
