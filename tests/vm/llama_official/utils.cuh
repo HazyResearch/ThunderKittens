@@ -4,37 +4,6 @@
 
 namespace kittens::prototype::vm
 {
-
-    //     template <auto WeightsPtr, int INPUT_PIPELINE_STAGES, int STAGE_PAGES, int WEIGHTS_START_PAGE, typename Config, typename Globals, typename instruction_t>
-    //     __device__ static inline void matvec_loader_pipeline(state<Config> &s, Globals &g, instruction_t &inst, semaphore *weights_arrived, semaphore *weights_finished)
-    //     {
-    //         int input_stage = 0;
-    //         for (int iter = 0; iter < inst.iters; iter++)
-    //         {
-    //             auto &weights_finished_sem = weights_finished[input_stage];
-    //             auto &weights_arrived_sem = weights_arrived[input_stage];
-
-    //             wait(weights_finished_sem, (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
-
-    //             int block_idx = inst.start_block_idx + iter;
-
-    //             tma::expect_bytes(weights_arrived_sem, sizeof(bf16) * 2048 * 16);
-    // #pragma unroll
-    //             for (int i = 0; i < 4; i++)
-    //             {
-    //                 int weight_page = s.pid(WEIGHTS_START_PAGE + input_stage * STAGE_PAGES + i);
-    //                 if (iter < INPUT_PIPELINE_STAGES)
-    //                 {
-    //                     s.wait_page_ready(weight_page);
-    //                 }
-    //                 auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[weight_page]);
-    //                 tma::load_async(weight_chunk, g.*WeightsPtr, {block_idx, i}, weights_arrived_sem);
-    //             }
-
-    //             input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
-    //         }
-    //     }
-
     template <typename Config, kittens::ducks::sv::all sv_t>
     __device__ static inline auto rms_norm(const sv_t &rms_scale_smem, const sv_t &activations_smem, float rms_norm_eps, void *scratch_memory)
     {
