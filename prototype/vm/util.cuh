@@ -89,6 +89,16 @@ template<typename config> struct state {
     __device__ inline void* scratch() const {
         return (void*)&all_instructions[instruction_ring].scratch[0];
     }
+
+    template<int num_bytes>
+    __device__ inline void zero_scratch() {
+        static_assert(num_bytes % 4 == 0, "num_bytes must be a multiple of 4");
+        constexpr auto num_floats = num_bytes / 4;
+        auto &scratch_vec = *reinterpret_cast<sv_fl<num_floats>*>(scratch());
+        warp::zero(scratch_vec);
+        warp::sync();
+    }
+
     __device__ inline kittens::semaphore (&semaphores())[config::DYNAMIC_SEMAPHORES] {
         return all_instructions[instruction_ring].semaphores;
     }
