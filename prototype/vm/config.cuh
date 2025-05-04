@@ -30,7 +30,7 @@ namespace kittens
                 static constexpr int DYNAMIC_SEMAPHORES = 32;
 
                 // One controller warp, one load warp, one store warp, and one mma warp.
-                static constexpr int NUM_CONSUMER_WARPS = 8;
+                static constexpr int NUM_CONSUMER_WARPS = 16;
                 static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
                 static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
                 static constexpr int NUM_BLOCKS = 1;
@@ -51,7 +51,7 @@ namespace kittens
 
                 static constexpr bool GMEM_SPIN_LOOP_SLEEP_NANOS = 20;
 
-                static constexpr int CONSUMER_REGISTERS = 208;
+                static constexpr int CONSUMER_REGISTERS = 104;
                 static constexpr int NON_CONSUMER_REGISTERS = 64;
             };
             template <typename config>
