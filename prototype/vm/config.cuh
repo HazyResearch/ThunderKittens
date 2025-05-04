@@ -30,7 +30,7 @@ namespace kittens
                 static constexpr int DYNAMIC_SEMAPHORES = 32;
 
                 // One controller warp, one load warp, one store warp, and one mma warp.
-                static constexpr int NUM_CONSUMER_WARPS = 8;
+                static constexpr int NUM_CONSUMER_WARPS = 16;
                 static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
                 static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
                 static constexpr int NUM_BLOCKS = 1;
@@ -47,7 +47,12 @@ namespace kittens
                 static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
                 static_assert(NUM_PAGES == 13, "NUM_PAGES must be 13");
 
-                static constexpr bool TIMING_RECORD_ENABLED = true;
+                static constexpr bool TIMING_RECORD_ENABLED = false;
+
+                static constexpr bool GMEM_SPIN_LOOP_SLEEP_NANOS = 20;
+
+                static constexpr int CONSUMER_REGISTERS = 104;
+                static constexpr int NON_CONSUMER_REGISTERS = 64;
             };
             template <typename config>
             using instruction_layout = gl<int, 1, -1, -1, config::INSTRUCTION_WIDTH>;
