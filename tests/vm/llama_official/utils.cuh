@@ -201,7 +201,7 @@ namespace kittens::prototype::vm
         }
     }
 
-    template <typename Config, typename Globals, typename parsed_instruction>
+    template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics>
     struct matvec_pipeline
     {
         static constexpr int INPUT_PIPELINE_STAGES = 3;
@@ -329,6 +329,27 @@ namespace kittens::prototype::vm
                 group<Config::NUM_CONSUMER_WARPS>::sync(0);
 
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
+                output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
+            }
+        }
+        
+        __device__ static inline void storer_loop(state<Config> &s, const Globals &g)
+        {
+            parsed_instruction inst{s};
+
+            int output_stage = 0;
+            for (int i = 0; i < inst.iters; i++)
+            {
+                int block_idx = inst.start_block_idx + i;
+
+                sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+                sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>((float *)s.scratch() + (32 * output_stage));
+
+                wait(outputs_arrived(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) >= OUTPUT_PIPELINE_STAGES);
+
+                pipeline_specifics::store(s, g, inst, i, output_stage);
+
+                warp::arrive(outputs_finished(s, output_stage));
                 output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
             }
         }

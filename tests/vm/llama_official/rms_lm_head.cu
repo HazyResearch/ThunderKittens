@@ -37,7 +37,35 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        using pipeline = matvec_pipeline<Config, Globals, parsed_instruction>;
+        struct pipeline_specifics
+        {
+            static __device__ void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
+            {
+                int block_idx = inst.start_block_idx + output_idx;
+
+                sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+                sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>((float *)s.scratch() + (32 * output_stage));
+
+                rv_fl<16> logits_rv;
+                warp::load(logits_rv, logits_smem);
+                warp::store(logits_smem_bf, logits_rv);
+                warp::sync();
+
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_OUTPUT_READY);
+
+                    tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, block_idx});
+
+                    tma::store_async_read_wait(); // not just read wait! full wait! must be visible in global!
+                }
+
+                warp::zero(logits_smem);
+                warp::sync();
+            }
+        };
+
+        using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
         // Semaphores
         __device__ static inline semaphore &weights_arrived(state<Config> &s, int stage) { return s.semaphores()[stage]; }
@@ -141,38 +169,7 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-
-                int output_stage = 0;
-                for (int i = 0; i < inst.iters; i++)
-                {
-                    int block_idx = inst.start_block_idx + i;
-
-                    sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
-                    sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>((float *)s.scratch() + (32 * output_stage));
-
-                    wait(outputs_arrived(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) >= OUTPUT_PIPELINE_STAGES);
-
-                    rv_fl<16> logits_rv;
-                    warp::load(logits_rv, logits_smem);
-                    warp::store(logits_smem_bf, logits_rv);
-                    warp::sync();
-
-                    if (warp::laneid() == 0)
-                    {
-                        s.record(TEVENT_OUTPUT_READY);
-
-                        tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, block_idx});
-
-                        tma::store_async_read_wait(); // not just read wait! full wait! must be visible in global!
-                    }
-
-                    warp::zero(logits_smem);
-                    warp::sync();
-
-                    warp::arrive(outputs_finished(s, output_stage));
-                    output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
-                }
+                pipeline::storer_loop(s, g);
             }
         };
     };
