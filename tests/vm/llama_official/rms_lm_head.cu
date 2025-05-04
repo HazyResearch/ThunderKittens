@@ -131,7 +131,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (*(volatile int *)&g.Bar[{globals::num_layers - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                     {
-                        __nanosleep(20);
+                        __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     tma::expect(activations_arrived(s), activations);

@@ -318,7 +318,7 @@ namespace kittens::prototype::vm
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4 ||                       // K
                            *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] < 4) // V
                     {
-                        __nanosleep(20);
+                        __nanosleep(config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
 
                     s.record(TEVENT_DONE_GMEM_WAIT);

@@ -137,7 +137,9 @@ namespace kittens::prototype::vm
 
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        __nanosleep(20);
+                    {
+                        __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
+                    }
                     s.record(TEVENT_DONE_GMEM_WAIT);
 
                     auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[activation_page]);
