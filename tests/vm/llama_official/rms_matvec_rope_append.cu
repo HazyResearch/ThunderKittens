@@ -87,15 +87,24 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
 
+                    s.record(TEMP1);
+
                     // RMS scale
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
 
+                    s.record(TEMP2);
+
                     auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
+
+                    s.record(TEMP3);
+
                     tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
                     // arrive(rms_scale_arrived(s), 1);
+
+                    s.record(TEMP4);
 
                     for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                     {
