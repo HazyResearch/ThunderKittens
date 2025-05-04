@@ -113,6 +113,64 @@ def assert_div(a, b):
     return a // b
 
 
+def schedule_qkv(globs: Globals, layer_idx: int):
+    instructions: list[Instruction] = []
+
+    qkv_outdim = (globs.num_attention_heads + 2 * globs.num_kv_heads) * globs.head_dim
+
+    num_qkv_blocks = assert_div(qkv_outdim, globs.qkv_block_size)
+    sm_count = globs.sm_count()
+
+    blocks_per_sm = num_qkv_blocks / sm_count
+    assert blocks_per_sm > 1
+
+    for sm_idx in range(sm_count):
+        start = round(sm_idx * blocks_per_sm)
+        end = round((sm_idx + 1) * blocks_per_sm)
+        instructions.append(
+            LayerNorm_QKV_MatVecRopeAppend(
+                layer_idx=layer_idx,
+                start_output_block_idx=start,
+                end_output_block_idx=end,
+            )
+        )
+
+    # for qkv_block_idx in range(num_qkv_blocks):
+    #     instructions.append(
+    #         LayerNorm_QKV_MatVecRopeAppend(
+    #             layer_idx=layer_idx,
+    #             start_output_block_idx=qkv_block_idx,
+    #             end_output_block_idx=qkv_block_idx + 1,
+    #         )
+    #     )
+
+    return instructions
+
+
+def schedule_lm_head(globs: Globals):
+    instructions: list[Instruction] = []
+
+    num_logit_blocks = assert_div(globs.vocab_size, globs.lm_head_block_size)
+    sm_count = globs.sm_count()
+
+    blocks_per_sm = num_logit_blocks / sm_count
+    assert blocks_per_sm > 1
+
+    for sm_idx in range(sm_count):
+        start = round(sm_idx * blocks_per_sm)
+        end = round((sm_idx + 1) * blocks_per_sm)
+        instructions.append(
+            RMS_LM_Head(start_output_block_idx=start, end_output_block_idx=end)
+        )
+
+    # DIV = 4
+    # for idx in range(0, num_logit_blocks, DIV):
+    #     instructions.append(
+    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=idx+DIV)
+    #     )
+    return instructions
+
+
 def schedule_layer(
     globals: Globals,
     layer_idx: int,
@@ -131,10 +189,6 @@ def schedule_layer(
     add_print_instructions = print_info is not None
 
     instructions: list[Instruction] = []
-
-    qkv_outdim = (
-        globals.num_attention_heads + 2 * globals.num_kv_heads
-    ) * globals.head_dim
 
     def maybe_add_print(layer_idx: int, name: str):
         if add_print_instructions:
@@ -155,14 +209,7 @@ def schedule_layer(
 
     # INSTRUCTION 1
     if instruction_1:
-        num_qkv_blocks = assert_div(qkv_outdim, globals.qkv_block_size)
-        for qkv_block_idx in range(num_qkv_blocks):
-            instructions.append(
-                LayerNorm_QKV_MatVecRopeAppend(
-                    layer_idx=layer_idx,
-                    output_block_idx=qkv_block_idx,
-                )
-            )
+        instructions.extend(schedule_qkv(globals, layer_idx))
         maybe_add_print(layer_idx, "qkv")
         if stop_after_op == "qkv":
             return instructions
@@ -253,30 +300,6 @@ def schedule_layer(
     return instructions
 
 
-def schedule_lm_head(globs: Globals):
-    instructions: list[Instruction] = []
-
-    num_logit_blocks = assert_div(globs.vocab_size, globs.lm_head_block_size)
-    sm_count = globs.sm_count()
-
-    blocks_per_sm = num_logit_blocks / sm_count
-    assert blocks_per_sm > 1
-
-    for sm_idx in range(sm_count):
-        start = round(sm_idx * blocks_per_sm)
-        end = round((sm_idx + 1) * blocks_per_sm)
-        instructions.append(
-            RMS_LM_Head(start_output_block_idx=start, end_output_block_idx=end)
-        )
-
-    # DIV = 4
-    # for idx in range(0, num_logit_blocks, DIV):
-    #     instructions.append(
-    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=idx+DIV)
-    #     )
-    return instructions
-
-
 def schedule_model(
     prompt_len: int,
     ntok: int,
@@ -306,7 +329,7 @@ def schedule_model(
                 prompt_len=prompt_len,
                 ntok=ntok,
                 print_info=print_info,
-                stop_after_op=stop_after_op,
+                stop_after_op=stop_after_op if layer_idx == nlayers - 1 else None,
             )
         )
 

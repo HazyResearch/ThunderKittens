@@ -118,7 +118,8 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     """
 
     layer_idx: int
-    output_block_idx: int
+    start_output_block_idx: int
+    end_output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:

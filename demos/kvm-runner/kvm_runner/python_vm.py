@@ -169,50 +169,67 @@ def layer_norm_matvec_rope_append(
         eps=globals.rms_norm_eps,
     )
 
-    matmul_output = einsum(
-        globals.qkv_proj[layer_idx],
-        post_ln,
-        "o i, i -> o",
-    )
+    pos_id = globals.pos_id
 
     k_start = globals.num_attention_heads * globals.head_dim
     v_start = k_start + globals.num_kv_heads * globals.head_dim
 
-    q = matmul_output[:k_start]
-    k = matmul_output[k_start:v_start]
-    v = matmul_output[v_start:]
-
-    q_arr = rearrange(q, "(h d) -> h d", h=globals.num_attention_heads)
-    k_arr = rearrange(k, "(h d) -> h d", h=globals.num_kv_heads)
-
-    pos_id = globals.pos_id
-    q_with_rope, k_with_rope = apply_rotary_pos_emb_interleaved(
-        q=q_arr,
-        k=k_arr,
-        cos=globals.rope_cos[pos_id],
-        sin=globals.rope_sin[pos_id],
-        unsqueeze_dim=0,
-    )
-
-    start, end = get_start_end(globals.qkv_block_size, instruction.output_block_idx)
-    if start < k_start:
-        globals.post_ln_rope_q[start:end] = q_with_rope.view(-1)[start:end]
-    elif start < v_start:
-        start_in_k = start - k_start
-        end_in_k = end - k_start
-        globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = (
-            k_with_rope.view(-1)[start_in_k:end_in_k]
-        )
-    else:
-        start_in_v = start - v_start
-        end_in_v = end - v_start
-        globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = v.view(-1)[
-            start_in_v:end_in_v
-        ]
-
-    # Barrier update
     barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    barriers[instruction.output_block_idx // 4] += 1
+
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(globals.qkv_block_size, block_idx)
+
+        if start < k_start:
+            mode = "q"
+        elif start < v_start:
+            mode = "k"
+        else:
+            mode = "v"
+
+        matmul_output = einsum(
+            globals.qkv_proj[layer_idx][start:end],
+            post_ln,
+            "o i, i -> o",
+        )
+
+        out = matmul_output
+
+        if mode in ["q", "k"]:
+            full_head = torch.zeros(
+                1,
+                globals.head_dim,
+                device=globals.hidden_states.device,
+                dtype=out.dtype,
+            )
+            head_segment = start % globals.head_dim
+            full_head_start = head_segment
+            full_head_end = full_head_start + (end - start)
+
+            full_head[:, full_head_start:full_head_end] = out
+            full_head_with_rope, _ = apply_rotary_pos_emb_interleaved(
+                q=full_head,
+                k=full_head,
+                cos=globals.rope_cos[pos_id],
+                sin=globals.rope_sin[pos_id],
+                unsqueeze_dim=0,
+            )
+            out = full_head_with_rope[:, full_head_start:full_head_end].view(-1)
+
+        match mode:
+            case "q":
+                globals.post_ln_rope_q[start:end] = out
+            case "k":
+                start_in_k = start - k_start
+                end_in_k = end - k_start
+                globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = out
+            case "v":
+                start_in_v = start - v_start
+                end_in_v = end - v_start
+                globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = out
+
+        barriers[block_idx // 4] += 1
 
 
 def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
