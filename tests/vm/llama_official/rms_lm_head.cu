@@ -1,5 +1,6 @@
 #include "llama.cuh"
 #include "utils.cuh"
+#include "matvec_pipeline.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -25,6 +26,13 @@ namespace kittens::prototype::vm
 
         static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
+        // Semaphores
+        __device__ static inline semaphore &activations_rms_scale_arrived(state<Config> &s) { return s.semaphores()[2 * (INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES)]; }
+
+        // Pages (very naive for now, no fine-grained usage)
+        __device__ static inline int get_rms_scale_activation_page(state<Config> &s) { return s.pid(0); }
+        __device__ static inline int get_weight_page(state<Config> &s, int stage, int offset) { return s.pid(1 + stage * STAGE_PAGES + offset); }
+
         struct parsed_instruction
         {
             int start_block_idx, end_block_idx, iters;
@@ -39,8 +47,10 @@ namespace kittens::prototype::vm
 
         struct pipeline_specifics
         {
-            static __device__ void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
             {
+                wait(sem, bit);
+
                 int block_idx = inst.start_block_idx + output_idx;
 
                 sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
@@ -67,17 +77,6 @@ namespace kittens::prototype::vm
 
         using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
-        // Semaphores
-        __device__ static inline semaphore &weights_arrived(state<Config> &s, int stage) { return s.semaphores()[stage]; }
-        __device__ static inline semaphore &weights_finished(state<Config> &s, int stage) { return s.semaphores()[INPUT_PIPELINE_STAGES + stage]; }
-        __device__ static inline semaphore &outputs_arrived(state<Config> &s, int stage) { return s.semaphores()[2 * INPUT_PIPELINE_STAGES + stage]; }
-        __device__ static inline semaphore &outputs_finished(state<Config> &s, int stage) { return s.semaphores()[2 * INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES + stage]; }
-        __device__ static inline semaphore &activations_rms_scale_arrived(state<Config> &s) { return s.semaphores()[2 * (INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES)]; }
-
-        // Pages (very naive for now, no fine-grained usage)
-        __device__ static inline int get_rms_scale_activation_page(state<Config> &s) { return s.pid(0); }
-        __device__ static inline int get_weight_page(state<Config> &s, int stage, int offset) { return s.pid(1 + stage * STAGE_PAGES + offset); }
-
         struct controller
         {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
@@ -87,38 +86,23 @@ namespace kittens::prototype::vm
 
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-                auto ret = pipeline::init_semaphores(s);
-                init_semaphore(activations_rms_scale_arrived(s), 1); // get rms scale, too.
-                return ret + 1;
+                return pipeline::init_semaphores(s);
             }
         };
         struct loader
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
 
-                if (laneid() == 0)
-                {
-                    pipeline::loader_loop<&Globals::lm_head_weights>(s, g);
-                }
-                else if (laneid() >= inst.iters * 4 && laneid() < INPUT_PIPELINE_STAGES * 4)
-                {
-                    int stage = laneid() / 4, offset = laneid() % 4;
-                    auto pid = get_weight_page(s, stage, offset);
-                    s.wait_page_ready(pid);
-                    s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
-                }
+                pipeline::loader_loop<&Globals::lm_head_weights>(s, g, 0);
             }
         };
         struct launcher
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-
                 if (laneid() == 0)
                 {
                     s.wait_tensor_ready();
@@ -126,12 +110,14 @@ namespace kittens::prototype::vm
 
                     parsed_instruction inst{s};
 
-                    int rms_scale_activation_page = get_rms_scale_activation_page(s);
-                    s.wait_page_ready(rms_scale_activation_page);
-                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
-                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
-                    tma::expect(activations_rms_scale_arrived(s), activations, rms_scale);
-                    tma::load_async(rms_scale, g.lm_head_norm_weights, {}, activations_rms_scale_arrived(s));
+                    auto activation_page = pipeline::get_activation_page(s);
+                    auto &sem = pipeline::activations_arrived(s);
+
+                    s.wait_page_ready(activation_page);
+                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
+                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr());
+                    tma::expect(sem, activations, rms_scale);
+                    tma::load_async(rms_scale, g.lm_head_norm_weights, {}, sem);
 
                     // Activation
                     s.record(TEVENT_AT_GMEM_WAIT);
@@ -140,7 +126,7 @@ namespace kittens::prototype::vm
                         __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    tma::load_async(activations, g.hidden_states, {}, activations_rms_scale_arrived(s));
+                    tma::load_async(activations, g.hidden_states, {}, sem);
                 }
             }
         };
@@ -148,19 +134,18 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                auto activation_page = pipeline::get_activation_page(s);
+                auto &sem = pipeline::activations_arrived(s);
 
-                using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
-                using float_rv_t = rv_fl<16>;
+                wait(sem, 0);
 
-                wait(activations_rms_scale_arrived(s), 0);
-
-                auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_rms_scale_activation_page(s)].ptr());
-                auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_rms_scale_activation_page(s)].ptr(sizeof(sv_bf<2048>)));
+                auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr());
+                auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
 
                 auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((uint8_t *)s.scratch() + (64 * 12)));
 
                 warp::sync();
-                s.warp_finish_page(get_rms_scale_activation_page(s), 1);
+                s.warp_finish_page(activation_page, 1);
 
                 pipeline::consumer_loop(s, g, activations_vec);
             }
