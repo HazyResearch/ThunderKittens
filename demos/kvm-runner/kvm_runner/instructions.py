@@ -218,7 +218,8 @@ class DownProjResidual(MatVecAdd):
 
 @dataclass
 class RMS_LM_Head(Instruction):
-    output_block_idx: int
+    start_output_block_idx: int
+    end_output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:

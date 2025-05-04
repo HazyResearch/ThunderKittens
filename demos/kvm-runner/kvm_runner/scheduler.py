@@ -253,6 +253,29 @@ def schedule_layer(
     return instructions
 
 
+def schedule_lm_head(globs: Globals):
+    instructions: list[Instruction] = []
+
+    num_logit_blocks = assert_div(globs.vocab_size, globs.lm_head_block_size)
+    sm_count = globs.sm_count()
+
+    blocks_per_sm = num_logit_blocks / sm_count
+    assert blocks_per_sm > 1
+
+    for sm_idx in range(sm_count):
+        start = round(sm_idx * blocks_per_sm)
+        end = round((sm_idx + 1) * blocks_per_sm)
+        instructions.append(
+            RMS_LM_Head(start_output_block_idx=start, end_output_block_idx=end)
+        )
+
+    # for idx in range(num_logit_blocks):
+    #     instructions.append(
+    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=0)
+    #     )
+    return instructions
+
+
 def schedule_model(
     prompt_len: int,
     ntok: int,
@@ -287,9 +310,7 @@ def schedule_model(
         )
 
     if nlayers == globals.num_hidden_layers:
-        num_logit_blocks = assert_div(globals.vocab_size, globals.lm_head_block_size)
-        for logit_block_idx in range(num_logit_blocks):
-            instructions.append(RMS_LM_Head(output_block_idx=logit_block_idx))
+        instructions.extend(schedule_lm_head(globals))
 
     return globals, instructions
 

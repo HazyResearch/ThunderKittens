@@ -227,15 +227,18 @@ def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
         eps=globals.rms_norm_eps,
     )
 
-    start, end = get_start_end(globals.lm_head_block_size, instruction.output_block_idx)
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(globals.lm_head_block_size, block_idx)
 
-    matmul_output = einsum(
-        globals.lm_head_weights[start:end],
-        post_ln,
-        "o i, i -> o",
-    )
+        matmul_output = einsum(
+            globals.lm_head_weights[start:end],
+            post_ln,
+            "o i, i -> o",
+        )
 
-    globals.logits[start:end] = matmul_output
+        globals.logits[start:end] = matmul_output
 
 
 def partial_attention(globals: Globals, instruction: PartialAttention):
