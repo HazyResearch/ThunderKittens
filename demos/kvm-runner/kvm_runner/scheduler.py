@@ -269,9 +269,10 @@ def schedule_lm_head(globs: Globals):
             RMS_LM_Head(start_output_block_idx=start, end_output_block_idx=end)
         )
 
-    # for idx in range(num_logit_blocks):
+    # DIV = 4
+    # for idx in range(0, num_logit_blocks, DIV):
     #     instructions.append(
-    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=0)
+    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=idx+DIV)
     #     )
     return instructions
 

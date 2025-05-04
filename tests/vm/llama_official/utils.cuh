@@ -35,6 +35,35 @@ template<typename Config, kittens::ducks::sv::all sv_t> __device__ static inline
     return activations_vec;
 }
 
+template<kittens::ducks::st::all st_t> __device__ static inline void matvec(sv_fl<st_t::rows> &out_smem, st_t &weights_smem, rv_fl<st_t::cols> &activations) {
+    using rt_t = rt_fl<st_t::rows, st_t::cols>;
+    using rrv_t = typename rt_t::row_vec;
+    using rcv_t = typename rt_t::col_vec;
+    using rv_t = rv_fl<st_t::rows>;
+    using sv_t = sv_bf<st_t::rows>;
+
+    rrv_t row_activations;
+    warp::copy(row_activations, activations);
+
+    rt_t broadcast_activations, weights;
+    warp::broadcast_col(broadcast_activations, row_activations);
+    warp::load(weights, weights_smem);
+    warp::mul(broadcast_activations, broadcast_activations, weights);
+    rcv_t sum_col_vec;
+    warp::row_sum(sum_col_vec, broadcast_activations);
+
+    rv_t sum_vec;
+    warp::copy(sum_vec, sum_col_vec);
+
+    if (laneid() < 16)
+    {
+        // this might be a bad idea but yolo, it's probably an okay start
+        // and fortunately this is code where ncu will tell us if it's bad..
+        atomicAdd(&out_smem[laneid()], sum_vec[0][0]);
+    }
+    warp::sync();
+}
+
     template <typename Config, typename Globals, typename rv_t>
     __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
     {
@@ -107,35 +136,6 @@ template<typename Config, kittens::ducks::sv::all sv_t> __device__ static inline
 
         warp::mul(activations_vec, activations_vec, rms_scale_vec);
     }
-
-template<kittens::ducks::st::all st_t> __device__ static inline void matvec(sv_fl<st_t::rows> &out_smem, st_t &weights_smem, rv_fl<st_t::cols> &activations) {
-    using rt_t = rt_fl<st_t::rows, st_t::cols>;
-    using rrv_t = typename rt_t::row_vec;
-    using rcv_t = typename rt_t::col_vec;
-    using rv_t = rv_fl<st_t::rows>;
-    using sv_t = sv_bf<st_t::rows>;
-
-    rrv_t row_activations;
-    warp::copy(row_activations, activations);
-
-    rt_t broadcast_activations, weights;
-    warp::broadcast_col(broadcast_activations, row_activations);
-    warp::load(weights, weights_smem);
-    warp::mul(broadcast_activations, broadcast_activations, weights);
-    rcv_t sum_col_vec;
-    warp::row_sum(sum_col_vec, broadcast_activations);
-
-    rv_t sum_vec;
-    warp::copy(sum_vec, sum_col_vec);
-
-    if (laneid() < 16)
-    {
-        // this might be a bad idea but yolo, it's probably an okay start
-        // and fortunately this is code where ncu will tell us if it's bad..
-        atomicAdd(&out_smem[laneid()], sum_vec[0][0]);
-    }
-    warp::sync();
-}
 
     template <typename rt_t, int WARPS_PER_PAGE, typename Config, typename Globals, typename rv_t>
     __device__ inline void matvec(Globals &g, state<Config> &s, rv_t &activations_vec, semaphore &weights_arrived, int weight_pid, int scratch_offset)

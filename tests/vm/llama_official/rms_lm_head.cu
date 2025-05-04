@@ -87,7 +87,8 @@ namespace kittens::prototype::vm
                 }
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
-                ((uint64_t *)s.scratch())[laneid()] = 0;
+                auto &scratch_vec = *reinterpret_cast<sv_fl<256>*>(s.scratch());
+                warp::zero(scratch_vec);
                 warp::sync(); // done, now we can proceed to other things.
 
                 if(laneid() == 0) {
@@ -97,7 +98,7 @@ namespace kittens::prototype::vm
 
                         int block_idx = inst.start_block_idx + iter;
 
-                        warp::tma::expect_bytes(weights_arrived(s, input_stage), sizeof(bf16) * 2048 * 16);
+                        tma::expect_bytes(weights_arrived(s, input_stage), sizeof(bf16) * 2048 * 16);
                         #pragma unroll
                         for(int i = 0; i < 4; i++) {
                             int weight_page = get_weight_page(s, input_stage, i);
@@ -132,7 +133,7 @@ namespace kittens::prototype::vm
                     int rms_scale_activation_page = get_rms_scale_activation_page(s);
                     s.wait_page_ready(rms_scale_activation_page);
                     auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
-                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
+                    auto &rms_scale   = *reinterpret_cast<sv_bf<2048> *>(s.pages[rms_scale_activation_page].ptr());
                     tma::expect(activations_rms_scale_arrived(s), activations, rms_scale);
                     tma::load_async(rms_scale, g.lm_head_norm_weights, {}, activations_rms_scale_arrived(s));
 
@@ -178,15 +179,16 @@ namespace kittens::prototype::vm
                 for(int i = 0; i < inst.iters; i++) {
 
                     int weight_page = get_weight_page(s, input_stage, page_index);
-                    wait(weights_arrived(s, input_stage), (i%(2*INPUT_PIPELINE_STAGES))>=INPUT_PIPELINE_STAGES);
+                    wait(weights_arrived(s, input_stage),   (i%(2*INPUT_PIPELINE_STAGES))>=INPUT_PIPELINE_STAGES);
                     wait(outputs_finished(s, output_stage), (i%(2*OUTPUT_PIPELINE_STAGES))<OUTPUT_PIPELINE_STAGES);
                     st_bf<16, REDUCTION_DIM_PER_WARP> &weights = reinterpret_cast<st_bf<16, REDUCTION_DIM_PER_WARP> *>(s.pages[weight_page].ptr())[warpid() % WARPS_PER_PAGE];
-                    sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
+                    sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>((float*)s.scratch() + (32 * output_stage));
 
                     matvec(out_smem, weights, activations_vec);
 
                     warp::sync();
                     warp::arrive(outputs_arrived(s, output_stage));
+                    warp::arrive(weights_finished(s, input_stage));
 
                     if(i >= inst.iters - 3) {
                         // Release pages.
@@ -214,18 +216,17 @@ namespace kittens::prototype::vm
             {
                 parsed_instruction inst{s};
 
-                sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>(s.scratch());
-                sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>(s.scratch());
-
                 int output_stage = 0;
                 for(int i = 0; i < inst.iters; i++) {
                     int block_idx = inst.start_block_idx + i; 
+
+                    sv_fl<16> &logits_smem = *reinterpret_cast<sv_fl<16> *>((float*)s.scratch() + (32 * output_stage));
+                    sv_bf<16> &logits_smem_bf = *reinterpret_cast<sv_bf<16> *>((float*)s.scratch() + (32 * output_stage));
 
                     wait(outputs_arrived(s, output_stage), (i%(2*OUTPUT_PIPELINE_STAGES))>=OUTPUT_PIPELINE_STAGES);
 
                     rv_fl<16> logits_rv;
                     warp::load(logits_rv, logits_smem);
-                    warp::sync();
                     warp::store(logits_smem_bf, logits_rv);
                     warp::sync();
 
@@ -237,6 +238,9 @@ namespace kittens::prototype::vm
 
                         tma::store_async_read_wait(); // not just read wait! full wait! must be visible in global!
                     }
+
+                    warp::zero(logits_smem);
+                    warp::sync();
 
                     warp::arrive(outputs_finished(s, output_stage));
                     output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
