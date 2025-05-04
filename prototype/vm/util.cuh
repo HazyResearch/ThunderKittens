@@ -136,8 +136,8 @@ template<typename config> struct state {
         #pragma unroll
         for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
             // auto should_flip = (next_instruction_index % (1 << i)) == 0;
-            bool should_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
-            if (should_flip) {
+            bool shit_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
+            if (shit_flip) {
                 arrive(page_finished[pid][i], count);
             }
         }
