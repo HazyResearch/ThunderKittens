@@ -49,8 +49,8 @@ namespace kittens::prototype::vm
 
                 rv_fl<16> qkv_proj, rope_cos, rope_sin;
 
-                // warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
-                // warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
+                warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
+                warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
 
                 wait(sem, bit);
                 warp::load(qkv_proj, qkv_proj_smem);
@@ -96,9 +96,9 @@ namespace kittens::prototype::vm
                         tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
 
-                    tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                    // asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-                    // atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
+                    tma::store_async_wait();              // not just read wait! full wait! must be visible in global!
+                    asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
                 }
             }
         };
@@ -151,7 +151,6 @@ namespace kittens::prototype::vm
 
                     // Activation
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    __nanosleep(100000);
                     if (inst.layer_idx > 0)
                     {
                         while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
@@ -190,17 +189,6 @@ namespace kittens::prototype::vm
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 pipeline::storer_loop(s, g);
-
-                if (laneid() == 0)
-                {
-                    asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-
-                    parsed_instruction inst{s};
-                    for (int block_idx = inst.start_block_idx; block_idx < inst.end_block_idx; block_idx++)
-                    {
-                        atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
-                    }
-                }
             }
         };
     };
