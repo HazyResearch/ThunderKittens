@@ -150,7 +150,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_AT_GMEM_WAIT);
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
                     {
-                        __nanosleep(20);
+                        __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     s.record(TEVENT_TRIPLES_START + 7);

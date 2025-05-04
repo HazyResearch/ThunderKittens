@@ -198,7 +198,7 @@ namespace kittens::prototype::vm
                            *(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + 2}] < inst.num_partials ||
                            *(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, inst.q_head_start_idx + 3}] < inst.num_partials)
                     {
-                        __nanosleep(20);
+                        __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
 

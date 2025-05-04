@@ -109,12 +109,12 @@ namespace kittens
 
                 if (warpid() < config::NUM_CONSUMER_WARPS)
                 {
-                    warpgroup::increase_registers<208>();
+                    warpgroup::increase_registers<config::CONSUMER_REGISTERS>();
                     ::kittens::prototype::vm::consumer::main_loop<config, globals, ops...>(g, kvms);
                 }
                 else
                 {
-                    warpgroup::decrease_registers<64>();
+                    warpgroup::decrease_registers<config::NON_CONSUMER_REGISTERS>();
                     switch (warpgroup::warpid())
                     {
                     case 0:
