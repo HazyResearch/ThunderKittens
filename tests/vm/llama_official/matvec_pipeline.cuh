@@ -29,6 +29,10 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &outputs_arrived(state<Config> &s, int stage) { return s.semaphores()[1 + 2 * INPUT_PIPELINE_STAGES + stage]; }
         __device__ static inline semaphore &outputs_finished(state<Config> &s, int stage) { return s.semaphores()[1 + 2 * INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES + stage]; }
 
+        __device__ static inline sv_bf<Globals::hidden_dim> &get_activations(state<Config> &s) { return *reinterpret_cast<sv_bf<Globals::hidden_dim> *>(s.pages[get_activation_page(s)].ptr()); }
+
+        __device__ static inline sv_bf<Globals::hidden_dim> &get_rms_scale(state<Config> &s) { return *reinterpret_cast<sv_bf<Globals::hidden_dim> *>(s.pages[get_activation_page(s)].ptr(sizeof(sv_bf<Globals::hidden_dim>))); }
+
         __device__ static inline int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
         {
             // NOTE: assumes a three stage pipeline
@@ -68,8 +72,32 @@ namespace kittens::prototype::vm
             return SEM_COUNT;
         }
 
-        template <auto WeightsPtr, auto OddWeightsPtr = WeightsPtr, int iter_scale = 1>
-        __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx)
+        // template <auto ActPtr>
+        // __device__ static inline void launcher_load_activations(state<Config> &s, const Globals &g)
+        // {
+        //     if (laneid() == 0)
+        //     {
+        //         s.wait_tensor_ready();
+        //         arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+        //         parsed_instruction inst{s};
+
+        //         int activation_page = get_activation_page(s);
+
+        //         s.wait_page_ready(activation_page);
+        //         auto &activations = get_activations(s);
+
+        //         auto &sem = activations_arrived(s);
+
+        //         // Activation
+        //         s.record(TEVENT_AT_GMEM_WAIT);
+        //         pipeline_specifics::gmem_wait(g, s);
+        //         s.record(TEVENT_DONE_GMEM_WAIT);
+        //         tma::load_async(activations, g.*ActPtr, {}, sem);
+        //     }
+        // }
+
+        __device__ static inline void loader_loop(state<Config> &s, const Globals &g)
         {
             parsed_instruction inst{s};
 
@@ -83,9 +111,8 @@ namespace kittens::prototype::vm
                 {
                     wait(weights_finished(s, input_stage), (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
 
-                    int block_idx = inst.start_block_idx + iter / iter_scale;
-
-                    tma::expect_bytes(weights_arrived(s, input_stage), sizeof(bf16) * 2048 * 16);
+                    auto &sem = weights_arrived(s, input_stage);
+                    tma::expect_bytes(sem, sizeof(bf16) * 2048 * 16);
 #pragma unroll
                     for (int i = 0; i < 4; i++)
                     {
@@ -95,14 +122,8 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page);
                         }
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[weight_page]);
-                        if (iter % 2 == 0)
-                        {
-                            tma::load_async(weight_chunk, g.*WeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
-                        }
-                        else
-                        {
-                            tma::load_async(weight_chunk, g.*OddWeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
-                        }
+
+                        pipeline_specifics::load_iter(s, g, inst, iter, i, weight_chunk, sem);
                     }
 
                     input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
@@ -167,8 +188,6 @@ namespace kittens::prototype::vm
             int output_stage = 0;
             for (int i = 0; i < inst.iters; i++)
             {
-                int block_idx = inst.start_block_idx + i;
-
                 auto &sem = outputs_arrived(s, output_stage);
                 auto bit = (i % (2 * OUTPUT_PIPELINE_STAGES)) >= OUTPUT_PIPELINE_STAGES;
 
@@ -207,8 +226,8 @@ namespace kittens::prototype::vm
                 int activation_page = get_activation_page(s);
 
                 s.wait_page_ready(activation_page);
-                auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
-                auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr());
+                auto &activations = get_activations(s);
+                auto &rms_scale = get_rms_scale(s);
 
                 auto &sem = activations_arrived(s);
 
@@ -230,8 +249,8 @@ namespace kittens::prototype::vm
 
             wait(sem, 0);
 
-            auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr());
-            auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
+            auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(&get_rms_scale(s));
+            auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(&get_activations(s));
 
             auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
 

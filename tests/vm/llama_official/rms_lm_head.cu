@@ -39,6 +39,12 @@ namespace kittens::prototype::vm
                 }
             }
 
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
+            {
+                auto block_idx = inst.start_block_idx + iter;
+                tma::load_async(weight_chunk, g.lm_head_weights, {block_idx, col_idx}, sem);
+            }
+
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
             {
                 wait(sem, bit);
@@ -50,6 +56,7 @@ namespace kittens::prototype::vm
 
                 rv_fl<16> logits_rv;
                 warp::load(logits_rv, logits_smem);
+                warp::sync();
                 warp::store(logits_smem_bf, logits_rv);
                 warp::sync();
 
@@ -87,8 +94,7 @@ namespace kittens::prototype::vm
             {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
-
-                pipeline::loader_loop<&Globals::lm_head_weights>(s, g, 0);
+                pipeline::loader_loop(s, g);
             }
         };
         struct launcher

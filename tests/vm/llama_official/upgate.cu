@@ -40,6 +40,27 @@ namespace kittens::prototype::vm
                 }
             }
 
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
+            {
+                auto block_idx = inst.start_block_idx + iter / 2;
+                if (iter % 2 == 0)
+                {
+                    tma::load_async(weight_chunk, g.up_weights, {inst.layer, block_idx, col_idx}, sem);
+                }
+                else
+                {
+                    tma::load_async(weight_chunk, g.gate_weights, {inst.layer, block_idx, col_idx}, sem);
+                }
+                // if (iter % 2 == 0)
+                // {
+                //     tma::load_async(weight_chunk, g.*WeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
+                // }
+                // else
+                // {
+                //     tma::load_async(weight_chunk, g.*OddWeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
+                // }
+            }
+
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
             {
                 // mbarriers need to be waited on for every phase.
@@ -119,8 +140,7 @@ namespace kittens::prototype::vm
             {
                 s.template zero_scratch<1024>();
 
-                parsed_instruction inst{s};
-                pipeline::loader_loop<&Globals::up_weights, &Globals::gate_weights, 2>(s, g, inst.layer);
+                pipeline::loader_loop(s, g);
             }
         };
 
