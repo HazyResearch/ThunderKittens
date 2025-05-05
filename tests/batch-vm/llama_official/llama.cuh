@@ -90,7 +90,7 @@ namespace kittens::prototype::vm
         weights_t up_weights;
         weights_t gate_weights;
         weights_big_indim_t down_weights;
-        
+
         // kv cache
         kv_cache_t k_cache;
         kv_cache_t v_cache;
@@ -151,5 +151,5 @@ namespace kittens::prototype::vm
     template <typename config = config, typename globals = llama_70b_globals>
     struct downproj;
 
-    
 }
+

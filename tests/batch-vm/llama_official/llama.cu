@@ -32,13 +32,17 @@ PYBIND11_MODULE(kvm_llama_70b, m)
     m.doc() = "";
     kittens::py::bind_kernel<kvm<default_config, 
                                  llama_70b_globals,
-                                 pre_rms_norm,
+
+                                 pre_rms_norm_op,
+                                 qkv_rope_append_op,
                                  attention_decode,
-                                 post_rms_norm,
-                                 rms_qkv_rope_append_op,
-                                 downproj_op,
                                  o_proj_op,
-                                 rms_upgate_silu_op,
+
+                                 post_rms_norm_op,
+                                 matmul_silu_op,
+                                 matmul_gate_op,
+                                 downproj_op,
+                                 
                                  rms_lm_head_op>>(m, "kvm_llama_70b",
                                                   &llama_70b_globals::Bar,
                                                   &llama_70b_globals::instructions,
@@ -48,11 +52,14 @@ PYBIND11_MODULE(kvm_llama_70b, m)
                                                   &llama_70b_globals::attn_norm_weights,
                                                   &llama_70b_globals::o_weights,
                                                   &llama_70b_globals::mlp_norm_weights,
+                                                  
                                                   &llama_70b_globals::up_weights,
                                                   &llama_70b_globals::gate_weights,
                                                   &llama_70b_globals::down_weights,
+
                                                   &llama_70b_globals::lm_head_norm_weights,
                                                   &llama_70b_globals::lm_head_weights,
+
                                                   &llama_70b_globals::k_cache,
                                                   &llama_70b_globals::v_cache,
 
