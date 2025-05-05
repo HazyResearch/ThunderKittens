@@ -171,4 +171,59 @@ namespace kittens::prototype::vm
             }
         }
     };
+
+    template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics>
+    struct rms_matvec_pipeline : public matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>
+    {
+        using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
+
+        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+
+        template <auto ActPtr, auto RmsPtr>
+        __device__ static inline void launcher_load_rms_and_activations(state<Config> &s, const Globals &g, int layer_idx)
+        {
+            if (laneid() == 0)
+            {
+                s.wait_tensor_ready();
+                arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+
+                parsed_instruction inst{s};
+
+                int activation_page = get_activation_page(s);
+
+                s.wait_page_ready(activation_page);
+                auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
+                auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr());
+
+                auto &sem = activations_arrived(s);
+
+                tma::expect(sem, activations, rms_scale);
+                tma::load_async(rms_scale, g.*RmsPtr, {layer_idx, 0}, sem);
+
+                // Activation
+                s.record(TEVENT_AT_GMEM_WAIT);
+                pipeline_specifics::gmem_wait(g, s);
+                s.record(TEVENT_DONE_GMEM_WAIT);
+                tma::load_async(activations, g.*ActPtr, {}, sem);
+            }
+        }
+
+        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g)
+        {
+            auto activation_page = get_activation_page(s);
+            auto &sem = activations_arrived(s);
+
+            wait(sem, 0);
+
+            auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr());
+            auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
+
+            auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((uint8_t *)s.scratch() + (64 * 12)));
+
+            warp::sync();
+            s.warp_finish_page(activation_page, 1);
+
+            pipeline::consumer_loop(s, g, activations_vec);
+        }
+    };
 }

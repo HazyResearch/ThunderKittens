@@ -17,8 +17,6 @@ namespace kittens::prototype::vm
 
         static constexpr int K_BLK_START = 2048 / Globals::matvec_block_size;
         static constexpr int V_BLK_START = 2560 / Globals::matvec_block_size;
-
-        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
         static constexpr int EXPECTED_ARRIVAL_COUNT = 512;
 
         struct parsed_instruction
@@ -36,6 +34,19 @@ namespace kittens::prototype::vm
 
         struct pipeline_specifics
         {
+
+            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s)
+            {
+                parsed_instruction inst{s};
+                if (inst.layer_idx > 0)
+                {
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                    {
+                        __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
+                    }
+                }
+            }
+
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
             {
 
@@ -103,7 +114,7 @@ namespace kittens::prototype::vm
             }
         };
 
-        using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
+        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
         struct controller
         {
@@ -131,56 +142,16 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (laneid() == 0)
-                {
-                    s.wait_tensor_ready();
-                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
 
-                    parsed_instruction inst{s};
-
-                    int activation_page = pipeline::get_activation_page(s);
-
-                    s.wait_page_ready(activation_page);
-                    auto &activations = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
-                    auto &rms_scale = *reinterpret_cast<sv_bf<2048> *>(s.pages[activation_page].ptr());
-
-                    auto &sem = pipeline::activations_arrived(s);
-
-                    tma::expect(sem, activations, rms_scale);
-                    tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, sem);
-
-                    // Activation
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    if (inst.layer_idx > 0)
-                    {
-                        while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        {
-                            __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
-                        }
-                    }
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-                    tma::load_async(activations, g.hidden_states, {}, sem);
-                }
+                parsed_instruction inst{s};
+                pipeline::launcher_load_rms_and_activations<&Globals::hidden_states, &Globals::attn_norm_weights>(s, g, inst.layer_idx);
             }
         };
         struct consumer
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                auto activation_page = pipeline::get_activation_page(s);
-                auto &sem = pipeline::activations_arrived(s);
-
-                wait(sem, 0);
-
-                auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr());
-                auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
-
-                auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((uint8_t *)s.scratch() + (64 * 12)));
-
-                warp::sync();
-                s.warp_finish_page(activation_page, 1);
-
-                pipeline::consumer_loop(s, g, activations_vec);
+                pipeline::consumer_loop(s, g);
             }
         };
         struct storer
