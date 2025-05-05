@@ -51,14 +51,6 @@ namespace kittens::prototype::vm
                 {
                     tma::load_async(weight_chunk, g.gate_weights, {inst.layer, block_idx, col_idx}, sem);
                 }
-                // if (iter % 2 == 0)
-                // {
-                //     tma::load_async(weight_chunk, g.*WeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
-                // }
-                // else
-                // {
-                //     tma::load_async(weight_chunk, g.*OddWeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
-                // }
             }
 
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
