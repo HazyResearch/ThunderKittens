@@ -158,27 +158,89 @@ def schedule_upgate(globs: Globals, layer_idx: int):
     blocks_per_sm = num_up_gate_blocks / sm_count
     assert blocks_per_sm > 1
 
-    # for sm_idx in range(sm_count):
-    #     start = round(sm_idx * blocks_per_sm)
-    #     end = round((sm_idx + 1) * blocks_per_sm)
-    #     instructions.append(
-    #         LayerNormDoubleMatVecSiLU(
-    #             layer_idx=layer_idx,
-    #             start_output_block_idx=start,
-    #             end_output_block_idx=end,
-    #         )
-    #     )
-
-    DIV = 4
-    assert num_up_gate_blocks % DIV == 0
-    for up_gate_block_idx in range(0, num_up_gate_blocks, DIV):
+    for sm_idx in range(sm_count):
+        start = round(sm_idx * blocks_per_sm)
+        end = round((sm_idx + 1) * blocks_per_sm)
         instructions.append(
             LayerNormDoubleMatVecSiLU(
                 layer_idx=layer_idx,
-                start_output_block_idx=up_gate_block_idx,
-                end_output_block_idx=up_gate_block_idx + DIV,
+                start_output_block_idx=start,
+                end_output_block_idx=end,
             )
         )
+
+    # DIV = 4
+    # assert num_up_gate_blocks % DIV == 0
+    # for up_gate_block_idx in range(0, num_up_gate_blocks, DIV):
+    #     instructions.append(
+    #         LayerNormDoubleMatVecSiLU(
+    #             layer_idx=layer_idx,
+    #             start_output_block_idx=up_gate_block_idx,
+    #             end_output_block_idx=up_gate_block_idx + DIV,
+    #         )
+    #     )
+
+    return instructions
+
+
+def schedule_downproj(globs: Globals, layer_idx: int):
+    instructions: list[Instruction] = []
+
+    num_down_blocks = assert_div(globs.hidden_size, globs.down_proj_block_size)
+    num_col_splits = globs.intermediate_size // globs.hidden_size
+    sm_count = globs.sm_count()
+
+    jobs = []
+    for col_idx in range(num_col_splits):
+        for down_block_idx in range(num_down_blocks):
+            jobs.append((col_idx, down_block_idx))
+
+    num_assigned_jobs = 0
+    for sm_idx in range(sm_count):
+        jobs_left = len(jobs) - num_assigned_jobs
+        sms_left = sm_count - sm_idx
+        jobs_per_sm = jobs_left / sms_left
+        assert jobs_per_sm > 1
+
+        jobs_for_this_sm = round(jobs_per_sm)
+        raw_sliced_jobs = jobs[num_assigned_jobs : num_assigned_jobs + jobs_for_this_sm]
+
+        col_idx = raw_sliced_jobs[0][0]
+        sliced_jobs = [job for job in raw_sliced_jobs if job[0] == col_idx]
+        assert len(sliced_jobs) > 0
+
+        start_output_block_idx = sliced_jobs[0][1]
+        output_block_indices = [job[1] for job in sliced_jobs]
+        assert output_block_indices == list(
+            range(
+                start_output_block_idx,
+                start_output_block_idx + len(sliced_jobs),
+            )
+        )
+
+        instructions.append(
+            DownProjResidual(
+                layer_idx=layer_idx,
+                start_block_idx=start_output_block_idx,
+                end_block_idx=start_output_block_idx + len(sliced_jobs),
+                reduction_block_idx=col_idx,
+            )
+        )
+
+        num_assigned_jobs += len(sliced_jobs)
+
+    # DIV = 5
+    # assert num_down_blocks % DIV == 0
+    # for down_block_idx in range(0, num_down_blocks, DIV):
+    #     for reduction_idx in range(4):  # 2048 columns per op
+    #         instructions.append(
+    #             DownProjResidual(
+    #                 layer_idx=layer_idx,
+    #                 start_block_idx=down_block_idx,
+    #                 end_block_idx=down_block_idx + DIV,
+    #                 reduction_block_idx=reduction_idx,
+    #             )
+    #         )
 
     return instructions
 
@@ -292,7 +354,8 @@ def schedule_layer(
             instructions.append(
                 O_ProjResidual(
                     layer_idx=layer_idx,
-                    output_block_idx=o_block_idx,
+                    start_block_idx=o_block_idx,
+                    end_block_idx=o_block_idx + 1,
                     reduction_block_idx=0,
                 )
             )
@@ -309,16 +372,7 @@ def schedule_layer(
 
     # INSTRUCTION 6
     if instruction_6:
-        num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
-        for down_block_idx in range(num_down_blocks):
-            for reduction_idx in range(4):  # 2048 columns per op
-                instructions.append(
-                    DownProjResidual(
-                        layer_idx=layer_idx,
-                        output_block_idx=down_block_idx,
-                        reduction_block_idx=reduction_idx,
-                    )
-                )
+        instructions.extend(schedule_downproj(globals, layer_idx))
         maybe_add_print(layer_idx, "down_proj")
         if stop_after_op == "down_proj":
             return instructions

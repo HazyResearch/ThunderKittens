@@ -66,14 +66,23 @@ def matvec_with_residual(
     vec: Tensor,
     residual: Tensor,
     block_size: int,
-    block_idx: int,
+    start_block_idx: int,
+    end_block_idx: int,
     reduction_size: int,
     reduction_block_idx: int,
 ):
-    matvec_out, start, end = matvec(
-        mat, vec, block_size, block_idx, True, reduction_size, reduction_block_idx
-    )
-    residual[start:end] += matvec_out
+    for block_idx in range(start_block_idx, end_block_idx):
+        matvec_out, start, end = matvec(
+            mat=mat,
+            vec=vec,
+            block_size=block_size,
+            block_idx=block_idx,
+            reduce=True,
+            reduction_size=reduction_size,
+            reduction_idx=reduction_block_idx,
+        )
+
+        residual[start:end] += matvec_out.to(residual.dtype)
 
 
 def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
@@ -81,19 +90,23 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
     assert op_barriers[0] == globals.num_attention_heads
 
+    assert instruction.start_block_idx == instruction.end_block_idx - 1
+    assert instruction.reduction_block_idx == 0
+
     matvec_with_residual(
         mat=globals.o_proj[instruction.layer_idx],
         vec=globals.attn_out,
         residual=globals.hidden_states,
         block_size=globals.o_proj_block_size,
-        block_idx=instruction.output_block_idx,
+        start_block_idx=instruction.start_block_idx,
+        end_block_idx=instruction.end_block_idx,
         reduction_size=globals.matvec_reduction_size,
         reduction_block_idx=instruction.reduction_block_idx,
     )
 
     # Barrier update
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+    next_op_barriers[0] += instruction.end_block_idx - instruction.start_block_idx
 
 
 def down_proj_residual(globals: Globals, instruction: DownProjResidual):
@@ -106,13 +119,14 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         vec=globals.silu_out,
         residual=globals.hidden_states,
         block_size=globals.down_proj_block_size,
-        block_idx=instruction.output_block_idx,
+        start_block_idx=instruction.start_block_idx,
+        end_block_idx=instruction.end_block_idx,
         reduction_size=globals.matvec_reduction_size,
         reduction_block_idx=instruction.reduction_block_idx,
     )
 
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+    next_op_barriers[0] += instruction.end_block_idx - instruction.start_block_idx
 
 
 def layer_norm_double_matvec_silu(

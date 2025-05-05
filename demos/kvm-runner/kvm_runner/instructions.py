@@ -170,8 +170,9 @@ class AttentionReduction(Instruction):
 @dataclass
 class MatVecAdd(Instruction):
     layer_idx: int
-    output_block_idx: int
-    reduction_block_idx: int  # in units of 2048
+    start_block_idx: int
+    end_block_idx: int
+    reduction_block_idx: int
 
 
 # denoting these with separate opcodes so that know what inputs to read from

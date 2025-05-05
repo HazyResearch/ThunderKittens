@@ -180,7 +180,7 @@ def main(config: ScriptConfig):
             print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
             return diff, adiff, rdiff
 
-        test_tensors(
+        d, a, r = test_tensors(
             globs_for_pyvm.hidden_states, globs_for_kvm.hidden_states, "hidden_states"
         )
         test_tensors(
@@ -202,7 +202,7 @@ def main(config: ScriptConfig):
         test_tensors(globs_for_pyvm.silu_out, globs_for_kvm.silu_out, "silu_out")
         test_tensors(globs_for_pyvm.barriers, globs_for_kvm.barriers, "barriers")
 
-        d, a, r = test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
+        test_tensors(globs_for_pyvm.logits, globs_for_kvm.logits, "logits")
 
         # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
         # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
