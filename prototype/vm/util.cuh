@@ -97,10 +97,7 @@ template<typename config> struct state {
     }
     __device__ inline void await_instruction() {
         wait(instruction_arrived[instruction_ring], (instruction_index / config::INSTRUCTION_PIPELINE_STAGES) & 1);
-        #pragma unroll
-        for(int i = 0; i < config::NUM_PAGES; i++) {
-            reg_pid_order[i] = pid_order()[i];
-        }
+        pid_order_shared_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&(pid_order()[0])));
     }
     __device__ inline void next_instruction() {
         __syncwarp();
@@ -117,14 +114,39 @@ template<typename config> struct state {
     using page_array_t = page<config>[config::NUM_PAGES];
     page_array_t &pages;
 
-    using page_semaphore_array_t = kittens::semaphore[config::NUM_PAGES];
+    using page_semaphore_array_t = kittens::semaphore[config::NUM_PAGES][config::INSTRUCTION_PIPELINE_STAGES_BITS];
     page_semaphore_array_t &page_finished;
 
     __device__ inline int pid(int lid) {
-        return reg_pid_order[lid];
+        int ret;
+        move<int>::lds(ret, pid_order_shared_addr + lid*sizeof(int));
+        return ret;
     }
     __device__ inline void wait_page_ready(int pid) {
-        wait(page_finished[pid], instruction_index%2);
+        #pragma unroll
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
+            auto bit = (instruction_index >> i) & 1;
+            wait(page_finished[pid][i], bit);
+        }
+    }
+
+    __device__ inline void finish_page(int pid, int count) {
+        auto next_instruction_index = instruction_index + 1;
+
+        #pragma unroll
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
+            // auto should_flip = (next_instruction_index % (1 << i)) == 0;
+            bool should_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
+            if (should_flip) {
+                arrive(page_finished[pid][i], count);
+            }
+        }
+    }
+
+    __device__ inline void warp_finish_page(int pid, int count) {
+        if (warp::laneid() == 0) {
+            finish_page(pid, count);
+        }
     }
 
     semaphore &tensor_finished;
@@ -149,10 +171,37 @@ template<typename config> struct state {
     using tensor_allocator_t = ::kittens::tensor_allocator<1, NCTA_TENSOR_ALLOC>;
     tensor_allocator_t &tensor_alloc;
 
+    uint32_t pid_order_shared_addr;
+
     __device__ inline void print() {
         printf("Kittens Virtual Machine State being printed by thread %d, block %d\n  Instruction index: %d, Instruction ring: %d\n", threadIdx.x, blockIdx.x, instruction_index, instruction_ring);
     }
 };
+
+
+// timing event convention
+constexpr int TEVENT_CONTROLLER_START = 0;
+constexpr int TEVENT_IFETCH_DONE = 1;
+constexpr int TEVENT_PAGE_ALLOC_DONE = 2;
+constexpr int TEVENT_SEMS_SETUP = 3;
+constexpr int TEVENT_CONTROLLER_END = 4;
+constexpr int TEVENT_LOADER_START = 5;
+constexpr int TEVENT_LAUNCHER_START = 7;
+constexpr int TEVENT_STORER_START = 9;
+// need NUM_CONSUMER_WARPS * 2 slots here
+constexpr int TEVENT_CONSUMER_START = 11;
+
+constexpr int TEVENT_AT_GMEM_WAIT = 44;
+constexpr int TEVENT_DONE_GMEM_WAIT = 45;
+
+constexpr int TEVENT_OUTPUT_READY = 46;
+
+constexpr int FREE_SLOTS_START = 47;
+
+constexpr int TEVENT_TRIPLES_START = 100;
+constexpr int TEVENT_TRIPLES_END = 110;
+constexpr int TEVENT_TRIPLES_STORE_START = 124;
+constexpr int TEVENT_TRIPLES_OUTPUT_READY = 125;
 
 } // namespace vm
 } // namespace prototype
@@ -167,7 +216,7 @@ template<typename config> struct state {
 #endif
 
 
-#define MAKE_WORKER(name) \
+#define MAKE_WORKER(name, start_event, is_consumer) \
 namespace kittens { \
 namespace prototype { \
 namespace vm { \
@@ -188,7 +237,23 @@ template<typename config, typename globals, typename... ops> __device__ void mai
     int num_iters = g.instructions.rows(); \
     for(kvms.instruction_index = 0, kvms.instruction_ring = 0; kvms.instruction_index < num_iters; kvms.next_instruction()) { \
         kvms.await_instruction(); \
+        if (laneid() == 0) { \
+            if (is_consumer) { \
+                kvms.record(start_event + warpid()); \
+            } \
+            else { \
+                kvms.record(start_event); \
+            } \
+        } \
         dispatch_op<name##_op_dispatcher<config, globals>::dispatcher, ops...>::template run<void, config, globals, ::kittens::prototype::vm::state<config>>(kvms.instruction()[0], g, kvms); \
+        if (laneid() == 0) { \
+            if (is_consumer) { \
+                kvms.record(start_event + config::NUM_CONSUMER_WARPS + warpid()); \
+            } \
+            else { \
+                kvms.record(start_event + 1); \
+            } \
+        } \
     } \
     __syncwarp(); \
     KVM_DEBUG_PRINT_END(#name); \
