@@ -111,6 +111,10 @@ namespace kittens::prototype::vm
                     asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
                 }
+
+                warp::sync();
+                warp::zero(qkv_proj_smem);
+                warp::sync();
             }
         };
 
