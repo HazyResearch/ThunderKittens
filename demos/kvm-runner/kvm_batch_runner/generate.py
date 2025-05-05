@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pydra
 import torch
-from kvm_runner.kvm import KVM_Runner
-from kvm_runner.llama import LlamaForCausalLM
-from kvm_runner.model_types import BatchState, ExtraModelConfig
-from kvm_runner.python_vm import PyVM_Runner
-from kvm_runner.scheduler import PrintInfo
+from kvm_batch_runner.kvm import KVM_Runner
+from kvm_batch_runner.llama import LlamaForCausalLM
+from kvm_batch_runner.model_types import BatchState, ExtraModelConfig
+from kvm_batch_runner.python_vm import PyVM_Runner
+from kvm_batch_runner.scheduler import PrintInfo
 from tabulate import tabulate
 from torch import Tensor
 from tqdm import tqdm
@@ -15,6 +15,7 @@ from transformers import AutoTokenizer
 
 class ScriptConfig(pydra.Config):
     model: str = "meta-llama/Llama-3.1-70B-Instruct"
+    model_cache_dir: Path = ( "/data/bfs/" )
     device: str = "cuda:0"
     prompt: str = "tell me a funny joke about cookies"
     chat: bool = False
@@ -159,7 +160,8 @@ def main(config: ScriptConfig):
         max_len_override=config.max_len_override,
     )
     model = LlamaForCausalLM.from_pretrained(
-        config.model, device=config.device, extra_config=extra_config
+        config.model, device=config.device, extra_config=extra_config, 
+        cache_dir=config.model_cache_dir
     )
 
     if config.chat:

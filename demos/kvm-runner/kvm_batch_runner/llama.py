@@ -1,17 +1,18 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import huggingface_hub
 import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
 from einops import rearrange
-from kvm_runner.model_types import (
+from kvm_batch_runner.model_types import (
     BatchState,
     DeviceType,
     ExtraModelConfig,
 )
-from kvm_runner.utils import (
+from kvm_batch_runner.utils import (
     load_safetensors_repo,
 )
 from torch import Tensor, nn
@@ -583,11 +584,15 @@ class LlamaForCausalLM(nn.Module):
         extra_config: ExtraModelConfig | None = None,
         device: DeviceType | None = None,
         dtype: torch.dtype | None = None,
+        cache_dir: Optional[Path] = None,
     ):
         if extra_config is None:
             extra_config = ExtraModelConfig()
 
-        config: LlamaConfig = LlamaConfig.from_pretrained(model_name_or_path)  # type: ignore
+        config: LlamaConfig = LlamaConfig.from_pretrained(
+            model_name_or_path, 
+            cache_dir
+        )  # type: ignore
         if extra_config.rope_scaling is not None:
             config.rope_scaling = extra_config.rope_scaling
 

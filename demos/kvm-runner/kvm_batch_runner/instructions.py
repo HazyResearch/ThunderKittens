@@ -1,8 +1,8 @@
 from dataclasses import dataclass, fields
 from typing import Optional
 
-from kvm_runner.model_types import DeviceType
-from kvm_runner.utils import get_sm_count
+from kvm_batch_runner.model_types import DeviceType
+from kvm_batch_runner.utils import get_sm_count
 from torch import Tensor
 
 

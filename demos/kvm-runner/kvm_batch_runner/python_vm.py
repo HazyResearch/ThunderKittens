@@ -3,25 +3,30 @@ import math
 import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange
-from kvm_runner.instructions import (
+from kvm_batch_runner.instructions import (
     PreLayerNorm,
     QKV_MatMulRopeAppend,
     AttentionDecode,
     O_ProjResidual,
+    
     PostLayerNorm,
     MatMulSiLU,
     MatMulGate,
     DownProjResidual,
+
     PrintState,
     RMS_LM_Head,
+
+    Globals,
+    Instruction,
 )
-from kvm_runner.llama import (
+from kvm_batch_runner.llama import (
     BatchState,
     LlamaForCausalLM,
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
-from kvm_runner.utils import trepr
+from kvm_batch_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
+from kvm_batch_runner.utils import trepr
 from torch import Tensor
 
 
@@ -375,10 +380,10 @@ def print_state(globals: Globals, instruction: PrintState):
 
 
 INSTRUCTION_TO_SOLVER = {
-    PreLayerNorm: layer_norm,
+    PreLayerNorm: pre_layer_norm,
 
-    QKV_MatMulRopeAppend: layer_norm_matvec_rope_append,
-    AttentionDecode: attention,
+    QKV_MatMulRopeAppend: qkv_matmul_rope_append,
+    AttentionDecode: attention_decode,
     O_ProjResidual: o_proj_residual,
 
     PostLayerNorm: post_layer_norm,

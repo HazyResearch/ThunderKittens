@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 
 import torch
-from kvm_runner.model_types import DeviceType
+from kvm_batch_runner.model_types import DeviceType
 from safetensors import safe_open
 from torch import Tensor
 from tqdm import tqdm

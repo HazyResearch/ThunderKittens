@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pydra
 import torch
-from kvm_runner.instructions import NoOp
-from kvm_runner.kvm import get_kvm_func, interpret_with_kvm
-from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
-from kvm_runner.scheduler import (
+from kvm_batch_runner.instructions import NoOp
+from kvm_batch_runner.kvm import get_kvm_func, interpret_with_kvm
+from kvm_batch_runner.llama import ExtraModelConfig, LlamaForCausalLM
+from kvm_batch_runner.scheduler import (
     make_globals,
     tensorize_instructions,
 )

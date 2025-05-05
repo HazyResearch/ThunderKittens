@@ -1,7 +1,6 @@
 import math
-
 import torch
-from kvm_runner.instructions import (
+from kvm_batch_runner.instructions import (
     PreLayerNorm,
     QKV_MatMulRopeAppend,
     AttentionDecode,
@@ -18,8 +17,8 @@ from kvm_runner.instructions import (
     PrintState,
     RMS_LM_Head,
 )
-from kvm_runner.llama import LlamaForCausalLM
-from kvm_runner.utils import get_sm_count
+from kvm_batch_runner.llama import LlamaForCausalLM
+from kvm_batch_runner.utils import get_sm_count
 
 INTS_PER_INSTRUCTION = 32
 TIMING_SLOTS = 128
@@ -243,6 +242,7 @@ def schedule_layer(
             return instructions
 
 
+    # INSTRUCTION 7
     if instruction_7:
         num_up_gate_blocks = assert_div(
             globals.intermediate_size, globals.up_gate_proj_block_size
