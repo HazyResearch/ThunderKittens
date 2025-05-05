@@ -147,6 +147,42 @@ def schedule_qkv(globs: Globals, layer_idx: int):
     return instructions
 
 
+def schedule_upgate(globs: Globals, layer_idx: int):
+    instructions: list[Instruction] = []
+    num_up_gate_blocks = assert_div(
+        globs.intermediate_size, globs.up_gate_proj_block_size
+    )
+
+    sm_count = globs.sm_count()
+
+    blocks_per_sm = num_up_gate_blocks / sm_count
+    assert blocks_per_sm > 1
+
+    # for sm_idx in range(sm_count):
+    #     start = round(sm_idx * blocks_per_sm)
+    #     end = round((sm_idx + 1) * blocks_per_sm)
+    #     instructions.append(
+    #         LayerNormDoubleMatVecSiLU(
+    #             layer_idx=layer_idx,
+    #             start_output_block_idx=start,
+    #             end_output_block_idx=end,
+    #         )
+    #     )
+
+    DIV = 4
+    assert num_up_gate_blocks % DIV == 0
+    for up_gate_block_idx in range(0, num_up_gate_blocks, DIV):
+        instructions.append(
+            LayerNormDoubleMatVecSiLU(
+                layer_idx=layer_idx,
+                start_output_block_idx=up_gate_block_idx,
+                end_output_block_idx=up_gate_block_idx + DIV,
+            )
+        )
+
+    return instructions
+
+
 def schedule_lm_head(globs: Globals):
     instructions: list[Instruction] = []
 
@@ -266,17 +302,7 @@ def schedule_layer(
 
     # INSTRUCTION 5
     if instruction_5:
-        # print("We love upgate!")
-        num_up_gate_blocks = assert_div(
-            globals.intermediate_size, globals.up_gate_proj_block_size
-        )
-        for up_gate_block_idx in range(num_up_gate_blocks):
-            instructions.append(
-                LayerNormDoubleMatVecSiLU(
-                    layer_idx=layer_idx,
-                    output_block_idx=up_gate_block_idx,
-                )
-            )
+        instructions.extend(schedule_upgate(globals, layer_idx))
         maybe_add_print(layer_idx, "up_gate")
         if stop_after_op == "up_gate":
             return instructions

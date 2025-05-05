@@ -130,27 +130,37 @@ def layer_norm_double_matvec_silu(
 
     block_size = globals.up_gate_proj_block_size
 
-    up_matvec, start, end = matvec(
-        mat=globals.up_proj[instruction.layer_idx],
-        vec=post_ln,
-        block_size=block_size,
-        block_idx=instruction.output_block_idx,
-    )
+    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
 
-    gate_matvec, _, _ = matvec(
-        mat=globals.gate_proj[instruction.layer_idx],
-        vec=post_ln,
-        block_size=block_size,
-        block_idx=instruction.output_block_idx,
-    )
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(block_size, block_idx)
 
-    post_silu = F.silu(gate_matvec) * up_matvec
+        up_matvec, start, end = matvec(
+            mat=globals.up_proj[instruction.layer_idx],
+            vec=post_ln,
+            block_size=block_size,
+            block_idx=block_idx,
+        )
 
-    globals.silu_out[start:end] = post_silu
+        gate_matvec, _, _ = matvec(
+            mat=globals.gate_proj[instruction.layer_idx],
+            vec=post_ln,
+            block_size=block_size,
+            block_idx=block_idx,
+        )
 
-    # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+        # if block_idx in [24, 25, 320, 321]:
+        #     up_sum = torch.sum(up_matvec)
+        #     gate_sum = torch.sum(gate_matvec)
+        #     print(f"block_idx: {block_idx}, up_sum: {up_sum}, gate_sum: {gate_sum}")
+
+        post_silu = F.silu(gate_matvec) * up_matvec
+
+        globals.silu_out[start:end] = post_silu
+
+        barriers[0] += 1
 
 
 def layer_norm_matvec_rope_append(
