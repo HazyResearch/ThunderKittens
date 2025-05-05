@@ -61,6 +61,7 @@ namespace kittens::prototype::vm
                     tma::store_async_read_wait();
                 }
 
+                warp::sync();
                 warp::zero(logits_smem);
                 warp::sync();
             }
