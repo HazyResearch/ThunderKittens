@@ -613,6 +613,7 @@ class LlamaForCausalLM(nn.Module):
             snapshot_path_str = huggingface_hub.snapshot_download(
                 model_name_or_path,
                 allow_patterns=["*.safetensors", "*.json"],
+                cache_dir=cache_dir,
             )
 
             model_path = Path(snapshot_path_str)
