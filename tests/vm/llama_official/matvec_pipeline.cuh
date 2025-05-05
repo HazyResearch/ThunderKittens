@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "llama.cuh"
@@ -10,8 +9,8 @@ namespace kittens::prototype::vm
     struct matvec_pipeline
     {
         static constexpr int INPUT_PIPELINE_STAGES = 3;
+        static constexpr int OUTPUT_PIPELINE_STAGES = 3;
         static constexpr int STAGE_PAGES = 4;
-        static constexpr int OUTPUT_PIPELINE_STAGES = 2;
         static constexpr int ACTIVATION_PAGE = 0;
         static constexpr int WEIGHTS_START_PAGE = 1;
 
@@ -69,7 +68,7 @@ namespace kittens::prototype::vm
             return SEM_COUNT;
         }
 
-        template <auto WeightsPtr>
+        template <auto WeightsPtr, auto OddWeightsPtr = WeightsPtr, int iter_scale = 1>
         __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx)
         {
             parsed_instruction inst{s};
@@ -84,7 +83,7 @@ namespace kittens::prototype::vm
                 {
                     wait(weights_finished(s, input_stage), (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
 
-                    int block_idx = inst.start_block_idx + iter;
+                    int block_idx = inst.start_block_idx + iter / iter_scale;
 
                     tma::expect_bytes(weights_arrived(s, input_stage), sizeof(bf16) * 2048 * 16);
 #pragma unroll
@@ -92,9 +91,18 @@ namespace kittens::prototype::vm
                     {
                         int weight_page = get_weight_page(s, input_stage, i);
                         if (iter < INPUT_PIPELINE_STAGES)
+                        {
                             s.wait_page_ready(weight_page);
+                        }
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[weight_page]);
-                        tma::load_async(weight_chunk, g.*WeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
+                        if (iter % 2 == 0)
+                        {
+                            tma::load_async(weight_chunk, g.*WeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
+                        }
+                        else
+                        {
+                            tma::load_async(weight_chunk, g.*OddWeightsPtr, {layer_idx, block_idx, i}, weights_arrived(s, input_stage));
+                        }
                     }
 
                     input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
@@ -122,7 +130,6 @@ namespace kittens::prototype::vm
             int input_stage = 0, output_stage = 0;
             for (int i = 0; i < inst.iters; i++)
             {
-
                 int weight_page = get_weight_page(s, input_stage, page_index);
                 wait(weights_arrived(s, input_stage), (i % (2 * INPUT_PIPELINE_STAGES)) >= INPUT_PIPELINE_STAGES);
                 wait(outputs_finished(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) < OUTPUT_PIPELINE_STAGES);
@@ -135,7 +142,7 @@ namespace kittens::prototype::vm
                 warp::arrive(outputs_arrived(s, output_stage));
                 warp::arrive(weights_finished(s, input_stage));
 
-                if (i >= inst.iters - 3)
+                if (i >= inst.iters - INPUT_PIPELINE_STAGES)
                 {
 // Release pages.
 #pragma unroll
@@ -152,6 +159,7 @@ namespace kittens::prototype::vm
             }
         }
 
+        template <int iter_scale = 1>
         __device__ static inline void storer_loop(state<Config> &s, const Globals &g)
         {
             parsed_instruction inst{s};
@@ -166,7 +174,14 @@ namespace kittens::prototype::vm
 
                 pipeline_specifics::store(s, g, inst, i, output_stage, sem, bit);
 
-                warp::arrive(outputs_finished(s, output_stage));
+                if ((i + 1) % iter_scale == 0)
+                {
+                    for (int j = 0; j < iter_scale; j++)
+                    {
+                        auto stage_to_arrive = (i - j) % OUTPUT_PIPELINE_STAGES;
+                        warp::arrive(outputs_finished(s, stage_to_arrive));
+                    }
+                }
                 output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
             }
         }
@@ -218,7 +233,7 @@ namespace kittens::prototype::vm
             auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr());
             auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[activation_page].ptr(sizeof(sv_bf<2048>)));
 
-            auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((uint8_t *)s.scratch() + (64 * 12)));
+            auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
 
             warp::sync();
             s.warp_finish_page(activation_page, 1);
