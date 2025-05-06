@@ -159,9 +159,10 @@ def main(config: ScriptConfig):
         interleave_rope=config.interleave_rope,
         max_len_override=config.max_len_override,
     )
+
     model = LlamaForCausalLM.from_pretrained(
         config.model, device=config.device, extra_config=extra_config, 
-        cache_dir=config.model_cache_dir
+        cache_dir=config.model_cache_dir, dtype=torch.bfloat16
     )
 
     if config.chat:
