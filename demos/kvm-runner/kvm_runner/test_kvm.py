@@ -79,7 +79,7 @@ def main(config: ScriptConfig):
     gkvm.pos_id = pos_id
 
     normal_(gpy.hidden_states)
-    gpy.hidden_states.copy_(gkvm.hidden_states)
+    gkvm.hidden_states.copy_(gpy.hidden_states)
     print("hidden states sum:", gpy.hidden_states.float().sum())
 
     print("HACK LOW MEM NO KV CACHE GOODNESS")
