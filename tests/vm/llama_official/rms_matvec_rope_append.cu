@@ -50,7 +50,7 @@ namespace kittens::prototype::vm
             static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
             {
                 auto block_idx = inst.start_block_idx + iter;
-                tma::load_async(weight_chunk, g.qkv_weights, {inst.layer_idx, block_idx, col_idx}, sem);
+                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.qkv_weights, {inst.layer_idx, block_idx, col_idx}, sem);
             }
 
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
@@ -96,21 +96,21 @@ namespace kittens::prototype::vm
 
                     if (block_idx < K_BLK_START)
                     { // Q
-                        tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem_bf, {0, 0, 0, block_idx});
+                        tma::store_async<cache_policy::EVICT_LAST>(g.q_post_rope, qkv_proj_smem_bf, {0, 0, 0, block_idx});
                     }
                     else if (block_idx < V_BLK_START)
                     { // K
                         int base_index = (block_idx - K_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
+                        tma::store_async<cache_policy::EVICT_LAST>(g.k_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
                     else
                     { // V
                         int base_index = (block_idx - V_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
+                        tma::store_async<cache_policy::EVICT_LAST>(g.v_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
 
                     tma::store_async_wait();              // not just read wait! full wait! must be visible in global!

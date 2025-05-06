@@ -46,7 +46,7 @@ namespace kittens::prototype::vm
 
             static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
             {
-                tma::load_async(weight_chunk, g.*WeightsPtr, coord<>{inst.layer, (inst.start_block_idx + iter) * Globals::matvec_block_size, inst.start_reduction_col + 512 * col_idx}, sem);
+                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.*WeightsPtr, coord<>{inst.layer, (inst.start_block_idx + iter) * Globals::matvec_block_size, inst.start_reduction_col + 512 * col_idx}, sem);
             }
 
             static __device__ inline void store(state<Config> &s, const globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
@@ -67,7 +67,7 @@ namespace kittens::prototype::vm
                 if (warp::laneid() == 0)
                 {
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
-                    tma::store_add_async<cache_policy::NORMAL>(OutputActivations, output_smem_bf, {block_idx});
+                    tma::store_add_async<cache_policy::EVICT_LAST>(OutputActivations, output_smem_bf, {block_idx});
                     tma::store_async_wait();
                 }
 
@@ -125,7 +125,7 @@ namespace kittens::prototype::vm
                     tma::expect(pipeline::activations_arrived(s), activations);
 
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
-                    tma::load_async(activations, InputActivations, coord<>{inst.start_reduction_col}, pipeline::activations_arrived(s));
+                    tma::load_async<cache_policy::EVICT_LAST>(activations, InputActivations, coord<>{inst.start_reduction_col}, pipeline::activations_arrived(s));
                 }
             }
         };

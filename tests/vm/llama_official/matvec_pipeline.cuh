@@ -236,7 +236,7 @@ namespace kittens::prototype::vm
                 auto &sem = rms_scale_arrived(s);
 
                 tma::expect(sem, rms_scale);
-                tma::load_async(rms_scale, g.*RmsPtr, {layer_idx, 0}, sem);
+                tma::load_async<cache_policy::EVICT_LAST>(rms_scale, g.*RmsPtr, {layer_idx, 0}, sem);
             }
 
             pipeline::loader_loop(s, g);
@@ -294,7 +294,7 @@ namespace kittens::prototype::vm
                 s.record(TEVENT_AT_GMEM_WAIT);
                 pipeline_specifics::gmem_wait(g, s);
                 s.record(TEVENT_DONE_GMEM_WAIT);
-                tma::load_async(activations, g.*ActPtr, {}, sem);
+                tma::load_async<cache_policy::EVICT_FIRST>(activations, g.*ActPtr, {}, sem);
             }
         }
 

@@ -521,7 +521,7 @@ namespace kittens::prototype::vm
                     for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
                     {
                         auto &smem_bf = *reinterpret_cast<o_sv_bf *>(&O_smem[head_offset]);
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out, smem_bf, {q_head_start_idx + head_offset});
+                        tma::store_async<cache_policy::EVICT_LAST>(g.attn_out, smem_bf, {q_head_start_idx + head_offset});
                     }
                 }
             }
@@ -537,7 +537,7 @@ namespace kittens::prototype::vm
 
                     for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
                     {
-                        tma::store_async<cache_policy::NORMAL>(g.attn_out_intermediates, O_smem[head_offset], {0, q_head_start_idx + head_offset, inst.partial_idx, 0});
+                        tma::store_async<cache_policy::EVICT_LAST>(g.attn_out_intermediates, O_smem[head_offset], {0, q_head_start_idx + head_offset, inst.partial_idx, 0});
                     }
                 }
             }

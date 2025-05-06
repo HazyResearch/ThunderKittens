@@ -45,11 +45,11 @@ namespace kittens::prototype::vm
                 auto block_idx = inst.start_block_idx + iter / 2;
                 if (iter % 2 == 0)
                 {
-                    tma::load_async(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
+                    tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
                 else
                 {
-                    tma::load_async(weight_chunk, g.gate_weights, {inst.layer_idx, block_idx, col_idx}, sem);
+                    tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.gate_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
             }
 
@@ -100,7 +100,7 @@ namespace kittens::prototype::vm
 
                 if (laneid() == 0)
                 {
-                    tma::store_async<cache_policy::NORMAL>(g.silu_out, out_smem, {block_idx});
+                    tma::store_async<cache_policy::EVICT_LAST>(g.silu_out, out_smem, {block_idx});
                     tma::store_async_read_wait();
                 }
 

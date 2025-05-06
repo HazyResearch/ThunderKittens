@@ -42,7 +42,7 @@ namespace kittens::prototype::vm
             static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
             {
                 auto block_idx = inst.start_block_idx + iter;
-                tma::load_async(weight_chunk, g.lm_head_weights, {block_idx, col_idx}, sem);
+                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.lm_head_weights, {block_idx, col_idx}, sem);
             }
 
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
@@ -64,7 +64,7 @@ namespace kittens::prototype::vm
                 {
                     s.record(TEVENT_OUTPUT_READY);
 
-                    tma::store_async<cache_policy::NORMAL>(g.logits, logits_smem_bf, {0, 0, 0, block_idx});
+                    tma::store_async<cache_policy::EVICT_LAST>(g.logits, logits_smem_bf, {0, 0, 0, block_idx});
                     tma::store_async_read_wait();
                 }
 
