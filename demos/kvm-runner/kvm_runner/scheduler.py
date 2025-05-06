@@ -1,17 +1,17 @@
+import heapq
 import math
+from dataclasses import dataclass, field
 
 import torch
 from kvm_runner.instructions import (
-    AttentionReduction,
     DownProjResidual,
     Globals,
     Instruction,
     LayerNorm_QKV_MatVecRopeAppend,
     LayerNormDoubleMatVecSiLU,
+    NoOp,
     O_ProjResidual,
     PartialAttention,
-    PrintInfo,
-    PrintState,
     RMS_LM_Head,
 )
 from kvm_runner.llama import LlamaForCausalLM
@@ -113,8 +113,10 @@ def assert_div(a, b):
     return a // b
 
 
-def schedule_qkv(globs: Globals, layer_idx: int):
-    instructions: list[Instruction] = []
+def schedule_qkv(
+    globs: Globals, layer_idx: int
+) -> list[LayerNorm_QKV_MatVecRopeAppend]:
+    instructions = []
 
     qkv_outdim = (globs.num_attention_heads + 2 * globs.num_kv_heads) * globs.head_dim
 
@@ -269,154 +271,266 @@ def schedule_lm_head(globs: Globals):
     return instructions
 
 
-def schedule_layer(
-    globals: Globals,
-    layer_idx: int,
-    prompt_len: int,
-    ntok: int,
-    stop_after_op: str | None = None,
-    print_info: PrintInfo | None = None,
+@dataclass
+class DAG_Node:
+    def __hash__(self):
+        return hash(tuple(self.instruction.serialize()))
+
+    instruction: Instruction
+    dependencies: list["DAG_Node"]
+
+    children: set["DAG_Node"] = field(default_factory=set)
+    start_time: float = float("inf")
+    remaining_dependencies: set["DAG_Node"] = field(default_factory=set)
+
+    def earliest_ready_time(self):
+        if len(self.dependencies) == 0:
+            return 0
+        return max(dep.start_time for dep in self.dependencies)
+
+    def register_with_parents(self):
+        for dep in self.dependencies:
+            dep.children.add(self)
+
+
+def make_dag(
+    globs: Globals, stop_after_op: str | None = None, layer_limit: int | None = None
 ):
-    if globals.skip_attn_reduction:
-        num_attention_partitions = 1
+    nodes: list[DAG_Node] = []
+
+    if layer_limit is not None:
+        nlayers = layer_limit
     else:
-        num_attention_partitions = pick_num_attention_partitions(
-            prompt_len, ntok, globals.device
+        nlayers = globs.num_hidden_layers
+
+    prev_outputs = []
+    for layer_idx in range(nlayers):
+        new_nodes, new_outputs = make_dag_layer(
+            globs=globs,
+            layer_idx=layer_idx,
+            prev_layer_outputs=prev_outputs,
+            stop_after_op=stop_after_op,
+        )
+        nodes.extend(new_nodes)
+        prev_outputs = new_outputs
+
+    if nlayers == globs.num_hidden_layers:
+        lm_head_instructions = schedule_lm_head(globs)
+        lm_head_nodes: list[DAG_Node] = []
+        for ins in lm_head_instructions:
+            lm_head_nodes.append(DAG_Node(ins, prev_outputs))
+
+        nodes.extend(lm_head_nodes)
+
+    return nodes
+
+
+def make_dag_layer(
+    globs: Globals,
+    layer_idx: int,
+    prev_layer_outputs: list[DAG_Node],
+    stop_after_op: str | None = None,
+):
+    assert globs.skip_attn_reduction
+    num_attention_partitions = 1
+
+    new_nodes: list[DAG_Node] = []
+
+    # qkv
+    qkv_instructions = schedule_qkv(globs, layer_idx)
+    qkv_nodes: list[DAG_Node] = []
+    for ins in qkv_instructions:
+        qkv_nodes.append(DAG_Node(ins, prev_layer_outputs))
+
+    qkv_deps = {}
+
+    for node in qkv_nodes:
+        ins: LayerNorm_QKV_MatVecRopeAppend = node.instruction
+        for block_idx in ins.block_indices():
+            qkv_deps[(layer_idx, ins.opcode(), block_idx)] = node
+
+    new_nodes.extend(qkv_nodes)
+
+    if stop_after_op == "qkv":
+        return new_nodes, qkv_nodes
+
+    # partial
+    partial_nodes: list[DAG_Node] = []
+
+    for kv_head_idx in range(globs.num_kv_heads):
+        for partial_idx in range(num_attention_partitions):
+            ins = PartialAttention(
+                layer_idx=layer_idx,
+                kv_head_idx=kv_head_idx,
+                num_partials=num_attention_partitions,
+                partial_idx=partial_idx,
+            )
+
+            block_indices = []
+
+            k_start_dim = (globs.num_attention_heads + kv_head_idx) * globs.head_dim
+            v_start_dim = (
+                globs.num_attention_heads + globs.num_kv_heads + kv_head_idx
+            ) * globs.head_dim
+
+            dims_per_block = assert_div(globs.head_dim, globs.qkv_block_size)
+
+            k_start_block = k_start_dim // globs.qkv_block_size
+            v_start_block = v_start_dim // globs.qkv_block_size
+
+            block_indices.extend(
+                list(range(k_start_block, k_start_block + dims_per_block))
+            )
+            block_indices.extend(
+                list(range(v_start_block, v_start_block + dims_per_block))
+            )
+
+            dep_set = {
+                qkv_deps[(layer_idx, PartialAttention.prev_opcode(), block_idx)]
+                for block_idx in block_indices
+            }
+            deps = list(dep_set)
+
+            partial_nodes.append(DAG_Node(ins, deps))
+
+    new_nodes.extend(partial_nodes)
+
+    if stop_after_op == "partial":
+        return new_nodes, partial_nodes
+
+    # oproj
+    num_o_blocks = assert_div(globs.hidden_size, globs.o_proj_block_size)
+    o_proj_nodes: list[DAG_Node] = []
+    for o_block_idx in range(num_o_blocks):
+        ins = O_ProjResidual(
+            layer_idx=layer_idx,
+            start_block_idx=o_block_idx,
+            end_block_idx=o_block_idx + 1,
+            reduction_block_idx=0,
         )
 
-    add_print_instructions = print_info is not None
+        o_proj_nodes.append(DAG_Node(ins, partial_nodes))
 
-    instructions: list[Instruction] = []
+    new_nodes.extend(o_proj_nodes)
 
-    def maybe_add_print(layer_idx: int, name: str):
-        if add_print_instructions:
-            instructions.append(
-                PrintState(
-                    layer_idx=layer_idx,
-                    name=name,
-                    print_info=print_info,
-                )
-            )
+    if stop_after_op == "oproj":
+        return new_nodes, o_proj_nodes
 
-    instruction_1 = True
-    instruction_2 = True
-    instruction_3 = True
-    instruction_4 = True
-    instruction_5 = True
-    instruction_6 = True
+    # upgate
+    upgate_instructions = schedule_upgate(globs, layer_idx)
+    upgate_nodes: list[DAG_Node] = []
+    for ins in upgate_instructions:
+        upgate_nodes.append(DAG_Node(ins, o_proj_nodes))
 
-    # INSTRUCTION 1
-    if instruction_1:
-        instructions.extend(schedule_qkv(globals, layer_idx))
-        maybe_add_print(layer_idx, "qkv")
-        if stop_after_op == "qkv":
-            return instructions
+    new_nodes.extend(upgate_nodes)
 
-    # INSTRUCTION 2
-    if instruction_2:
-        for kv_head_idx in range(globals.num_kv_heads):
-            for partial_idx in range(num_attention_partitions):
-                instructions.append(
-                    PartialAttention(
-                        layer_idx=layer_idx,
-                        kv_head_idx=kv_head_idx,
-                        num_partials=num_attention_partitions,
-                        partial_idx=partial_idx,
-                    )
-                )
-        maybe_add_print(layer_idx, "partial_attn")
-        if stop_after_op == "partial_attn":
-            return instructions
+    if stop_after_op == "upgate":
+        return new_nodes, upgate_nodes
 
-    # INSTRUCTION 3
-    # TODO: harcoding one reduction stage, not seqlen dependent
-    if instruction_3 and not globals.skip_attn_reduction:
-        for head_start_idx in range(
-            0, globals.num_attention_heads, globals.attn_reduction_size
-        ):
-            instructions.append(
-                AttentionReduction(
-                    layer_idx=layer_idx,
-                    head_start_idx=head_start_idx,
-                    is_terminal=True,
-                    num_partials=num_attention_partitions,
-                    reduction_list=list(range(num_attention_partitions)),
-                ),
-            )
-        maybe_add_print(layer_idx, "attn_reduction")
-        if stop_after_op == "attn_reduction":
-            return instructions
+    # downproj
+    # TODO we can do better - we can start a reduction col's work once that fraction of the upgate work is done
+    downproj_instructions = schedule_downproj(globs, layer_idx)
+    downproj_nodes: list[DAG_Node] = []
+    for ins in downproj_instructions:
+        downproj_nodes.append(DAG_Node(ins, upgate_nodes))
 
-    # INSTRUCTION 4
-    if instruction_4:
-        num_o_blocks = assert_div(globals.hidden_size, globals.o_proj_block_size)
-        for o_block_idx in range(num_o_blocks):
-            instructions.append(
-                O_ProjResidual(
-                    layer_idx=layer_idx,
-                    start_block_idx=o_block_idx,
-                    end_block_idx=o_block_idx + 1,
-                    reduction_block_idx=0,
-                )
-            )
-        maybe_add_print(layer_idx, "o_proj")
-        if stop_after_op == "o_proj":
-            return instructions
+    new_nodes.extend(downproj_nodes)
 
-    # INSTRUCTION 5
-    if instruction_5:
-        instructions.extend(schedule_upgate(globals, layer_idx))
-        maybe_add_print(layer_idx, "up_gate")
-        if stop_after_op == "up_gate":
-            return instructions
+    if stop_after_op == "downproj":
+        return new_nodes, downproj_nodes
 
-    # INSTRUCTION 6
-    if instruction_6:
-        instructions.extend(schedule_downproj(globals, layer_idx))
-        maybe_add_print(layer_idx, "down_proj")
-        if stop_after_op == "down_proj":
-            return instructions
-
-    return instructions
+    return new_nodes, downproj_nodes
 
 
-def schedule_model(
+def assign_dag_to_sms(nodes: list[DAG_Node], globs: Globals) -> list[list[Instruction]]:
+    for node in nodes:
+        node.register_with_parents()
+
+    for node in nodes:
+        node.remaining_dependencies = set(node.dependencies)
+
+    sm_count = globs.sm_count()
+    sm_queues = [[] for _ in range(sm_count)]
+
+    sm_heap = [(0, i) for i in range(sm_count)]
+    heapq.heapify(sm_heap)
+
+    ready_nodes = [n for n in nodes if len(n.dependencies) == 0]
+
+    idx_to_node = {i: n for i, n in enumerate(nodes)}
+    node_to_idx = {n: i for i, n in enumerate(nodes)}
+
+    ready_heap = []
+    for node in ready_nodes:
+        idx = node_to_idx[node]
+        ready_heap.append((node.earliest_ready_time(), idx))
+
+    heapq.heapify(ready_heap)
+
+    while ready_heap:
+        _, idx = heapq.heappop(ready_heap)
+        node = idx_to_node[idx]
+
+        sm_time, sm_idx = heapq.heappop(sm_heap)
+
+        node.start_time = sm_time
+        sm_queues[sm_idx].append(node.instruction)
+        sm_time += node.instruction.cost(globs)
+        heapq.heappush(sm_heap, (sm_time, sm_idx))
+
+        for child in node.children:
+            child.remaining_dependencies.remove(node)
+            if len(child.remaining_dependencies) == 0:
+                earliest_ready_time = child.earliest_ready_time()
+                assert earliest_ready_time < float("inf")
+                idx = node_to_idx[child]
+                heapq.heappush(ready_heap, (earliest_ready_time, idx))
+
+    return sm_queues
+
+
+def round_robin_assign_to_sms(
+    instructions: list[Instruction], sm_count: int
+) -> list[list[Instruction]]:
+    sm_queues = [[] for _ in range(sm_count)]
+    for i, instruction in enumerate(instructions):
+        sm_queues[i % sm_count].append(instruction)
+
+    return sm_queues
+
+
+@dataclass
+class Schedule:
+    globs: Globals
+    dag_nodes: list[DAG_Node]
+
+    def get_linear_instructions(self):
+        # NOTE: assumes this is in topological order
+        return [node.instruction for node in self.dag_nodes]
+
+    def smart_assign_to_sms(self):
+        return assign_dag_to_sms(self.dag_nodes, self.globs)
+
+    def round_robin_assign_to_sms(self):
+        instructions = self.get_linear_instructions()
+        return round_robin_assign_to_sms(instructions, self.globs.sm_count())
+
+    def with_new_globals(self, model: LlamaForCausalLM):
+        return Schedule(make_globals(model), self.dag_nodes)
+
+
+def schedule(
     prompt_len: int,
     ntok: int,
-    print_info: PrintInfo | None = None,
-    globs: Globals | None = None,
-    model: LlamaForCausalLM | None = None,
+    model: LlamaForCausalLM,
     layer_limit: int | None = None,
     stop_after_op: str | None = None,
 ):
-    if globs is None:
-        globals = make_globals(model)
-    else:
-        globals = globs
+    globs = make_globals(model)
 
-    instructions = []
+    nodes = make_dag(globs, stop_after_op=stop_after_op, layer_limit=layer_limit)
 
-    if layer_limit is None:
-        nlayers = globals.num_hidden_layers
-    else:
-        nlayers = layer_limit
-
-    for layer_idx in range(nlayers):
-        instructions.extend(
-            schedule_layer(
-                globals=globals,
-                layer_idx=layer_idx,
-                prompt_len=prompt_len,
-                ntok=ntok,
-                print_info=print_info,
-                stop_after_op=stop_after_op if layer_idx == nlayers - 1 else None,
-            )
-        )
-
-    if nlayers == globals.num_hidden_layers:
-        instructions.extend(schedule_lm_head(globals))
-
-    return globals, instructions
+    return Schedule(globs, nodes)
 
 
 def serialize_and_pad(instruction: Instruction):
@@ -427,23 +541,19 @@ def serialize_and_pad(instruction: Instruction):
 
 
 def tensorize_instructions(
-    globs: Globals, instructions: list[Instruction], barrier_init_val: int = 0
+    globs: Globals,
+    instruction_queues: list[list[Instruction]],
+    barrier_init_val: int = 0,
 ):
-    num_sms = get_sm_count(globs.device)
-    instruction_queues = [[] for _ in range(num_sms)]
-    for i, instruction in enumerate(instructions):
-        instruction_queues[i % num_sms].append(serialize_and_pad(instruction))
-
-    empty_instruction = [0] * INTS_PER_INSTRUCTION
+    num_sms = globs.sm_count()
 
     max_queue_len = max(len(queue) for queue in instruction_queues)
     for queue in instruction_queues:
-        queue.extend([empty_instruction] * (max_queue_len - len(queue)))
+        queue.extend([NoOp()] * (max_queue_len - len(queue)))
 
     flattened = []
     for queue in instruction_queues:
-        for instruction in queue:
-            flattened.extend(instruction)
+        flattened.extend(serialize_and_pad(instruction) for instruction in queue)
 
     device = globs.device
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import Globals, schedule_model, tensorize_instructions
+from kvm_runner.scheduler import Globals, tensorize_instructions
 from torch import Tensor
 
 

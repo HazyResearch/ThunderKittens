@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn.functional as F
-from einops import einsum, rearrange
+from einops import einsum
 from kvm_runner.instructions import (
     AttentionReduction,
     DownProjResidual,
@@ -12,6 +12,7 @@ from kvm_runner.instructions import (
     LayerNormDoubleMatVecSiLU,
     O_ProjResidual,
     PartialAttention,
+    PrintInfo,
     PrintState,
     RMS_LM_Head,
 )
@@ -20,7 +21,7 @@ from kvm_runner.llama import (
     LlamaForCausalLM,
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
+from kvm_runner.scheduler import tensorize_instructions
 from kvm_runner.utils import trepr
 from torch import Tensor
 

@@ -83,8 +83,6 @@ class Instruction:
         words = [self.opcode()]
         for field in fields(self):
             name = field.name
-            if name == "global_idx":
-                continue
             attr = getattr(self, name)
 
             if isinstance(attr, int):
@@ -102,6 +100,9 @@ class Instruction:
                 raise ValueError(f"Unsupported field type: {attr}")
 
         return words
+
+    def cost(self, globs: Globals):
+        raise NotImplementedError
 
 
 @dataclass
@@ -129,6 +130,16 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     def prev_opcode(cls) -> int:
         return DownProjResidual.opcode()
 
+    def block_indices(self):
+        return list(range(self.start_output_block_idx, self.end_output_block_idx))
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.qkv_block_size
+            * globs.hidden_size
+        )
+
 
 @dataclass
 class PartialAttention(Instruction):
@@ -144,6 +155,13 @@ class PartialAttention(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return LayerNorm_QKV_MatVecRopeAppend.opcode()
+
+    def cost(self, globs: Globals):
+        seq_len = globs.pos_id + 1
+        loaded_seq_len = seq_len / self.num_partials
+
+        # num loaded elements from kv cache
+        return loaded_seq_len * globs.head_dim * 2
 
 
 @dataclass
@@ -188,6 +206,13 @@ class O_ProjResidual(MatVecAdd):
     def prev_opcode(cls) -> int:
         return AttentionReduction.opcode()
 
+    def cost(self, globs: Globals):
+        return (
+            (self.end_block_idx - self.start_block_idx)
+            * globs.o_proj_block_size
+            * globs.hidden_size
+        )
+
 
 @dataclass
 class LayerNormDoubleMatVecSiLU(Instruction):
@@ -207,6 +232,13 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     def prev_opcode(cls) -> int:
         return O_ProjResidual.opcode()
 
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.up_gate_proj_block_size
+            * globs.hidden_size
+        )
+
 
 @dataclass
 class DownProjResidual(MatVecAdd):
@@ -217,6 +249,13 @@ class DownProjResidual(MatVecAdd):
     @classmethod
     def prev_opcode(cls) -> int:
         return LayerNormDoubleMatVecSiLU.opcode()
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_block_idx - self.start_block_idx)
+            * globs.down_proj_block_size
+            * globs.hidden_size
+        )
 
 
 @dataclass
@@ -231,6 +270,13 @@ class RMS_LM_Head(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return DownProjResidual.opcode()
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.lm_head_block_size
+            * globs.hidden_size
+        )
 
 
 @dataclass
