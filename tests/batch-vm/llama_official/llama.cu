@@ -1,0 +1,79 @@
+#include "llama.cuh"
+
+#include "rms_norm.cu"
+#include "qkv_rope_append.cu"
+#include "attention_decode.cu"
+#include "matmul_adds.cu"
+#include "matmul_silu.cu"
+#include "matmul_gate.cu"
+#include "rms_lm_head.cu"
+
+#include "pyutils/pyutils.cuh"
+
+using namespace kittens;
+using namespace kittens::prototype;
+using namespace kittens::prototype::vm;
+
+using pre_rms_norm_op = pre_rms_norm<default_config, llama_70b_globals>;
+using qkv_rope_append_op = qkv_rope_append<default_config, llama_70b_globals>;
+using attention_decode_op = attention_decode<default_config, llama_70b_globals>;
+using o_proj_op = o_proj<default_config, llama_70b_globals>;
+
+using post_rms_norm_op = post_rms_norm<default_config, llama_70b_globals>;
+using matmul_silu_op = matmul_silu<default_config, llama_70b_globals>;
+using matmul_gate_op = matmul_gate<default_config, llama_70b_globals>;
+using downproj_op = downproj<default_config, llama_70b_globals>;
+
+using rms_lm_head_op = rms_lm_head<default_config, llama_70b_globals>;
+
+
+PYBIND11_MODULE(kvm_llama_70b, m)
+{
+    m.doc() = "";
+    kittens::py::bind_kernel<kvm<default_config, 
+                                 llama_70b_globals,
+
+                                 pre_rms_norm_op,
+                                 qkv_rope_append_op,
+                                 attention_decode,
+                                 o_proj_op,
+
+                                 post_rms_norm_op,
+                                 matmul_silu_op,
+                                 matmul_gate_op,
+                                 downproj_op,
+                                 
+                                 rms_lm_head_op>>(m, "kvm_llama_70b",
+                                                  &llama_70b_globals::Bar,
+                                                  &llama_70b_globals::instructions,
+                                                  &llama_70b_globals::timings,
+
+                                                  &llama_70b_globals::qkv_weights,
+                                                  &llama_70b_globals::attn_norm_weights,
+                                                  &llama_70b_globals::o_weights,
+                                                  &llama_70b_globals::mlp_norm_weights,
+                                                  
+                                                  &llama_70b_globals::up_weights,
+                                                  &llama_70b_globals::gate_weights,
+                                                  &llama_70b_globals::down_weights,
+
+                                                  &llama_70b_globals::lm_head_norm_weights,
+                                                  &llama_70b_globals::lm_head_weights,
+
+                                                  &llama_70b_globals::k_cache,
+                                                  &llama_70b_globals::v_cache,
+
+                                                  &llama_70b_globals::rope_cos,
+                                                  &llama_70b_globals::rope_sin,
+
+                                                  &llama_70b_globals::hidden_states,
+                                                  &llama_70b_globals::q_post_rope,
+                                                  &llama_70b_globals::attn_out,
+                                                  &llama_70b_globals::silu_out,
+                                                  &llama_70b_globals::logits,
+
+                                                  &llama_70b_globals::pos_id,
+                                                  &llama_70b_globals::attn_scale,
+                                                  &llama_70b_globals::rms_norm_eps);
+}
+

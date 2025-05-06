@@ -15,6 +15,10 @@ namespace kittens
             {
                 // Instruction pipeline
                 static constexpr int INSTRUCTION_PIPELINE_STAGES = 4;
+
+                // num bits required to represent num pipeline stages
+                static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 2;
+
                 static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
                 using instruction_t = int[INSTRUCTION_WIDTH];
 
@@ -26,7 +30,7 @@ namespace kittens
                 static constexpr int DYNAMIC_SEMAPHORES = 32;
 
                 // One controller warp, one load warp, one store warp, and one mma warp.
-                static constexpr int NUM_CONSUMER_WARPS = 16;
+                static constexpr int NUM_CONSUMER_WARPS = 8;
                 static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
                 static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
                 static constexpr int NUM_BLOCKS = 1;
