@@ -714,10 +714,27 @@ class LlamaForCausalLM(nn.Module):
 
     def stack_params(self):
         def stack_and_reassign(modules, prop: str):
-            params = [getattr(m, prop) for m in modules]
-            stacked = torch.stack(params, dim=0)
+            # Get shape from one module
+            shape = getattr(modules[0], prop).shape
+            dtype = getattr(modules[0], prop).dtype
+            device = getattr(modules[0], prop).device
+            requires_grad = getattr(modules[0], prop).requires_grad
+            n = len(modules)
+
+            # Allocate the single backing tensor
+            stacked = torch.empty((n, *shape), dtype=dtype, device=device, requires_grad=requires_grad)
+
+            # Fill stacked and replace layer weights with views
             for i, m in enumerate(modules):
-                getattr(m, prop)[:] = stacked[i]
+                original = getattr(m, prop)
+                stacked[i].copy_(original.data)  # copy data into the unified buffer
+                del original  # help GC
+
+                # Replace with a view (as nn.Parameter)
+                setattr(m, prop, torch.nn.Parameter(stacked[i], requires_grad=requires_grad))
+
+            # Force release of references
+            torch.cuda.empty_cache()
             return stacked
 
         layers: list[LlamaBlock] = self.model.layers  # type: ignore
