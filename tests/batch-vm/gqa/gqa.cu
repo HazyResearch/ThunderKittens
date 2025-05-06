@@ -43,10 +43,10 @@ namespace kittens::prototype::vm
             int kv_head_idx;
             int partial_idx;
             int kv_indices_len;
-            int kv_indices[KV_INDICES_LEN]; // actual physical indices to read in from paged KV 
+            int kv_indices[KV_INDICES_LEN]; // actual physical indices to read in from paged KV
 
             __device__ inline parsed_instruction(typename config::instruction_t &instruction)
-            {
+            {                
                 layer_idx = instruction[1];
                 kv_head_idx = instruction[2];
                 kv_indices_len = instruction[3]; // length of number of indices from paged KV cache to read 
@@ -298,6 +298,7 @@ namespace kittens::prototype::vm
                         int cur_page_idx = inst.kv_indices[i];
                         // TODO: Need to ensure right indexing based on k_cache and v_cache shape
                         tma::expect(K_arrived(s, stage), K_smem);
+                        // TODO: ensure AXIS access is right here? 
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {cur_page_idx, 0, inst.kv_head_idx, 0}, K_arrived(s, stage));
                         tma::expect(V_arrived(s, stage), V_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {cur_page_idx, 0, inst.kv_head_idx, 0}, V_arrived(s, stage));
