@@ -144,7 +144,8 @@ namespace kittens::prototype::vm
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
 
-                pipeline::loader_loop(s, g);
+                parsed_instruction inst{s};
+                pipeline::loader_loop<&Globals::attn_norm_weights>(s, g, inst.layer_idx);
             }
         };
         struct launcher
@@ -153,7 +154,7 @@ namespace kittens::prototype::vm
             {
 
                 parsed_instruction inst{s};
-                pipeline::launcher_load_rms_and_activations<&Globals::hidden_states, &Globals::attn_norm_weights>(s, g, inst.layer_idx);
+                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
             }
         };
         struct consumer

@@ -18,10 +18,10 @@ namespace kittens::prototype::vm
 
         struct parsed_instruction
         {
-            int layer, start_block_idx, end_block_idx, iters;
+            int layer_idx, start_block_idx, end_block_idx, iters;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
-                layer = instruction[1];
+                layer_idx = instruction[1];
                 start_block_idx = instruction[2];
                 end_block_idx = instruction[3];
                 iters = 2 * (end_block_idx - start_block_idx);
@@ -34,7 +34,7 @@ namespace kittens::prototype::vm
             static __device__ inline void gmem_wait(const Globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
-                while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
                 {
                     __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                 }
@@ -45,11 +45,11 @@ namespace kittens::prototype::vm
                 auto block_idx = inst.start_block_idx + iter / 2;
                 if (iter % 2 == 0)
                 {
-                    tma::load_async(weight_chunk, g.up_weights, {inst.layer, block_idx, col_idx}, sem);
+                    tma::load_async(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
                 else
                 {
-                    tma::load_async(weight_chunk, g.gate_weights, {inst.layer, block_idx, col_idx}, sem);
+                    tma::load_async(weight_chunk, g.gate_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
             }
 
@@ -132,7 +132,8 @@ namespace kittens::prototype::vm
             {
                 s.template zero_scratch<1024>();
 
-                pipeline::loader_loop(s, g);
+                parsed_instruction inst{s};
+                pipeline::loader_loop<&Globals::mlp_norm_weights>(s, g, inst.layer_idx);
             }
         };
 
@@ -142,7 +143,7 @@ namespace kittens::prototype::vm
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 parsed_instruction inst{s};
-                pipeline::launcher_load_rms_and_activations<&Globals::hidden_states, &Globals::mlp_norm_weights>(s, g, inst.layer);
+                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
             }
         };
 
@@ -169,7 +170,7 @@ namespace kittens::prototype::vm
 
                     parsed_instruction inst{s};
                     auto to_increment = inst.end_block_idx - inst.start_block_idx;
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], to_increment);
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], to_increment);
                 }
             }
         };

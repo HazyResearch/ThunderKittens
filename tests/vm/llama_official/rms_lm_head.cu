@@ -94,14 +94,14 @@ namespace kittens::prototype::vm
             {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
-                pipeline::loader_loop(s, g);
+                pipeline::loader_loop<&Globals::lm_head_norm_weights>(s, g, 0);
             }
         };
         struct launcher
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                pipeline::launcher_load_rms_and_activations<&Globals::hidden_states, &Globals::lm_head_norm_weights>(s, g, 0);
+                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
             }
         };
         struct consumer
