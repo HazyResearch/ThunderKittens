@@ -20,7 +20,7 @@
 #define LLAMA_70B_NUM_ATTENTION_HEADS 64
 #define LLAMA_70B_NUM_KV_HEADS 8
 #define LLAMA_70B_KV_BLOCK_SIZE 16
-#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 256
+#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
 #define SM_COUNT 148
 
 // timing event convention
@@ -68,6 +68,7 @@ namespace kittens::prototype::vm
 
         using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>>;
         using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>>;
+        using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
         
@@ -87,9 +88,13 @@ namespace kittens::prototype::vm
         norm_weights_t attn_norm_weights;
         weights_t o_weights;
         norm_weights_t mlp_norm_weights;
+        
         weights_t up_weights;
         weights_t gate_weights;
         weights_big_indim_t down_weights;
+
+        norm_weights_t lm_head_norm_weights;
+        weights_t lm_head_weights;
 
         // kv cache
         kv_cache_t k_cache;
@@ -101,9 +106,13 @@ namespace kittens::prototype::vm
 
         // activation buffers
         activations_t hidden_states;
+        activations_t rms_rope_intermediates;
+        activations_t rms_gate_intermediates;
+        activations_t gate_silu_intermediates;
         activations_t q_post_rope;
         activations_t attn_out;
         activations_big_indim_t silu_out;
+        logits_t logits;
 
         unsigned int pos_id;
         float attn_scale;
@@ -151,5 +160,7 @@ namespace kittens::prototype::vm
     template <typename config = config, typename globals = llama_70b_globals>
     struct downproj;
 
+    template <typename config = config, typename globals = llama_70b_globals>
+    struct rms_lm_head;
 }
 

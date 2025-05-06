@@ -1,56 +1,52 @@
-#pragma once
-
 #include "llama.cuh"
-
+#include "utils.cuh"
 using namespace kittens;
 using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
+
     using globals = llama_70b_globals;
-    template <
-        int _EXPECTED_ARRIVAL_COUNT,
-        auto WeightsPtr,
-        auto InputActivationsPtr,
-        auto OutputActivationsPtr,
-        int _opcode,
-        int _prev_opcode = 0,
-        typename Config = kittens::prototype::vm::default_config>
+    using config = default_config;
 
-    struct MatVecAddOp
+    template <typename Config, typename Globals>
+    struct up_matmul
     {
-        static constexpr int opcode = _opcode;
-        static constexpr int prev_opcode = _prev_opcode;
-        static constexpr int EXPECTED_ARRIVAL_COUNT = _EXPECTED_ARRIVAL_COUNT;
-
-        static constexpr int NUM_WEIGHT_PAGES = 4;
-        static constexpr int PAGE_WEIGHT_START = 0;
-        static constexpr int PAGE_ACTIVATION = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
-        static constexpr int PAGE_COUNT = PAGE_ACTIVATION + 1; // 5
+        static constexpr int opcode = OPCODE_MLP_SiLU;
+        static constexpr int prev_opcode = OPCODE_MLP_SiLU;
+        static constexpr int EXPECTED_ARRIVAL_COUNT = Globals::hidden_dim / Globals::matvec_block_size;
         static constexpr int PIPELINE_STAGES = 3;
-
-        static constexpr int REDUCTION_DIM_PER_WARP = llama_70b_globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         using a_tile = st_bf<64, 128>;    // 16KB
         using b_tile = st_bf<128, 128>;   // 32KB
         using c_tile = st_bf<64, 128>;    // 16KB
+        using c_subtile = st_subtile<c_tile, 16, 128>;
 
         struct parsed_instruction
         {
-            int layer, row, col, iters;
+            int layer;
+            int row, col, iters;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
-                layer = instruction[1];               // in units of 1
-                row = instruction[2];
-                col = instruction[3];
+                layer = instruction[1];
+                row   = instruction[2];
+                col   = instruction[3];
                 iters = instruction[4];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
-        static __device__ inline parsed_instruction parse_instruction(const globals &g, state<Config> &s)
-        {
-            return parsed_instruction{s.instruction()[1], s.instruction()[2], s.instruction()[3], s.instruction()[4]};
-        }
+
+        static constexpr int NUM_UP_PAGES = 4;
+        static constexpr int NUM_GATE_PAGES = 4;
+        static constexpr int PAGE_RMS_SCALE_ACTIVATION = 0;
+        static constexpr int PAGE_UP_START = PAGE_RMS_SCALE_ACTIVATION + 1;
+        static constexpr int PAGE_GATE_START = PAGE_UP_START + NUM_UP_PAGES;
+        static constexpr int PAGE_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 1;
+        static constexpr int SEM_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 3;
+
+        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+
+        //  semaphores
         __device__ static inline semaphore &inputs_arrived(state<config> &s, int id) {
             return s.semaphores()[id];
         }
@@ -63,23 +59,39 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &outputs_shared(state<config> &s, int id) {
             return s.semaphores()[id+PIPELINE_STAGES*2+2];
         }
-    
+        __device__ static inline semaphore &silu_arrived(state<config> &s) {
+            return s.semaphores()[PIPELINE_STAGES*2+4];
+        }
+
+        // getters
         __device__ static inline int get_a_page(state<config> &s, int stage, int offset) {
             return stage*4 + offset;
         }
         __device__ static inline int get_b_page(state<config> &s, int stage) {
             return stage*4 + 2;
         }
+        __device__ static inline int get_store_page(state<config> &s, parsed_instruction &inst, int offset) {
+            return ((inst.iters+2)%PIPELINE_STAGES)*4 + offset;
+        }
+        __device__ static inline int get_gate_silu_page(state<config> &s, parsed_instruction &inst)
+        {
+            return ((inst.iters+2)%PIPELINE_STAGES)*4 + 3;
+        }
 
         struct controller
         {
-            static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
+            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                // TODO: get right order
-                int ret_order[] = {5, 6, 7, 8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3};
+                // first the pages we don't use (we use 10 pages)
+                // then input, then rms scale, then up, then gate
+                // TODO: Edit page release order
+
+                int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
+
                 return ret_order[query];
             }
-            static __device__ int init_semaphores(const globals &g, state<config> &s) {
+            static __device__ int init_semaphores(const Globals &g, state<Config> &s)
+            {
                 for(int i = 0; i < PIPELINE_STAGES; i++) {
                     init_semaphore(inputs_arrived(s, i), 1);
                     init_semaphore(inputs_finished(s, i), 2);
@@ -88,11 +100,14 @@ namespace kittens::prototype::vm
                     init_semaphore(outputs_arrived(s, i), 1);
                     init_semaphore(outputs_shared(s, i), 1);
                 }
-                return 2*PIPELINE_STAGES + 4; // Total semaphores initialized
+                init_semaphore(silu_arrived, 1);
+                return (PIPELINE_STAGES * 2) + (2 * 2) + 1;
             }
         };
+
         struct loader {
             static __device__ void run(const globals &g, state<config> &s) {
+                // TODO: need to add spins till signal received
                 parsed_instruction inst{s};
                 uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
                 int pipeline_stage = 0;
@@ -105,20 +120,26 @@ namespace kittens::prototype::vm
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(a_page);
                         }
-                        auto &a_global = g.*WeightsPtr;
                         a_tile &a = *reinterpret_cast<a_tile *>(s.pages[a_page].data);
-                        tma::load_async(a, a_global, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(a, g.rms_gate_intermediates, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 2) {
                         int b_page = get_b_page(s, pipeline_stage);
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(b_page);
                             s.wait_page_ready(b_page+1);
                         }
-                        auto &b_global = g.*InputActivationsPtr;
                         b_tile &b = *reinterpret_cast<b_tile *>(s.pages[b_page].data);
-                        tma::load_async(b, b_global, {inst.col, i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(b, g.up_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
                     }
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
+                }
+                // Load silu intermediates
+                if (laneid() == 0)
+                {
+                    int gate_silu_page = get_gate_silu_page(s, inst);
+                    tma::expect_bytes(silu_arrived(s), sizeof(c_tile));
+                    c_tile &silu_out = *reinterpret_cast<c_tile *>(s.pages[gate_silu_page].data);
+                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s));
                 }
                 warp::sync(); // Ensure all loads are issued
                 // if (laneid() == 0) printf(BLUE_TEXT "Loader finished issuing loads\n" RESET_TEXT);
@@ -132,6 +153,7 @@ namespace kittens::prototype::vm
                 }
             }
         };
+
         struct launcher { // launches mma's
             static __device__ void run(const globals &g, state<config> &s) {
     
@@ -176,66 +198,69 @@ namespace kittens::prototype::vm
                     mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
                 }
                 warp::sync();
-                // if (laneid() == 0) printf(RED_TEXT "Finished launcher\n" RESET_TEXT);
-    
             }
         };
         struct consumer {
             static __device__ void run(const globals &g, state<config> &s) {
                 parsed_instruction inst{s};
                 int groupid = warpgroup::groupid();
-                wait(outputs_arrived(s, groupid), 0);
-    
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
-                
-                rt_fl<16, 128> acc_rt;
-                rt_bf<16, 128> acc_bf16;
-                
-                warpgroup::load_async(acc_rt, accumulator);
-                warp::copy(acc_bf16, acc_rt);
-                tensor_load_wait();
-                warp::arrive(s.tensor_finished);
-                
-                int store_page_id = get_store_page(s, inst, groupid);
-                c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
-                warpgroup::store(store_buffer, acc_bf16);
-                warpgroup::sync(groupid);
-                warpgroup::arrive(outputs_shared(s, groupid));
+                if (groupid < 2)
+                {
+                    wait(outputs_arrived(s, groupid), 0);
+        
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
+                    
+                    rt_fl<16, 128> acc_rt, silu_rt;
+                    rt_bf<16, 128> acc_bf16;
+                    
+                    warpgroup::load_async(acc_rt, accumulator);
+                    tensor_load_wait();
+                    
+                    // Multiply by the silu gate
+                    int silu_page = get_gate_silu_page(s, inst);
+                    c_tile &silu_out = *reinterpret_cast<c_tile *>(s.pages[silu_page].data);
+                    c_subtile silu_subtile(silu_out, {warpgroup::warpid(), 0});
+                    warp::load(silu_rt, silu_subtile);
+                    warp::mul(acc_rt, acc_rt, silu_rt);
+                    warp::copy(acc_bf16, acc_rt);
+                    warp::arrive(s.tensor_finished);
+                    
+                    int store_page_id = get_store_page(s, inst, groupid);
+                    c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
+                    warpgroup::store(store_buffer, acc_bf16);
+                    warpgroup::sync(groupid);
+                    warpgroup::arrive(outputs_shared(s, groupid));
+                }
             }
         };
+
         struct storer
         {
-            // Uses 4 full pages for outputs.
-            static __device__ void run(const globals &g, state<Config> &s)
+            static __device__ void run(const Globals &g, state<Config> &s)
             {
                 if (kittens::laneid() == 0)
                 {
                     s.record(TEVENT_TRIPLES_STORE_START);
                 }
-            
+
                 parsed_instruction inst{s};
-                
+
                 if (laneid() < 2) {
                     wait(outputs_shared(s, laneid()), 0);
-                    auto &OutputActivations = g.*OutputActivationsPtr;
                     int store_page = get_store_page(s, inst, laneid());
                     c_tile &output = *reinterpret_cast<c_tile *>(s.pages[get_store_page(s, inst, laneid())].data);
-                    tma::store_add_async(OutputActivations, output, {inst.row+laneid(), inst.col});
+                    tma::store_async(g.silu_out, output, {inst.row+laneid(), inst.col});
                     tma::store_async_read_wait();
                     s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
                     s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
 
-                asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
+                asm volatile("fence.acq_rel.gpu;");
                 if (laneid() == 0)
                 {
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
-                    // if constexpr (OP_IDX == g.Bar.rows() - 1)
-                    //     atomicAdd(&g.Bar[{inst.layer + 1, 0, 0}], 1);
-                    // else
-                    //     atomicAdd(&g.Bar[{inst.layer, OP_IDX + 1, 0}], 1);
                 }
 
                 warp::sync();
@@ -245,29 +270,5 @@ namespace kittens::prototype::vm
                 }
             }
         };
-    };
-
-    template <typename Config, typename Globals>
-    struct downproj : MatVecAddOp<
-                          llama_70b_globals::intermediate_dim / llama_70b_globals::matmul_out_block_size,
-                          &Globals::down_weights,
-                          &Globals::silu_out,
-                          &Globals::hidden_states,
-                          OPCODE_DownProjResidual,
-                          OPCODE_DownProjResidual - 1,
-                          Config>
-    {
-    };
-
-    template <typename Config, typename Globals>
-    struct o_proj : MatVecAddOp<
-                        llama_70b_globals::num_attention_heads,
-                        &Globals::o_weights,
-                        &Globals::attn_out,
-                        &Globals::hidden_states,
-                        OPCODE_O_ProjResidual,
-                        OPCODE_O_ProjResidual - 1,
-                        Config>
-    {
     };
 }
