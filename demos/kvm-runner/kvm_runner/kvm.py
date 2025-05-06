@@ -3,7 +3,12 @@ from pathlib import Path
 
 import torch
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import Globals, Schedule, schedule, tensorize_instructions
+from kvm_runner.scheduler import (
+    Globals,
+    assign_to_sms,
+    schedule,
+    tensorize_instructions,
+)
 from torch import Tensor
 
 
@@ -62,10 +67,10 @@ class KVM_Runner:
         kvm_dir: Path,
         prompt_len: int,
         ntok: int,
+        sched: str,
         barrier_fill_val: int = 0,
         skip_kvm: bool = False,
         skip_rest: bool = False,
-        mode: str = "smart",
     ):
         sys.path.append(str(kvm_dir.expanduser().absolute()))
         from kvm_llama import kvm_llama  # type: ignore
@@ -80,15 +85,10 @@ class KVM_Runner:
             ntok=ntok,
         )
 
-        match mode:
-            case "smart":
-                queues = self.schedule.smart_assign_to_sms()
-            case "rr":
-                queues = self.schedule.round_robin_assign_to_sms()
-            case _:
-                raise ValueError(f"Unknown mode: {mode}")
-
-        tensorize_instructions(self.schedule.globs, queues)
+        queues = assign_to_sms(sched, self.schedule)
+        tensorize_instructions(
+            self.schedule.globs, queues, barrier_init_val=barrier_fill_val
+        )
 
         self.instructions = self.schedule.get_linear_instructions()
 

@@ -12,7 +12,6 @@ from kvm_runner.instructions import (
     LayerNormDoubleMatVecSiLU,
     O_ProjResidual,
     PartialAttention,
-    PrintInfo,
     PrintState,
     RMS_LM_Head,
 )
@@ -23,6 +22,7 @@ from kvm_runner.llama import (
 )
 from kvm_runner.scheduler import (
     Schedule,
+    assign_to_sms,
     make_dag,
     make_globals,
     tensorize_instructions,
@@ -434,13 +434,7 @@ def interpret_with_pyvm(globals: Globals, instructions: list[Instruction]):
 
 
 class PyVM_Runner:
-    def __init__(
-        self,
-        model: LlamaForCausalLM,
-        prompt_len: int,
-        ntok: int,
-        print_info: PrintInfo | None = None,
-    ):
+    def __init__(self, model: LlamaForCausalLM, prompt_len: int, ntok: int, sched: str):
         self.model = model
 
         self.schedule = Schedule(
@@ -448,7 +442,7 @@ class PyVM_Runner:
             dag_nodes=make_dag(self.model, prompt_len, ntok),
         )
 
-        queues = self.schedule.round_robin_assign_to_sms()
+        queues = assign_to_sms(sched, self.schedule)
         tensorize_instructions(self.schedule.globs, queues)
 
         self.instructions = self.schedule.get_linear_instructions()

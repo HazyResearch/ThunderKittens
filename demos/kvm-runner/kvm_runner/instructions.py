@@ -240,6 +240,7 @@ class LayerNormDoubleMatVecSiLU(Instruction):
             (self.end_output_block_idx - self.start_output_block_idx)
             * globs.up_gate_proj_block_size
             * globs.hidden_size
+            * 2  # gate and up
         )
 
 

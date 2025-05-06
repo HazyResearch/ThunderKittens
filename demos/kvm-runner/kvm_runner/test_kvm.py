@@ -9,7 +9,7 @@ from kvm_runner.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_runner.python_vm import interpret_with_pyvm
 from kvm_runner.scheduler import (
     Globals,
-    round_robin_assign_to_sms,
+    assign_to_sms,
     schedule,
     tensorize_instructions,
 )
@@ -119,20 +119,21 @@ def main(config: ScriptConfig):
             print(f"truncating instructions to {config.truncate_instructions}")
             instructions = instructions[: config.truncate_instructions]
 
-        assigned_to_sms = round_robin_assign_to_sms(instructions, spy.globs.sm_count())
+        assigned_to_sms = assign_to_sms(
+            config.sched,
+            instructions=instructions,
+            sm_count=spy.globs.sm_count(),
+        )
 
     else:
         starting_instructions = []
 
         start = time.time()
         print(f"assigning to sms with mode {config.sched}...")
-        match config.sched:
-            case "smart":
-                assigned_to_sms = skvm.smart_assign_to_sms()
-            case "rr":
-                assigned_to_sms = skvm.round_robin_assign_to_sms()
-            case _:
-                raise ValueError(f"unknown schedule mode: {config.sched}")
+        assigned_to_sms = assign_to_sms(
+            mode=config.sched,
+            schedule=skvm,
+        )
         end = time.time()
         print(f"assign time: {end - start}")
 

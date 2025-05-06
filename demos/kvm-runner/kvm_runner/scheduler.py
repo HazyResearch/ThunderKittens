@@ -560,6 +560,65 @@ def zig_zag_assign_to_sms(
     return sm_queues
 
 
+def wave_assign_to_sms(
+    schedule: Schedule,
+) -> list[list[Instruction]]:
+    instructions = schedule.get_linear_instructions()
+    globs = schedule.globs
+    sm_count = globs.sm_count()
+
+    waves: list[list[Instruction]] = []
+    cur = []
+    for instruction in instructions:
+        if cur == [] or cur[-1].opcode() == instruction.opcode():
+            cur.append(instruction)
+        else:
+            waves.append(cur)
+            cur = [instruction]
+
+    if len(cur) > 0:
+        waves.append(cur)
+
+    sm_queues = [[] for _ in range(sm_count)]
+
+    sm_heap = [(0, i) for i in range(sm_count)]
+    heapq.heapify(sm_heap)
+
+    for wave in waves:
+        sorted_by_biggest_cost = sorted(wave, key=lambda x: x.cost(globs), reverse=True)
+
+        for ins in sorted_by_biggest_cost:
+            sm_cost, sm_idx = heapq.heappop(sm_heap)
+            sm_cost += ins.cost(globs)
+            heapq.heappush(sm_heap, (sm_cost, sm_idx))
+            sm_queues[sm_idx].append(ins)
+
+    return sm_queues
+
+
+def assign_to_sms(
+    mode: str,
+    schedule: Schedule | None = None,
+    instructions: list[Instruction] | None = None,
+    sm_count: int | None = None,
+):
+    if schedule is not None:
+        instructions = schedule.get_linear_instructions()
+        sm_count = schedule.globs.sm_count()
+
+    match mode:
+        case "rr":
+            return round_robin_assign_to_sms(instructions, sm_count)
+        case "zz":
+            return zig_zag_assign_to_sms(instructions, sm_count)
+        case "wave":
+            return wave_assign_to_sms(schedule)
+        case "dag":
+            return assign_dag_to_sms(schedule)
+        case _:
+            raise ValueError(f"Unknown mode: {mode}")
+
+
 def schedule(
     prompt_len: int,
     ntok: int,

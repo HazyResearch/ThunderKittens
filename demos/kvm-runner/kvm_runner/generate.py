@@ -33,7 +33,7 @@ class ScriptConfig(pydra.Config):
     noops: bool = False
     skip_kvm: bool = False
     skip_rest: bool = False
-    sched: str = "smart"
+    sched: str = "rr"
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -44,12 +44,12 @@ class ScriptConfig(pydra.Config):
         self.num_iters = 1
 
 
-class Runner:
+class Generator:
     def go():
         raise NotImplementedError
 
 
-class PyTorchRunner(Runner):
+class PyTorchGenerator(Generator):
     def __init__(
         self,
         config: ScriptConfig,
@@ -78,7 +78,7 @@ class PyTorchRunner(Runner):
             self.output_tokens[i] = decode_output.output_ids
 
 
-class PyVMRunner(Runner):
+class PyVM_Generator(Generator):
     def __init__(
         self,
         config: ScriptConfig,
@@ -106,14 +106,14 @@ class PyVMRunner(Runner):
             self.output_tokens[i] = output_ids
 
 
-class KVMRunner(Runner):
+class KVM_Generator(Generator):
     def __init__(
         self,
         config: ScriptConfig,
         model: LlamaForCausalLM,
         output_tokens: Tensor,
         prompt_len: int,
-        mode: str = "smart",
+        sched: str = "smart",
     ):
         self.config = config
         self.model = model
@@ -131,7 +131,7 @@ class KVMRunner(Runner):
             barrier_fill_val=config.barrier_fill_val,
             skip_kvm=config.skip_kvm,
             skip_rest=config.skip_rest,
-            mode=mode,
+            sched=sched,
         )
 
         self.runner = runner
@@ -143,7 +143,7 @@ class KVMRunner(Runner):
             self.output_tokens[i] = output_ids
 
 
-class GraphedKVMRunner(KVMRunner):
+class GraphedKVM_Generator(KVM_Generator):
     def record_graph(self):
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
@@ -211,20 +211,20 @@ def main(config: ScriptConfig):
 
     match config.mode:
         case "model":
-            model = PyTorchRunner(config, model, output_tokens, prompt_len)
+            gen = PyTorchGenerator(config, model, output_tokens, prompt_len)
         case "pyvm":
-            model = PyVMRunner(config, model, output_tokens, prompt_len)
+            gen = PyVM_Generator(config, model, output_tokens, prompt_len)
         case "kvm":
-            model = KVMRunner(
-                config, model, output_tokens, prompt_len, mode=config.sched
+            gen = KVM_Generator(
+                config, model, output_tokens, prompt_len, sched=config.sched
             )
             if config.noops:
-                model.runner.schedule.globs.instructions.zero_()
+                gen.runner.schedule.globs.instructions.zero_()
         case "gkvm":
-            model = GraphedKVMRunner(config, model, output_tokens, prompt_len)
+            gen = GraphedKVM_Generator(config, model, output_tokens, prompt_len)
             if config.noops:
-                model.runner.schedule.globs.instructions.zero_()
-            model.record_graph()
+                gen.runner.schedule.globs.instructions.zero_()
+            gen.record_graph()
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")
 
@@ -235,7 +235,7 @@ def main(config: ScriptConfig):
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         cpu_start = time.time()
-        model.go()
+        gen.go()
         cpu_end = time.time()
         end_event.record()
         torch.cuda.synchronize()
