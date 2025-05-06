@@ -136,6 +136,20 @@ def main(config: ScriptConfig):
         end = time.time()
         print(f"assign time: {end - start}")
 
+    cost_per_sm = []
+    for sm_queue in assigned_to_sms:
+        cost = 0
+        for instruction in sm_queue:
+            cost += instruction.cost(gpy)
+        cost_per_sm.append(cost)
+
+    cost_tensor = torch.tensor(cost_per_sm)
+    relative_cost_tensor = cost_tensor / cost_tensor.max()
+
+    print(
+        f"cost per sm: min={relative_cost_tensor.min():.2f}, mean={relative_cost_tensor.mean():.2f}"
+    )
+
     tensorize_instructions(
         gpy, assigned_to_sms, barrier_init_val=config.barrier_init_val
     )

@@ -21,7 +21,12 @@ from kvm_runner.llama import (
     LlamaForCausalLM,
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import tensorize_instructions
+from kvm_runner.scheduler import (
+    Schedule,
+    make_dag,
+    make_globals,
+    tensorize_instructions,
+)
 from kvm_runner.utils import trepr
 from torch import Tensor
 
@@ -165,11 +170,6 @@ def layer_norm_double_matvec_silu(
             block_size=block_size,
             block_idx=block_idx,
         )
-
-        # if block_idx in [24, 25, 320, 321]:
-        #     up_sum = torch.sum(up_matvec)
-        #     gate_sum = torch.sum(gate_matvec)
-        #     print(f"block_idx: {block_idx}, up_sum: {up_sum}, gate_sum: {gate_sum}")
 
         post_silu = F.silu(gate_matvec) * up_matvec
 
@@ -443,14 +443,15 @@ class PyVM_Runner:
     ):
         self.model = model
 
-        self.globals, self.instructions = schedule_model(
-            prompt_len=prompt_len,
-            ntok=ntok,
-            print_info=print_info,
-            model=self.model,
+        self.schedule = Schedule(
+            globs=make_globals(self.model),
+            dag_nodes=make_dag(self.model, prompt_len, ntok),
         )
 
-        tensorize_instructions(self.globals, self.instructions)
+        queues = self.schedule.round_robin_assign_to_sms()
+        tensorize_instructions(self.schedule.globs, queues)
+
+        self.instructions = self.schedule.get_linear_instructions()
 
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
@@ -460,13 +461,13 @@ class PyVM_Runner:
         post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
         hiddens = post_embedding.hidden_states
         assert hiddens is not None
-        self.globals.hidden_states[:] = hiddens
-        self.globals.barriers.zero_()
-        self.globals.pos_id = pos_id
+        self.schedule.globs.hidden_states[:] = hiddens
+        self.schedule.globs.barriers.zero_()
+        self.schedule.globs.pos_id = pos_id
 
-        interpret_with_pyvm(self.globals, self.instructions)
+        interpret_with_pyvm(self.schedule.globs, self.instructions)
 
-        output_hiddens = self.globals.hidden_states
+        output_hiddens = self.schedule.globs.hidden_states
 
         post_embedding.hidden_states = output_hiddens
 

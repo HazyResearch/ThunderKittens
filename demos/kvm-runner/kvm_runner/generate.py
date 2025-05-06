@@ -7,7 +7,6 @@ from kvm_runner.kvm import KVM_Runner
 from kvm_runner.llama import LlamaForCausalLM
 from kvm_runner.model_types import BatchState, ExtraModelConfig
 from kvm_runner.python_vm import PyVM_Runner
-from kvm_runner.scheduler import PrintInfo
 from tabulate import tabulate
 from torch import Tensor
 from tqdm import tqdm
@@ -21,10 +20,6 @@ class ScriptConfig(pydra.Config):
     chat: bool = False
     ntok: int = 100
     mode: str = "model"
-    add_print_instructions: bool = False
-    print_layer_filter: list[int] | None = None
-    print_name_filter: list[str] | None = None
-    print_state_filter: list[str] | None = None
     interleave_rope: bool = True
     kvm_dir: Path = (
         Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
@@ -38,6 +33,7 @@ class ScriptConfig(pydra.Config):
     noops: bool = False
     skip_kvm: bool = False
     skip_rest: bool = False
+    sched: str = "smart"
 
     def finalize(self):
         if self.mode in ["kvm", "pyvm"]:
@@ -95,18 +91,8 @@ class PyVMRunner(Runner):
         self.output_tokens = output_tokens
         self.prompt_len = prompt_len
 
-        if config.add_print_instructions:
-            print_info = PrintInfo(
-                layer_filter=config.print_layer_filter,
-                name_filter=config.print_name_filter,
-                state_filter=config.print_state_filter,
-            )
-        else:
-            print_info = None
-
         runner = PyVM_Runner(
             model,
-            print_info=print_info,
             prompt_len=prompt_len,
             ntok=config.ntok,
         )
@@ -127,6 +113,7 @@ class KVMRunner(Runner):
         model: LlamaForCausalLM,
         output_tokens: Tensor,
         prompt_len: int,
+        mode: str = "smart",
     ):
         self.config = config
         self.model = model
@@ -144,6 +131,7 @@ class KVMRunner(Runner):
             barrier_fill_val=config.barrier_fill_val,
             skip_kvm=config.skip_kvm,
             skip_rest=config.skip_rest,
+            mode=mode,
         )
 
         self.runner = runner
@@ -227,13 +215,15 @@ def main(config: ScriptConfig):
         case "pyvm":
             model = PyVMRunner(config, model, output_tokens, prompt_len)
         case "kvm":
-            model = KVMRunner(config, model, output_tokens, prompt_len)
+            model = KVMRunner(
+                config, model, output_tokens, prompt_len, mode=config.sched
+            )
             if config.noops:
-                model.runner.globals.instructions.zero_()
+                model.runner.schedule.globs.instructions.zero_()
         case "gkvm":
             model = GraphedKVMRunner(config, model, output_tokens, prompt_len)
             if config.noops:
-                model.runner.globals.instructions.zero_()
+                model.runner.schedule.globs.instructions.zero_()
             model.record_graph()
         case _:
             raise ValueError(f"Invalid mode: {config.mode}")

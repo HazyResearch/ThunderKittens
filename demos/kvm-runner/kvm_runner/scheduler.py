@@ -1,6 +1,6 @@
 import heapq
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import torch
 from kvm_runner.instructions import (
@@ -281,16 +281,26 @@ class DAG_Node:
 
     children: set["DAG_Node"] = field(default_factory=set)
     start_time: float = float("inf")
+    end_time: float = float("inf")
     remaining_dependencies: set["DAG_Node"] = field(default_factory=set)
+    priority: float = 0
 
-    def earliest_ready_time(self):
+    def earliest_ready_time(self, globs: Globals):
         if len(self.dependencies) == 0:
             return 0
-        return max(dep.start_time for dep in self.dependencies)
+
+        return max(dep.end_time for dep in self.dependencies)
 
     def register_with_parents(self):
         for dep in self.dependencies:
             dep.children.add(self)
+
+    def calc_priority(self, globs: Globals):
+        cur_cost = self.priority
+        for dep in self.dependencies:
+            pri = cur_cost + dep.instruction.cost(globs)
+            dep.priority = max(pri, dep.priority)
+            dep.calc_priority(globs)
 
 
 def make_dag(
@@ -303,26 +313,29 @@ def make_dag(
     else:
         nlayers = globs.num_hidden_layers
 
-    prev_outputs = []
+    last_outputs = []
     for layer_idx in range(nlayers):
         new_nodes, new_outputs = make_dag_layer(
             globs=globs,
             layer_idx=layer_idx,
-            prev_layer_outputs=prev_outputs,
+            prev_layer_outputs=last_outputs,
             stop_after_op=stop_after_op,
         )
         nodes.extend(new_nodes)
-        prev_outputs = new_outputs
+        last_outputs = new_outputs
 
     if nlayers == globs.num_hidden_layers:
         lm_head_instructions = schedule_lm_head(globs)
         lm_head_nodes: list[DAG_Node] = []
         for ins in lm_head_instructions:
-            lm_head_nodes.append(DAG_Node(ins, prev_outputs))
+            lm_head_nodes.append(DAG_Node(ins, last_outputs))
 
         nodes.extend(lm_head_nodes)
+        last_outputs = lm_head_nodes
 
-    return nodes
+    end_node = DAG_Node(NoOp(), last_outputs)
+
+    return nodes, end_node
 
 
 def make_dag_layer(
@@ -442,12 +455,38 @@ def make_dag_layer(
     return new_nodes, downproj_nodes
 
 
-def assign_dag_to_sms(nodes: list[DAG_Node], globs: Globals) -> list[list[Instruction]]:
+@dataclass
+class Schedule:
+    globs: Globals
+    dag_nodes: list[DAG_Node]
+    end_node: DAG_Node
+
+    def get_linear_instructions(self):
+        # NOTE: assumes this is in topological order
+        return [node.instruction for node in self.dag_nodes]
+
+    def smart_assign_to_sms(self):
+        return assign_dag_to_sms(self)
+
+    def round_robin_assign_to_sms(self):
+        instructions = self.get_linear_instructions()
+        return round_robin_assign_to_sms(instructions, self.globs.sm_count())
+
+    def with_new_globals(self, model: LlamaForCausalLM):
+        return replace(self, globs=make_globals(model))
+
+
+def assign_dag_to_sms(schedule: Schedule) -> list[list[Instruction]]:
+    nodes = schedule.dag_nodes
+    globs = schedule.globs
+
     for node in nodes:
         node.register_with_parents()
 
     for node in nodes:
         node.remaining_dependencies = set(node.dependencies)
+
+    # schedule.end_node.calc_priority(globs)
 
     sm_count = globs.sm_count()
     sm_queues = [[] for _ in range(sm_count)]
@@ -463,28 +502,36 @@ def assign_dag_to_sms(nodes: list[DAG_Node], globs: Globals) -> list[list[Instru
     ready_heap = []
     for node in ready_nodes:
         idx = node_to_idx[node]
-        ready_heap.append((node.earliest_ready_time(), idx))
+        # max cost first
+        ready_heap.append((-node.instruction.cost(globs), idx))
 
     heapq.heapify(ready_heap)
 
     while ready_heap:
-        _, idx = heapq.heappop(ready_heap)
+        ready_time, idx = heapq.heappop(ready_heap)
         node = idx_to_node[idx]
 
         sm_time, sm_idx = heapq.heappop(sm_heap)
 
-        node.start_time = sm_time
+        # print(f"assigning instruction {node.instruction} to sm {sm_idx}")
+
+        # start_time = max(ready_time, sm_time)
+        start_time = sm_time
+
+        end_time = start_time + node.instruction.cost(globs)
+
+        node.start_time = start_time
+        node.end_time = end_time
+
         sm_queues[sm_idx].append(node.instruction)
-        sm_time += node.instruction.cost(globs)
-        heapq.heappush(sm_heap, (sm_time, sm_idx))
+
+        heapq.heappush(sm_heap, (end_time, sm_idx))
 
         for child in node.children:
             child.remaining_dependencies.remove(node)
             if len(child.remaining_dependencies) == 0:
-                earliest_ready_time = child.earliest_ready_time()
-                assert earliest_ready_time < float("inf")
                 idx = node_to_idx[child]
-                heapq.heappush(ready_heap, (earliest_ready_time, idx))
+                heapq.heappush(ready_heap, (-child.instruction.cost(globs), idx))
 
     return sm_queues
 
@@ -499,24 +546,18 @@ def round_robin_assign_to_sms(
     return sm_queues
 
 
-@dataclass
-class Schedule:
-    globs: Globals
-    dag_nodes: list[DAG_Node]
+def zig_zag_assign_to_sms(
+    instructions: list[Instruction], sm_count: int
+) -> list[list[Instruction]]:
+    sm_queues = [[] for _ in range(sm_count)]
+    for i, instruction in enumerate(instructions):
+        base_id = i % (sm_count * 2)
+        if base_id < sm_count:
+            sm_queues[base_id].append(instruction)
+        else:
+            sm_queues[sm_count - 1 - (base_id - sm_count)].append(instruction)
 
-    def get_linear_instructions(self):
-        # NOTE: assumes this is in topological order
-        return [node.instruction for node in self.dag_nodes]
-
-    def smart_assign_to_sms(self):
-        return assign_dag_to_sms(self.dag_nodes, self.globs)
-
-    def round_robin_assign_to_sms(self):
-        instructions = self.get_linear_instructions()
-        return round_robin_assign_to_sms(instructions, self.globs.sm_count())
-
-    def with_new_globals(self, model: LlamaForCausalLM):
-        return Schedule(make_globals(model), self.dag_nodes)
+    return sm_queues
 
 
 def schedule(
@@ -528,9 +569,11 @@ def schedule(
 ):
     globs = make_globals(model)
 
-    nodes = make_dag(globs, stop_after_op=stop_after_op, layer_limit=layer_limit)
+    nodes, end_node = make_dag(
+        globs, stop_after_op=stop_after_op, layer_limit=layer_limit
+    )
 
-    return Schedule(globs, nodes)
+    return Schedule(globs, nodes, end_node)
 
 
 def serialize_and_pad(instruction: Instruction):

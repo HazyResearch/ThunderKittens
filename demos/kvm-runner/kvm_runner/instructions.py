@@ -111,6 +111,9 @@ class NoOp(Instruction):
     def opcode(cls) -> int:
         return 0
 
+    def cost(self, globs: Globals):
+        return 0
+
 
 @dataclass
 class LayerNorm_QKV_MatVecRopeAppend(Instruction):

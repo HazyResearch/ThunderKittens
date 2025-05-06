@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import Globals, tensorize_instructions
+from kvm_runner.scheduler import Globals, Schedule, schedule, tensorize_instructions
 from torch import Tensor
 
 
@@ -65,6 +65,7 @@ class KVM_Runner:
         barrier_fill_val: int = 0,
         skip_kvm: bool = False,
         skip_rest: bool = False,
+        mode: str = "smart",
     ):
         sys.path.append(str(kvm_dir.expanduser().absolute()))
         from kvm_llama import kvm_llama  # type: ignore
@@ -73,12 +74,23 @@ class KVM_Runner:
 
         self.model = model
 
-        self.globals, self.instructions = schedule_model(
+        self.schedule = schedule(
             model=self.model,
             prompt_len=prompt_len,
             ntok=ntok,
         )
-        tensorize_instructions(self.globals, self.instructions)
+
+        match mode:
+            case "smart":
+                queues = self.schedule.smart_assign_to_sms()
+            case "rr":
+                queues = self.schedule.round_robin_assign_to_sms()
+            case _:
+                raise ValueError(f"Unknown mode: {mode}")
+
+        tensorize_instructions(self.schedule.globs, queues)
+
+        self.instructions = self.schedule.get_linear_instructions()
 
         self.barrier_fill_val = barrier_fill_val
         self.skip_kvm = skip_kvm
@@ -93,17 +105,17 @@ class KVM_Runner:
             post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
             hiddens = post_embedding.hidden_states
             assert hiddens is not None
-            self.globals.hidden_states[:] = hiddens
-            self.globals.barriers.fill_(self.barrier_fill_val)
+            self.schedule.globs.hidden_states[:] = hiddens
+            self.schedule.globs.barriers.fill_(self.barrier_fill_val)
 
-        self.globals.pos_id = pos_id
+        self.schedule.globs.pos_id = pos_id
         if not self.skip_kvm:
-            interpret_with_kvm(self.globals, self.kvm_func)
+            interpret_with_kvm(self.schedule.globs, self.kvm_func)
 
         if self.skip_rest:
             return input_ids
 
-        logits = self.globals.logits
+        logits = self.schedule.globs.logits
         output_ids = torch.argmax(logits, dim=-1)
 
         return output_ids
