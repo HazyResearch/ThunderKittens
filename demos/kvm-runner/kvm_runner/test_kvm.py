@@ -39,7 +39,7 @@ class ScriptConfig(pydra.Config):
     outfile: Path | None = None
     noops: bool = False
     max_len_override: int | None = 16384
-    sched: str = "smart"
+    sched: str = "rr"
 
     def full(self):
         self.layer_limit = None
@@ -136,6 +136,11 @@ def main(config: ScriptConfig):
         )
         end = time.time()
         print(f"assign time: {end - start}")
+
+    queue_lengths = [len(q) for q in assigned_to_sms]
+    print(
+        f"sm queue lengths: min={min(queue_lengths)}, max={max(queue_lengths)}, mean={sum(queue_lengths) / len(queue_lengths)}"
+    )
 
     cost_per_sm = []
     for sm_queue in assigned_to_sms:
@@ -253,9 +258,12 @@ def main(config: ScriptConfig):
     if config.outfile is not None:
         outdata = {
             "timings": gkvm.timings.cpu(),
-            "instructions": assigned_to_sms,
-            "tensor_instructions": gkvm.instructions.cpu(),
+            "instructions": gkvm.instructions.cpu(),
+            "python_instructions": assigned_to_sms,
+            "cost_per_sm": cost_per_sm,
         }
+
+        print(f"Saving to {config.outfile}")
 
         with open(config.outfile, "wb") as f:
             pickle.dump(outdata, f)
