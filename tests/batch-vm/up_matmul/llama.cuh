@@ -10,8 +10,8 @@
 #define OPCODE_O_ProjResidual 4
 
 #define OPCODE_POST_RMS_NORM 5
-#define OPCODE_MLP_SiLU 6
-#define OPCODE_MLP_Gate 7
+#define OPCODE_GateSiLU 6
+#define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
 
 #define LLAMA_70B_HIDDEN_DIM 8192
@@ -24,7 +24,6 @@
 
 #define SM_COUNT 148
 #define BATCH_SIZE 128
-
 
 // timing event convention
 
@@ -68,7 +67,7 @@ namespace kittens::prototype::vm
         using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
 
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
-        using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>>; 
+        using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
 
         using activations_t = gl<bf16, 1, 1, batch_size, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>>;
         using activations_big_indim_t = gl<bf16, 1, 1, batch_size, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
@@ -88,38 +87,38 @@ namespace kittens::prototype::vm
         timing_layout timings;
 
         // model weights
-        weights_t qkv_weights;
-        norm_weights_t attn_norm_weights;
-        weights_t o_weights;
-        norm_weights_t mlp_norm_weights;
+        // weights_t qkv_weights;
+        // norm_weights_t attn_norm_weights;
+        // weights_t o_weights;
+        // norm_weights_t mlp_norm_weights;
         
-        weights_t up_weights;
-        weights_t gate_weights;
-        weights_big_indim_t down_weights;
+        weights_t up_weights; 
+        // weights_t gate_weights;
+        // weights_big_indim_t down_weights;
 
-        norm_weights_t lm_head_norm_weights;
-        weights_t lm_head_weights;
+        // norm_weights_t lm_head_norm_weights;
+        // weights_t lm_head_weights;
 
         // kv cache
-        kv_cache_t k_cache;
-        kv_cache_t v_cache;
+        // kv_cache_t k_cache;
+        // kv_cache_t v_cache;
 
         // other buffers
-        rope_table_t rope_cos;
-        rope_table_t rope_sin;
+        // rope_table_t rope_cos;
+        // rope_table_t rope_sin;
 
         // activation buffers
-        activations_t hidden_states;
-        activations_t rms_rope_intermediates;
+        // activations_t hidden_states;
+        // activations_t rms_rope_intermediates;
         activations_t rms_gate_intermediates;
-        activations_t gate_silu_intermediates;
-        activations_t q_post_rope;
-        activations_t attn_out;
+        activations_big_indim_t gate_silu_intermediates;
+        // activations_t q_post_rope;
+        // activations_t attn_out;
         activations_big_indim_t silu_out;
-        logits_t logits;
+        // logits_t logits;
 
-        unsigned int pos_id;
-        float attn_scale;
+        // unsigned int pos_id;
+        // float attn_scale;
         float rms_norm_eps;
 
         dim3 grid() { return dim3(sm_count); }

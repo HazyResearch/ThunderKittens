@@ -1,5 +1,4 @@
 #include "llama.cuh"
-#include "utils.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -15,16 +14,22 @@ namespace kittens::prototype::vm
 
     using globals = llama_70b_globals;
 
-    template <typename Config, typename Globals>
-    struct rms_qkv_rope_append
+    template <
+        auto A_Ptr,
+        auto B_Ptr,
+        auto C_Ptr,
+        int _opcode,
+        int _prev_opcode = 0,
+        typename Config = kittens::prototype::vm::default_config>
+    struct rms_op
     {
-        static constexpr int opcode = OPCODE_RMS_QKV_MatVecRopeAppend; // Op index within the layer -- controls which barrier to listen to.
+        static constexpr int opcode = _opcode;
         static constexpr int NUM_WEIGHT_PAGES = 4;
 
         static constexpr int RMS_AND_ACTIVATION_PAGE = 0;
         static constexpr int OUTPUT_PAGE = 1;
 
-        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+        static constexpr int REDUCTION_DIM_PER_WARP = globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         struct parsed_instruction
         {
@@ -39,24 +44,30 @@ namespace kittens::prototype::vm
         };
 
         // Semaphores
+        __device__ static inline semaphore &weights_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
         __device__ static inline semaphore &activations_arrived(state<Config> &s) { return s.semaphores()[NUM_WEIGHT_PAGES]; }
         __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[NUM_WEIGHT_PAGES + 1]; }
         __device__ static inline semaphore &outputs_arrived(state<Config> &s) { return s.semaphores()[NUM_WEIGHT_PAGES + 4]; }
 
         // Pages (very naive for now, no fine-grained usage)
-        __device__ static inline int get_rms_scale_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE); }
+        static constexpr int PAGE_WEIGHT = 0;
+        static constexpr int PAGE_ACTIVATION = 1;
+        static constexpr int PAGE_OUTPUT = 2;
+        __device__ static inline int get_weight_page(state<Config> &s) { return s.pid(PAGE_WEIGHT); }
         __device__ static inline int get_activation_page(state<Config> &s) { return s.pid(PAGE_ACTIVATION); }
+        __device__ static inline int get_output_page(state<Config> &s) { return s.pid(PAGE_OUTPUT); }
 
         struct controller
         {
-            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
+            static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
             {
                 // TODO: How is proper page order decided??? 
                 // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
-                int ret_order[13] = {8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_RMS_SCALE, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
-                return ret_order[query];
+                // int ret_order[13] = {8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
+                // return ret_order[query];
+                return query;
             }
-            static __device__ int init_semaphores(const Globals &g, state<Config> &s)
+            static __device__ int init_semaphores(const globals &g, state<Config> &s)
             {
                 for (int i = 0; i < NUM_WEIGHT_PAGES; i++)
                 {
@@ -71,7 +82,7 @@ namespace kittens::prototype::vm
         };
         struct loader
         {
-            static __device__ void run(const Globals &g, state<Config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
                 {
@@ -85,11 +96,12 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     // RMS scale
-                    s.wait_page_ready(get_rms_scale_page(s));
-                    auto &rms_scale = reinterpret_cast<sv_bf<2048> &>(s.pages[get_rms_scale_page(s)]);
+                    s.wait_page_ready(get_weight_page(s));
+                    auto &rms_scale = reinterpret_cast<sv_bf<8192> &>(s.pages[get_weight_page(s)]);
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(rms_scale_arrived(s), rms_scale);
-                    tma::load_async(rms_scale, g.attn_norm_weights, {inst.layer_idx, 0}, rms_scale_arrived(s));
+                    auto& b_global = g.*B_Ptr;
+                    tma::load_async(rms_scale, b_global, {inst.layer_idx, 0}, rms_scale_arrived(s));
 
                     // Activation
                     auto act_page_id = get_activation_page(s);
@@ -98,17 +110,18 @@ namespace kittens::prototype::vm
                     while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
                         __nanosleep(20);
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    auto &activations = reinterpret_cast<sv_bf<2048> &>(s.pages[act_page_id]);
+                    auto &activations = reinterpret_cast<sv_bf<8192> &>(s.pages[act_page_id]);
                     s.record(TEVENT_TRIPLES_START + 7);
                     tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, activations_arrived(s));
+                    auto& a_global = g.*A_Ptr;
+                    tma::load_async(activations, a_global, {}, activations_arrived(s));
                 }
 
                 else if (laneid() >= 8 && laneid() <= 12)
                 {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
-                    arrive(s.page_finished[s.pid(laneid())], Config::NUM_CONSUMER_WARPS);
+                    arrive(s.page_finished[s.pid(laneid())][0], Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -120,7 +133,7 @@ namespace kittens::prototype::vm
         };
         struct launcher
         {
-            static __device__ void run(const Globals &g, state<Config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
                 {
@@ -131,7 +144,7 @@ namespace kittens::prototype::vm
         };
         struct consumer
         {
-            static __device__ void run(const Globals &g, state<Config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
                 {
@@ -143,21 +156,69 @@ namespace kittens::prototype::vm
                 using float_rv_t = rv_fl<16>;
 
                 parsed_instruction inst{s};
-                typename float_rt_t::row_vec activations_vec;
-                float_rv_t qkv_proj, rope_cos, rope_sin;
+                typename float_rt_t::row_vec activations_vec, copy_activations_vec, rms_scale_vec;
 
                 static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
                 constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
 
                 int page_index = warpid() / WARPS_PER_PAGE;
 
-                rms_norm(g, s, activations_vec, get_activation_page(s), get_rms_scale_page(s), activations_arrived(s), rms_scale_arrived(s), 16);
+                sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_activation_page(s)].ptr());
+                sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_activation_page(s)].ptr(sizeof(sv_bf<8192>)));
+
+                // Setup
+                wait(activations_arrived(s), 0);
+
+                warp::load(activations_vec, activations_smem[warpid()]);
+                warp::sync();
+
+                // Step 2: Apply RMS normalization
+                warp::copy(copy_activations_vec, activations_vec);                           // cast to float
+                warp::mul(copy_activations_vec, copy_activations_vec, copy_activations_vec); // square
+                float partial_sum = warp::sum(copy_activations_vec);
+
+                auto smem_rms_partial_sums = ((float *)s.scratch());
+                // aggregate sums across the consumer warps
+                if (laneid() == 0)
+                {
+                    smem_rms_partial_sums[warpid()] = partial_sum;
+                }
+
+                group<Config::NUM_CONSUMER_WARPS>::sync(0);
+
+                float full_sum = 0;
+                for (int i = 0; i < Config::NUM_CONSUMER_WARPS; i++)
+                {
+                    full_sum += smem_rms_partial_sums[i];
+                }
+
+                float variance = full_sum / 8192.0f;
+                float rms_scale = rsqrtf(variance + g.rms_norm_eps);
+
+                warp::copy(copy_activations_vec, activations_vec); // unsquare
+                warp::mul(copy_activations_vec, copy_activations_vec, rms_scale);
+                warp::copy(activations_vec, copy_activations_vec);
+
+                // multiply by rms scale
+                wait(rms_scale_arrived(s), 0);
+
+                warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
+                warp::sync();
+
+                warp::mul(activations_vec, activations_vec, rms_scale_vec);
+
+                int output_page = get_output_page(s);
+                s.wait_page_ready(output_page);
+                auto &rms_activations = reinterpret_cast<sv_bf<8192> &>(s.pages[output_page]);
+                // warp::store(rms_activations, activations_vec);
+                warp::sync();
+                warp::arrive(outputs_arrived(s));
             }
         };
         struct storer
         {
             // Uses 4 full pages for outputs.
-            static __device__ void run(const Globals &g, state<Config> &s)
+            static __device__ void run(const globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
                 {
@@ -168,31 +229,12 @@ namespace kittens::prototype::vm
 
                 if (warp::laneid() == 0)
                 {
-                    sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
                     wait(outputs_arrived(s), 0);
-                    s.record(TEVENT_TRIPLES_OUTPUT_READY);
-
-                    if (inst.qkv_block_idx < K_BLK_START)
-                    { // Q
-                        tma::store_async<cache_policy::NORMAL>(g.q_post_rope, qkv_proj_smem, {0, 0, 0, inst.qkv_block_idx});
-                    }
-                    else if (inst.qkv_block_idx < V_BLK_START)
-                    { // K
-                        int base_index = (inst.qkv_block_idx - K_BLK_START) * Globals::matvec_block_size;
-                        int head_idx = base_index / Globals::head_dim;
-                        int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
-                    }
-                    else
-                    { // V
-                        int base_index = (inst.qkv_block_idx - V_BLK_START) * Globals::matvec_block_size;
-                        int head_idx = base_index / Globals::head_dim;
-                        int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
-                        tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
-                    }
-
-                    tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
-                    s.record(126);
+                    int output_page = get_output_page(s);
+                    auto &rms_activations = reinterpret_cast<sv_bf<8192> &>(s.pages[output_page]);
+                    auto &c_global = g.*C_Ptr;
+                    tma::store_async<cache_policy::NORMAL>(c_global, rms_activations, {});
+                    tma::store_async_wait(); 
                 }
 
                 warp::sync();
@@ -207,6 +249,26 @@ namespace kittens::prototype::vm
             }
         };
     };
+
+    template <typename Config, typename globals>
+    struct pre_rms_norm : rms_op<
+                          &globals::attn_norm_weights,
+                          &globals::hidden_states,
+                          &globals::rms_rope_intermediates,
+                          OPCODE_RMS_NORM,
+                          OPCODE_RMS_NORM - 1,
+                          Config>
+    {};
+
+    template <typename Config, typename globals>
+    struct post_rms_norm : rms_op<
+                        &globals::mlp_norm_weights,
+                        &globals::hidden_states,
+                        &globals::rms_gate_intermediates,
+                        OPCODE_POST_RMS_NORM,
+                        OPCODE_POST_RMS_NORM - 1,
+                        Config>
+    {};
 }
 
 
