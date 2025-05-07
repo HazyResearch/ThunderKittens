@@ -14,10 +14,10 @@ namespace kittens
             struct default_config
             {
                 // Instruction pipeline
-                static constexpr int INSTRUCTION_PIPELINE_STAGES = 4;
+                static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
 
                 // num bits required to represent num pipeline stages
-                static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 2;
+                static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 1;
 
                 static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
                 using instruction_t = int[INSTRUCTION_WIDTH];
