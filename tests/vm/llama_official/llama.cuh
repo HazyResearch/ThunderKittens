@@ -52,15 +52,25 @@ namespace kittens::prototype::vm
     struct globals_t
     {
 
-        constexpr static unsigned int num_layers = _num_layers;
-        constexpr static unsigned int matvec_block_size = _matvec_block_size;
-        constexpr static unsigned int kv_block_size = _kv_block_size;
-        constexpr static unsigned int head_dim = _head_dim;
-        constexpr static unsigned int hidden_dim = _hidden_dim;
-        constexpr static unsigned int intermediate_dim = _intermediate_dim;
-        constexpr static unsigned int num_attention_heads = _num_attention_heads;
-        constexpr static unsigned int num_kv_heads = _num_kv_heads;
-        constexpr static unsigned int sm_count = _sm_count;
+        // constexpr static unsigned int num_layers = _num_layers;
+        // constexpr static unsigned int matvec_block_size = _matvec_block_size;
+        // constexpr static unsigned int kv_block_size = _kv_block_size;
+        // constexpr static unsigned int head_dim = _head_dim;
+        // constexpr static unsigned int hidden_dim = _hidden_dim;
+        // constexpr static unsigned int intermediate_dim = _intermediate_dim;
+        // constexpr static unsigned int num_attention_heads = _num_attention_heads;
+        // constexpr static unsigned int num_kv_heads = _num_kv_heads;
+        // constexpr static unsigned int sm_count = _sm_count;
+
+        constexpr static int num_layers = _num_layers;
+        constexpr static int matvec_block_size = _matvec_block_size;
+        constexpr static int kv_block_size = _kv_block_size;
+        constexpr static int head_dim = _head_dim;
+        constexpr static int hidden_dim = _hidden_dim;
+        constexpr static int intermediate_dim = _intermediate_dim;
+        constexpr static int num_attention_heads = _num_attention_heads;
+        constexpr static int num_kv_heads = _num_kv_heads;
+        constexpr static int sm_count = _sm_count;
 
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
@@ -73,7 +83,7 @@ namespace kittens::prototype::vm
         using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<matvec_block_size>>;
 
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<matvec_block_size>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<matvec_block_size>>;
+        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<head_dim>>;
         using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<matvec_block_size>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
