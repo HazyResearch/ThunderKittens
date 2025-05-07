@@ -341,7 +341,7 @@ namespace kittens::prototype::vm
 
                 if (warpid() == 0)
                 {
-                    // Wait for the previous ops to finish1
+                    // Wait for the previous ops to finish
                     parsed_instruction inst{s};
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + 0}] < 4 ||

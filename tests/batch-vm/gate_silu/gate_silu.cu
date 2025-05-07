@@ -1,22 +1,22 @@
 #include "llama.cuh"
-#include "utils.cuh"
 using namespace kittens;
 using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
-
-    using globals = llama_1b_globals;
+    using globals = llama_70b_globals;
     using config = default_config;
 
     template <typename Config, typename Globals>
-    struct rms_upgate_silu
+    struct gate_silu
     {
-        static constexpr int opcode = OPCODE_MLP_Gate;
-        static constexpr int prev_opcode = OPCODE_POST_RMS_NORM;
-        static constexpr int EXPECTED_ARRIVAL_COUNT = Globals::hidden_dim / Globals::matvec_block_size;
+        static constexpr int opcode = OPCODE_GateSiLU;
+        static constexpr int prev_opcode = opcode - 1;
         static constexpr int PIPELINE_STAGES = 3;
 
+        using a_tile = st_bf<64, 128>;    // 16KB
+        using b_tile = st_bf<128, 128>;   // 32KB
+        using c_tile = st_bf<64, 128>;    // 16KB
         struct parsed_instruction
         {
             int layer;
@@ -24,31 +24,26 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];
-                
+                row = instruction[2];
+                col = instruction[3];
+                iters = instruction[4];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        static constexpr int NUM_UP_PAGES = 4;
-        static constexpr int NUM_GATE_PAGES = 4;
-        static constexpr int PAGE_RMS_SCALE_ACTIVATION = 0;
-        static constexpr int PAGE_UP_START = PAGE_RMS_SCALE_ACTIVATION + 1;
-        static constexpr int PAGE_GATE_START = PAGE_UP_START + NUM_UP_PAGES;
-        static constexpr int PAGE_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 1;
-        static constexpr int SEM_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 3;
-
-        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
-
-        using a_tile = st_bf<64, 128>;    // 16KB
-        using b_tile = st_bf<128, 128>;   // 32KB
-        using c_tile = st_bf<64, 128>;    // 16KB
-
         //  semaphores
-        __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
-        __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[NUM_UP_PAGES + i]; }
-        __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES]; }
-        __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 1]; }
-        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 2]; }
+        __device__ static inline semaphore &inputs_arrived(state<config> &s, int id) {
+            return s.semaphores()[id];
+        }
+        __device__ static inline semaphore &inputs_finished(state<config> &s, int id) {
+            return s.semaphores()[id+PIPELINE_STAGES];
+        }
+        __device__ static inline semaphore &outputs_arrived(state<config> &s, int id) {
+            return s.semaphores()[id+PIPELINE_STAGES*2];
+        }
+        __device__ static inline semaphore &outputs_shared(state<config> &s, int id) {
+            return s.semaphores()[id+PIPELINE_STAGES*2+2];
+        }
 
         // getters
         __device__ static inline int get_a_page(state<config> &s, int stage, int offset) {
@@ -67,10 +62,10 @@ namespace kittens::prototype::vm
             {
                 // first the pages we don't use (we use 10 pages)
                 // then input, then rms scale, then up, then gate
-
-                int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
-
-                return ret_order[query];
+                return query; 
+                // TODO: Update release order
+                // int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
+                // return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
@@ -102,7 +97,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(a_page);
                         }
                         a_tile &a = *reinterpret_cast<a_tile *>(s.pages[a_page].data);
-                        tma::load_async(a, g.post_rms_intermediates, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(a, g.rms_gate_intermediates, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 2) {
                         int b_page = get_b_page(s, pipeline_stage);
                         if(i < PIPELINE_STAGES) {
@@ -224,7 +219,7 @@ namespace kittens::prototype::vm
                     wait(outputs_shared(s, laneid()), 0);
                     int store_page = get_store_page(s, inst, laneid());
                     c_tile &output = *reinterpret_cast<c_tile *>(s.pages[get_store_page(s, inst, laneid())].data);
-                    tma::store_async(g.gate_silu_intermediate, output, {inst.row+laneid(), inst.col});
+                    tma::store_async(g.gate_silu_intermediates, output, {inst.row+laneid(), inst.col});
                     tma::store_async_read_wait();
                     s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
                     s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS);

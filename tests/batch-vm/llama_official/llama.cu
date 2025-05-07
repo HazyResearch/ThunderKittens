@@ -4,8 +4,8 @@
 #include "qkv_rope_append.cu"
 #include "attention_decode.cu"
 #include "matmul_adds.cu"
-#include "matmul_silu.cu"
-#include "matmul_gate.cu"
+#include "gate_silu.cu"
+#include "up_matmul.cu"
 #include "rms_lm_head.cu"
 
 #include "pyutils/pyutils.cuh"
@@ -42,7 +42,6 @@ PYBIND11_MODULE(kvm_llama_70b, m)
                                  matmul_silu_op,
                                  matmul_gate_op,
                                  downproj_op,
-                                 
                                  rms_lm_head_op>>(m, "kvm_llama_70b",
                                                   &llama_70b_globals::Bar,
                                                   &llama_70b_globals::instructions,

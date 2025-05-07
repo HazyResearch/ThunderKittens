@@ -1,5 +1,4 @@
 #include "llama.cuh"
-#include "utils.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -7,23 +6,20 @@ using namespace kittens::prototype;
 namespace kittens::prototype::vm
 {
 
-    using globals = llama_1b_globals;
+    using globals = llama_70b_globals;
 
     template <typename Config, typename Globals>
     struct qkv_rope_append
     {
-        static constexpr int opcode = OPCODE_QKV_MatVecRopeAppend; // Op index within the layer -- controls which barrier to listen to.
+        static constexpr int opcode = OPCODE_QKV_RopeAppend; // Op index within the layer -- controls which barrier to listen to.
         static constexpr int PIPELINE_STAGES = 3;
         static constexpr int NUM_MATMUL_PAGES = 9;
 
-        static constexpr int PAGE_ACTIVATION = 0;
-        static constexpr int PAGE_ROPE = PAGE_ACTIVATION + 1;
-        static constexpr int PAGE_WEIGHT_START = PAGE_ROPE + 1;
-        static constexpr int PAGE_COUNT = PAGE_WEIGHT_START + NUM_WEIGHT_PAGES;
+        static constexpr int PAGE_ROPE = 12;
 
         // TODO: Ensure matvec_block_size is 128
-        static constexpr int K_BLK_START = 8192 / Globals::matvec_block_size;
-        static constexpr int V_BLK_START = 9216 / Globals::matvec_block_size;
+        static constexpr int K_BLK_START = 8192 / Globals::matmul_out_block_size;
+        static constexpr int V_BLK_START = 9216 / Globals::matmul_out_block_size;
 
         // 8192 / 16 = 512
         static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
@@ -35,8 +31,8 @@ namespace kittens::prototype::vm
         
         struct parsed_instruction
         {
-            int output_row;
-            int output_col;
+            int row;
+            int col;
             int iters;
             int layer_idx;
             int qkv_block_idx; // can get 
@@ -45,8 +41,8 @@ namespace kittens::prototype::vm
 
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
-                output_row = instruction[1];
-                output_col = instruction[2];
+                row = instruction[1];
+                col = instruction[2];
                 layer_idx = instruction[3];
                 qkv_block_idx = instruction[4];
                 page_idx = instruction[5];
@@ -77,6 +73,9 @@ namespace kittens::prototype::vm
         __device__ static inline int get_weight_page(state<config> &s, int stage) {
             return stage*4 + 2;
         }
+        __device__ static inline int get_store_page(state<config> &s, parsed_instruction &inst, int offset) {
+            return ((inst.iters+2)%PIPELINE_STAGES)*4 + offset*2;
+        }
         __device__ static inline rope_sv &get_rope_sin_smem(state<Config> &s) { 
             int pid = s.pid(PAGE_ROPE);
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[pid].data);
@@ -94,8 +93,9 @@ namespace kittens::prototype::vm
             {
                 // TODO: Need to correct order
                 // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
-                int ret_order[13] = {7, 8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
-                return ret_order[query];
+                // int ret_order[13] = {7, 8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
+                // return ret_order[query];
+                return query; 
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
@@ -129,7 +129,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(activation_page);
                         }
                         activation_tile &a = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
-                        tma::load_async(a, g.A, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(a, g.rms_rope_intermediates, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 2) {
                         int weight_page = get_weight_page(s, pipeline_stage);
                         if(i < PIPELINE_STAGES) {
@@ -137,7 +137,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page+1);
                         }
                         weight_tile &b = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
-                        tma::load_async(b, g.B, {inst.col, i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(b, g.qkv_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
                     }
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
                 }
@@ -147,20 +147,17 @@ namespace kittens::prototype::vm
                 if (laneid() == 0)
                 {
                     // Rope cos
-                    auto cos_page_id = get_rope_cos_page(s);
-                    s.wait_page_ready(cos_page_id);
-                    auto &rope_cos = reinterpret_cast<rope_sv &>(s.pages[cos_page_id]);
+                    s.wait_page_ready(PAGE_ROPE);
+                    rope_sv &rope_cos_smem = get_rope_cos_smem(s);
                     s.record(TEVENT_TRIPLES_START + 5);
-                    tma::expect(rope_cos_arrived(s), rope_cos);
-                    tma::load_async(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
+                    // tma::expect(rope_cos_arrived(s), rope_cos_smem);
+                    // tma::load_async(rope_cos_smem, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_cos_arrived(s));
 
                     // Rope sin
-                    auto sin_page_id = get_rope_sin_page(s);
-                    s.wait_page_ready(sin_page_id);
-                    auto &rope_sin = reinterpret_cast<rope_sv &>(s.pages[sin_page_id]);
+                    rope_sv &rope_sin_smem = get_rope_sin_smem(s);
                     s.record(TEVENT_TRIPLES_START + 6);
-                    tma::expect(rope_sin_arrived(s), rope_sin);
-                    tma::load_async(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
+                    // tma::expect(rope_sin_arrived(s), rope_sin_smem);
+                    // tma::load_async(rope_sin_smem, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), inst.qkv_block_idx % 4}, rope_sin_arrived(s));
 
                 }
                 warp::sync(); 
@@ -255,37 +252,33 @@ namespace kittens::prototype::vm
                 { // only a single warp needed from here!
 
                     // even for V, we need to cast from float to bf16
+                    rv_fl<16> qkv_proj, rope_cos, rope_sin;
                     rope_sv &qkv_proj_smem = *reinterpret_cast<rope_sv *>(s.scratch());
                     sv_bf<128> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<128> *>(s.scratch());
-                    warp::load(qkv_proj, qkv_proj_smem);
+                    // warp::load(qkv_proj, qkv_proj_smem);
 
                     warp::sync();
 
-                    int rope_cos_page = get_rope_cos_page(s);
-                    int rope_sin_page = get_rope_sin_page(s);
-
                     if (inst.qkv_block_idx < V_BLK_START)
                     { // only Q & K need RoPE
-
-                        rope_sv &rope_cos_smem = reinterpret_cast<rope_sv &>(s.pages[rope_cos_page]);
+                        rope_sv &rope_cos_smem = get_rope_cos_smem(s);
                         wait(rope_cos_arrived(s), 0);
                         if (laneid() == 0)
                         {
                             s.record(TEVENT_TRIPLES_END + 5);
                             s.record(TEVENT_CONSUMER_START + 48);
                         }
-                        warp::load(rope_cos, rope_cos_smem);
-                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
+                        // warp::load(rope_cos, rope_cos_smem);
 
-                        rope_sv &rope_sin_smem = reinterpret_cast<rope_sv &>(s.pages[rope_sin_page]);
+                        rope_sv &rope_sin_smem = get_rope_sin_smem(s);
                         wait(rope_sin_arrived(s), 0);
                         if (laneid() == 0)
                         {
                             s.record(TEVENT_TRIPLES_END + 6);
                             s.record(TEVENT_CONSUMER_START + 49);
                         }
-                        warp::load(rope_sin, rope_sin_smem);
-                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
+                        // warp::load(rope_sin, rope_sin_smem);
+                        // warp::arrive(s.page_finished[PAGE_ROPE], Config::NUM_CONSUMER_WARPS);
 
                         // Fetch the neighbor values
                         int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -297,20 +290,14 @@ namespace kittens::prototype::vm
                             // will clean this up later
                             qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
                     }
-                    else
-                    {
-                        wait(rope_cos_arrived(s), 0);
-                        warp::arrive(s.page_finished[rope_cos_page], Config::NUM_CONSUMER_WARPS);
-
-                        wait(rope_sin_arrived(s), 0);
-                        warp::arrive(s.page_finished[rope_sin_page], Config::NUM_CONSUMER_WARPS);
-                    }
 
                     // Store back to the scratch
-                    warp::store(qkv_proj_smem_bf, qkv_proj);
+                    // warp::store(qkv_proj_smem_bf, qkv_proj);
                     warp::sync();
 
-                    warp::arrive(outputs_arrived(s));
+                    if (groupid < 2)
+                        warpgroup::arrive(outputs_shared(s, groupid));
+                    
                     if (kittens::group<Config::NUM_CONSUMER_WARPS>::laneid() == 0)
                     {
                         s.record(TEVENT_CONSUMER_END);
@@ -334,7 +321,8 @@ namespace kittens::prototype::vm
                 if (warp::laneid() == 0)
                 {
                     sv_bf<16> &qkv_proj_smem = *reinterpret_cast<sv_bf<16> *>(s.scratch());
-                    wait(outputs_arrived(s), 0);
+                    wait(outputs_shared(s, 0), 0);
+
                     s.record(TEVENT_TRIPLES_OUTPUT_READY);
 
                     if (inst.qkv_block_idx < K_BLK_START)
@@ -343,16 +331,16 @@ namespace kittens::prototype::vm
                     }
                     else if (inst.qkv_block_idx < V_BLK_START)
                     { // K
-                        int base_index = (inst.qkv_block_idx - K_BLK_START) * Globals::matvec_block_size;
+                        int base_index = (inst.qkv_block_idx - K_BLK_START) * Globals::matmul_out_block_size;
                         int head_idx = base_index / Globals::head_dim;
-                        int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
+                        int dim_idx = (base_index % Globals::head_dim) / Globals::matmul_out_block_size;
                         tma::store_async<cache_policy::NORMAL>(g.k_cache, qkv_proj_smem, {inst.page_idx, inst.slot_idx, head_idx, dim_idx});
                     }
                     else
                     { // V
-                        int base_index = (inst.qkv_block_idx - V_BLK_START) * Globals::matvec_block_size;
+                        int base_index = (inst.qkv_block_idx - V_BLK_START) * Globals::matmul_out_block_size;
                         int head_idx = base_index / Globals::head_dim;
-                        int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
+                        int dim_idx = (base_index % Globals::head_dim) / Globals::matmul_out_block_size;
                         tma::store_async<cache_policy::NORMAL>(g.v_cache, qkv_proj_smem, {inst.page_idx, inst.slot_idx, head_idx, dim_idx});
                     }
 

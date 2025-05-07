@@ -17,7 +17,7 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
 /*
-Instruction format:
+Instruction format: (ASSUMING HOST UPDATES UNITS)
 [0] = opcode
 [1] = Row offset of C, in units of 64
 [2] = Col offset of C, in units of 128
@@ -29,6 +29,13 @@ Outputs a 128 x 128 matrix of C
 using a_tile = st_bf<64, 128>;    // 16KB
 using b_tile = st_bf<128, 128>;   // 32KB
 using c_tile = st_bf<64, 128>;    // 16KB
+
+/*
+Could also try... 
+using a_tile = st_bf<128, 64>;   // 16KB
+using b_tile = st_bf<256, 64>;   // 32KB
+using c_tile = st_bf<128, 256>;  // 64KB
+*/
 
 static constexpr int SM_COUNT = 148;
 
@@ -80,13 +87,6 @@ template<typename config=config> struct MatmulOp {
     __device__ static inline int get_b_page(state<config> &s, int stage) {
         return stage*4 + 2;
     }
-    /*
-    0, 1
-
-    4, 5
-
-    8, 9
-    */
     __device__ static inline int get_store_page(state<config> &s, parsed_instruction &inst, int offset) {
         return ((inst.iters+2)%PIPELINE_STAGES)*4 + offset*2;
     }
@@ -145,16 +145,6 @@ template<typename config=config> struct MatmulOp {
                     s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
                 }
             }
-
-            // if (laneid() < config::NUM_PAGES) { 
-            //     auto pid = s.pid(laneid()); 
-
-            //     s.wait_page_ready(pid); 
-
-            //     s.finish_page(pid, config::NUM_CONSUMER_WARPS); 
-            // }
-
-            // if (laneid() == 0) printf(RED_TEXT "Finished loader\n" RESET_TEXT);
         }
     };
     struct launcher { // launches mma's
@@ -168,8 +158,8 @@ template<typename config=config> struct MatmulOp {
             // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
             s.wait_tensor_ready();
             if(laneid() < 2) {
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                 a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                 b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                 mm<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -182,8 +172,8 @@ template<typename config=config> struct MatmulOp {
                 wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
                 // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
                 if(laneid() < 2) {
-                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                     a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                     b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                     mma<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -194,8 +184,8 @@ template<typename config=config> struct MatmulOp {
             // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
 
             if(laneid() < 2) {
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                 a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                 b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                 mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
@@ -209,26 +199,38 @@ template<typename config=config> struct MatmulOp {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
             int groupid = warpgroup::groupid();
-            wait(outputs_arrived(s, groupid), 0);
-
-            // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
-            auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
-            
-            rt_fl<16, 128> acc_rt;
-            rt_bf<16, 128> acc_bf16;
-            
-            warpgroup::load_async(acc_rt, accumulator);
-            warp::copy(acc_bf16, acc_rt);
-            tensor_load_wait();
-            warp::arrive(s.tensor_finished);
-            
-            int store_page_id = get_store_page(s, inst, groupid);
-            c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
-            warpgroup::store(store_buffer, acc_bf16);
-            warpgroup::sync(groupid);
-            warpgroup::arrive(outputs_shared(s, groupid));
+            // if (groupid < 2 && warpgroup::warpid() < 2)
+            if (groupid < 2)
+            {
+                wait(outputs_arrived(s, groupid), 0);
+    
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
+                rt_fl<16, 128> acc_rt;
+                rt_bf<16, 128> acc_bf16;
+                
+                warpgroup::load_async(acc_rt, accumulator);
+                tensor_load_wait();
+                warp::copy(acc_bf16, acc_rt);
+                warp::arrive(s.tensor_finished);
+                
+                int store_page_id = get_store_page(s, inst, groupid);
+                c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
+                warpgroup::store(store_buffer, acc_bf16);
+                warpgroup::sync(groupid);
+                warpgroup::arrive(outputs_shared(s, groupid));
+            }
         }
     };
+    /*
+    rt_fl<32, 128> acc_rt;
+    rt_bf<32, 128> acc_bf16;
+
+    auto src_subtile = accumulator.template subtile<tt<float, 32, 128>>(32*warpgroup::warpid(), 0);
+    warp::load_async(acc_rt, src_subtile);
+    
+    // warpgroup::load_async(acc_rt, accumulator);
+    */
     struct storer {
         static __device__ void run(const globals &g, state<config> &s) {
             parsed_instruction inst{s};
@@ -239,7 +241,7 @@ template<typename config=config> struct MatmulOp {
                 tma::store_async(g.C, output, {inst.row+laneid(), inst.col});
                 tma::store_async_read_wait();
                 s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
-                s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS); // not used but need to release
+                s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS); // not used but should still be released 
             }
             warp::sync();
         }
