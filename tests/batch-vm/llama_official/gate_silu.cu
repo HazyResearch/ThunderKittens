@@ -1,22 +1,22 @@
 #include "llama.cuh"
-#include "utils.cuh"
 using namespace kittens;
 using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
-
     using globals = llama_70b_globals;
     using config = default_config;
 
     template <typename Config, typename Globals>
     struct gate_silu
     {
-        static constexpr int opcode = OPCODE_MLP_Gate;
-        static constexpr int prev_opcode = OPCODE_POST_RMS_NORM;
-        static constexpr int EXPECTED_ARRIVAL_COUNT = Globals::hidden_dim / Globals::matvec_block_size;
+        static constexpr int opcode = OPCODE_GateSiLU;
+        static constexpr int prev_opcode = opcode - 1;
         static constexpr int PIPELINE_STAGES = 3;
 
+        using a_tile = st_bf<64, 128>;    // 16KB
+        using b_tile = st_bf<128, 128>;   // 32KB
+        using c_tile = st_bf<64, 128>;    // 16KB
         struct parsed_instruction
         {
             int layer;
@@ -24,24 +24,12 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];
-                
+                row = instruction[2];
+                col = instruction[3];
+                iters = instruction[4];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
-
-        static constexpr int NUM_UP_PAGES = 4;
-        static constexpr int NUM_GATE_PAGES = 4;
-        static constexpr int PAGE_RMS_SCALE_ACTIVATION = 0;
-        static constexpr int PAGE_UP_START = PAGE_RMS_SCALE_ACTIVATION + 1;
-        static constexpr int PAGE_GATE_START = PAGE_UP_START + NUM_UP_PAGES;
-        static constexpr int PAGE_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 1;
-        static constexpr int SEM_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 3;
-
-        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
-
-        using a_tile = st_bf<64, 128>;    // 16KB
-        using b_tile = st_bf<128, 128>;   // 32KB
-        using c_tile = st_bf<64, 128>;    // 16KB
 
         //  semaphores
         __device__ static inline semaphore &inputs_arrived(state<config> &s, int id) {
@@ -74,10 +62,10 @@ namespace kittens::prototype::vm
             {
                 // first the pages we don't use (we use 10 pages)
                 // then input, then rms scale, then up, then gate
-
-                int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
-
-                return ret_order[query];
+                return query; 
+                // TODO: Update release order
+                // int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
+                // return ret_order[query];
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {

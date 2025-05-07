@@ -96,20 +96,18 @@ namespace kittens::prototype::vm
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(a_page);
                         }
-                        // auto &a_global = g.*InputActivationsPtr;
+                        auto &a_global = g.*InputActivationsPtr;
                         a_tile &a = *reinterpret_cast<a_tile *>(s.pages[a_page].data);
-                        // tma::load_async(a, a_global, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
-                        tma::load_async(a, g.attn_out, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(a, a_global, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 2) {
                         int b_page = get_b_page(s, pipeline_stage);
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(b_page);
                             s.wait_page_ready(b_page+1);
                         }
-                        // auto &b_global = g.*WeightsPtr;
+                        auto &b_global = g.*WeightsPtr;
                         b_tile &b = *reinterpret_cast<b_tile *>(s.pages[b_page].data);
-                        // tma::load_async(b, b_global, {inst.col, i}, inputs_arrived(s, pipeline_stage));
-                        tma::load_async(b, g.o_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(b, b_global, {inst.col, i}, inputs_arrived(s, pipeline_stage));
                     }
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
                 }
@@ -214,16 +212,12 @@ namespace kittens::prototype::vm
                 
                 if (laneid() < 2) {
                     wait(outputs_shared(s, laneid()), 0);
-                    // auto &OutputActivations = g.*OutputActivationsPtr;
+                    auto &OutputActivations = g.*OutputActivationsPtr;
                     int store_page = get_store_page(s, inst, laneid());
-                    c_tile &output = *reinterpret_cast<c_tile *>(s.pages[get_store_page(s, inst, laneid())].data);
-                    // tma::store_add_async(OutputActivations, output, {inst.row+laneid(), inst.col});
-                    // tma::store_async_wait();
-                    //  tma::store_async(OutputActivations, output, {inst.row+laneid(), inst.col});
-                    tma::store_async(g.hidden_states, output, {inst.row+laneid(), inst.col});
-                    tma::store_async_read_wait();
+                    c_tile &output = *reinterpret_cast<c_tile *>(s.pages[store_page].data);
+                    tma::store_add_async(OutputActivations, output, {inst.row+laneid(), inst.col});
+                    tma::store_async_wait();
                     s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
-                    s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS);
                 }
                 warp::sync();
 
