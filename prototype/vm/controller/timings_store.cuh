@@ -18,7 +18,7 @@ namespace kittens
                 {
                     constexpr int bytes = config::TIMING_WIDTH * sizeof(int);
                     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(timings));
-                    uint64_t dst_ptr = (uint64_t)(&g.timings[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}]);
+                    uint64_t dst_ptr = (uint64_t)(&g.timings[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}]);
                     asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
                     asm volatile(
                         "cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;\n"

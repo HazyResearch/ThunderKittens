@@ -22,6 +22,18 @@ template<typename config> struct __align__(128) instruction_state_t {
 };
 
 
+__device__ inline unsigned int get_smid() {
+    unsigned int ret;
+    asm volatile("mov.u32 %0, %smid;" : "=r"(ret));
+    return ret;
+}
+
+__device__ inline unsigned int get_worker_id() {
+    return get_smid();
+    // return blockIdx.x;
+}
+
+
 template<template<typename> typename op_dispatcher, typename... ops>
 struct dispatch_op {
     template<typename return_t, typename config, typename globals, typename... args>
@@ -141,8 +153,6 @@ template<typename config> struct state {
     }
 
     __device__ inline void finish_page(int pid, int count) {
-        auto next_instruction_index = instruction_index + 1;
-
         #pragma unroll
         for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
             arrive(page_finished[pid][i], count);
