@@ -79,7 +79,8 @@ def run_reference_implementation(attn_out, o_weights, output_tensor_ref):
     for i, a_block in enumerate([a_block0, a_block1]):
         matmul = torch.matmul(a_block.float(), b_block.T.float())
         # Add the result to existing values in output_tensor_ref
-        output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] += matmul.to(output_tensor_ref.dtype)
+        # output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] += matmul.to(output_tensor_ref.dtype)
+        output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] = matmul.to(output_tensor_ref.dtype)
 
     return output_tensor_ref
 
@@ -122,8 +123,8 @@ def main():
         instructions,
         timings,
         o_weights_tensor,
-        attn_out_tensor,
-        hidden_states_tensor
+        hidden_states_tensor,
+        attn_out_tensor
     )
     if TORCH_DEVICE.type == 'cuda':
         torch.cuda.synchronize(TORCH_DEVICE)
@@ -139,9 +140,19 @@ def main():
     reference_output_tile = output_tensor_ref[M_START:M_END, N_START:N_END]
 
     # --- BEGIN OUTPUT SLICE PRINTING ---
+
     print(f"\nKernel output tile (shape: {kernel_output_tile.shape}):")
     print(f"Top-left {slice_preview_rows}x{slice_preview_cols} slice:")
     print(kernel_output_tile[:slice_preview_rows, :slice_preview_cols])
+
+    all_zeros = True
+    for i in kernel_output_tile:
+        for j in i:
+            if j != 0:
+                all_zeros = False
+    if all_zeros:
+        print("All zeros")
+        raise Exception
 
     print(f"\nReference output tile (shape: {reference_output_tile.shape}):")
     print(f"Top-left {slice_preview_rows}x{slice_preview_cols} slice:")

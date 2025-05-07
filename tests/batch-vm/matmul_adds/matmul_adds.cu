@@ -8,18 +8,21 @@ using namespace kittens::prototype;
 namespace kittens::prototype::vm
 {
     using globals = llama_70b_globals;
-    template <
-        auto WeightsPtr,
-        auto InputActivationsPtr,
-        auto OutputActivationsPtr,
-        int _opcode,
-        int _prev_opcode = 0,
-        typename Config = kittens::prototype::vm::default_config>
+    // template <
+    //     auto WeightsPtr,
+    //     auto InputActivationsPtr,
+    //     auto OutputActivationsPtr,
+    //     int _opcode,
+    //     int _prev_opcode = 0,
+    //     typename Config = kittens::prototype::vm::default_config>
 
-    struct MatVecAddOp
+    template <typename Config, typename Globals>
+    struct o_proj
     {
-        static constexpr int opcode = _opcode;
-        static constexpr int prev_opcode = _prev_opcode;
+        static constexpr int opcode = OPCODE_O_ProjResidual;
+        static constexpr int prev_opcode = opcode - 1;
+        // static constexpr int opcode = _opcode;
+        // static constexpr int prev_opcode = _prev_opcode;
 
         static constexpr int PIPELINE_STAGES = 3;
 
@@ -97,18 +100,20 @@ namespace kittens::prototype::vm
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(a_page);
                         }
-                        auto &a_global = g.*InputActivationsPtr;
+                        // auto &a_global = g.*InputActivationsPtr;
                         a_tile &a = *reinterpret_cast<a_tile *>(s.pages[a_page].data);
-                        tma::load_async(a, a_global, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        // tma::load_async(a, a_global, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(a, g.attn_out, {inst.row + laneid(), i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 2) {
                         int b_page = get_b_page(s, pipeline_stage);
                         if(i < PIPELINE_STAGES) {
                             s.wait_page_ready(b_page);
                             s.wait_page_ready(b_page+1);
                         }
-                        auto &b_global = g.*WeightsPtr;
+                        // auto &b_global = g.*WeightsPtr;
                         b_tile &b = *reinterpret_cast<b_tile *>(s.pages[b_page].data);
-                        tma::load_async(b, b_global, {inst.col, i}, inputs_arrived(s, pipeline_stage));
+                        // tma::load_async(b, b_global, {inst.col, i}, inputs_arrived(s, pipeline_stage));
+                        tma::load_async(b, g.o_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
                     }
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
                 }
@@ -176,24 +181,27 @@ namespace kittens::prototype::vm
             static __device__ void run(const globals &g, state<config> &s) {
                 parsed_instruction inst{s};
                 int groupid = warpgroup::groupid();
-                wait(outputs_arrived(s, groupid), 0);
-    
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
-                
-                rt_fl<16, 128> acc_rt;
-                rt_bf<16, 128> acc_bf16;
-                
-                warpgroup::load_async(acc_rt, accumulator);
-                tensor_load_wait();
-                warp::copy(acc_bf16, acc_rt);
-                warp::arrive(s.tensor_finished);
-                
-                int store_page_id = get_store_page(s, inst, groupid);
-                c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
-                warpgroup::store(store_buffer, acc_bf16);
-                warpgroup::sync(groupid);
-                warpgroup::arrive(outputs_shared(s, groupid));
+                if (groupid < 2)
+                {
+                    wait(outputs_arrived(s, groupid), 0);
+        
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
+                    
+                    rt_fl<16, 128> acc_rt;
+                    rt_bf<16, 128> acc_bf16;
+                    
+                    warpgroup::load_async(acc_rt, accumulator);
+                    tensor_load_wait();
+                    warp::copy(acc_bf16, acc_rt);
+                    warp::arrive(s.tensor_finished);
+                    
+                    int store_page_id = get_store_page(s, inst, groupid);
+                    c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
+                    warpgroup::store(store_buffer, acc_bf16);
+                    warpgroup::sync(groupid);
+                    warpgroup::arrive(outputs_shared(s, groupid));
+                }
             }
         };
         struct storer
@@ -210,12 +218,13 @@ namespace kittens::prototype::vm
                 
                 if (laneid() < 2) {
                     wait(outputs_shared(s, laneid()), 0);
-                    auto &OutputActivations = g.*OutputActivationsPtr;
+                    // auto &OutputActivations = g.*OutputActivationsPtr;
                     int store_page = get_store_page(s, inst, laneid());
                     c_tile &output = *reinterpret_cast<c_tile *>(s.pages[get_store_page(s, inst, laneid())].data);
                     // tma::store_add_async(OutputActivations, output, {inst.row+laneid(), inst.col});
                     // tma::store_async_wait();
-                    tma::store_async(OutputActivations, output, {inst.row+laneid(), inst.col});
+                    //  tma::store_async(OutputActivations, output, {inst.row+laneid(), inst.col});
+                    tma::store_async(g.hidden_states, output, {inst.row+laneid(), inst.col});
                     tma::store_async_read_wait();
                     s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
                     s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS);
@@ -237,25 +246,25 @@ namespace kittens::prototype::vm
         };
     };
 
-    template <typename Config, typename Globals>
-    struct downproj : MatVecAddOp<
-                          &Globals::down_weights,
-                          &Globals::silu_out,
-                          &Globals::hidden_states,
-                          OPCODE_DownProjResidual,
-                          OPCODE_DownProjResidual - 1,
-                          Config>
-    {
-    };
+    // template <typename Config, typename Globals>
+    // struct downproj : MatVecAddOp<
+    //                       &Globals::down_weights,
+    //                       &Globals::silu_out,
+    //                       &Globals::hidden_states,
+    //                       OPCODE_DownProjResidual,
+    //                       OPCODE_DownProjResidual - 1,
+    //                       Config>
+    // {
+    // };
 
-    template <typename Config, typename Globals>
-    struct o_proj : MatVecAddOp<
-                        &Globals::o_weights,
-                        &Globals::attn_out,
-                        &Globals::hidden_states,
-                        OPCODE_O_ProjResidual,
-                        OPCODE_O_ProjResidual - 1,
-                        Config>
-    {
-    };
+    // template <typename Config, typename Globals>
+    // struct o_proj : MatVecAddOp<
+    //                     &Globals::o_weights,
+    //                     &Globals::attn_out,
+    //                     &Globals::hidden_states,
+    //                     OPCODE_O_ProjResidual,
+    //                     OPCODE_O_ProjResidual - 1,
+    //                     Config>
+    // {
+    // };
 }
