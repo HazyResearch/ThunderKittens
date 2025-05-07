@@ -106,10 +106,22 @@ namespace kittens::prototype::vm
             {
                 if (laneid() == 0)
                 {
-                    parsed_instruction inst{s};
-
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+                }
+            }
+        };
+        struct consumer
+        {
+            static __device__ void run(const Globals &g, state<Config> &s)
+            {
+
+                using sv_t = sv_bf<pipeline::REDUCTION_DIM_PER_WARP>;
+                using rv_t = rv_fl<pipeline::REDUCTION_DIM_PER_WARP>;
+                parsed_instruction inst{s};
+
+                if (laneid() == 0 && warpid() == 0)
+                {
 
                     int activation_page = pipeline::get_activation_page(s);
                     s.wait_page_ready(activation_page);
@@ -122,26 +134,17 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_DONE_GMEM_WAIT);
 
                     auto &activations = pipeline::get_activations(s);
-                    tma::expect(pipeline::activations_arrived(s), activations);
-
                     auto &InputActivations = g.*InputActivationsPtr; // object in global memory
-                    tma::load_async<cache_policy::EVICT_LAST>(activations, InputActivations, coord<>{inst.start_reduction_col}, pipeline::activations_arrived(s));
                 }
-            }
-        };
-        struct consumer
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
-                wait(pipeline::activations_arrived(s), 0);
+                group<Config::NUM_CONSUMER_WARPS>::sync(4);
 
-                using sv_t = sv_bf<pipeline::REDUCTION_DIM_PER_WARP>;
-                using rv_t = rv_fl<pipeline::REDUCTION_DIM_PER_WARP>;
+                sv_t &activations_smem = reinterpret_cast<sv_t *>(&pipeline::get_activations(s))[warpid()];
 
-                sv_t(&activations_smem)[Config::NUM_CONSUMER_WARPS] = reinterpret_cast<sv_t(&)[Config::NUM_CONSUMER_WARPS]>(pipeline::get_activations(s));
+                warp::load(activations_smem, g.*InputActivationsPtr, coord<>{inst.start_reduction_col + warpid() * pipeline::REDUCTION_DIM_PER_WARP});
+                warp::sync();
 
                 rv_t activations_vec;
-                warp::load(activations_vec, activations_smem[warpid()]);
+                warp::load(activations_vec, activations_smem);
                 warp::sync();
 
                 s.warp_finish_page(pipeline::get_activation_page(s), 1);
