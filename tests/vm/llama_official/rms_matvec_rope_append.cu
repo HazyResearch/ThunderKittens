@@ -19,6 +19,13 @@ namespace kittens::prototype::vm
         static constexpr int V_BLK_START = 2560 / Globals::matvec_block_size;
         static constexpr int EXPECTED_ARRIVAL_COUNT = 512;
 
+        using rope_t = sv_fl<Globals::head_dim>;
+
+        __device__ static inline uint8_t *get_rope_cos_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + 512; }
+        __device__ static inline uint8_t *get_rope_sin_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + 512 + 256; }
+        __device__ static inline rope_t &get_rope_cos(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_cos_ptr(s)); }
+        __device__ static inline rope_t &get_rope_sin(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_sin_ptr(s)); }
+
         struct parsed_instruction
         {
             int layer_idx, start_block_idx, end_block_idx, iters;
@@ -55,7 +62,6 @@ namespace kittens::prototype::vm
 
             static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
             {
-
                 int block_idx = inst.start_block_idx + output_idx;
 
                 // apply rope
@@ -66,8 +72,24 @@ namespace kittens::prototype::vm
 
                 rv_fl<16> qkv_proj, rope_cos, rope_sin;
 
-                warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
-                warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
+                // warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
+                // warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
+
+                // wait(sem, bit);
+                // warp::load(qkv_proj, qkv_proj_smem);
+
+                wait(rope_arrived(s), 0);
+
+                auto head_chunk = block_idx % 4;
+
+                sv_fl<16> &rope_cos_sv = *reinterpret_cast<sv_fl<16> *>(get_rope_cos_ptr(s) + head_chunk * 64);
+                sv_fl<16> &rope_sin_sv = *reinterpret_cast<sv_fl<16> *>(get_rope_sin_ptr(s) + head_chunk * 64);
+
+                // sv_fl<16> &rope_cos_sv = reinterpret_cast<sv_fl<16> *>(&(get_rope_cos(s)[0]))[block_idx % 4];
+                // sv_fl<16> &rope_sin_sv = reinterpret_cast<sv_fl<16> *>(&(get_rope_sin(s)[0]))[block_idx % 4];
+
+                warp::load(rope_cos, rope_cos_sv);
+                warp::load(rope_sin, rope_sin_sv);
 
                 wait(sem, bit);
                 warp::load(qkv_proj, qkv_proj_smem);
@@ -113,9 +135,13 @@ namespace kittens::prototype::vm
                         tma::store_async<cache_policy::EVICT_LAST>(g.v_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
 
+                    s.record(TEVENT_AT_GMEM_STORE);
+
                     tma::store_async_wait();              // not just read wait! full wait! must be visible in global!
                     asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
+
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
+                    s.record(TEVENT_DONE_GMEM_STORE);
                 }
 
                 warp::sync();
@@ -126,6 +152,8 @@ namespace kittens::prototype::vm
 
         using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
+        __device__ static inline semaphore &rope_arrived(state<Config> &s) { return s.semaphores()[pipeline::SEM_COUNT]; }
+
         struct controller
         {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
@@ -134,7 +162,9 @@ namespace kittens::prototype::vm
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-                return pipeline::init_semaphores(s);
+                pipeline::init_semaphores(s);
+                init_semaphore(rope_arrived(s), 1);
+                return pipeline::SEM_COUNT + 1;
             }
         };
         struct loader
@@ -143,6 +173,18 @@ namespace kittens::prototype::vm
             {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
+
+                if (laneid() == 0)
+                {
+                    auto &rope_cos = get_rope_cos(s);
+                    auto &rope_sin = get_rope_sin(s);
+
+                    auto &sem = rope_arrived(s);
+                    tma::expect(sem, rope_cos, rope_sin);
+
+                    tma::load_async<cache_policy::EVICT_LAST>(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), 0}, sem);
+                    tma::load_async<cache_policy::EVICT_LAST>(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), 0}, sem);
+                }
 
                 parsed_instruction inst{s};
                 pipeline::loader_loop<&Globals::attn_norm_weights>(s, g, inst.layer_idx);
