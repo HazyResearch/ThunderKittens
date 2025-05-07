@@ -68,7 +68,7 @@ namespace kittens::prototype::vm
                 {
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
                     tma::store_add_async<cache_policy::EVICT_LAST>(OutputActivations, output_smem_bf, {block_idx});
-                    tma::store_async_wait();
+                    tma::store_async_read_wait();
                 }
 
                 warp::sync();
@@ -159,12 +159,14 @@ namespace kittens::prototype::vm
 
                 if (laneid() == 0)
                 {
+                    s.record(TEVENT_AT_GMEM_STORE);
                     parsed_instruction inst{s};
 
                     tma::store_async_wait(); // not just read wait! full wait! must be visible in global!
 
                     asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], inst.iters);
+                    s.record(TEVENT_DONE_GMEM_STORE);
                 }
             }
         };

@@ -165,12 +165,16 @@ namespace kittens::prototype::vm
                 // one atomic add at the end
                 if (laneid() == 0)
                 {
+                    s.record(TEVENT_AT_GMEM_STORE);
+
                     tma::store_async_wait();
                     asm volatile("fence.acq_rel.gpu;");
 
                     parsed_instruction inst{s};
                     auto to_increment = inst.end_block_idx - inst.start_block_idx;
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], to_increment);
+
+                    s.record(TEVENT_DONE_GMEM_STORE);
                 }
             }
         };

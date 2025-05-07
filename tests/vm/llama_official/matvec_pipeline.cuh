@@ -37,12 +37,17 @@ namespace kittens::prototype::vm
 
             parsed_instruction inst{instruction};
             // unused pages, then activation, then weights
-            if (inst.iters % 3 == 1)
+
+            static_assert(INPUT_PIPELINE_STAGES == 3, "INPUT_PIPELINE_STAGES must be 3");
+
+            auto remainder = inst.iters % INPUT_PIPELINE_STAGES;
+
+            if (remainder == 1)
             {
                 int ret_order[13] = {0, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4};
                 return ret_order[query];
             }
-            else if (inst.iters % 3 == 2)
+            else if (remainder == 2)
             {
                 int ret_order[13] = {0, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8};
                 return ret_order[query];
