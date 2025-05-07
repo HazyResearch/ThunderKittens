@@ -8,21 +8,17 @@ using namespace kittens::prototype;
 namespace kittens::prototype::vm
 {
     using globals = llama_70b_globals;
-    // template <
-    //     auto WeightsPtr,
-    //     auto InputActivationsPtr,
-    //     auto OutputActivationsPtr,
-    //     int _opcode,
-    //     int _prev_opcode = 0,
-    //     typename Config = kittens::prototype::vm::default_config>
-
-    template <typename Config, typename Globals>
-    struct o_proj
+    template <
+        auto WeightsPtr,
+        auto InputActivationsPtr,
+        auto OutputActivationsPtr,
+        int _opcode,
+        int _prev_opcode = 0,
+        typename Config = kittens::prototype::vm::default_config>
+    struct MatMulAddOp
     {
-        static constexpr int opcode = OPCODE_O_ProjResidual;
-        static constexpr int prev_opcode = opcode - 1;
-        // static constexpr int opcode = _opcode;
-        // static constexpr int prev_opcode = _prev_opcode;
+        static constexpr int opcode = _opcode;
+        static constexpr int prev_opcode = _prev_opcode;
 
         static constexpr int PIPELINE_STAGES = 3;
 
@@ -246,25 +242,25 @@ namespace kittens::prototype::vm
         };
     };
 
-    // template <typename Config, typename Globals>
-    // struct downproj : MatVecAddOp<
-    //                       &Globals::down_weights,
-    //                       &Globals::silu_out,
-    //                       &Globals::hidden_states,
-    //                       OPCODE_DownProjResidual,
-    //                       OPCODE_DownProjResidual - 1,
-    //                       Config>
-    // {
-    // };
+    template <typename Config, typename Globals>
+    struct downproj : MatMulAddOp<
+                          &Globals::down_weights,
+                          &Globals::silu_out,
+                          &Globals::hidden_states,
+                          OPCODE_DownProjResidual,
+                          OPCODE_DownProjResidual - 1,
+                          Config>
+    {
+    };
 
-    // template <typename Config, typename Globals>
-    // struct o_proj : MatVecAddOp<
-    //                     &Globals::o_weights,
-    //                     &Globals::attn_out,
-    //                     &Globals::hidden_states,
-    //                     OPCODE_O_ProjResidual,
-    //                     OPCODE_O_ProjResidual - 1,
-    //                     Config>
-    // {
-    // };
+    template <typename Config, typename Globals>
+    struct o_proj : MatMulAddOp<
+                        &Globals::o_weights,
+                        &Globals::attn_out,
+                        &Globals::hidden_states,
+                        OPCODE_O_ProjResidual,
+                        OPCODE_O_ProjResidual - 1,
+                        Config>
+    {
+    };
 }
