@@ -178,6 +178,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-../gate_silu/Makefile ../gate_silu/llama.cu ../gate_silu/llama.cuh ../gate_silu/unit_test.py
