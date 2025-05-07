@@ -145,11 +145,7 @@ template<typename config> struct state {
 
         #pragma unroll
         for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
-            // auto should_flip = (next_instruction_index % (1 << i)) == 0;
-            bool shit_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
-            if (shit_flip) {
-                arrive(page_finished[pid][i], count);
-            }
+            arrive(page_finished[pid][i], count);
         }
     }
 
@@ -205,10 +201,12 @@ constexpr int TEVENT_CONSUMER_START = 11;
 
 constexpr int TEVENT_AT_GMEM_WAIT = 44;
 constexpr int TEVENT_DONE_GMEM_WAIT = 45;
+constexpr int TEVENT_AT_GMEM_STORE = 46;
+constexpr int TEVENT_DONE_GMEM_STORE = 47;
 
-constexpr int TEVENT_OUTPUT_READY = 46;
+constexpr int TEVENT_OUTPUT_READY = 48;
 
-constexpr int FREE_SLOTS_START = 47;
+constexpr int FREE_SLOTS_START = 49;
 
 constexpr int TEVENT_TRIPLES_START = 100;
 constexpr int TEVENT_TRIPLES_END = 110;
@@ -251,7 +249,7 @@ template<typename config, typename globals, typename... ops> __device__ void mai
         kvms.await_instruction(); \
         if (laneid() == 0) { \
             if (is_consumer) { \
-                kvms.record(start_event + warpid()); \
+                kvms.record(start_event + 2 * warpid()); \
             } \
             else { \
                 kvms.record(start_event); \
@@ -260,7 +258,7 @@ template<typename config, typename globals, typename... ops> __device__ void mai
         dispatch_op<name##_op_dispatcher<config, globals>::dispatcher, ops...>::template run<void, config, globals, ::kittens::prototype::vm::state<config>>(kvms.instruction()[0], g, kvms); \
         if (laneid() == 0) { \
             if (is_consumer) { \
-                kvms.record(start_event + config::NUM_CONSUMER_WARPS + warpid()); \
+                kvms.record(start_event + 2 * warpid() + 1); \
             } \
             else { \
                 kvms.record(start_event + 1); \

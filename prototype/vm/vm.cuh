@@ -83,8 +83,9 @@ namespace kittens
                 {
                     for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++)
                     {
-                        init_semaphore(page_finished[threadIdx.x][i], config::NUM_CONSUMER_WARPS);
-                        arrive(page_finished[threadIdx.x][i], config::NUM_CONSUMER_WARPS);
+                        auto count = config::NUM_CONSUMER_WARPS * (1 << i);
+                        init_semaphore(page_finished[threadIdx.x][i], count);
+                        arrive(page_finished[threadIdx.x][i], count);
                     }
                 }
                 if (threadIdx.x == 0)
