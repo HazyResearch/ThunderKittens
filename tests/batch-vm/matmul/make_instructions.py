@@ -49,7 +49,7 @@ def make_instructions(M, K, N):
 
                 opcode = 1
                 row_offset_inst = 2 * row
-                col_offset_inst = 2 * col
+                col_offset_inst = col
                 k_iters = K // BLOCK_K
 
                 instruction = [opcode, row_offset_inst, col_offset_inst, k_iters] + [0] * 28
