@@ -111,7 +111,7 @@ namespace kittens::prototype::vm
             }
         };
 
-        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
+        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics, &Globals::hidden_states, &Globals::mlp_norm_weights>;
         static_assert(pipeline::OUTPUT_PIPELINE_STAGES == 3);
 
         struct controller
@@ -133,7 +133,7 @@ namespace kittens::prototype::vm
                 s.template zero_scratch<1024>();
 
                 parsed_instruction inst{s};
-                pipeline::loader_loop<&Globals::mlp_norm_weights>(s, g, inst.layer_idx);
+                pipeline::loader_loop(s, g, inst.layer_idx);
             }
         };
 
@@ -142,8 +142,7 @@ namespace kittens::prototype::vm
             // launcher does nothing here, since this doesn't use tensor cores.
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                parsed_instruction inst{s};
-                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
+                pipeline::launcher_loop(s, g);
             }
         };
 

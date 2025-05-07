@@ -150,7 +150,7 @@ namespace kittens::prototype::vm
             }
         };
 
-        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
+        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics, &Globals::hidden_states, &Globals::attn_norm_weights>;
 
         __device__ static inline semaphore &rope_arrived(state<Config> &s) { return s.semaphores()[pipeline::SEM_COUNT]; }
 
@@ -187,7 +187,7 @@ namespace kittens::prototype::vm
                 }
 
                 parsed_instruction inst{s};
-                pipeline::loader_loop<&Globals::attn_norm_weights>(s, g, inst.layer_idx);
+                pipeline::loader_loop(s, g, inst.layer_idx);
             }
         };
         struct launcher
@@ -196,7 +196,7 @@ namespace kittens::prototype::vm
             {
 
                 parsed_instruction inst{s};
-                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
+                pipeline::launcher_loop(s, g);
             }
         };
         struct consumer

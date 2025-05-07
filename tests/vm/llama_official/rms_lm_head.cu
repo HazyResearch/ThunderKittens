@@ -74,7 +74,7 @@ namespace kittens::prototype::vm
             }
         };
 
-        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
+        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics, &Globals::hidden_states, &Globals::lm_head_norm_weights>;
 
         struct controller
         {
@@ -94,14 +94,14 @@ namespace kittens::prototype::vm
             {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
-                pipeline::loader_loop<&Globals::lm_head_norm_weights>(s, g, 0);
+                pipeline::loader_loop(s, g, 0);
             }
         };
         struct launcher
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                pipeline::launcher_loop<&Globals::hidden_states>(s, g);
+                pipeline::launcher_loop(s, g);
             }
         };
         struct consumer

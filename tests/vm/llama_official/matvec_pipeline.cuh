@@ -209,7 +209,7 @@ namespace kittens::prototype::vm
         }
     };
 
-    template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics>
+    template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics, auto ActPtr, auto RmsPtr>
     struct rms_matvec_pipeline : public matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>
     {
         using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
@@ -229,7 +229,6 @@ namespace kittens::prototype::vm
             return SEM_COUNT;
         }
 
-        template <auto RmsPtr>
         __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx)
         {
             if (laneid() == 0)
@@ -276,14 +275,24 @@ namespace kittens::prototype::vm
         //     }
         // }
 
-        template <auto ActPtr>
         __device__ static inline void launcher_loop(state<Config> &s, const Globals &g)
         {
             if (laneid() == 0)
             {
                 s.wait_tensor_ready();
                 arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+            }
+        }
 
+        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g)
+        {
+
+            using sv_t = sv_bf<REDUCTION_DIM_PER_WARP>;
+            auto &rms_scale_smem = reinterpret_cast<sv_t *>(&get_rms_scale(s))[warpid()];
+            auto &activations_smem = reinterpret_cast<sv_t *>(&get_activations(s))[warpid()];
+
+            if (laneid() == 0 && warpid() == 0)
+            {
                 parsed_instruction inst{s};
 
                 int activation_page = get_activation_page(s);
@@ -293,27 +302,27 @@ namespace kittens::prototype::vm
 
                 auto &sem = activations_arrived(s);
 
-                tma::expect(sem, activations);
+                // tma::expect(sem, activations);
 
                 // Activation
                 s.record(TEVENT_AT_GMEM_WAIT);
                 pipeline_specifics::gmem_wait(g, s);
                 s.record(TEVENT_DONE_GMEM_WAIT);
-                tma::load_async<cache_policy::EVICT_FIRST>(activations, g.*ActPtr, {}, sem);
-            }
-        }
 
-        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g)
-        {
+                // tma::load_async<cache_policy::EVICT_LAST>(activations, g.*ActPtr, {}, sem);
+            }
+            group<Config::NUM_CONSUMER_WARPS>::sync(3);
+            
+            warp::load(activations_smem, g.*ActPtr, {warpid()});
+
             auto activation_page = get_activation_page(s);
 
             wait(rms_scale_arrived(s), 0);
-            wait(activations_arrived(s), 0);
+            // wait(activations_arrived(s), 0);
 
-            auto rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(&get_rms_scale(s));
-            auto activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(&get_activations(s));
+            group<Config::NUM_CONSUMER_WARPS>::sync(2);
 
-            auto activations_vec = rms_norm<Config>(rms_scale_smem[warpid()], activations_smem[warpid()], g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
+            auto activations_vec = rms_norm<Config>(rms_scale_smem, activations_smem, g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
 
             warp::sync();
             s.warp_finish_page(activation_page, 1);
