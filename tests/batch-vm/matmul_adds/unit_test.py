@@ -47,7 +47,9 @@ def generate_tensor_inputs():
     # o_weights (Input B to A*B^T)
     o_weights = torch.randn(HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)
     # hidden_states (Output C)
-    hidden_states = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)
+    # hidden_states = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)
+    # hidden_states = torch.ones(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)
+    hidden_states = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)
     return attn_out, o_weights, hidden_states
 
 def generate_itb():
@@ -79,8 +81,8 @@ def run_reference_implementation(attn_out, o_weights, output_tensor_ref):
     for i, a_block in enumerate([a_block0, a_block1]):
         matmul = torch.matmul(a_block.float(), b_block.T.float())
         # Add the result to existing values in output_tensor_ref
-        # output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] += matmul.to(output_tensor_ref.dtype)
-        output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] = matmul.to(output_tensor_ref.dtype)
+        output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] += matmul.to(output_tensor_ref.dtype)
+        # output_tensor_ref[M_START + i*M_TILE_SIZE:M_START + (i+1)*M_TILE_SIZE, N_START:N_END] = matmul.to(output_tensor_ref.dtype)
 
     return output_tensor_ref
 
@@ -116,7 +118,7 @@ def main():
     print(o_weights_block_used_by_kernel[:slice_preview_rows, :slice_preview_cols])
     print('--- End of Slices ---')
     # --- END SLICE PRINTING ---
-
+    hidden_states_tensor_clone = hidden_states_tensor.clone()
     print('\nRunning the kernel...')
     kvm_llama(
         barriers,
@@ -131,7 +133,9 @@ def main():
 
     print('\nRunning the reference implementation...')
     # If testing store_async, the reference should calculate matmul into an initially zeroed output
-    output_tensor_ref = torch.zeros_like(hidden_states_tensor)
+    # output_tensor_ref = torch.zeros_like(hidden_states_tensor)
+    # output_tensor_ref = torch.ones_like(hidden_states_tensor)
+    output_tensor_ref = hidden_states_tensor_clone
     output_tensor_ref = run_reference_implementation(attn_out_tensor, o_weights_tensor, output_tensor_ref)
 
     # Verify the output
@@ -145,14 +149,14 @@ def main():
     print(f"Top-left {slice_preview_rows}x{slice_preview_cols} slice:")
     print(kernel_output_tile[:slice_preview_rows, :slice_preview_cols])
 
-    all_zeros = True
-    for i in kernel_output_tile:
-        for j in i:
-            if j != 0:
-                all_zeros = False
-    if all_zeros:
-        print("All zeros")
-        raise Exception
+    # all_zeros = True
+    # for i in kernel_output_tile:
+    #     for j in i:
+    #         if j != 0:
+    #             all_zeros = False
+    # if all_zeros:
+    #     print("All zeros")
+    #     raise Exception
 
     print(f"\nReference output tile (shape: {reference_output_tile.shape}):")
     print(f"Top-left {slice_preview_rows}x{slice_preview_cols} slice:")

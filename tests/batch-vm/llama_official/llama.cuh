@@ -10,8 +10,8 @@
 #define OPCODE_O_ProjResidual 4
 
 #define OPCODE_POST_RMS_NORM 5
-#define OPCODE_MLP_SiLU 6
-#define OPCODE_MLP_Gate 7
+#define OPCODE_GateSiLU 6
+#define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
 
 #define LLAMA_70B_HIDDEN_DIM 8192
@@ -20,11 +20,11 @@
 #define LLAMA_70B_NUM_ATTENTION_HEADS 64
 #define LLAMA_70B_NUM_KV_HEADS 8
 #define LLAMA_70B_KV_BLOCK_SIZE 16
-#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 256
 
 #define SM_COUNT 148
 #define BATCH_SIZE 128
-
+#define KV_PAGE_SIZE 128
 
 // timing event convention
 
@@ -53,7 +53,6 @@ namespace kittens::prototype::vm
     template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _batch_size, int _sm_count>
     struct globals_t
     {
-
         constexpr static unsigned int matmul_out_block_size = _matmul_out_block_size;
         constexpr static unsigned int kv_block_size = _kv_block_size;
         constexpr static unsigned int head_dim = _head_dim;
@@ -74,10 +73,10 @@ namespace kittens::prototype::vm
         using activations_big_indim_t = gl<bf16, 1, 1, batch_size, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
         using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
+        using rope_table_t = gl<float, 1, batch_size, -1, head_dim, sv_fl<16>>;
         
         // FlashInfer Paged KV Cache Format: (max_num_pages, page_size, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, 16, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
+        using kv_cache_t = gl<bf16, -1, KV_PAGE_SIZE, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 7, num_attention_heads + 2 * num_kv_heads>;
