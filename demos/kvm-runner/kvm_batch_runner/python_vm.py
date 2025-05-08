@@ -42,13 +42,8 @@ def get_start_end(block_size: int, block_idx: int):
 def matmul(
     matA: Tensor,
     matB: Tensor,
-    # block_size: int,
-    # block_idx: int,
-    # reduce: bool = False,
-    # reduction_size: int = 0,
-    # reduction_idx: int = 0,
 ):
-    out = einsum(matA, matB, "o i, i -> o")
+    out = einsum(matA, matB, "b i, c i -> b c" )
     return out
 
 
@@ -64,14 +59,11 @@ def matmul_with_residual(
     matA: Tensor,
     matB: Tensor,
     residual: Tensor,
-    block_size: int,
-    block_idx: int,
-    # reduction_size: int,
-    # reduction_block_idx: int,
 ):
     matmul_out, start, end = matmul(
-        matA, vecB #, block_size, block_idx, True, reduction_size, reduction_block_idx
+        matA, matB,
     )
+    breakpoint()
     residual[start:end] += matmul_out
 
 
@@ -188,10 +180,7 @@ def attention_decode(globals: Globals, instruction: AttentionDecode):
 
     q = globals.post_ln_rope_q[batch_start_idx:batch_end_idx].view(batch_size, globals.num_attention_heads, -1)[:, head_start:head_end]
 
-    try:
-        qk = einsum(q.float(), k.float(), "b h i, b k i -> b h k")
-    except:
-        breakpoint()
+    qk = einsum(q.float(), k.float(), "b h i, b k i -> b h k")
     scaled_qk = qk * globals.attn_scale
 
     # casting the output of the softmax to 16-bit causes small numerical differences
@@ -242,14 +231,12 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == globals.num_attention_heads
 
+    breakpoint()
+
     matmul_with_residual(
         matA=globals.o_proj[instruction.layer_idx],
-        matB=globals.attn_out,
-        residual=globals.hidden_states,
-        # block_size=globals.o_proj_block_size,
-        # block_idx=instruction.output_block_idx,
-        # reduction_size=globals.matvec_reduction_size,
-        # reduction_block_idx=instruction.reduction_block_idx,
+        matB=globals.attn_out[batch_start_idx:batch_end_idx],
+        residual=globals.hidden_states[batch_start_idx:batch_end_idx],
     )
 
     # Barrier update
@@ -265,13 +252,11 @@ def matmul_silu(globals: Globals, instruction: MatMulSiLU):
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == globals.hidden_size
 
-    block_size = globals.up_gate_proj_block_size
+    block_size = globals.silu_block_size
 
     gate_matmul, _, _ = matmul(
         matA=globals.gate_proj[instruction.layer_idx],
         matB=post_ln,
-        # block_size=block_size,
-        # block_idx=instruction.output_block_idx,
     )
 
     post_silu = F.silu(gate_matmul)
@@ -299,8 +284,6 @@ def matmul_gate( globals: Globals, instruction: MatMulGate):
     up_matmul, start, end = matmul(
         matA=globals.up_proj[instruction.layer_idx],
         matB=post_ln,
-        # block_size=block_size,
-        # block_idx=instruction.output_block_idx,
     ) 
 
     globals.silu_out = globals.silu_out * up_matmul
@@ -323,12 +306,8 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
 
     matmul_with_residual(
         mat=globals.down_proj[instruction.layer_idx],
-        vec=globals.silu_out,
-        residual=globals.hidden_states,
-        block_size=globals.down_proj_block_size,
-        block_idx=instruction.output_block_idx,
-        reduction_size=globals.matvec_reduction_size,
-        reduction_block_idx=instruction.reduction_block_idx,
+        vec=globals.silu_out[batch_start_idx:batch_end_idx],
+        residual=globals.hidden_states[batch_start_idx:batch_end_idx],
     )
 
     if include_barriers:
@@ -359,7 +338,6 @@ def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
     )
 
     globals.logits[start:end] = matmul_output
-
 
 
 def print_state(globals: Globals, instruction: PrintState):
