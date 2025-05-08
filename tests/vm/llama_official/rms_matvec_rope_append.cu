@@ -60,7 +60,7 @@ namespace kittens::prototype::vm
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.qkv_weights, {inst.layer_idx, block_idx, col_idx}, sem);
             }
 
-            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
             {
                 int block_idx = inst.start_block_idx + output_idx;
 
@@ -90,8 +90,6 @@ namespace kittens::prototype::vm
 
                 warp::load(rope_cos, rope_cos_sv);
                 warp::load(rope_sin, rope_sin_sv);
-
-                wait(sem, bit);
                 warp::load(qkv_proj, qkv_proj_smem);
 
                 if (block_idx < V_BLK_START)

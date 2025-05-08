@@ -49,9 +49,8 @@ namespace kittens::prototype::vm
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.*WeightsPtr, coord<>{inst.layer, (inst.start_block_idx + iter) * Globals::matvec_block_size, inst.start_reduction_col + 512 * col_idx}, sem);
             }
 
-            static __device__ inline void store(state<Config> &s, const globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
+            static __device__ inline void store(state<Config> &s, const globals &g, parsed_instruction &inst, int output_idx, int output_stage)
             {
-                wait(sem, bit);
 
                 int block_idx = inst.start_block_idx + output_idx;
 

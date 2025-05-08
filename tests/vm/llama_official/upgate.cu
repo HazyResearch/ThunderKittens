@@ -53,11 +53,8 @@ namespace kittens::prototype::vm
                 }
             }
 
-            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage, semaphore &sem, int bit)
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
             {
-                // mbarriers need to be waited on for every phase.
-                wait(sem, bit);
-
                 if (output_idx % 2 == 0)
                 {
                     return;
