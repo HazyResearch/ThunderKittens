@@ -40,9 +40,22 @@ namespace kittens::prototype::vm
 
             static_assert(INPUT_PIPELINE_STAGES == 3, "INPUT_PIPELINE_STAGES must be 3");
 
-            auto remainder = inst.iters % INPUT_PIPELINE_STAGES;
+            auto iters = inst.iters;
+            auto remainder = iters % INPUT_PIPELINE_STAGES;
 
-            if (remainder == 1)
+            // special handling for 1 and 2 because only then do 
+            // we free pages before the activation/rms scale (page 0)
+            if (iters == 1)
+            {
+                int ret_order[13] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
+                return ret_order[query];
+            }
+            else if (iters == 2)
+            {
+                int ret_order[13] = {9, 10, 11, 12, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+                return ret_order[query];
+            }
+            else if (remainder == 1)
             {
                 int ret_order[13] = {0, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4};
                 return ret_order[query];
@@ -126,6 +139,15 @@ namespace kittens::prototype::vm
                         }
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[weight_page]);
 
+                        if (iter == 0 && i == 0)
+                        {
+                            s.record(TEVENT_FIRST_LOAD);
+                        }
+                        else if (iter == inst.iters - 1 && i == 3)
+                        {
+                            s.record(TEVENT_LAST_LOAD);
+                        }
+
                         pipeline_specifics::load_iter(s, g, inst, iter, i, weight_chunk, sem);
                     }
 
@@ -159,6 +181,15 @@ namespace kittens::prototype::vm
                 wait(outputs_finished(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) < OUTPUT_PIPELINE_STAGES);
                 st_bf<16, REDUCTION_DIM_PER_WARP> &weights = reinterpret_cast<st_bf<16, REDUCTION_DIM_PER_WARP> *>(s.pages[weight_page].ptr())[warpid() % WARPS_PER_PAGE];
                 sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+
+                if (i == 0)
+                {
+                    s.record(TEVENT_FIRST_USE);
+                }
+                else if (i == inst.iters - 1)
+                {
+                    s.record(TEVENT_LAST_USE);
+                }
 
                 matvec(out_smem, weights, activations_vec);
 
@@ -194,7 +225,18 @@ namespace kittens::prototype::vm
                 auto &sem = outputs_arrived(s, output_stage);
                 auto bit = (i % (2 * OUTPUT_PIPELINE_STAGES)) >= OUTPUT_PIPELINE_STAGES;
 
-                pipeline_specifics::store(s, g, inst, i, output_stage, sem, bit);
+                wait(sem, bit);
+
+                if (i == 0)
+                {
+                    s.record(TEVENT_FIRST_STORE);
+                }
+                else if (i == inst.iters - 1)
+                {
+                    s.record(TEVENT_LAST_STORE);
+                }
+
+                pipeline_specifics::store(s, g, inst, i, output_stage);
 
                 if ((i + 1) % iter_scale == 0)
                 {
@@ -312,7 +354,7 @@ namespace kittens::prototype::vm
                 // tma::load_async<cache_policy::EVICT_LAST>(activations, g.*ActPtr, {}, sem);
             }
             group<Config::NUM_CONSUMER_WARPS>::sync(3);
-            
+
             warp::load(activations_smem, g.*ActPtr, {warpid()});
 
             auto activation_page = get_activation_page(s);
