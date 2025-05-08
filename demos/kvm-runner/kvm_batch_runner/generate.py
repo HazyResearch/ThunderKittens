@@ -114,7 +114,7 @@ class PyVMRunner(Runner):
         for i in tqdm(range(1, self.config.ntok)):
             input_ids = self.output_tokens[:, i - 1 : i]
             output_ids = self.runner.run(input_ids, pos_id=self.prompt_len + i)
-            self.output_tokens[:, i] = output_ids.squeeze(1)
+            self.output_tokens[:, i] = output_ids
 
 
 class KVMRunner(Runner):

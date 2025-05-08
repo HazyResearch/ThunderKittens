@@ -43,7 +43,7 @@ def matmul(
     matA: Tensor,
     matB: Tensor,
 ):
-    out = einsum(matA, matB, "b i, c i -> b c" )
+    out = einsum(matA, matB, "b i, c i -> c b" )
     return out
 
 
@@ -60,11 +60,10 @@ def matmul_with_residual(
     matB: Tensor,
     residual: Tensor,
 ):
-    matmul_out, start, end = matmul(
+    matmul_out = matmul(
         matA, matB,
     )
-    breakpoint()
-    residual[start:end] += matmul_out
+    residual += matmul_out
 
 
 def pre_attn_layer_norm(
@@ -81,12 +80,12 @@ def pre_attn_layer_norm(
             assert op_barriers[0] == 64 # 8192 (hidden dim) / 128 (block size); from down_proj tiles
 
     pre_attn_ln = rms_norm(
-        inp=globals.hidden_states,
+        inp=globals.hidden_states[batch_start_idx:batch_end_idx],
         weight=globals.mlp_ln_weight[instruction.layer_idx],
         eps=globals.rms_norm_eps,
     )
 
-    globals.hidden_states[:] = pre_attn_ln
+    globals.hidden_states[batch_start_idx:batch_end_idx] = pre_attn_ln
 
     # barrier update
     if include_barriers:
@@ -208,12 +207,12 @@ def pre_mlp_layer_norm(
         assert op_barriers[0] == 128
 
     post_ln = rms_norm(
-        inp=globals.hidden_states,
+        inp=globals.hidden_states[batch_start_idx:batch_end_idx],
         weight=globals.mlp_ln_weight[instruction.layer_idx],
         eps=globals.rms_norm_eps,
     )
 
-    globals.hidden_states[:] = post_ln
+    globals.hidden_states[batch_start_idx:batch_end_idx] = post_ln
 
     # barrier update
     if include_barriers:
@@ -231,8 +230,6 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == globals.num_attention_heads
 
-    breakpoint()
-
     matmul_with_residual(
         matA=globals.o_proj[instruction.layer_idx],
         matB=globals.attn_out[batch_start_idx:batch_end_idx],
@@ -246,22 +243,23 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
 
 
 def matmul_silu(globals: Globals, instruction: MatMulSiLU):
+    layer_idx = instruction.layer_idx
+    batch_start_idx = instruction.batch_start_idx
+    batch_end_idx = instruction.batch_end_idx
     
     # Barrier check
     if include_barriers:
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == globals.hidden_size
 
-    block_size = globals.silu_block_size
-
-    gate_matmul, _, _ = matmul(
+    matmul_out = matmul(
         matA=globals.gate_proj[instruction.layer_idx],
-        matB=post_ln,
+        matB=globals.hidden_states[batch_start_idx:batch_end_idx],
     )
 
-    post_silu = F.silu(gate_matmul)
+    post_silu = F.silu(matmul_out)
 
-    globals.silu_out[start:end] = post_silu
+    globals.silu_out[batch_start_idx:batch_end_idx] = post_silu
 
     # Barrier update
     if include_barriers:
@@ -279,14 +277,12 @@ def matmul_gate( globals: Globals, instruction: MatMulGate):
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == 128
 
-    block_size = globals.up_gate_proj_block_size
-
-    up_matmul, start, end = matmul(
+    matmul_out = matmul(
         matA=globals.up_proj[instruction.layer_idx],
-        matB=post_ln,
+        matB=globals.hidden_states[batch_start_idx:batch_end_idx],
     ) 
 
-    globals.silu_out = globals.silu_out * up_matmul
+    globals.silu_out[batch_start_idx:batch_end_idx] = globals.silu_out[batch_start_idx:batch_end_idx] * matmul_out
 
     # Barrier update
     if include_barriers:
@@ -305,8 +301,8 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         assert op_barriers[0] == 512  # 8192 / 16
 
     matmul_with_residual(
-        mat=globals.down_proj[instruction.layer_idx],
-        vec=globals.silu_out[batch_start_idx:batch_end_idx],
+        matA=globals.down_proj[instruction.layer_idx],
+        matB=globals.silu_out[batch_start_idx:batch_end_idx],
         residual=globals.hidden_states[batch_start_idx:batch_end_idx],
     )
 
@@ -317,6 +313,8 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
 
 # TODO Split this out for the throughput setting into RMS and LM Head
 def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
+    batch_start_idx = instruction.batch_start_idx
+    batch_end_idx = instruction.batch_end_idx
     
     # Barrier check
     if include_barriers:
@@ -324,20 +322,17 @@ def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
         assert op_barriers[0] == 512
 
     post_ln = rms_norm(
-        inp=globals.hidden_states,
+        inp=globals.hidden_states[batch_start_idx:batch_end_idx],
         weight=globals.lm_head_norm_weights,
         eps=globals.rms_norm_eps,
     )
 
-    start, end = get_start_end(globals.lm_head_block_size, instruction.output_block_idx)
-
-    matmul_output = einsum(
-        globals.lm_head_weights[start:end],
+    matmul_output = matmul(
+        globals.lm_head_weights,
         post_ln,
-        "b o i, b i -> b o",
     )
 
-    globals.logits[start:end] = matmul_output
+    globals.logits[batch_start_idx:batch_end_idx] = matmul_output
 
 
 def print_state(globals: Globals, instruction: PrintState):
