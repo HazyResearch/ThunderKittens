@@ -119,7 +119,7 @@ namespace kittens::prototype::vm
 
         // unsigned int pos_id;
         // float attn_scale;
-        float rms_norm_eps;
+        // float rms_norm_eps;
 
         dim3 grid() { return dim3(sm_count); }
         dim3 block() { return dim3(config::NUM_THREADS); }

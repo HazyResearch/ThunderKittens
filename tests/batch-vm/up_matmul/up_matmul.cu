@@ -129,29 +129,22 @@ namespace kittens::prototype::vm
                 }
                 warp::sync(); // Ensure all loads are issued
 
-                if (laneid() == 28) {
+                if (laneid() < 2) {
                     wait(outputs_arrived(s, 0), 0);
-                    wait(outputs_arrived(s, 1), 0);
-                    // wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
                     
-                    int gate_silu_page = get_gate_silu_page(s, inst, 1);
+                    int gate_silu_page = get_gate_silu_page(s, inst, laneid());
                     c_tile &silu_out = get_gate_silu_buffer(s, gate_silu_page);
-                    tma::expect(silu_arrived(s, 0), silu_out);
-                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s, 0));
-
-                    gate_silu_page = get_gate_silu_page(s, inst, 0);
-                    silu_out = get_gate_silu_buffer(s, gate_silu_page);
-                    tma::expect(silu_arrived(s, 1), silu_out);
-                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s, 1));
+                    tma::expect(silu_arrived(s, laneid()), silu_out);
+                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row + laneid(), inst.col}, silu_arrived(s, laneid()));
                 } 
-                // if(laneid() >= 28) {
-                //     for(int i = 0; i < PIPELINE_STAGES-1; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
-                //         wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
-                //         int release_pid = pipeline_stage*4 + laneid() - 28;
-                //         s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
-                //     }
-                // }
-                warp::sync();
+
+                if(laneid() >= 28) {
+                    for(int i = 0; i < PIPELINE_STAGES-1; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
+                        wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
+                        int release_pid = pipeline_stage*4 + laneid() - 28;
+                        s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
+                    }
+                }
             }
         };
 
@@ -224,11 +217,11 @@ namespace kittens::prototype::vm
                     c_tile &silu_out = get_gate_silu_buffer(s, gate_silu_page);
                     c_subtile silu_subtile(silu_out, {warpgroup::warpid(), 0});
                     
-                    warp::load(acc_rt, silu_subtile);
-                    // warp::load(silu_rt, silu_subtile);
-                    // warp::sync();
-                    // warp::mul(acc_rt, acc_rt, silu_rt);
-                    // warpgroup::sync(groupid);
+                    // warp::load(acc_bf16, silu_subtile);
+                    warp::load(silu_rt, silu_subtile);
+                    warp::sync();
+                    warp::mul(acc_rt, acc_rt, silu_rt);
+                    warpgroup::sync(groupid);
 
                     // Store in bf16
                     warp::copy(acc_bf16, acc_rt);
@@ -236,6 +229,7 @@ namespace kittens::prototype::vm
                     
                     int store_page_id = get_store_page(s, inst, groupid);
                     c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page_id].data);
+                    warpgroup::sync(groupid);
                     warpgroup::store(store_buffer, acc_bf16);
                     warpgroup::sync(groupid);
                     warpgroup::arrive(outputs_shared(s, groupid));
@@ -261,6 +255,7 @@ namespace kittens::prototype::vm
                     tma::store_async(g.silu_out, output, {inst.row+laneid(), inst.col});
                     tma::store_async_read_wait();
                     s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
+                    s.finish_page(store_page + 2, config::NUM_CONSUMER_WARPS); // release relevant gate silu page
                 }
                 warp::sync();
 
