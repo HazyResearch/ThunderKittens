@@ -96,6 +96,11 @@ class KVM_Runner:
         self.skip_kvm = skip_kvm
         self.skip_rest = skip_rest
 
+        self.fill()
+
+    def fill(self):
+        self.schedule.globs.barriers.fill_(self.barrier_fill_val)
+
     def run(self, input_ids: Tensor, pos_id: int):
         if not self.skip_rest:
             batch_state = BatchState(
@@ -106,8 +111,8 @@ class KVM_Runner:
             hiddens = post_embedding.hidden_states
             assert hiddens is not None
             self.schedule.globs.hidden_states[:] = hiddens
-            self.schedule.globs.barriers.fill_(self.barrier_fill_val)
 
+        self.fill()
         self.schedule.globs.pos_id = pos_id
         if not self.skip_kvm:
             interpret_with_kvm(self.schedule.globs, self.kvm_func)
