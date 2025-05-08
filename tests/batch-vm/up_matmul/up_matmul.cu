@@ -47,8 +47,8 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &outputs_shared(state<config> &s, int id) {
             return s.semaphores()[id+PIPELINE_STAGES*2+2];
         }
-        __device__ static inline semaphore &silu_arrived(state<config> &s) {
-            return s.semaphores()[PIPELINE_STAGES*2+4];
+        __device__ static inline semaphore &silu_arrived(state<config> &s, int id) {
+            return s.semaphores()[id+PIPELINE_STAGES*2+4];
         }
 
         // getters
@@ -61,9 +61,14 @@ namespace kittens::prototype::vm
         __device__ static inline int get_store_page(state<config> &s, parsed_instruction &inst, int offset) {
             return ((inst.iters+2)%PIPELINE_STAGES)*4 + offset;
         }
-        __device__ static inline int get_gate_silu_page(state<config> &s, parsed_instruction &inst)
-        {
-            return 12;
+        __device__ static inline int get_gate_silu_page(state<config> &s, parsed_instruction &inst, int offset) {
+            return ((inst.iters+2)%PIPELINE_STAGES)*4 + 2 + offset;
+        }
+        
+        // 
+        __device__ static inline c_tile &get_gate_silu_buffer(state<config> &s, int gate_silu_page) {
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[gate_silu_page].data);
+            return *reinterpret_cast<c_tile *>(page_base_ptr);
         }
 
         struct controller
@@ -88,9 +93,10 @@ namespace kittens::prototype::vm
                 for(int i = 0; i < 2; i++) {
                     init_semaphore(outputs_arrived(s, i), 1);
                     init_semaphore(outputs_shared(s, i), 1);
+                    init_semaphore(silu_arrived(s, i), 1);
                 }
-                init_semaphore(silu_arrived(s), 1);
-                return (PIPELINE_STAGES * 2) + (2 * 2) + 1;
+                return (PIPELINE_STAGES * 2) + (2 * 3);
+                // return (PIPELINE_STAGES * 2) + (2 * 2) + 1;
             }
         };
 
@@ -99,15 +105,6 @@ namespace kittens::prototype::vm
                 parsed_instruction inst{s};
                 uint32_t semaphore_bitfield = 0xFFFF0000;
                 int pipeline_stage = 0;
-
-                // Load silu intermediates first
-                if (laneid() == 0) {
-                    int gate_silu_page = get_gate_silu_page(s, inst);
-                    tma::expect_bytes(silu_arrived(s), sizeof(c_tile));
-                    c_tile &silu_out = *reinterpret_cast<c_tile *>(s.pages[gate_silu_page].data);
-                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s));
-                }
-                warp::sync(); // Ensure silu load is issued
 
                 for(int i = 0; i < inst.iters; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
                     wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
@@ -127,18 +124,34 @@ namespace kittens::prototype::vm
                         }
                         b_tile &b = *reinterpret_cast<b_tile *>(s.pages[b_page].data);
                         tma::load_async(b, g.up_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
-                    }
+                    } 
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
                 }
                 warp::sync(); // Ensure all loads are issued
 
-                if(laneid() >= 28) {
-                    for(int i = 0; i < PIPELINE_STAGES-1; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
-                        wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
-                        int release_pid = pipeline_stage*4 + laneid() - 28;
-                        s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
-                    }
-                }
+                if (laneid() == 28) {
+                    wait(outputs_arrived(s, 0), 0);
+                    wait(outputs_arrived(s, 1), 0);
+                    // wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
+                    
+                    int gate_silu_page = get_gate_silu_page(s, inst, 1);
+                    c_tile &silu_out = get_gate_silu_buffer(s, gate_silu_page);
+                    tma::expect(silu_arrived(s, 0), silu_out);
+                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s, 0));
+
+                    gate_silu_page = get_gate_silu_page(s, inst, 0);
+                    silu_out = get_gate_silu_buffer(s, gate_silu_page);
+                    tma::expect(silu_arrived(s, 1), silu_out);
+                    tma::load_async(silu_out, g.gate_silu_intermediates, {inst.row, inst.col}, silu_arrived(s, 1));
+                } 
+                // if(laneid() >= 28) {
+                //     for(int i = 0; i < PIPELINE_STAGES-1; i++, pipeline_stage=ring_advance<PIPELINE_STAGES>(pipeline_stage)) {
+                //         wait(inputs_finished(s, pipeline_stage), get_phasebit<1>(semaphore_bitfield, pipeline_stage));
+                //         int release_pid = pipeline_stage*4 + laneid() - 28;
+                //         s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
+                //     }
+                // }
+                warp::sync();
             }
         };
 
@@ -153,8 +166,8 @@ namespace kittens::prototype::vm
                 // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
                 s.wait_tensor_ready();
                 if(laneid() < 2) {
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                     a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                     b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                     mm<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -167,8 +180,8 @@ namespace kittens::prototype::vm
                     wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
                     // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
                     if(laneid() < 2) {
-                        auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                        // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                        // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                        auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                         a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                         b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                         mma<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -179,8 +192,8 @@ namespace kittens::prototype::vm
                 // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
     
                 if(laneid() < 2) {
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                     a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                     b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                     mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
@@ -196,8 +209,8 @@ namespace kittens::prototype::vm
                 {
                     wait(outputs_arrived(s, groupid), 0);
         
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
-                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
                     
                     rt_fl<16, 128> acc_rt, silu_rt;
                     rt_bf<16, 128> acc_bf16;
@@ -206,15 +219,18 @@ namespace kittens::prototype::vm
                     tensor_load_wait();
                     
                     // Multiply by the silu gate
-                    wait(silu_arrived(s), 0);
-                    // int silu_page = get_gate_silu_page(s, inst);
-                    // c_tile &silu_out = *reinterpret_cast<c_tile *>(s.pages[silu_page].data);
-                    // c_subtile silu_subtile(silu_out, {warpgroup::warpid(), 0});
+                    wait(silu_arrived(s, groupid), 0);
+                    int gate_silu_page = get_gate_silu_page(s, inst, groupid);
+                    c_tile &silu_out = get_gate_silu_buffer(s, gate_silu_page);
+                    c_subtile silu_subtile(silu_out, {warpgroup::warpid(), 0});
                     
-                    // // warp::load(acc_rt, silu_subtile);
+                    warp::load(acc_rt, silu_subtile);
                     // warp::load(silu_rt, silu_subtile);
                     // warp::sync();
                     // warp::mul(acc_rt, acc_rt, silu_rt);
+                    // warpgroup::sync(groupid);
+
+                    // Store in bf16
                     warp::copy(acc_bf16, acc_rt);
                     warp::arrive(s.tensor_finished);
                     
