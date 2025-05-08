@@ -47,7 +47,7 @@ namespace kittens
                 static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
                 static_assert(NUM_PAGES == 13, "NUM_PAGES must be 13");
 
-                static constexpr bool TIMING_RECORD_ENABLED = true;
+                static constexpr bool TIMING_RECORD_ENABLED = false;
 
                 static constexpr bool GMEM_SPIN_LOOP_SLEEP_NANOS = 20;
 
