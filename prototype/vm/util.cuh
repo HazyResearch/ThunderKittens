@@ -214,9 +214,17 @@ constexpr int TEVENT_DONE_GMEM_WAIT = 45;
 constexpr int TEVENT_AT_GMEM_STORE = 46;
 constexpr int TEVENT_DONE_GMEM_STORE = 47;
 
-constexpr int TEVENT_OUTPUT_READY = 48;
+constexpr int TEVENT_FIRST_LOAD = 48;
+constexpr int TEVENT_FIRST_USE = 49;
+constexpr int TEVENT_FIRST_STORE = 50;
 
-constexpr int FREE_SLOTS_START = 49;
+constexpr int TEVENT_LAST_LOAD = 51;
+constexpr int TEVENT_LAST_USE = 52;
+constexpr int TEVENT_LAST_STORE = 53;
+
+constexpr int TEVENT_OUTPUT_READY = 54;
+
+constexpr int FREE_SLOTS_START = 55;
 
 constexpr int TEVENT_TRIPLES_START = 100;
 constexpr int TEVENT_TRIPLES_END = 110;
