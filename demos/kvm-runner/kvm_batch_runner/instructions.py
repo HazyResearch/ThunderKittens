@@ -29,8 +29,6 @@ class Globals:
     hidden_states: Tensor
     post_ln_rope_q: Tensor
     attn_out: Tensor
-    attn_lse_intermediates: Tensor
-    attn_out_intermediates: Tensor
     silu_out: Tensor
     logits: Tensor
 
@@ -39,14 +37,17 @@ class Globals:
     rms_norm_eps: float
 
     # block size constants
-    up_gate_proj_block_size: int
+    matmul_silu_block_size: int
+    matmul_gate_block_size: int
     down_proj_block_size: int
     o_proj_block_size: int
     lm_head_block_size: int
-    matvec_reduction_size: int
+    matmul_block_size: int
     qkv_block_size: int
     attn_kv_block_size: int
-    attn_reduction_size: int
+
+    batch_block_size: int
+    # attn_reduction_size: int
 
     # model constants
     num_hidden_layers: int
@@ -117,7 +118,8 @@ class PreLayerNorm(Instruction):
     """
 
     layer_idx: int
-    output_block_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -135,6 +137,8 @@ class QKV_MatMulRopeAppend(Instruction):
     """
 
     layer_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
     output_block_idx: int
 
     @classmethod
@@ -149,6 +153,8 @@ class QKV_MatMulRopeAppend(Instruction):
 @dataclass
 class AttentionDecode(Instruction):
     layer_idx: int
+    batch_start_idx: int
+    batch_end_idx: int
     kv_head_idx: int
 
     @classmethod
@@ -163,6 +169,8 @@ class AttentionDecode(Instruction):
 @dataclass
 class MatMulAdd(Instruction):
     layer_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
     output_block_idx: int
     reduction_block_idx: int  # in units of 2048
 
@@ -188,7 +196,8 @@ class PostLayerNorm(Instruction):
     """
 
     layer_idx: int
-    output_block_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -206,6 +215,8 @@ class MatMulSiLU(Instruction):
     """
 
     layer_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
     output_block_idx: int
 
     @classmethod
@@ -224,6 +235,8 @@ class MatMulGate(Instruction):
     """
 
     layer_idx: int
+    batch_start_idx: int 
+    batch_end_idx: int
     output_block_idx: int
 
     @classmethod
@@ -248,6 +261,8 @@ class DownProjResidual(MatMulAdd):
 
 @dataclass
 class RMS_LM_Head(Instruction):
+    batch_start_idx: int
+    batch_end_idx: int
     output_block_idx: int
 
     @classmethod

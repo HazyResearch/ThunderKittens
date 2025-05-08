@@ -20,6 +20,7 @@ class ScriptConfig(pydra.Config):
     prompt: str = "tell me a funny joke about cookies"
     chat: bool = False
     ntok: int = 100
+    batch_size: int = 512
     mode: str = "model"
     add_print_instructions: bool = False
     print_layer_filter: list[int] | None = None
@@ -31,10 +32,10 @@ class ScriptConfig(pydra.Config):
     )
     token_details: bool = False
     tokens: bool = True
-    num_warmup: int = 5
-    num_iters: int = 10
+    num_warmup: int = 0
+    num_iters: int = 1
     barrier_fill_val: int = 0
-    max_len_override: int | None = 16384
+    max_len_override: int | None = 32
     noops: bool = False
     skip_kvm: bool = False
     skip_rest: bool = False
@@ -62,20 +63,20 @@ class PyTorchRunner(Runner):
         self.output_tokens = output_tokens
         self.prompt_len = prompt_len
         self.start_position_ids = torch.ones(
-            1, dtype=torch.long, device=model.device
+            self.model.extra_config.max_batch_size, 1, dtype=torch.long, device=model.device
         ) * (prompt_len)
 
     def go(self):
         for i in tqdm(range(1, self.config.ntok)):
             position_ids = self.start_position_ids + i
             decode_inp = BatchState(
-                input_ids=self.output_tokens[i - 1 : i],
+                input_ids=self.output_tokens[:, i - 1 : i],
                 position_ids=position_ids,
                 seq_len=self.prompt_len + i + 1,
             )
             decode_output: BatchState = self.model(decode_inp)
             assert decode_output.output_ids is not None
-            self.output_tokens[i] = decode_output.output_ids
+            self.output_tokens[:, i] = decode_output.output_ids.squeeze(1)
 
 
 class PyVMRunner(Runner):
@@ -111,9 +112,9 @@ class PyVMRunner(Runner):
 
     def go(self):
         for i in tqdm(range(1, self.config.ntok)):
-            input_ids = self.output_tokens[i - 1 : i]
+            input_ids = self.output_tokens[:, i - 1 : i]
             output_ids = self.runner.run(input_ids, pos_id=self.prompt_len + i)
-            self.output_tokens[i] = output_ids
+            self.output_tokens[:, i] = output_ids
 
 
 class KVMRunner(Runner):
@@ -146,22 +147,28 @@ class KVMRunner(Runner):
 
     def go(self):
         for i in tqdm(range(1, self.config.ntok)):
-            input_ids = self.output_tokens[i - 1 : i]
+            input_ids = self.output_tokens[:, i - 1 : i]
             output_ids = self.runner.run(input_ids, pos_id=self.prompt_len + i)
-            self.output_tokens[i] = output_ids
+            self.output_tokens[:, i] = output_ids.squeeze(1)
+
 
 
 def main(config: ScriptConfig):
+
     torch.cuda.set_device(config.device)
+
+    BATCH_SIZE = config.batch_size
 
     tokenizer = AutoTokenizer.from_pretrained(config.model)
     extra_config = ExtraModelConfig(
         interleave_rope=config.interleave_rope,
         max_len_override=config.max_len_override,
+        max_batch_size=BATCH_SIZE,
     )
+
     model = LlamaForCausalLM.from_pretrained(
         config.model, device=config.device, extra_config=extra_config, 
-        cache_dir=config.model_cache_dir
+        cache_dir=config.model_cache_dir, dtype=torch.bfloat16
     )
 
     if config.chat:
@@ -173,20 +180,19 @@ def main(config: ScriptConfig):
 
     input_ids = tokenizer(tok_inp, return_tensors="pt")["input_ids"][0].to(model.device)
     prompt_len = input_ids.shape[0]
-
     position_ids = torch.arange(prompt_len).to(model.device)
 
-    prefill_inp = BatchState(
-        input_ids=input_ids,
-        position_ids=position_ids,
-    )
+    # Expand to batch size artificially
+    input_ids = input_ids.unsqueeze(0).expand(BATCH_SIZE, -1)
+    position_ids = position_ids.unsqueeze(0).expand(BATCH_SIZE, -1)
+    prefill_inp = BatchState(input_ids=input_ids, position_ids=position_ids,)
 
     prefill_output: BatchState = model(prefill_inp)
     assert prefill_output.output_ids is not None
-    new_input_token = prefill_output.output_ids[-1:]
+    new_input_token = prefill_output.output_ids[:, -1:]
 
-    output_tokens = torch.zeros(config.ntok, device=model.device, dtype=torch.long)
-    output_tokens[0] = new_input_token
+    output_tokens = torch.zeros(BATCH_SIZE, config.ntok, device=model.device, dtype=torch.long)
+    output_tokens[:, :1]= new_input_token
 
     match config.mode:
         case "model":
@@ -215,12 +221,19 @@ def main(config: ScriptConfig):
     print(f"Average time: {elapsed:.2f}s")
 
     if config.tokens:
-        to_cpu = output_tokens.cpu()
-        print("Output ids: ", to_cpu)
-        print("Output text: ", tokenizer.decode(to_cpu))
+        breakpoint()
+        to_cpu_0 = output_tokens.cpu()[0]
+        print("Output ids: ", to_cpu_0)
+        print("Output text: ", tokenizer.batch_decode(to_cpu_0, skip_special_tokens=True))
+
+        print("----"*10)
+
+        to_cpu_2 = output_tokens.cpu()[2]
+        print("Output ids: ", to_cpu_2)
+        print("Output text: ", tokenizer.batch_decode(to_cpu_2, skip_special_tokens=True))
 
     if config.token_details:
-        ids_list = to_cpu.tolist()
+        ids_list = to_cpu_0.tolist()
         tokens = tokenizer.convert_ids_to_tokens(ids_list)
 
         table = []
@@ -231,7 +244,7 @@ def main(config: ScriptConfig):
         print("More detailed output:")
         print(tabulate(table, headers=["output id", "position id", "token"]))
 
-    tokens_per_second = config.ntok / elapsed
+    tokens_per_second = (BATCH_SIZE * config.ntok) / elapsed
     print(f"Tokens per second: {tokens_per_second:.2f}")
 
 

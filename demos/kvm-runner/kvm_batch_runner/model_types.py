@@ -27,7 +27,7 @@ class BatchState:
 
     def __post_init__(self):
         if self.seq_len is None:
-            self.seq_len = self.input_ids.numel()
+            self.seq_len = self.input_ids.shape[1]
 
 
 @dataclass
@@ -47,3 +47,9 @@ class ExtraModelConfig:
     interleave_rope: bool = False
 
     max_len_override: int | None = None
+
+    # high throughput setting
+
+    max_batch_size: int | None = None
+
+    unsqueeze_dim: int = 2  # 1 for single batch

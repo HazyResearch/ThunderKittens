@@ -95,18 +95,28 @@ def attention(
     position_ids: Tensor,
     seq_len: int,
 ) -> Tensor:
-    num_new_tokens = query_states.shape[0]
+    batch_size = key_states.shape[0]
+    num_new_tokens = query_states.shape[1]
 
     k_cache, v_cache = kv_cache
 
-    k_cache[position_ids] = key_states
-    v_cache[position_ids] = value_states
+    if num_new_tokens > 1:
+        for b in range(batch_size):
+            for t in range(seq_len):
+                pos = position_ids[b, t].item()
+                k_cache[b, pos, :, :] = key_states[b, t]
+                v_cache[b, pos, :, :] = value_states[b, t]
+    else:
+        for b in range(batch_size):
+            pos = position_ids[b, 0].item()
+            k_cache[b, pos] = key_states[b, :].squeeze(1)
+            v_cache[b, pos] = value_states[b, :].squeeze(1)
 
     def shape_for_sdpa(x: Tensor):
-        return rearrange(x, "l h d -> h l d")
+        return rearrange(x, "b l h d -> b h l d")
 
     def unshape_for_sdpa(x: Tensor):
-        return rearrange(x, "h l d -> l h d")
+        return rearrange(x, "b h l d -> b l h d")
 
     if num_new_tokens > 1:
         k_for_sdpa = shape_for_sdpa(key_states)
@@ -120,8 +130,8 @@ def attention(
         )
     else:
         # decode
-        k_for_sdpa = shape_for_sdpa(k_cache[:seq_len])
-        v_for_sdpa = shape_for_sdpa(v_cache[:seq_len])
+        k_for_sdpa = shape_for_sdpa(k_cache[:, :seq_len])
+        v_for_sdpa = shape_for_sdpa(v_cache[:, :seq_len])
 
         q_for_sdpa = shape_for_sdpa(query_states)
 
@@ -146,7 +156,7 @@ def rotate_half_interleaved(x):
 
 
 def apply_rotary_pos_emb_interleaved(
-    q, k, cos, sin, position_ids=None, unsqueeze_dim=1
+    q, k, cos, sin, position_ids=None, unsqueeze_dim=2
 ):
     """Applies Rotary Position Embedding to the query and key tensors.
 
@@ -188,6 +198,8 @@ class LlamaAttention(nn.Module):
         self.input_layernorm = RMSNorm(config)
 
         self.tp_size = extra_config.tp_size or 1
+
+        self.unsqueeze_dim = extra_config.unsqueeze_dim 
 
         assert config.num_attention_heads % self.tp_size == 0
         head_dim = config.hidden_size // config.num_attention_heads
@@ -242,20 +254,20 @@ class LlamaAttention(nn.Module):
         inp = batch_state.hidden_states
         residual = inp
 
-        hidden_states = self.input_layernorm(inp)
-
+        hidden_states = self.input_layernorm(inp)   
         hidden_states = all_gather(hidden_states, self.extra_config)
         bsz = hidden_states.shape[0]
+        seq_len = hidden_states.shape[1]
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-        query_states = query_states.view(bsz, self.num_attention_heads, -1)
-        key_states = key_states.view(bsz, self.num_kv_heads, -1)
-        value_states = value_states.view(bsz, self.num_kv_heads, -1)
+        query_states = query_states.view(bsz, seq_len, self.num_attention_heads, -1)
+        key_states = key_states.view(bsz, seq_len, self.num_kv_heads, -1)
+        value_states = value_states.view(bsz, seq_len, self.num_kv_heads, -1)
 
-        cos, sin = batch_state.position_embeddings
+        cos, sin = batch_state.position_embeddings  # [ batch, num_kv_heads, head_dim ]
 
         dtype = query_states.dtype
 
@@ -269,7 +281,7 @@ class LlamaAttention(nn.Module):
             key_states,
             cos,
             sin,
-            unsqueeze_dim=1,  # unsqueeze dim = head dim on q/k
+            unsqueeze_dim=self.unsqueeze_dim,  # unsqueeze dim = head dim on q/k
         )
 
         query_states = query_states.to(dtype)
@@ -284,7 +296,7 @@ class LlamaAttention(nn.Module):
             seq_len=batch_state.seq_len,
         )
 
-        attn_output = raw_attn_output.reshape(bsz, -1)
+        attn_output = raw_attn_output.reshape(bsz, seq_len, -1)
 
         o_proj = self.o_proj(attn_output)
 
@@ -541,7 +553,6 @@ class LlamaForCausalLM(nn.Module):
             hidden_states=batch_state.hidden_states,
             seq_len=batch_state.seq_len,
         )
-
         out = self.model(out)
         out = self.lm_head(out)
 
@@ -551,6 +562,7 @@ class LlamaForCausalLM(nn.Module):
         k_cache = torch.zeros(
             (
                 self.config.num_hidden_layers,
+                self.extra_config.max_batch_size,
                 self.extra_config.max_len_override
                 or self.config.max_position_embeddings,
                 self.config.num_key_value_heads,
@@ -714,10 +726,27 @@ class LlamaForCausalLM(nn.Module):
 
     def stack_params(self):
         def stack_and_reassign(modules, prop: str):
-            params = [getattr(m, prop) for m in modules]
-            stacked = torch.stack(params, dim=0)
+            # Get shape from one module
+            shape = getattr(modules[0], prop).shape
+            dtype = getattr(modules[0], prop).dtype
+            device = getattr(modules[0], prop).device
+            requires_grad = getattr(modules[0], prop).requires_grad
+            n = len(modules)
+
+            # Allocate the single backing tensor
+            stacked = torch.empty((n, *shape), dtype=dtype, device=device, requires_grad=requires_grad)
+
+            # Fill stacked and replace layer weights with views
             for i, m in enumerate(modules):
-                getattr(m, prop)[:] = stacked[i]
+                original = getattr(m, prop)
+                stacked[i].copy_(original.data)  # copy data into the unified buffer
+                del original  # help GC
+
+                # Replace with a view (as nn.Parameter)
+                setattr(m, prop, torch.nn.Parameter(stacked[i], requires_grad=requires_grad))
+
+            # Force release of references
+            torch.cuda.empty_cache()
             return stacked
 
         layers: list[LlamaBlock] = self.model.layers  # type: ignore
