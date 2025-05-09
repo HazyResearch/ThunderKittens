@@ -20,7 +20,7 @@
 #define LLAMA_70B_NUM_ATTENTION_HEADS 64
 #define LLAMA_70B_NUM_KV_HEADS 8
 #define LLAMA_70B_KV_BLOCK_SIZE 16
-#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 256
+#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
 
 #define SM_COUNT 148
 #define BATCH_SIZE 128
@@ -76,7 +76,8 @@ namespace kittens::prototype::vm
         using rope_table_t = gl<float, 1, batch_size, -1, head_dim, sv_fl<16>>;
         
         // FlashInfer Paged KV Cache Format: (max_num_pages, page_size, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, KV_PAGE_SIZE, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
+        using kv_cache_t = gl<bf16, -1, KV_PAGE_SIZE, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, sv_bf<128>>;\
+        using routing_table_t = gl<uint32_t, 1, 1, 1, batch_size * 2, sv<uint32_t, 256>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 7, num_attention_heads + 2 * num_kv_heads>;
@@ -116,6 +117,8 @@ namespace kittens::prototype::vm
         activations_t attn_out;
         activations_big_indim_t silu_out;
         logits_t logits;
+
+        routing_table_t routing_table;
 
         unsigned int pos_id;
         float attn_scale;

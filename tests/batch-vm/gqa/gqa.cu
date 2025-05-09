@@ -95,12 +95,12 @@ namespace kittens::prototype::vm
         __device__ static inline void finish_QOL_page(state<config> &s)
         {
             if (warp::laneid() == 0)
-                arrive(s.page_finished[s.pid(QOL_PAGE)], config::NUM_CONSUMER_WARPS);
+                s.finish_page(s.pid(QOL_PAGE), config::NUM_CONSUMER_WARPS);
         }
         __device__ static inline void finish_KV_page(state<config> &s)
         {
             if (warp::laneid() == 0)
-                arrive(s.page_finished[s.pid(KV_PAGE)], config::NUM_CONSUMER_WARPS);
+                s.finish_page(s.pid(KV_PAGE), config::NUM_CONSUMER_WARPS);
         }
         __device__ static inline q_st &get_Q_smem(state<config> &s)
         {
@@ -308,7 +308,7 @@ namespace kittens::prototype::vm
                 {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
-                    arrive(s.page_finished[unused_page], config::NUM_CONSUMER_WARPS);
+                    s.finish_page(unused_page, config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();

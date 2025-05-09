@@ -21,7 +21,10 @@
 #define LLAMA_70B_NUM_KV_HEADS 8
 #define LLAMA_70B_KV_BLOCK_SIZE 16
 #define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
+
 #define SM_COUNT 148
+#define BATCH_SIZE 128
+
 
 // timing event convention
 
@@ -47,7 +50,7 @@ namespace kittens::prototype::vm
 
     using config = default_config;
 
-    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _sm_count>
+    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _batch_size, int _sm_count>
     struct globals_t
     {
 
@@ -58,6 +61,7 @@ namespace kittens::prototype::vm
         constexpr static unsigned int intermediate_dim = _intermediate_dim;
         constexpr static unsigned int num_attention_heads = _num_attention_heads;
         constexpr static unsigned int num_kv_heads = _num_kv_heads;
+        constexpr static unsigned int batch_size = _batch_size;
         constexpr static unsigned int sm_count = _sm_count;
 
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
@@ -66,14 +70,16 @@ namespace kittens::prototype::vm
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
 
-        using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>>;
+        using activations_t = gl<bf16, 1, 1, batch_size, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>>;
         using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
         using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
+        using rope_table_t = gl<float, 1, 1, -1, head_dim / 2, sv_fl<16>, st_fl<128, 64>>;
         
         // FlashInfer Paged KV Cache Format: (max_num_pages, page_size, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, 16, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
+        using kv_cache_t = gl<bf16, -1, 128, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, sv_bf<128>>;
+        // batch_size * 2 
+        using routing_table_t = gl<int, 1, 1, 1, batch_size * 2>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 7, num_attention_heads + 2 * num_kv_heads>;
@@ -114,7 +120,9 @@ namespace kittens::prototype::vm
         // activations_big_indim_t silu_out;
         // logits_t logits;
 
-        // unsigned int pos_id;
+        routing_table_t routing_table;
+
+        unsigned int pos_id;
         // float attn_scale;
         // float rms_norm_eps;
 
@@ -131,6 +139,7 @@ namespace kittens::prototype::vm
         LLAMA_70B_NUM_KV_HEADS,
         LLAMA_70B_KV_BLOCK_SIZE,
         LLAMA_70B_MATMUL_OUT_BLOCK_SIZE,
+        BATCH_SIZE,
         SM_COUNT>
         llama_70b_globals;
 
