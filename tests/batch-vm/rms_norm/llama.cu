@@ -13,14 +13,14 @@ using pre_rms_norm_op = pre_rms_norm<default_config, llama_70b_globals>;
 using post_rms_norm_op = post_rms_norm<default_config, llama_70b_globals>;
 
 
-PYBIND11_MODULE(kvm_llama_70b, m)
+PYBIND11_MODULE(kvm_llama, m)
 {
     m.doc() = "";
     kittens::py::bind_kernel<kvm<default_config, 
                                  llama_70b_globals,
                                  pre_rms_norm_op
                                 //  , post_rms_norm_op
-                                 >>(m, "kvm_llama_70b",
+                                 >>(m, "kvm_llama",
                                                   &llama_70b_globals::Bar,
                                                   &llama_70b_globals::instructions,
                                                   &llama_70b_globals::timings,
