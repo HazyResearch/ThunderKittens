@@ -105,8 +105,10 @@ namespace kittens::prototype::vm
             {
                 if (laneid() == 0)
                 {
+#ifdef KITTENS_BLACKWELL
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+#endif
                 }
             }
         };

@@ -165,10 +165,12 @@ template<typename config> struct state {
         }
     }
 
+#ifdef KITTENS_BLACKWELL
     semaphore &tensor_finished;
     __device__ inline void wait_tensor_ready() {
         wait(tensor_finished, instruction_index%2);
     }
+#endif
 
     semaphore &semaphores_ready;
     __device__ inline void wait_semaphores_ready() {
@@ -185,9 +187,11 @@ template<typename config> struct state {
         }
     }
 
+#ifdef KITTENS_BLACKWELL
     static constexpr int NCTA_TENSOR_ALLOC = config::CLUSTER_BLOCKS > 1 ? 2 : 1;
     using tensor_allocator_t = ::kittens::tensor_allocator<1, NCTA_TENSOR_ALLOC>;
     tensor_allocator_t &tensor_alloc;
+#endif
 
     uint32_t pid_order_shared_addr;
 

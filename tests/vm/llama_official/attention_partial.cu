@@ -319,8 +319,10 @@ namespace kittens::prototype::vm
             {
                 if (warp::laneid() == 0)
                 {
+#ifdef KITTENS_BLACKWELL
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
+#endif
 
                     // Setup
                     parsed_instruction inst{s};
