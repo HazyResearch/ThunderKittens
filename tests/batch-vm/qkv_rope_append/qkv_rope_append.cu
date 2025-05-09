@@ -470,5 +470,3 @@ namespace kittens::prototype::vm
         };
     };
 }
-
-  tests/batch-vm/gqa/gqa.cu tests/batch-vm/gqa/unit_test.py tests/batch-vm/llama_official/llama.cuh tests/batch-vm/llama_official/rms_lm_head.cu tests/batch-vm/qkv_rope_append/llama.cu tests/batch-vm/qkv_rope_append/llama.cuh tests/batch-vm/qkv_rope_append/qkv_rope_append.cu tests/batch-vm/rms_norm/llama.cuh tests/batch-vm/rms_norm/rms_norm.cu
