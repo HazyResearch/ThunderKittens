@@ -28,7 +28,7 @@ PYBIND11_MODULE(kvm_llama, m)
 
                                                   &llama_70b_globals::gate_weights,
                                                   &llama_70b_globals::rms_gate_intermediates,
-                                                  &llama_70b_globals::gate_silu_intermediates
+                                                  &llama_70b_globals::silu_out
                                                   );
 }
 

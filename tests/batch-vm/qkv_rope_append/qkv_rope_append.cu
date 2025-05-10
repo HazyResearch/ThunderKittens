@@ -34,7 +34,6 @@ namespace kittens::prototype::vm
             int row; // NEEDS TO BE IN OFFSETS OF 64!!
             int col;
             int iters;
-            int batch_head_idx; // in units of 128
 
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
@@ -42,7 +41,6 @@ namespace kittens::prototype::vm
                 row = instruction[2];
                 col = instruction[3];
                 iters = instruction[4];
-                batch_head_idx = instruction[5];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -126,7 +124,6 @@ namespace kittens::prototype::vm
         }
         __device__ static inline kv_row_vec &get_output_buffer(state<config> &s, parsed_instruction &inst, int store_page, int row) {
             char *page_base_ptr = reinterpret_cast<char *>(s.pages[store_page].data);
-            // Corrected stride: 128 elements * 2 bytes/element = 256 bytes
             constexpr int bytes_per_row = 128 * 2; // Assuming bfloat16 is 2 bytes
             return *reinterpret_cast<kv_row_vec *>(page_base_ptr + row * bytes_per_row);
         }
@@ -356,6 +353,7 @@ namespace kittens::prototype::vm
                     
                     int store_page_id = get_store_page(s, inst, groupid);
                     out_tile &store_buffer = *reinterpret_cast<out_tile *>(s.pages[store_page_id].data);
+                    warpgroup::sync(groupid);
                     warpgroup::store(store_buffer, out_bf16);
                     warpgroup::sync(groupid);
                     warpgroup::arrive(outputs_shared(s, groupid));
@@ -392,10 +390,19 @@ namespace kittens::prototype::vm
                     wait(outputs_shared(s, laneid()), 0);
                     int store_page = get_store_page(s, inst, laneid());
                     out_tile &output = *reinterpret_cast<out_tile *>(s.pages[store_page].ptr());
+                    // uint32_t output_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&output.data[0]));
+
+                    // for (int i = 0; i < 64; ++i) {
+                    //     for (int j = 0; j < 128; ++j) {
+                    //         // printf("%f ", __bfloat162float(output.data[i * 128 + j]));
+                    //         printf("%f ", __bfloat162float(output.idx(output_ptr, {i, j})));
+                    //     }
+                    //     printf("\n");
+                    // }
 
                     if (inst.col < K_BLK_START) // Q
                     {
-                        tma::store_async(g.q_post_rope, output, {(inst.batch_head_idx) + laneid(), inst.col});
+                        tma::store_async(g.q_post_rope, output, {(inst.row) + laneid(), inst.col});
                     } 
                     else 
                     {
@@ -411,21 +418,28 @@ namespace kittens::prototype::vm
                             int slot_idx = 0;
                             
                             int kv_row_index = i - routing_start;
-                            kv_row_vec& kv_sv = *reinterpret_cast<kv_row_vec*>(&output.data[kv_row_index * 128]);
+                            // kv_row_vec& kv_sv = *reinterpret_cast<kv_row_vec*>(&output.data[kv_row_index * 128]);
+                            kv_row_vec* kv_sv = reinterpret_cast<kv_row_vec*>(s.pages[store_page].ptr());
                             
                             // kv_row_vec& kv_sv = get_output_buffer(s, inst, store_page, kv_row_index);
                             // printf("kv_row_index: %d\n", kv_row_index);
                             // printf("routing_start: %d\n", routing_start);
                             // printf("Storing to page_idx: %d\n", page_idx);
                             
+                            printf("Calculating row idx: %d\n", kv_row_index);
                             if (inst.col < V_BLK_START) // K
                             {
                                 int head_idx = inst.col - K_BLK_START;
+
                                 for (int j = 0; j < 128; j++) {
-                                    output.data[kv_row_index * 128 + j] = i;
+                                    printf("%f ", __bfloat162float(kv_sv[kv_row_index].data[j]));
                                 }
-                                tma::store_async(g.k_cache, kv_sv, {page_idx, slot_idx, head_idx, 0});
-                                // tma::store_async_read_wait();
+                                printf("\n");
+
+                                
+                                tma::store_async(g.k_cache, kv_sv[kv_row_index], {page_idx, slot_idx, head_idx, 0});
+                                tma::store_async_wait();
+                                tma::store_async_read_wait();
                                 // tma::store_async(g.k_cache, kv_sv, {0, 0});
                             }
                             else // V

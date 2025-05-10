@@ -20,7 +20,8 @@ class ScriptConfig(pydra.Config):
     prompt: str = "tell me a funny joke about cookies"
     chat: bool = False
     ntok: int = 100
-    batch_size: int = 512
+    # batch_size: int = 512
+    batch_size: int = 128
     mode: str = "model"
     add_print_instructions: bool = False
     print_layer_filter: list[int] | None = None
@@ -28,7 +29,7 @@ class ScriptConfig(pydra.Config):
     print_state_filter: list[str] | None = None
     interleave_rope: bool = True
     kvm_dir: Path = (
-        Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
+        Path(__file__).parent.parent.parent.parent / "tests" / "batch-vm" / "llama_official"
     )
     token_details: bool = False
     tokens: bool = True
@@ -221,7 +222,7 @@ def main(config: ScriptConfig):
     print(f"Average time: {elapsed:.2f}s")
 
     if config.tokens:
-        breakpoint()
+        # breakpoint()
         to_cpu_0 = output_tokens.cpu()[0]
         print("Output ids: ", to_cpu_0)
         print("Output text: ", tokenizer.batch_decode(to_cpu_0, skip_special_tokens=True))
@@ -250,3 +251,6 @@ def main(config: ScriptConfig):
 
 if __name__ == "__main__":
     pydra.run(main)
+
+
+kvm_batch_runner/generate.py kvm_batch_runner/instructions.py kvm_batch_runner/llama.py kvm_batch_runner/python_vm.py kvm_batch_runner/scheduler.py kvm_batch_runner/test_kvm.py ../../tests/batch-vm/gate_silu/gate_silu.cu ../../tests/batch-vm/gate_silu/llama.cu ../../tests/batch-vm/gate_silu/llama.cuh ../../tests/batch-vm/gqa/gqa.cu ../../tests/batch-vm/gqa/llama.cu ../../tests/batch-vm/gqa/llama.cuh ../../tests/batch-vm/gqa/unit_test.py ../../tests/batch-vm/llama_official/attention_decode.cu ../../tests/batch-vm/llama_official/gate_silu.cu ../../tests/batch-vm/llama_official/llama.cu ../../tests/batch-vm/llama_official/llama.cuh ../../tests/batch-vm/llama_official/matmul_adds.cu ../../tests/batch-vm/llama_official/qkv_rope_append.cu ../../tests/batch-vm/llama_official/rms_norm.cu ../../tests/batch-vm/llama_official/up_matmul.cu ../../tests/batch-vm/matmul/matmul.cu ../../tests/batch-vm/matmul/test.py ../../tests/batch-vm/qkv_rope_append/qkv_rope_append.cu ../../tests/batch-vm/qkv_rope_append/unit_test.py ../../tests/batch-vm/rms_norm/rms_norm.cu ../../tests/batch-vm/rms_norm/unit_test.py ../../tests/batch-vm/up_matmul/up_matmul.c 

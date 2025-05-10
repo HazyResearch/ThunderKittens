@@ -26,6 +26,7 @@ LAYER_IDX = 3
 POS_ID = 1050
 ATTN_SCALE = 1 / math.sqrt(D_h)
 ATTN_BLOCK_SIZE = 16
+BATCH_IDX = 6
 
 # Unit testing
 H_kv_IDX = 5

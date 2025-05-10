@@ -73,7 +73,7 @@ namespace kittens::prototype::vm
         using activations_big_indim_t = gl<bf16, 1, 1, batch_size, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
         using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
-        using rope_table_t = gl<float, 1, batch_size, -1, head_dim, sv_fl<16>>;
+        using rope_table_t = gl<float, 1, batch_size, -1, head_dim, sv_fl<16>, st_fl<128, 64>>;
         
         // FlashInfer Paged KV Cache Format: (max_num_pages, page_size, num_heads, head_dim)
         using kv_cache_t = gl<bf16, -1, KV_PAGE_SIZE, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, sv_bf<128>>;\
@@ -112,7 +112,6 @@ namespace kittens::prototype::vm
         activations_t hidden_states;
         activations_t rms_rope_intermediates;
         activations_t rms_gate_intermediates;
-        activations_t gate_silu_intermediates;
         activations_t q_post_rope;
         activations_t attn_out;
         activations_big_indim_t silu_out;

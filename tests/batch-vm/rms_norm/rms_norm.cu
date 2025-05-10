@@ -31,13 +31,11 @@ namespace kittens::prototype::vm
         struct parsed_instruction
         {
             int layer_idx;
-            int qkv_block_idx;
             int batch_idx;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
-                layer_idx = instruction[1];     // in units of 1
-                qkv_block_idx = instruction[2]; // in units of 16 elements
-                batch_idx = instruction[3];
+                layer_idx = instruction[1];
+                batch_idx = instruction[2];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -231,8 +229,8 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0)
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
+                // if (warp::laneid() == 0)
+                //     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.qkv_block_idx / 4}], 1);
 
                 warp::sync();
                 if (laneid() == 0)

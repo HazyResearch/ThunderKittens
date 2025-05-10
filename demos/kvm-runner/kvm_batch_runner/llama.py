@@ -797,6 +797,14 @@ class LlamaForCausalLM(nn.Module):
             self_attn.k_proj.weight[:] = k_weight
             self_attn.v_proj.weight[:] = v_weight
 
+        print("Qkv weights: ", stacked_qkv_weights.shape)
+        print("O proj weights: ", stacked_o_proj.shape)
+        print("Self attn ln weights: ", stacked_self_attn_ln_weights.shape)
+        print("Mlp ln weights: ", stacked_mlp_ln_weights.shape)
+        print("Up proj weights: ", stacked_up_proj.shape)
+        print("Gate proj weights: ", stacked_gate_proj.shape)
+        print("Down proj weights: ", stacked_down_proj.shape)
+
         self.stacked_params = StackedParams(
             qkv_proj=stacked_qkv_weights,
             o_proj=stacked_o_proj,

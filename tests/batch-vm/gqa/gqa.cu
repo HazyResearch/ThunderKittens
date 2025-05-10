@@ -7,12 +7,12 @@ namespace kittens::prototype::vm
 {
 
     template <typename config, typename globals>
-    struct attention_partial
+    struct attention_decode
     {
         static constexpr int opcode = OPCODE_GQA_Attention;
         static constexpr int NUM_STAGES = 3;
         static constexpr int GQA_RATIO = LLAMA_70B_NUM_ATTENTION_HEADS / LLAMA_70B_NUM_KV_HEADS;
-        static constexpr int QOL_PAGE = 0;
+        static constexpr int QO_PAGE = 0;
         static constexpr int KV_PAGE = 1;
         static constexpr int KV_INDICES_LEN = 0;
         static constexpr int MAX_KV_INDICES_LEN = 0;
@@ -20,28 +20,28 @@ namespace kittens::prototype::vm
         static_assert(GQA_RATIO == 8, "GQA_RATIO must be 8.");
         static_assert(NUM_STAGES <= 4, "Modify page allocation for KVs.");
 
-        using q_rt = rt_bf<16, LLAMA_70B_HEAD_DIM>; // only 4 rows are used
-        using q_st = st_bf<16, LLAMA_70B_HEAD_DIM>; // only 4 rows are used
+        using q_rt = rt_bf<16, LLAMA_70B_HEAD_DIM>; // only 8 rows are used
+        using q_st = st_bf<16, LLAMA_70B_HEAD_DIM>; // only 8 rows are used
         using k_rt = rt_bf<LLAMA_70B_KV_BLOCK_SIZE, LLAMA_70B_HEAD_DIM>;
         using v_rt = rt_bf<LLAMA_70B_KV_BLOCK_SIZE, LLAMA_70B_HEAD_DIM, col_l>;
         using kv_st = st_bf<LLAMA_70B_KV_BLOCK_SIZE, LLAMA_70B_HEAD_DIM>;
-        using attn_fl_rt = rt_fl<16, LLAMA_70B_KV_BLOCK_SIZE>;      // only 4 values are used
-        using attn_bf_rt = rt_bf<16, LLAMA_70B_KV_BLOCK_SIZE>;      // only 4 values are used
-        using max_vec_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>;  // only 4 values are used
-        using max_vec_sv = sv_fl<16>;                              // only 4 values are used
-        using norm_vec_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>; // only 4 values are used
-        using norm_vec_sv = sv_fl<16>;                             // only 4 values are used
-        using l_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>;        // only 4 values are used
-        using l_sv = sv_fl<16>;                                    // only 4 values are used
-        using o_rt = rt_fl<16, LLAMA_70B_HEAD_DIM>;                 // only 4 rows are used
-        using o_rt_bf = rt_bf<16, LLAMA_70B_HEAD_DIM>;                 // only 4 rows are used
+        using attn_fl_rt = rt_fl<16, LLAMA_70B_KV_BLOCK_SIZE>;      // only 8 values are used
+        using attn_bf_rt = rt_bf<16, LLAMA_70B_KV_BLOCK_SIZE>;      // only 8 values are used
+        using max_vec_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>;  // only 8 values are used
+        using max_vec_sv = sv_fl<16>;                              // only 8 values are used
+        using norm_vec_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>; // only 8 values are used
+        using norm_vec_sv = sv_fl<16>;                             // only 8 values are used
+        using l_rv = col_vec<rt_fl<16, LLAMA_70B_HEAD_DIM>>;        // only 8 values are used
+        using l_sv = sv_fl<16>;                                    // only 8 values are used
+        using o_rt = rt_fl<16, LLAMA_70B_HEAD_DIM>;                 // only 8 rows are used
+        using o_rt_bf = rt_bf<16, LLAMA_70B_HEAD_DIM>;              // only 8 rows are used
         using o_sv = sv_bf<LLAMA_70B_HEAD_DIM>;
 
         struct parsed_instruction
         {
             int layer_idx;
             int kv_head_idx;
-            int partial_idx;
+            int batch_idx;
             int kv_indices_len;
             int kv_indices[KV_INDICES_LEN]; // actual physical indices to read in from paged KV
 
@@ -49,15 +49,15 @@ namespace kittens::prototype::vm
             {                
                 layer_idx = instruction[1];
                 kv_head_idx = instruction[2];
-                kv_indices_len = instruction[3]; // length of number of indices from paged KV cache to read 
-                // partial_idx = instruction[4];
+                batch_idx = instruction[3];
+                kv_indices_len = instruction[4]; // length of number of indices from paged KV cache to read 
 
                 #pragma unroll
                 for (int k = 0; k < MAX_KV_INDICES_LEN; ++k) 
                 {
                     if (k < kv_indices_len) 
                     {
-                        kv_indices[k] = instruction[4 + k];
+                        kv_indices[k] = instruction[5 + k];
                     }
                 }
             }
@@ -90,12 +90,12 @@ namespace kittens::prototype::vm
             return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2 + 1];
         }
 
-        __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
+        __device__ static inline void wait_QO_page(state<config> &s) { s.wait_page_ready(s.pid(QO_PAGE)); }
         __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
-        __device__ static inline void finish_QOL_page(state<config> &s)
+        __device__ static inline void finish_QO_page(state<config> &s)
         {
             if (warp::laneid() == 0)
-                s.finish_page(s.pid(QOL_PAGE), config::NUM_CONSUMER_WARPS);
+                s.finish_page(s.pid(QO_PAGE), config::NUM_CONSUMER_WARPS);
         }
         __device__ static inline void finish_KV_page(state<config> &s)
         {
@@ -104,12 +104,12 @@ namespace kittens::prototype::vm
         }
         __device__ static inline q_st &get_Q_smem(state<config> &s)
         {
-            int pid = s.pid(QOL_PAGE);
+            int pid = s.pid(QO_PAGE);
             return *reinterpret_cast<q_st *>(s.pages[pid].data);
         }
         __device__ static inline o_sv (&get_O_smem(state<config> &s))[8]
         {
-            int pid = s.pid(QOL_PAGE);
+            int pid = s.pid(QO_PAGE);
             return *reinterpret_cast<o_sv(*)[8]>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st));
         }
@@ -358,7 +358,7 @@ namespace kittens::prototype::vm
                     warp::sync();
 
                     // Initiate the load on Q
-                    wait_QOL_page(s);
+                    wait_QO_page(s);
 
                     q_st &Q_smem = get_Q_smem(s);
                     load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
@@ -518,7 +518,7 @@ namespace kittens::prototype::vm
                     tma::store_async_wait();
                     if (laneid == 0)
                         s.record(123 + laneid);
-                    finish_QOL_page(s);
+                    finish_QO_page(s);
                     // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
                     atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_GQA_Attention - 1, q_head_start_idx + laneid}], 1);
                 }

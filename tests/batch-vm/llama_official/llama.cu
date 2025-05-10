@@ -6,7 +6,7 @@
 #include "matmul_adds.cu"
 #include "gate_silu.cu"
 #include "up_matmul.cu"
-#include "lm_head.cu"
+// #include "lm_head.cu"
 
 #include "pyutils/pyutils.cuh"
 
@@ -20,15 +20,15 @@ using attention_decode_op = attention_decode<default_config, llama_70b_globals>;
 using o_proj_op = o_proj<default_config, llama_70b_globals>;
 
 using post_rms_norm_op = post_rms_norm<default_config, llama_70b_globals>;
-using matmul_silu_op = matmul_silu<default_config, llama_70b_globals>;
-using matmul_gate_op = matmul_gate<default_config, llama_70b_globals>;
+using gate_silu_op = gate_silu<default_config, llama_70b_globals>;
+using up_matmul_op = up_matmul<default_config, llama_70b_globals>;
 using downproj_op = downproj<default_config, llama_70b_globals>;
 
-using lm_head_rms_norm_op = lm_head_rms_norm<default_config, llama_70b_globals>;
-using lm_head_op = lm_head<default_config, llama_70b_globals>;
+// using lm_head_rms_norm_op = lm_head_rms_norm<default_config, llama_70b_globals>;
+// using lm_head_op = lm_head<default_config, llama_70b_globals>;
 
 
-PYBIND11_MODULE(kvm_llama_70b, m)
+PYBIND11_MODULE(kvm_llama, m)
 {
     m.doc() = "";
     kittens::py::bind_kernel<kvm<default_config, 
@@ -36,14 +36,15 @@ PYBIND11_MODULE(kvm_llama_70b, m)
 
                                  pre_rms_norm_op,
                                  qkv_rope_append_op,
-                                 attention_decode,
+                                 attention_decode_op,
                                  o_proj_op,
 
                                  post_rms_norm_op,
-                                 matmul_silu_op,
-                                 matmul_gate_op,
-                                 downproj_op,
-                                 lm_head_op>>(m, "kvm_llama_70b",
+                                 gate_silu_op,
+                                 up_matmul_op,
+                                 downproj_op
+                                //  lm_head_op
+                                 >>(m, "kvm_llama",
                                                   &llama_70b_globals::Bar,
                                                   &llama_70b_globals::instructions,
                                                   &llama_70b_globals::timings,
@@ -67,13 +68,19 @@ PYBIND11_MODULE(kvm_llama_70b, m)
                                                   &llama_70b_globals::rope_sin,
 
                                                   &llama_70b_globals::hidden_states,
+                                                  &llama_70b_globals::rms_rope_intermediates,
+                                                  &llama_70b_globals::rms_gate_intermediates,
+                                                  &llama_70b_globals::gate_silu_intermediates,
                                                   &llama_70b_globals::q_post_rope,
                                                   &llama_70b_globals::attn_out,
                                                   &llama_70b_globals::silu_out,
                                                   &llama_70b_globals::logits,
 
+                                                  &llama_70b_globals::routing_table,
+
                                                   &llama_70b_globals::pos_id,
                                                   &llama_70b_globals::attn_scale,
-                                                  &llama_70b_globals::rms_norm_eps);
+                                                  &llama_70b_globals::rms_norm_eps
+                                                  );
 }
 

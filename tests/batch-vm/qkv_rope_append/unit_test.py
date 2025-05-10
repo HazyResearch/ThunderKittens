@@ -24,7 +24,7 @@ PAGE_SIZE = 128  # Each page stores one sequence position
 
 # Kernel parameters
 LAYER_IDX = 0
-QKV_BLOCK_IDX = 64  # This now represents which head we're processing
+QKV_BLOCK_IDX = 63  # This now represents which head we're processing
 POS_ID = 0
 LN_EPS = 1e-5
 
@@ -121,7 +121,6 @@ def generate_itb():
         0,                       # arg2: row
         QKV_BLOCK_IDX,           # arg3: col
         HIDDEN_DIM // 128,       # arg4: iters
-        0                        # arg5: batch_head_idx
     ]
     for i, val in enumerate(instruction_values):
         instructions[0, 0, i] = val

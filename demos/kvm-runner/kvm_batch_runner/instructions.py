@@ -119,7 +119,6 @@ class PreLayerNorm(Instruction):
 
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -138,8 +137,7 @@ class QKV_MatMulRopeAppend(Instruction):
 
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
-    output_block_idx: int
+    qkv_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -154,7 +152,6 @@ class QKV_MatMulRopeAppend(Instruction):
 class AttentionDecode(Instruction):
     layer_idx: int
     batch_start_idx: int
-    batch_end_idx: int
     kv_head_idx: int
 
     @classmethod
@@ -170,9 +167,7 @@ class AttentionDecode(Instruction):
 class MatMulAdd(Instruction):
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
     output_block_idx: int
-    reduction_block_idx: int  # in units of 2048
 
 
 # denoting these with separate opcodes so that know what inputs to read from
@@ -190,14 +185,13 @@ class O_ProjResidual(MatMulAdd):
 
 
 @dataclass
-class PostLayerNorm(Instruction):
+class PreMLPLayerNorm(Instruction):
     """
-    layernorm post-attention
+    layernorm pre-mlp
     """
 
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -209,14 +203,13 @@ class PostLayerNorm(Instruction):
 
 
 @dataclass
-class MatMulSiLU(Instruction):
+class GateSilu(Instruction):
     """
     matmul + silu
     """
 
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
     output_block_idx: int
 
     @classmethod
@@ -225,18 +218,17 @@ class MatMulSiLU(Instruction):
 
     @classmethod
     def prev_opcode(cls) -> int:
-        return PostLayerNorm.opcode()
+        return PreMLPLayerNorm.opcode()
 
 
 @dataclass
-class MatMulGate(Instruction):
+class UpMatMul(Instruction):
     """
     matmul + gate
     """
 
     layer_idx: int
     batch_start_idx: int 
-    batch_end_idx: int
     output_block_idx: int
 
     @classmethod
@@ -245,7 +237,7 @@ class MatMulGate(Instruction):
 
     @classmethod
     def prev_opcode(cls) -> int:
-        return MatMulSiLU.opcode()
+        return GateSilu.opcode()
 
 
 @dataclass
@@ -256,7 +248,7 @@ class DownProjResidual(MatMulAdd):
 
     @classmethod
     def prev_opcode(cls) -> int:
-        return MatMulGate.opcode()
+        return UpMatMul.opcode()
 
 
 @dataclass
