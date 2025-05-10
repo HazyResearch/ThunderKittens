@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 class ScriptConfig(pydra.Config):
     kvm_path: Path = (
-        Path(__file__).parent.parent.parent.parent / "tests" / "vm" / "llama_official"
+        Path(__file__).parent.parent.parent.parent / "tests" / "batch-vm" / "llama_official"
     )
     model: str = "meta-llama/Llama-3.1-70B-Instruct"
     device: str = "cuda:0"

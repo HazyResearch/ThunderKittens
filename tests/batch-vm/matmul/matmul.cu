@@ -105,7 +105,7 @@ template<typename config=config> struct MatmulOp {
                 init_semaphore(outputs_arrived(s, i), 1);
                 init_semaphore(outputs_shared(s, i), 1);
             }
-            return 2*PIPELINE_STAGES + 4; // Total semaphores initialized
+            return 2*PIPELINE_STAGES + (2 * 2); // Total semaphores initialized
         }
     };
     struct loader {

@@ -6,9 +6,9 @@ from kvm_batch_runner.instructions import (
     AttentionDecode,
     O_ProjResidual,
 
-    PostLayerNorm,
-    MatMulSiLU,
-    MatMulGate,
+    PreMLPLayerNorm,
+    GateSilu,
+    UpMatMul,
     DownProjResidual,
 
     Globals,
@@ -40,6 +40,15 @@ def make_globals(
 
     stacked_params = model.stacked_params
 
+    '''
+    Need to keep track of things for paged KV cache... 
+
+
+
+    '''
+
+    MAX_BLOCKS_PER_SEQUENCE = 1024
+
     return Globals(
         # model params
         qkv_proj=stacked_params.qkv_proj,
@@ -62,6 +71,10 @@ def make_globals(
         attn_out=make_buffer(extra_config.max_batch_size, config.hidden_size),
         silu_out=make_buffer(extra_config.max_batch_size, config.intermediate_size),
         logits=make_buffer(extra_config.max_batch_size, config.vocab_size),
+
+        # paged kv cache
+        page_table=make_buffer(extra_config.max_batch_size, MAX_BLOCKS_PER_SEQUENCE),
+        next_free_page = torch.zeros(1, dtype=torch.uint32, device=device)
 
         # scalars
         pos_id=0,
@@ -132,7 +145,7 @@ def schedule_layer(
                 )
             )
 
-    instruction_1 = False
+    instruction_1 = True
     instruction_2 = True
     instruction_3 = True
     instruction_4 = True
@@ -156,12 +169,11 @@ def schedule_layer(
 
     # INSTRUCTION 1
     if instruction_1:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size):
             instructions.append(
                 PreLayerNorm(
                     layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    batch_end_idx=bidx + globals.batch_block_size,
+                    batch_start_idx=bidx
                 )
             )
             maybe_add_print(layer_idx, "pre_attn_layernorm")
@@ -171,15 +183,14 @@ def schedule_layer(
 
     # INSTRUCTION 2
     if instruction_2:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             num_qkv_blocks = assert_div(qkv_outdim, globals.qkv_block_size)
             for qkv_block_idx in range(num_qkv_blocks):
                 instructions.append(
                     QKV_MatMulRopeAppend(
                         layer_idx=layer_idx,
                         batch_start_idx=bidx,
-                        batch_end_idx=bidx + globals.batch_block_size,
-                        output_block_idx=qkv_block_idx,
+                        qkv_block_idx=qkv_block_idx,
                     )
                 )
             maybe_add_print(layer_idx, "qkv_rope_append")
@@ -188,15 +199,15 @@ def schedule_layer(
 
 
     # INSTRUCTION 3
+    # Need to figure out how to give in kv_indices
     if instruction_3:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             for kv_head_idx in range(globals.num_kv_heads):
                 instructions.append(
                     AttentionDecode(
                         layer_idx=layer_idx,
                         batch_start_idx=bidx,
-                        batch_end_idx=bidx + globals.batch_block_size,
-                        kv_head_idx=kv_head_idx,
+                        kv_head_idx=kv_head_idx
                     ),
                 )
             maybe_add_print(layer_idx, "attn_decode")
@@ -206,16 +217,14 @@ def schedule_layer(
 
     # INSTRUCTION 4
     if instruction_4:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             num_o_blocks = assert_div(globals.hidden_size, globals.o_proj_block_size)
             for o_block_idx in range(num_o_blocks):
                 instructions.append(
                     O_ProjResidual(
                         layer_idx=layer_idx,
                         batch_start_idx=bidx,
-                        batch_end_idx=bidx + globals.batch_block_size,
                         output_block_idx=o_block_idx,
-                        reduction_block_idx=0,
                     )
                 )
             maybe_add_print(layer_idx, "o_proj")
@@ -229,12 +238,11 @@ def schedule_layer(
 
     # INSTRUCTION 5
     if instruction_5:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size):
             instructions.append(
-                PostLayerNorm(
+                PreMLPLayerNorm(
                     layer_idx=layer_idx,
                     batch_start_idx=bidx,
-                    batch_end_idx=bidx + globals.batch_block_size,
                 )
             )
             maybe_add_print(layer_idx, "pre_mlp_layernorm")
@@ -244,56 +252,51 @@ def schedule_layer(
 
     # INSTRUCTION 6
     if instruction_6:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             num_matmul_silu_blocks = assert_div(globals.intermediate_size, globals.matmul_silu_block_size)
             for block_idx in range(num_matmul_silu_blocks):
                 instructions.append(
-                    MatMulSiLU(
+                    GateSilu(
                         layer_idx=layer_idx,
                         batch_start_idx=bidx,
-                        batch_end_idx=bidx + globals.batch_block_size,
                         output_block_idx=block_idx,
                     )
                 )
-            maybe_add_print(layer_idx, "matmul_silu")
-            if stop_after_op == "matmul_silu":
+            maybe_add_print(layer_idx, "gate_silu")
+            if stop_after_op == "gate_silu":
                 return instructions
 
 
     # INSTRUCTION 7
     if instruction_7:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             num_matmul_gate_blocks = assert_div(globals.intermediate_size, globals.matmul_gate_block_size)
             for block_idx in range(num_matmul_gate_blocks):
                 instructions.append(
-                    MatMulGate(
+                    UpMatMul(
                         layer_idx=layer_idx,
                         batch_start_idx=bidx,
-                        batch_end_idx=bidx + globals.batch_block_size,
                         output_block_idx=block_idx,
                     )
                 )
-            maybe_add_print(layer_idx, "matmul_gate")
-            if stop_after_op == "matmul_gate":
+            maybe_add_print(layer_idx, "up_matmul")
+            if stop_after_op == "up_matmul":
                 return instructions
 
 
 
     # INSTRUCTION 8
     if instruction_8:
-        for bidx in range(0, batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, batch_size, globals.batch_block_size):
             num_down_blocks = assert_div(globals.hidden_size, globals.down_proj_block_size)
             for down_block_idx in range(num_down_blocks):
-                for reduction_idx in range(4):  # 2048 columns per op
-                    instructions.append(
-                        DownProjResidual(
-                            layer_idx=layer_idx,
-                            batch_start_idx=bidx,
-                            batch_end_idx=bidx + globals.batch_block_size,
-                            output_block_idx=down_block_idx,
-                            reduction_block_idx=reduction_idx,
-                        )
+                instructions.append(
+                    DownProjResidual(
+                        layer_idx=layer_idx,
+                        batch_start_idx=bidx,
+                        output_block_idx=down_block_idx,
                     )
+                )
             maybe_add_print(layer_idx, "down_proj")
             if stop_after_op == "down_proj":
                 return instructions

@@ -78,8 +78,8 @@ namespace kittens::prototype::vm
         using barriers = gl<uint, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
 
         // vm stuff
-        instruction_layout instructions;
         barriers Bar;
+        instruction_layout instructions;
         timing_layout timings;
 
         // model weights

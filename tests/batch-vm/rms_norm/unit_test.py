@@ -49,7 +49,7 @@ def generate_itb():
     barriers = torch.zeros((7, NUM_OPS, 64 + 2 * 8), dtype=torch.uint32, device=TORCH_DEVICE)
 
     # Fill instruction: [opcode, layer, qkv_block, batch_idx]
-    instruction_values = [RMS_NORM_OPCODE, LAYER_IDX, QKV_BLOCK_IDX, BATCH_IDX]
+    instruction_values = [RMS_NORM_OPCODE, LAYER_IDX, BATCH_IDX]
     for i, val in enumerate(instruction_values):
         instructions[0, 0, i] = val
 
