@@ -136,7 +136,6 @@ namespace kittens::prototype::vm
 
         struct launcher
         {
-            // launcher does nothing here, since this doesn't use tensor cores.
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 pipeline::launcher_loop(s, g);

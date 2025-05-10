@@ -149,12 +149,10 @@ namespace kittens
                         kvms.instruction_index = instruction_index;
                         kvms.instruction_ring = instruction_ring;
                         // record using the current ring
-                        if (laneid == 0)
-                        {
-                            kvms.record(TEVENT_CONTROLLER_END);
-                            // technically don't need to reset, whatevs?
-                            store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
-                        }
+                        if (laneid == 0) kvms.record(TEVENT_CONTROLLER_END);
+                        
+                        // technically don't need to reset, whatevs?
+                        store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
                     }
                 }
 

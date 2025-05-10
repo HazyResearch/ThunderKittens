@@ -23,7 +23,8 @@
 #define LLAMA_1B_MATVEC_BLOCK_SIZE 16
 #define LLAMA_1B_LM_HEAD_BLOCK_SIZE 32
 #define LLAMA_1B_VOCAB_SIZE 128256
-#define SM_COUNT 148
+#define H100_SM_COUNT 132
+#define B200_SM_COUNT 148
 
 namespace kittens::prototype::vm
 {
@@ -144,7 +145,11 @@ namespace kittens::prototype::vm
         LLAMA_1B_NUM_KV_HEADS,
         LLAMA_1B_KV_BLOCK_SIZE,
         LLAMA_1B_MATVEC_BLOCK_SIZE,
-        SM_COUNT>
+#ifndef KITTENS_BLACKWELL
+        H100_SM_COUNT>
+#else
+        B200_SM_COUNT>
+#endif
         llama_1b_globals;
 
     template <typename config = config, typename globals = llama_1b_globals>
