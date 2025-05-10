@@ -145,6 +145,11 @@ template<typename config=config> struct MatmulOp {
                     s.finish_page(release_pid, config::NUM_CONSUMER_WARPS);
                 }
             }
+
+            if (laneid() == 0) {
+                s.wait_page_ready(12);
+                s.finish_page(12, config::NUM_CONSUMER_WARPS);
+            }
         }
     };
     struct launcher { // launches mma's
@@ -156,7 +161,9 @@ template<typename config=config> struct MatmulOp {
 
             wait(inputs_arrived(s, pipeline_stage), get_phasebit<0>(semaphore_bitfield, pipeline_stage));
             // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
+            
             s.wait_tensor_ready();
+
             if(laneid() < 2) {
                 auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
                 // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
@@ -219,6 +226,8 @@ template<typename config=config> struct MatmulOp {
                 warpgroup::store(store_buffer, acc_bf16);
                 warpgroup::sync(groupid);
                 warpgroup::arrive(outputs_shared(s, groupid));
+            } else {
+                warp::arrive(s.tensor_finished);
             }
         }
     };
@@ -240,6 +249,7 @@ template<typename config=config> struct MatmulOp {
                 c_tile &output = *reinterpret_cast<c_tile *>(s.pages[get_store_page(s, inst, laneid())].data);
                 tma::store_async(g.C, output, {inst.row+laneid(), inst.col});
                 tma::store_async_read_wait();
+
                 s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
                 s.finish_page(store_page+1, config::NUM_CONSUMER_WARPS); // not used but should still be released 
             }
