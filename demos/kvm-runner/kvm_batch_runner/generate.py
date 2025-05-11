@@ -251,6 +251,3 @@ def main(config: ScriptConfig):
 
 if __name__ == "__main__":
     pydra.run(main)
-
-
-kvm_batch_runner/generate.py kvm_batch_runner/instructions.py kvm_batch_runner/llama.py kvm_batch_runner/python_vm.py kvm_batch_runner/scheduler.py kvm_batch_runner/test_kvm.py ../../tests/batch-vm/gate_silu/gate_silu.cu ../../tests/batch-vm/gate_silu/llama.cu ../../tests/batch-vm/gate_silu/llama.cuh ../../tests/batch-vm/gqa/gqa.cu ../../tests/batch-vm/gqa/llama.cu ../../tests/batch-vm/gqa/llama.cuh ../../tests/batch-vm/gqa/unit_test.py ../../tests/batch-vm/llama_official/attention_decode.cu ../../tests/batch-vm/llama_official/gate_silu.cu ../../tests/batch-vm/llama_official/llama.cu ../../tests/batch-vm/llama_official/llama.cuh ../../tests/batch-vm/llama_official/matmul_adds.cu ../../tests/batch-vm/llama_official/qkv_rope_append.cu ../../tests/batch-vm/llama_official/rms_norm.cu ../../tests/batch-vm/llama_official/up_matmul.cu ../../tests/batch-vm/matmul/matmul.cu ../../tests/batch-vm/matmul/test.py ../../tests/batch-vm/qkv_rope_append/qkv_rope_append.cu ../../tests/batch-vm/qkv_rope_append/unit_test.py ../../tests/batch-vm/rms_norm/rms_norm.cu ../../tests/batch-vm/rms_norm/unit_test.py ../../tests/batch-vm/up_matmul/up_matmul.c 

@@ -74,7 +74,7 @@ def make_globals(
 
         # paged kv cache
         page_table=make_buffer(extra_config.max_batch_size, MAX_BLOCKS_PER_SEQUENCE),
-        next_free_page = torch.zeros(1, dtype=torch.uint32, device=device)
+        next_free_page = torch.zeros(1, dtype=torch.uint32, device=device),
 
         # scalars
         pos_id=0,

@@ -162,15 +162,16 @@ def qkv_matmul_rope_append(
 
 
 def attention_decode(globals: Globals, instruction: AttentionDecode):
-    layer_idx = instruction.layer_idx
+    # unpack indices
+    layer_idx       = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
-    batch_size = batch_end_idx - batch_start_idx
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
+    batch_size      = batch_end_idx - batch_start_idx
 
-    gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
+    gqa_ratio   = globals.num_attention_heads // globals.num_kv_heads
     kv_head_dim = globals.hidden_size // globals.num_kv_heads
 
-    # Barrier check
+    # barrier check
     if include_barriers:
         op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.prev_opcode() - 1]
         for i in range(gqa_ratio):
@@ -178,36 +179,42 @@ def attention_decode(globals: Globals, instruction: AttentionDecode):
         assert op_barriers[globals.num_attention_heads + instruction.kv_head_idx] == 4
         assert (op_barriers[globals.num_attention_heads + globals.num_kv_heads + instruction.kv_head_idx] == 4)
 
-    kv_block_size = globals.attn_kv_block_size
-    seq_len = globals.pos_id + 1
-    layer_idx = instruction.layer_idx
-    kv_head_idx = instruction.kv_head_idx
+    head_start = instruction.kv_head_idx * kv_head_dim
+    head_end   = head_start + kv_head_dim
+    q = (
+        globals.post_ln_rope_q[batch_start_idx : batch_end_idx]
+        .view(batch_size, globals.num_attention_heads, -1)
+        [:, head_start:head_end]
+    )  # shape [B, H_per_kv, D]
 
-    num_kv_pages = math.ceil(seq_len / globals.qkv_block_size)
+    num_kv_pages = math.ceil((globals.pos_id + 1) / globals.qkv_block_size)
 
-    attn_out_buf = torch.zeros(gqa_ratio, batch_size, dtype=torch.float32)
-    q = globals.post_ln_rope_q[batch_start_idx].view(batch_size, globals.num_attention_heads, -1)[:, head_start:head_end]
-
+    # gather qk and v
+    qk_blocks = []
+    v_blocks  = []
     for page_idx in range(num_kv_pages):
         page = globals.page_table[batch_start_idx][page_idx]
-        k = globals.k_cache[page, :, kv_head_idx, :]
-        v = globals.v_cache[page, :, kv_head_idx, :]
+        k    = globals.k_cache[page, :, instruction.kv_head_idx, :]
+        v    = globals.v_cache[page, :, instruction.kv_head_idx, :]
 
-        qk = einsum(q.float(), k.float(), "b h i, b k i -> b h k")
-        scaled_qk = qk * globals.attn_scale
+        qk = torch.einsum("b d, b k d -> b k", q.float(), k.float())
+        qk_blocks.append(qk)
+        v_blocks.append(v.float())
 
-        softmax = torch.softmax(scaled_qk, dim=-1)
+    # concatenate along the sequence axis
+    qk_full = torch.cat(qk_blocks, dim=1)
+    v_full  = torch.cat(v_blocks, dim=1)
 
-        out = einsum(softmax.float(), v.float(), "b h k, b k o -> b h o")
+    # full‐sequence softmax
+    scaled = qk_full * globals.attn_scale
+    attn   = torch.softmax(scaled, dim=-1)                       # [B, S]
+    out    = torch.einsum("b s, b s d -> b d", attn, v_full)      # [B, D]
 
-        attn_out_buf += out
-    
-    globals.attn_out[batch_start_idx:batch_end_idx, kv_head_idx*kv_head_dim: (kv_head_idx+1)*kv_head_dim] = attn_out_buf.view(batch_size, -1)
-
-    # Barrier update
-    if include_barriers:
-        next_op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.opcode() - 1]
-        next_op_barriers[0] += globals.attn_reduction_size  # the dumb way
+    out = out.view(batch_size, -1)
+    globals.attn_out[
+        batch_start_idx:batch_end_idx,
+        instruction.kv_head_idx * kv_head_dim : (instruction.kv_head_idx + 1) * kv_head_dim
+    ] = out
 
 
 def pre_mlp_layer_norm(

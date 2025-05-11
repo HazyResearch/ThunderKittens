@@ -94,54 +94,121 @@ def attention(
     kv_cache: KV_Cache,
     position_ids: Tensor,
     seq_len: int,
+    page_table: Tensor,
+    next_free_page: int,
 ) -> Tensor:
     batch_size = key_states.shape[0]
     num_new_tokens = query_states.shape[1]
 
-    k_cache, v_cache = kv_cache
+    # [max_num_pages, num_key_value_heads, kv_page_size, head_dim]
+    B, N_new, H_kv, D = key_states.shape
+    k_cache_layer, v_cache_layer = kv_cache
 
-    if num_new_tokens > 1:
-        for b in range(batch_size):
-            for t in range(seq_len):
-                pos = position_ids[b, t].item()
-                k_cache[b, pos, :, :] = key_states[b, t]
-                v_cache[b, pos, :, :] = value_states[b, t]
-    else:
-        for b in range(batch_size):
-            pos = position_ids[b, 0].item()
-            k_cache[b, pos] = key_states[b, :].squeeze(1)
-            v_cache[b, pos] = value_states[b, :].squeeze(1)
+    bsz, seq_len_new, num_heads_q, head_dim = query_states.shape
+    _, _, num_heads_kv, _ = key_states.shape
+    kv_page_size = k_cache_layer.size(2)
 
-    def shape_for_sdpa(x: Tensor):
+    for b in range(bsz):
+        for t in range(seq_len):
+            block_idx = t // kv_page_size
+            slot = t % kv_page_size
+            pid = page_table[b, block_idx].item()
+            if pid < 0:
+                pid = next_free_page.item()
+                next_free_page += 1
+                page_table[b, block_idx] = pid
+            k_cache_layer[pid, :, slot, :] = key_states[b, t, :, :]
+            v_cache_layer[pid, :, slot, :] = value_states[b, t, :, :]
+
+    #  Flatten pages into full KV sequence
+    used_pages = next_free_page.item()
+    total_tokens = used_pages * kv_page_size
+    k_full = k_cache_layer[:used_pages]  # [used_pages, heads, kv_page_size, head_dim]
+    v_full = v_cache_layer[:used_pages]
+    # reshape -> [total_tokens, heads, head_dim]
+    k_flat = k_full.reshape(total_tokens, num_heads_kv, head_dim)
+    v_flat = v_full.reshape(total_tokens, num_heads_kv, head_dim)
+
+    # broadcast across batch
+    k_batched = k_flat.unsqueeze(0).expand(bsz, -1, -1, -1)
+    v_batched = v_flat.unsqueeze(0).expand(bsz, -1, -1, -1)
+
+    def shape_sdpa(x: Tensor):
         return rearrange(x, "b l h d -> b h l d")
 
-    def unshape_for_sdpa(x: Tensor):
+    q_s = shape_sdpa(query_states)
+    k_s = shape_sdpa(k_batched)
+    v_s = shape_sdpa(v_batched)
+
+    attn_out = F.scaled_dot_product_attention(
+        q_s, k_s, v_s, is_causal=False, enable_gqa=True
+    )  # [B, heads, new_len, head_dim]
+
+    return rearrange(attn_out, "b h l d -> b l h d")
+
+
+def attention(
+    query_states: Tensor,
+    key_states:   Tensor,
+    value_states: Tensor,
+    kv_cache:     KV_Cache,
+    position_ids: Tensor,
+    page_table:   Tensor,
+    next_free_page: Tensor # scalar tensor
+) -> Tensor:
+    k_cache_layer, v_cache_layer = kv_cache
+    B, N_new, _, _ = key_states.shape
+    page_size = k_cache_layer.size(2)
+
+    for b in range(B):
+        for i in range(N_new):
+            pos       = position_ids[b, i].item()
+            block_idx = pos // page_size
+            slot      = pos % page_size
+
+            pid = page_table[b, block_idx].item()
+            if pid < 0:
+                pid = next_free_page.item()
+                page_table[b, block_idx] = pid
+                next_free_page += 1
+
+            # safe because i < N_new
+            k_cache_layer[pid, :, slot, :] = key_states[b, i, :, :]
+            v_cache_layer[pid, :, slot, :] = value_states[b, i, :, :]
+
+    # 2) Flatten all used pages into one long sequence for SDPA
+    used_pages = next_free_page.item()
+    # (used_pages, heads, page_size, head_dim) -> (1, used_pages*page_size, heads, head_dim)
+    k_seq = rearrange(
+        k_cache_layer[:used_pages],
+        "p h s d -> 1 (p s) h d"
+    )
+    v_seq = rearrange(
+        v_cache_layer[:used_pages],
+        "p h s d -> 1 (p s) h d"
+    )
+
+    def shape_for_sdpa(x: Tensor) -> Tensor:
+        return rearrange(x, "b l h d -> b h l d")
+
+    def unshape_for_sdpa(x: Tensor) -> Tensor:
         return rearrange(x, "b h l d -> b l h d")
+        
+    # 3) Shape for SDPA
+    q_sdpa = shape_for_sdpa(query_states)
+    k_sdpa = shape_for_sdpa(k_seq)
+    v_sdpa = shape_for_sdpa(v_seq)
 
-    if num_new_tokens > 1:
-        k_for_sdpa = shape_for_sdpa(key_states)
-        v_for_sdpa = shape_for_sdpa(value_states)
+    # 4) Scaled‐dot‐product attention
+    is_prefill = (N_new > 1)
+    attn_out = F.scaled_dot_product_attention(
+        q_sdpa, k_sdpa, v_sdpa,
+        is_causal=is_prefill,
+        enable_gqa=True,
+    )   
 
-        q_for_sdpa = shape_for_sdpa(query_states)
-
-        # assume running prefill from scratch
-        attn_output = F.scaled_dot_product_attention(
-            q_for_sdpa, k_for_sdpa, v_for_sdpa, is_causal=True, enable_gqa=True
-        )
-    else:
-        # decode
-        k_for_sdpa = shape_for_sdpa(k_cache[:, :seq_len])
-        v_for_sdpa = shape_for_sdpa(v_cache[:, :seq_len])
-
-        q_for_sdpa = shape_for_sdpa(query_states)
-
-        attn_output = F.scaled_dot_product_attention(
-            q_for_sdpa, k_for_sdpa, v_for_sdpa, is_causal=False, enable_gqa=True
-        )
-
-    reshaped_attn_output = unshape_for_sdpa(attn_output)
-    return reshaped_attn_output
-
+    # 5) Unshape back to (B, N_new, heads, head_dim)
+    return unshape_for_sdpa(attn_out)
 
 def rotate_half_interleaved(x):
     """Rotates half the hidden dims of the input."""
@@ -240,6 +307,8 @@ class LlamaAttention(nn.Module):
         )
 
         self.kv_cache: KV_Cache | None = None
+        self.page_table: Tensor | None = None
+        self.next_free_page: int | None = None
 
     def forward(
         self,
@@ -286,14 +355,15 @@ class LlamaAttention(nn.Module):
 
         query_states = query_states.to(dtype)
         key_states = key_states.to(dtype)
-
+        
         raw_attn_output = attention(
             query_states,
             key_states,
             value_states,
             self.kv_cache,
             batch_state.position_ids,
-            seq_len=batch_state.seq_len,
+            page_table=self.page_table,
+            next_free_page=self.next_free_page,
         )
 
         attn_output = raw_attn_output.reshape(bsz, seq_len, -1)
@@ -559,13 +629,14 @@ class LlamaForCausalLM(nn.Module):
         return out
 
     def setup_caches(self):
+        max_num_pages = self.extra_config.max_batch_size * self.extra_config.max_blocks_per_sequence
+
         k_cache = torch.zeros(
             (
                 self.config.num_hidden_layers,
-                self.extra_config.max_batch_size,
-                self.extra_config.max_len_override
-                or self.config.max_position_embeddings,
+                max_num_pages,
                 self.config.num_key_value_heads,
+                self.extra_config.kv_page_size,
                 self.config.head_dim,
             ),
             device=self.device,
@@ -574,13 +645,26 @@ class LlamaForCausalLM(nn.Module):
         v_cache = k_cache.clone()
 
         self.stacked_kv_cache = (k_cache, v_cache)
-
-        for layer_idx in range(self.config.num_hidden_layers):
-            layer: LlamaBlock = self.model.layers[layer_idx]  # type: ignore
-            layer.self_attn.kv_cache = (
+        self.page_table = torch.full(
+            (self.extra_config.max_batch_size, self.extra_config.max_blocks_per_sequence),
+            -1,
+            device=self.device,
+            dtype=torch.int32,
+        )
+        self.next_free_page = torch.zeros(
+            (), dtype=torch.int32, device=self.device
+        )
+        
+        for layer_idx, layer in enumerate(self.model.layers):
+            attn = layer.self_attn
+            attn.kv_cache = (
                 self.stacked_kv_cache[0][layer_idx],
                 self.stacked_kv_cache[1][layer_idx],
             )
+            attn.page_table = self.page_table
+            attn.next_free_page = self.next_free_page
+        
+
 
     def to(self, device: DeviceType | None = None, dtype: torch.dtype | None = None):  # type: ignore
         if device is not None:

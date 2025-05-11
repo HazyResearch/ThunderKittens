@@ -53,3 +53,7 @@ class ExtraModelConfig:
     max_batch_size: int | None = None
 
     unsqueeze_dim: int = 2  # 1 for single batch
+
+    # paged kv cache
+    max_blocks_per_sequence: int = 1
+    kv_page_size: int = 22
