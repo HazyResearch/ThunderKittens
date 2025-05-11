@@ -34,7 +34,6 @@ namespace kittens::prototype::vm
             int row; // NEEDS TO BE IN OFFSETS OF 64!!
             int col;
             int iters;
-            int batch_head_idx; // in units of 128
 
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
@@ -42,7 +41,6 @@ namespace kittens::prototype::vm
                 row = instruction[2];
                 col = instruction[3];
                 iters = instruction[4];
-                batch_head_idx = instruction[5];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -195,22 +193,22 @@ namespace kittens::prototype::vm
                         tma::load_async(b, g.qkv_weights, {inst.col, i}, inputs_arrived(s, pipeline_stage));
                     } else if (laneid() == 3 && i == inst.iters - 1) { // If last iteration, load routing table
                         int next_stage = ring_advance<PIPELINE_STAGES>(pipeline_stage);
-                        wait(inputs_finished(s, next_stage), get_phasebit<1>(semaphore_bitfield, next_stage));
+                        // wait(inputs_finished(s, next_stage), get_phasebit<1>(semaphore_bitfield, next_stage));
                         wait(outputs_arrived(s, 0), 0);
                         arrive(routing_page_ready(s));
                     } else if (laneid() == 4 && i == inst.iters - 1) {
-                        int next_next_stage = ring_advance<PIPELINE_STAGES>(pipeline_stage, 2);
-                        wait(inputs_finished(s, next_next_stage), get_phasebit<1>(semaphore_bitfield, next_next_stage));
+                        // int next_next_stage = ring_advance<PIPELINE_STAGES>(pipeline_stage, 2);
+                        // wait(inputs_finished(s, next_next_stage), get_phasebit<1>(semaphore_bitfield, next_next_stage));
 
-                        int cos_page = get_cos_page(s, inst);
-                        rope_st &rope_cos_smem = *reinterpret_cast<rope_st *>(s.pages[cos_page].data);
-                        tma::expect(rope_cos_arrived(s), rope_cos_smem);
-                        tma::load_async(rope_cos_smem, g.rope_cos, {0, inst.batch_head_idx, static_cast<int>(g.pos_id), 0}, rope_cos_arrived(s));
+                        // int cos_page = get_cos_page(s, inst);
+                        // rope_st &rope_cos_smem = *reinterpret_cast<rope_st *>(s.pages[cos_page].data);
+                        // tma::expect(rope_cos_arrived(s), rope_cos_smem);
+                        // tma::load_async(rope_cos_smem, g.rope_cos, {0, inst.batch_head_idx, static_cast<int>(g.pos_id), 0}, rope_cos_arrived(s));
 
-                        int sin_page = get_sin_page(s, inst);
-                        rope_st &rope_sin_smem = *reinterpret_cast<rope_st *>(s.pages[sin_page].data);
-                        tma::expect(rope_sin_arrived(s), rope_sin_smem);
-                        tma::load_async(rope_sin_smem, g.rope_sin, {0, inst.batch_head_idx, static_cast<int>(g.pos_id), 0}, rope_sin_arrived(s));
+                        // int sin_page = get_sin_page(s, inst);
+                        // rope_st &rope_sin_smem = *reinterpret_cast<rope_st *>(s.pages[sin_page].data);
+                        // tma::expect(rope_sin_arrived(s), rope_sin_smem);
+                        // tma::load_async(rope_sin_smem, g.rope_sin, {0, inst.batch_head_idx, static_cast<int>(g.pos_id), 0}, rope_sin_arrived(s));
                     }
                         
                     update_phasebit<1>(semaphore_bitfield, pipeline_stage);
@@ -311,43 +309,43 @@ namespace kittens::prototype::vm
                     tensor_load_wait();
 
                     if (inst.col < V_BLK_START) {
-                        rt_fl<16, 64> x1, x2, temp1, temp2, cos, sin;
+                        // rt_fl<16, 64> x1, x2, temp1, temp2, cos, sin;
                         // Load cos and sin
-                        wait(rope_cos_arrived(s), 0);
-                        int cos_page = get_cos_page(s, inst);
-                        rope_st &rope_cos_smem = *reinterpret_cast<rope_st *>(s.pages[cos_page].data);
-                        rope_subtile cos_smem(rope_cos_smem, {warpgroup::warpid(), 0});
-                        warp::load(cos, cos_smem);
+                        // wait(rope_cos_arrived(s), 0);
+                        // int cos_page = get_cos_page(s, inst);
+                        // rope_st &rope_cos_smem = *reinterpret_cast<rope_st *>(s.pages[cos_page].data);
+                        // rope_subtile cos_smem(rope_cos_smem, {warpgroup::warpid(), 0});
+                        // warp::load(cos, cos_smem);
 
-                        wait(rope_sin_arrived(s), 0);
-                        int sin_page = get_sin_page(s, inst);   
-                        rope_st &rope_sin_smem = *reinterpret_cast<rope_st *>(s.pages[sin_page].data);
-                        rope_subtile sin_smem(rope_sin_smem, {warpgroup::warpid(), 0});
-                        warp::load(sin, sin_smem);
+                        // wait(rope_sin_arrived(s), 0);
+                        // int sin_page = get_sin_page(s, inst);   
+                        // rope_st &rope_sin_smem = *reinterpret_cast<rope_st *>(s.pages[sin_page].data);
+                        // rope_subtile sin_smem(rope_sin_smem, {warpgroup::warpid(), 0});
+                        // warp::load(sin, sin_smem);
 
-                        for(int i = 0; i < 128/32; i++) {
-                            #pragma unroll
-                            for(int j = 0; j < 4; j++) {
-                                x1.tiles[0][i].data[j] = acc_rt.tiles[0][i].data[j];
-                                x2.tiles[0][i].data[j] = acc_rt.tiles[0][i+128/32].data[j];
-                            }
-                        }
+                        // for(int i = 0; i < 128/32; i++) {
+                        //     #pragma unroll
+                        //     for(int j = 0; j < 4; j++) {
+                        //         x1.tiles[0][i].data[j] = acc_rt.tiles[0][i].data[j];
+                        //         x2.tiles[0][i].data[j] = acc_rt.tiles[0][i+128/32].data[j];
+                        //     }
+                        // }
 
-                        warp::mul(temp1, x1, cos);
-                        warp::mul(temp2, x2, cos);
-                        warp::mul(x2, x2, -1.f);
-                        warp::mul(x1, x1, sin);
-                        warp::mul(x2, x2, sin);
-                        warp::add(temp1, temp1, x2);
-                        warp::add(temp2, temp2, x1);
+                        // warp::mul(temp1, x1, cos);
+                        // warp::mul(temp2, x2, cos);
+                        // warp::mul(x2, x2, -1.f);
+                        // warp::mul(x1, x1, sin);
+                        // warp::mul(x2, x2, sin);
+                        // warp::add(temp1, temp1, x2);
+                        // warp::add(temp2, temp2, x1);
 
-                        for(int i = 0; i < 128/32; i++) {
-                            #pragma unroll
-                            for(int j = 0; j < 4; j++) {
-                                acc_rt.tiles[0][i].data[j] = temp1.tiles[0][i].data[j];
-                                acc_rt.tiles[0][i+128/32].data[j] = temp2.tiles[0][i].data[j];
-                            }
-                        }
+                        // for(int i = 0; i < 128/32; i++) {
+                        //     #pragma unroll
+                        //     for(int j = 0; j < 4; j++) {
+                        //         acc_rt.tiles[0][i].data[j] = temp1.tiles[0][i].data[j];
+                        //         acc_rt.tiles[0][i+128/32].data[j] = temp2.tiles[0][i].data[j];
+                        //     }
+                        // }
                     }
 
                     warp::copy(out_bf16, acc_rt);
@@ -382,44 +380,72 @@ namespace kittens::prototype::vm
                 wait(routing_page_ready(s), 0);
                 int routing_page = get_routing_page(s, inst);
                 routing_sv &routing_vec = *reinterpret_cast<routing_sv *>(s.pages[routing_page].data);
-                warp::load(routing_vec, g.routing_table, {0, 0});
+                // warp::load(routing_vec, g.routing_table, {0, 0});
 
                 if (laneid() < 2)
+                // if (laneid() > 64)
+                // if (laneid() == 0)
+                // if (laneid() == 1)
                 {
                     wait(outputs_shared(s, laneid()), 0);
                     int store_page = get_store_page(s, inst, laneid());
                     out_tile &output = *reinterpret_cast<out_tile *>(s.pages[store_page].ptr());
+                    // uint32_t output_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&output.data[0]));
+
+                    // for (int i = 0; i < 64; ++i) {
+                    //     for (int j = 0; j < 128; ++j) {
+                    //         // printf("%f ", __bfloat162float(output.data[i * 128 + j]));
+                    //         printf("%f ", __bfloat162float(output.idx(output_ptr, {i, j})));
+                    //     }
+                    //     printf("\n");
+                    // }
 
                     if (inst.col < K_BLK_START) // Q
                     {
-                        tma::store_async(g.q_post_rope, output, {(inst.batch_head_idx) + laneid(), inst.col});
+                        tma::store_async(g.q_post_rope, output, {(inst.row) + laneid(), inst.col});
                     } 
                     else 
                     {
                         int routing_start = laneid() * 64;
                         for (int i = routing_start; i < routing_start + 64; ++i)
                         {                            
-                            int page_idx, slot_idx;
-                            uint32_t page_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&routing_vec.data[i * 2]));
-                            uint32_t slot_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&routing_vec.data[i * 2 + 1]));
-                            move<int>::lds(page_idx, page_ptr);
-                            move<int>::lds(slot_idx, slot_ptr);
+                            // int page_idx, slot_idx;
+                            // uint32_t page_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&routing_vec.data[i * 2]));
+                            // uint32_t slot_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&routing_vec.data[i * 2 + 1]));
+                            // move<int>::lds(page_idx, page_ptr);
+                            // move<int>::lds(slot_idx, slot_ptr);
+                            int page_idx = (127 - i); 
+                            int slot_idx = 0;
                             
                             int kv_row_index = i - routing_start;
+                            // kv_row_vec& kv_sv = *reinterpret_cast<kv_row_vec*>(&output.data[kv_row_index * 128]);
                             kv_row_vec* kv_sv = reinterpret_cast<kv_row_vec*>(s.pages[store_page].ptr());
+                            
+                            // kv_row_vec& kv_sv = get_output_buffer(s, inst, store_page, kv_row_index);
+                            // printf("kv_row_index: %d\n", kv_row_index);
+                            // printf("routing_start: %d\n", routing_start);
+                            // printf("Storing to page_idx: %d\n", page_idx);
                             
                             printf("Calculating row idx: %d\n", kv_row_index);
                             if (inst.col < V_BLK_START) // K
                             {
                                 int head_idx = inst.col - K_BLK_START;
+
+                                for (int j = 0; j < 128; j++) {
+                                    printf("%f ", __bfloat162float(kv_sv[kv_row_index].data[j]));
+                                }
+                                printf("\n");
+
+                                
                                 tma::store_async(g.k_cache, kv_sv[kv_row_index], {page_idx, slot_idx, head_idx, 0});
+                                tma::store_async_wait();
                                 tma::store_async_read_wait();
+                                // tma::store_async(g.k_cache, kv_sv, {0, 0});
                             }
                             else // V
                             {
                                 int head_idx = inst.col - V_BLK_START;
-                                tma::store_async(g.v_cache, kv_sv[kv_row_index], {page_idx, slot_idx, head_idx, 0});
-                                tma::store_async_read_wait();
+                                // tma::store_async(g.v_cache, kv_sv, {page_idx, slot_idx, head_idx, 0});
                             }
                             
                             // break;
