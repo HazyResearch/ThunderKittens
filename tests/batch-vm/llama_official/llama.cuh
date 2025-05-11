@@ -112,6 +112,7 @@ namespace kittens::prototype::vm
         activations_t hidden_states;
         activations_t rms_rope_intermediates;
         activations_t rms_gate_intermediates;
+        activations_big_indim_t gate_silu_intermediates;
         activations_t q_post_rope;
         activations_t attn_out;
         activations_big_indim_t silu_out;
