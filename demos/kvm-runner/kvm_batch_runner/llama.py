@@ -86,67 +86,6 @@ def reduce_scatter(x: Tensor, extra_config: ExtraModelConfig):
     torch.distributed.reduce_scatter_tensor(out, x, group=extra_config.tp_group)
     return out
 
-
-def attention(
-    query_states: Tensor,
-    key_states: Tensor,
-    value_states: Tensor,
-    kv_cache: KV_Cache,
-    position_ids: Tensor,
-    seq_len: int,
-    page_table: Tensor,
-    next_free_page: int,
-) -> Tensor:
-    batch_size = key_states.shape[0]
-    num_new_tokens = query_states.shape[1]
-
-    # [max_num_pages, num_key_value_heads, kv_page_size, head_dim]
-    B, N_new, H_kv, D = key_states.shape
-    k_cache_layer, v_cache_layer = kv_cache
-
-    bsz, seq_len_new, num_heads_q, head_dim = query_states.shape
-    _, _, num_heads_kv, _ = key_states.shape
-    kv_page_size = k_cache_layer.size(2)
-
-    for b in range(bsz):
-        for t in range(seq_len):
-            block_idx = t // kv_page_size
-            slot = t % kv_page_size
-            pid = page_table[b, block_idx].item()
-            if pid < 0:
-                pid = next_free_page.item()
-                next_free_page += 1
-                page_table[b, block_idx] = pid
-            k_cache_layer[pid, :, slot, :] = key_states[b, t, :, :]
-            v_cache_layer[pid, :, slot, :] = value_states[b, t, :, :]
-
-    #  Flatten pages into full KV sequence
-    used_pages = next_free_page.item()
-    total_tokens = used_pages * kv_page_size
-    k_full = k_cache_layer[:used_pages]  # [used_pages, heads, kv_page_size, head_dim]
-    v_full = v_cache_layer[:used_pages]
-    # reshape -> [total_tokens, heads, head_dim]
-    k_flat = k_full.reshape(total_tokens, num_heads_kv, head_dim)
-    v_flat = v_full.reshape(total_tokens, num_heads_kv, head_dim)
-
-    # broadcast across batch
-    k_batched = k_flat.unsqueeze(0).expand(bsz, -1, -1, -1)
-    v_batched = v_flat.unsqueeze(0).expand(bsz, -1, -1, -1)
-
-    def shape_sdpa(x: Tensor):
-        return rearrange(x, "b l h d -> b h l d")
-
-    q_s = shape_sdpa(query_states)
-    k_s = shape_sdpa(k_batched)
-    v_s = shape_sdpa(v_batched)
-
-    attn_out = F.scaled_dot_product_attention(
-        q_s, k_s, v_s, is_causal=False, enable_gqa=True
-    )  # [B, heads, new_len, head_dim]
-
-    return rearrange(attn_out, "b h l d -> b l h d")
-
-
 def attention(
     query_states: Tensor,
     key_states:   Tensor,
@@ -664,7 +603,6 @@ class LlamaForCausalLM(nn.Module):
             attn.page_table = self.page_table
             attn.next_free_page = self.next_free_page
         
-
 
     def to(self, device: DeviceType | None = None, dtype: torch.dtype | None = None):  # type: ignore
         if device is not None:
