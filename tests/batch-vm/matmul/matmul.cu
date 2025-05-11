@@ -197,8 +197,8 @@ struct MatmulOp
 
             if (laneid() < 2)
             {
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                 a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                 b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                 mm<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -213,8 +213,8 @@ struct MatmulOp
                 // if (laneid() == 0) printf(GREEN_TEXT "Launcher Passed stage %d\n" RESET_TEXT, pipeline_stage);
                 if (laneid() < 2)
                 {
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                    // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                     a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                     b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                     mma<transpose::N, transpose::T>(accumulator, a, b, inputs_finished(s, pipeline_stage));
@@ -226,8 +226,8 @@ struct MatmulOp
 
             if (laneid() < 2)
             {
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(laneid(), 0);
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, laneid() * 128);
                 a_tile &a = *reinterpret_cast<a_tile *>(s.pages[get_a_page(s, pipeline_stage, laneid())].data);
                 b_tile &b = *reinterpret_cast<b_tile *>(s.pages[get_b_page(s, pipeline_stage)].data);
                 mma<transpose::N, transpose::T>(accumulator, a, b, outputs_arrived(s, laneid()));
@@ -247,8 +247,8 @@ struct MatmulOp
             {
                 wait(outputs_arrived(s, groupid), 0);
 
-                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
-                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
+                // auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(groupid, 0);
+                auto accumulator = s.tensor_alloc.template allocate<tt<float, 64, 128>>(0, groupid * 128);
                 rt_fl<16, 128> acc_rt;
                 rt_bf<16, 128> acc_bf16;
 

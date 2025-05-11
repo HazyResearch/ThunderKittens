@@ -27,10 +27,16 @@ class Globals:
 
     # activation buffers
     hidden_states: Tensor
+    rms_rope_intermediates: Tensor
+    rms_gate_intermediates: Tensor
     post_ln_rope_q: Tensor
     attn_out: Tensor
     silu_out: Tensor
     logits: Tensor
+
+    # paged kv cache
+    page_table: Tensor
+    next_free_page: Tensor
 
     pos_id: int
     attn_scale: float

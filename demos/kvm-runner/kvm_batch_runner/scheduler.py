@@ -47,8 +47,6 @@ def make_globals(
 
     '''
 
-    MAX_BLOCKS_PER_SEQUENCE = 1024
-
     return Globals(
         # model params
         qkv_proj=stacked_params.qkv_proj,
@@ -67,14 +65,18 @@ def make_globals(
 
         # activation buffers
         hidden_states=make_buffer(extra_config.max_batch_size, config.hidden_size),
+        rms_rope_intermediates=make_buffer(extra_config.max_batch_size, config.hidden_size),
+        rms_gate_intermediates=make_buffer(extra_config.max_batch_size, config.hidden_size),
         post_ln_rope_q=make_buffer(extra_config.max_batch_size, config.hidden_size),
         attn_out=make_buffer(extra_config.max_batch_size, config.hidden_size),
         silu_out=make_buffer(extra_config.max_batch_size, config.intermediate_size),
         logits=make_buffer(extra_config.max_batch_size, config.vocab_size),
 
         # paged kv cache
-        page_table=make_buffer(extra_config.max_batch_size, MAX_BLOCKS_PER_SEQUENCE),
-        next_free_page = torch.zeros(1, dtype=torch.uint32, device=device),
+        # page_table=make_buffer(extra_config.max_batch_size, MAX_BLOCKS_PER_SEQUENCE),
+        # next_free_page = torch.zeros(1, dtype=torch.uint32, device=device),
+        page_table=model.page_table,
+        next_free_page=model.next_free_page,
 
         # scalars
         pos_id=0,
@@ -201,7 +203,7 @@ def schedule_layer(
     # INSTRUCTION 3
     # Need to figure out how to give in kv_indices
     if instruction_3:
-        for bidx in range(0, batch_size, globals.batch_block_size):
+        for bidx in range(0, batch_size):
             for kv_head_idx in range(globals.num_kv_heads):
                 instructions.append(
                     AttentionDecode(
@@ -341,7 +343,7 @@ def schedule_model(
 
     if nlayers == globals.num_hidden_layers:
         num_logit_blocks = assert_div(globals.vocab_size, globals.lm_head_block_size)
-        for bidx in range(0, model.extra_config.max_batch_size // globals.batch_block_size, globals.batch_block_size):
+        for bidx in range(0, model.extra_config.max_batch_size, globals.batch_block_size):
             for logit_block_idx in range(num_logit_blocks):
                 instructions.append(RMS_LM_Head(
                     output_block_idx=logit_block_idx,

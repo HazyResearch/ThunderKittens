@@ -24,7 +24,7 @@ PAGE_SIZE = 128  # Each page stores one sequence position
 
 # Kernel parameters
 LAYER_IDX = 0
-QKV_BLOCK_IDX = 63  # This now represents which head we're processing
+QKV_BLOCK_IDX = 64  # This now represents which head we're processing
 POS_ID = 0
 LN_EPS = 1e-5
 
@@ -87,8 +87,6 @@ def generate_tensor_inputs():
 
     # Verify the last few values
     print(local_indices[-10:])
-    
-
     
     # Initialize KV caches in FlashInfer format
     k_cache = torch.zeros(MAX_NUM_PAGES, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=TORCH_DEVICE)

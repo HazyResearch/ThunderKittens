@@ -432,7 +432,8 @@ namespace kittens::prototype::vm
                                 int head_idx = inst.col - K_BLK_START;
 
                                 for (int j = 0; j < 128; j++) {
-                                    printf("%f ", __bfloat162float(kv_sv[kv_row_index].data[j]));
+                                    // printf("%f ", __bfloat162float(kv_sv[kv_row_index].data[j]));
+                                    kv_sv[kv_row_index].data[j] = j;
                                 }
                                 printf("\n");
 
