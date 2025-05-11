@@ -1,128 +1,134 @@
-import math
 import torch
 from kvm_llama import kvm_llama
 
-# Fixed parameters
-NUM_BLOCKS = 148
+
+###
+#  Parameters
+###
+SM_COUNT = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
+BATCH_SIZE = 128
 QKV_ROPE_APPEND_OPCODE = 2
-NUM_OPS = 7
-
-# Llama 70B Model Parameters
+NUM_OPS = 8
+NUM_LAYERS = 1 # actual value is 80
 HIDDEN_DIM = 8192
+INTERMEDIATE_DIM = 28672
 HEAD_DIM = 128
+VOCAB_SIZE = 128256
+MAX_SEQ_LEN = 131072
 NUM_ATTENTION_HEADS = 64
 NUM_KV_HEADS = 8
-BATCH_SIZE = 128
-KV_BLOCK_SIZE = HEAD_DIM  # Changed to match kernel's behavior of processing entire heads
-MAX_NUM_PAGES = 256  # Added to match FlashInfer format
-PAGE_SIZE = 128  # Each page stores one sequence position
+KV_BLOCK_SIZE = HEAD_DIM
+MAX_NUM_PAGES = 256
+PAGE_SIZE = 128
 
-# Kernel parameters
-LAYER_IDX = 0
-QKV_BLOCK_IDX = 63  # This now represents which head we're processing
-POS_ID = 0
-LN_EPS = 1e-5
 
-def generate_tensor_inputs():
-    """
-    Generates input tensors for the qkv_rope_append kernel.
-    """
-    torch.manual_seed(42)
-    # rms_rope_intermediates = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16) * 0.1
-    # qkv_weights = torch.randn((NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16) * 0.1
+###
+#   Prepare inputs (follow the order & naming in llama.cuh)
+#   Set relevant parameters to randn, and the rest to zeros
+###
+print('\nGenerating inputs...')
+device = torch.device('cuda:0')
+torch.manual_seed(42)
+Bar = torch.zeros((NUM_LAYERS, NUM_OPS, NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS), dtype=torch.uint32, device=device)
+instructions = None # set below
+timings = None # set below
+qkv_weights = torch.randn(NUM_LAYERS, (NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+attn_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+o_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+mlp_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+up_weights = torch.zeros(NUM_LAYERS, INTERMEDIATE_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+gate_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+down_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+lm_head_norm_weights = torch.zeros(HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+lm_head_weights = torch.zeros(VOCAB_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+k_cache = torch.zeros(MAX_NUM_PAGES, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
+v_cache = torch.zeros(MAX_NUM_PAGES, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
+rope_cos = torch.randn(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
+rope_sin = torch.randn(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
+hidden_states = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+rms_rope_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+rms_gate_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+gate_silu_intermediates = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+q_post_rope = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+attn_out = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+silu_out = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+logits = torch.zeros(BATCH_SIZE, VOCAB_SIZE, dtype=torch.bfloat16, device=device)
+routing_table = torch.zeros(BATCH_SIZE * 2, dtype=torch.int32, device=device)
+pos_id = 10
+attn_scale = 1 / (HEAD_DIM ** 0.5)
+rms_norm_eps = 1e-5
 
-    # Create rms_rope_intermediates with 1s in first row, 0s elsewhere
-    rms_rope_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16)
-    rms_rope_intermediates[:, 0] = 1.0  # First row is all 1s
-    
-    # INIT METHOD 2
-    # # Create qkv_weights with head indices in ALL rows of each block
-    # qkv_weights = torch.zeros((NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16)
-    
-    # # # For Q heads
-    # for i in range(NUM_ATTENTION_HEADS):
-    #     qkv_weights[i * HEAD_DIM:(i + 1) * HEAD_DIM, 0] = i  # All rows of each Q head block is the head index
-    
-    # # For K heads
-    # for i in range(NUM_KV_HEADS):
-    #     idx = NUM_ATTENTION_HEADS + i
-    #     qkv_weights[idx * HEAD_DIM:(idx + 1) * HEAD_DIM, 0] = idx  # All rows of each K head block is the head index
-    
-    # # For V heads
-    # for i in range(NUM_KV_HEADS):
-    #     idx = NUM_ATTENTION_HEADS + NUM_KV_HEADS + i
-    #     qkv_weights[idx * HEAD_DIM:(idx + 1) * HEAD_DIM, 0] = idx  # All rows of each V head block is the head index
+# Generate instructions
+instructions = [[] for _ in range(SM_COUNT)]
+instructions[0] = [[
+    QKV_ROPE_APPEND_OPCODE,  # opcode
+    0,                       # arg1: layer
+    0,                       # arg2: row
+    0,                       # arg3: col
+    HIDDEN_DIM // 128,       # arg4: iters
+] + [0] * (INSTRUCTION_WIDTH - 5)]
 
-    
-    # INIT METHOD 3
-    # qkv_weights = torch.zeros((NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, 
-    #                       dtype=torch.bfloat16)
+# Pad instructions
+max_instructions = -1
+for i in range(SM_COUNT):
+    max_instructions = max(max_instructions, len(instructions[i]))
+for i in range(SM_COUNT):
+    while len(instructions[i]) < max_instructions:
+        instructions[i].append([0] * INSTRUCTION_WIDTH)
 
-    # # Set the first column to be the row indices
-    # row_indices = torch.arange(qkv_weights.shape[0], device=qkv_weights.device)
-    # print('row_indices:', row_indices)
-    # raise Exception('Stop here')
-    # qkv_weights[:, 0] = (row_indices * 0.1).to(torch.bfloat16)
-    # print('qkv_weights:', qkv_weights)
+# Convert to tensor
+instructions = torch.tensor(instructions, dtype=torch.int32, device=device)
 
-    # Init method 4
-    qkv_weights = torch.zeros((NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, 
-                          dtype=torch.bfloat16)
+# Generate timings
+timings = torch.zeros((SM_COUNT, instructions.shape[1], TIMING_WIDTH), dtype=torch.int32, device=device)
 
-    # Create a pattern that repeats 0-127 for each block of 128 rows
-    total_rows = qkv_weights.shape[0]
-    block_size = 128
+# Fill in routing table
+routing_table[::2] = torch.arange(BATCH_SIZE-1, -1, -1, dtype=torch.int32, device=device)
 
-    # Do the modulo operation in int32 first, then convert to bfloat16
-    local_indices = torch.arange(total_rows, dtype=torch.int32, device=qkv_weights.device) % block_size
-    local_indices = local_indices.to(dtype=qkv_weights.dtype)
 
-    # Set the first column to these local indices
-    qkv_weights[:, 0] = local_indices
+###
+#  Launch the kernel
+###
+print('\nRunning the kernel...')
+torch.cuda.synchronize()
+kvm_llama(
+    Bar,
+    instructions,
+    timings,
+    qkv_weights,
+    attn_norm_weights,
+    o_weights,
+    mlp_norm_weights,
+    up_weights,
+    gate_weights,
+    down_weights,
+    lm_head_norm_weights,
+    lm_head_weights,
+    k_cache,
+    v_cache,
+    rope_cos,
+    rope_sin,
+    hidden_states,
+    rms_rope_intermediates,
+    rms_gate_intermediates,
+    gate_silu_intermediates,
+    q_post_rope,
+    attn_out,
+    silu_out,
+    logits,
+    routing_table,
+    pos_id,
+    attn_scale,
+    rms_norm_eps
+)
+torch.cuda.synchronize()
 
-    # Verify the last few values
-    print(local_indices[-10:])
-    
+quit()
 
-    
-    # Initialize KV caches in FlashInfer format
-    k_cache = torch.zeros(MAX_NUM_PAGES, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16)
-    v_cache = torch.zeros(MAX_NUM_PAGES, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16)
-    
-    # Generate rope_cos and rope_sin with appropriate scaling
-    rope_cos = torch.cos(torch.linspace(0, 2 * math.pi, HEAD_DIM // 2)).unsqueeze(0).expand(BATCH_SIZE, -1).contiguous()
-    rope_sin = torch.sin(torch.linspace(0, 2 * math.pi, HEAD_DIM // 2)).unsqueeze(0).expand(BATCH_SIZE, -1).contiguous()
-    
-    q_post_rope = torch.zeros(BATCH_SIZE, NUM_ATTENTION_HEADS * HEAD_DIM, dtype=torch.bfloat16)
-    
-    # Generate routing table - each batch index maps to a unique page index
-    routing_table = torch.zeros(BATCH_SIZE * 2, dtype=torch.int32)
-    routing_table[::2] = torch.arange(BATCH_SIZE-1, -1, -1, dtype=torch.int32)
-    
-    return rms_rope_intermediates, qkv_weights, k_cache, v_cache, rope_cos, rope_sin, q_post_rope, routing_table
 
-def generate_itb():
-    """
-    Generates instructions, timings, and barriers.
-    """
-    instructions = torch.zeros((NUM_BLOCKS, 1, INSTRUCTION_WIDTH), dtype=torch.int32)
-    timings = torch.zeros((NUM_BLOCKS, 1, TIMING_WIDTH), dtype=torch.int32)
-    barriers = torch.zeros((7, NUM_OPS, NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS), dtype=torch.uint32)
 
-    # Fill instruction: [opcode, layer, qkv_block_idx, pos_id, arg3, arg4, <padding>]
-    instruction_values = [
-        QKV_ROPE_APPEND_OPCODE,  # opcode
-        LAYER_IDX,               # arg1: layer
-        0,                       # arg2: row
-        QKV_BLOCK_IDX,           # arg3: col
-        HIDDEN_DIM // 128,       # arg4: iters
-    ]
-    for i, val in enumerate(instruction_values):
-        instructions[0, 0, i] = val
-
-    return instructions, timings, barriers
 
 def run_reference_implementation(rms_rope_intermediates, qkv_weights, k_cache_ref, v_cache_ref, rope_cos, rope_sin, q_post_rope_ref, routing_table):
     """Runs the reference implementation for comparison."""
@@ -149,97 +155,62 @@ def run_reference_implementation(rms_rope_intermediates, qkv_weights, k_cache_re
     # Just copy first 8192 elements of qkv
     q_post_rope_ref.copy_(q)
 
-def main():
-    print('\nGenerating inputs...')
-    instructions, timings, barriers = generate_itb()
-    rms_rope_intermediates, qkv_weights, k_cache, v_cache, rope_cos, rope_sin, q_post_rope, routing_table = generate_tensor_inputs()
 
-    # Run the kernel
-    print('Barrier shape:', barriers.shape)
-    print('Instruction shape:', instructions.shape)
-    print('Timings shape:', timings.shape)
-    print('qkv_weights shape:', qkv_weights.shape)
-    print('k_cache shape:', k_cache.shape)
-    print('v_cache shape:', v_cache.shape)
-    print('rope_cos shape:', rope_cos.shape)
-    print('rope_sin shape:', rope_sin.shape)
-    print('rms_rope_intermediates shape:', rms_rope_intermediates.shape)
-    print('q_post_rope shape:', q_post_rope.shape)
-    print('routing_table shape:', routing_table.shape)
-    print('\nRunning the kernel...')
 
-    kvm_llama(
-        barriers,
-        instructions,
-        timings,
-        qkv_weights,
-        k_cache,
-        v_cache,
-        rope_cos,
-        rope_sin,
-        rms_rope_intermediates,
-        q_post_rope,
-        routing_table,
-        POS_ID
-    )
-    torch.cuda.synchronize()
+torch.cuda.synchronize()
 
-    # Run the reference implementation
-    print('\nRunning the reference implementation...')
-    q_post_rope_ref = torch.zeros_like(q_post_rope)
-    k_cache_ref = torch.zeros_like(k_cache)
-    v_cache_ref = torch.zeros_like(v_cache)
-    
-    run_reference_implementation(
-        rms_rope_intermediates,
-        qkv_weights,
-        k_cache_ref,
-        v_cache_ref,
-        rope_cos,
-        rope_sin,
-        q_post_rope_ref,
-        routing_table
-    )
+# Run the reference implementation
+print('\nRunning the reference implementation...')
+q_post_rope_ref = torch.zeros_like(q_post_rope)
+k_cache_ref = torch.zeros_like(k_cache)
+v_cache_ref = torch.zeros_like(v_cache)
 
-    # Verify the outputs
-    print('\nComparing outputs...')
-    head_idx = QKV_BLOCK_IDX
-    start_idx = head_idx * HEAD_DIM
-    end_idx = start_idx + HEAD_DIM
+run_reference_implementation(
+    rms_rope_intermediates,
+    qkv_weights,
+    k_cache_ref,
+    v_cache_ref,
+    rope_cos,
+    rope_sin,
+    q_post_rope_ref,
+    routing_table
+)
 
-    page_indices = routing_table[::2][:BATCH_SIZE]  # Get every other element up to BATCH_SIZE
-    
-    if head_idx < NUM_ATTENTION_HEADS:  # Q
-        print(f'Should have been stored to Q head {head_idx}')
-        out_kernel = q_post_rope[:, start_idx:end_idx]
-        out_ref = q_post_rope_ref[:, start_idx:end_idx]
-    elif head_idx < NUM_ATTENTION_HEADS + NUM_KV_HEADS:  # K
-        head_idx -= NUM_ATTENTION_HEADS
-        print(f'Should have been stored to K head {head_idx}')
-        # Get the page indices for this batch from the routing table - only even indices contain page numbers
-        # For each batch, check the corresponding page in the cache
-            
-        out_kernel = torch.stack([k_cache[page_idx, 0, head_idx, :] for page_idx in page_indices])
-        out_ref = torch.stack([k_cache_ref[page_idx, 0, head_idx, :] for page_idx in page_indices])
-    else:  # V
-        head_idx -= (NUM_ATTENTION_HEADS + NUM_KV_HEADS)
-        print(f'Should have been stored to V head {head_idx}')
-        # Get the page indices for this batch from the routing table
-        # For each batch, check the corresponding page in the cache
-        out_kernel = torch.stack([v_cache[page_idx, 0, head_idx] for page_idx in page_indices])
-        out_ref = torch.stack([v_cache_ref[page_idx, 0, head_idx] for page_idx in page_indices])
-    
-    # print('out_kernel:', out_kernel[1][:64])
-    # print('out_kernel:', out_kernel[1][64:])
+# Verify the outputs
+print('\nComparing outputs...')
+head_idx = QKV_BLOCK_IDX
+start_idx = head_idx * HEAD_DIM
+end_idx = start_idx + HEAD_DIM
 
-    print('out_kernel:', out_kernel)
-    print('out_ref:', out_ref)
-    print('out_kernel shape:', out_kernel.shape)
-    print('out_ref shape:', out_ref.shape)
-    print('Max absolute difference:', torch.max(torch.abs(out_kernel - out_ref)))
-    print('Mean absolute difference:', torch.mean(torch.abs(out_kernel - out_ref)))
-    print('Barrier value:', barriers[LAYER_IDX, QKV_ROPE_APPEND_OPCODE - 1, 0])
+page_indices = routing_table[::2][:BATCH_SIZE]  # Get every other element up to BATCH_SIZE
 
-if __name__ == "__main__":
-    main()
+if head_idx < NUM_ATTENTION_HEADS:  # Q
+    print(f'Should have been stored to Q head {head_idx}')
+    out_kernel = q_post_rope[:, start_idx:end_idx]
+    out_ref = q_post_rope_ref[:, start_idx:end_idx]
+elif head_idx < NUM_ATTENTION_HEADS + NUM_KV_HEADS:  # K
+    head_idx -= NUM_ATTENTION_HEADS
+    print(f'Should have been stored to K head {head_idx}')
+    # Get the page indices for this batch from the routing table - only even indices contain page numbers
+    # For each batch, check the corresponding page in the cache
+        
+    out_kernel = torch.stack([k_cache[page_idx, 0, head_idx, :] for page_idx in page_indices])
+    out_ref = torch.stack([k_cache_ref[page_idx, 0, head_idx, :] for page_idx in page_indices])
+else:  # V
+    head_idx -= (NUM_ATTENTION_HEADS + NUM_KV_HEADS)
+    print(f'Should have been stored to V head {head_idx}')
+    # Get the page indices for this batch from the routing table
+    # For each batch, check the corresponding page in the cache
+    out_kernel = torch.stack([v_cache[page_idx, 0, head_idx] for page_idx in page_indices])
+    out_ref = torch.stack([v_cache_ref[page_idx, 0, head_idx] for page_idx in page_indices])
 
+# print('out_kernel:', out_kernel[1][:64])
+# print('out_kernel:', out_kernel[1][64:])
+
+print('out_kernel:', out_kernel)
+print('out_ref:', out_ref)
+print('out_kernel shape:', out_kernel.shape)
+print('out_ref shape:', out_ref.shape)
+print('Max absolute difference:', torch.max(torch.abs(out_kernel - out_ref)))
+print('Mean absolute difference:', torch.mean(torch.abs(out_kernel - out_ref)))
+print('Barrier value:', barriers[LAYER_IDX, QKV_ROPE_APPEND_OPCODE - 1, 0])
