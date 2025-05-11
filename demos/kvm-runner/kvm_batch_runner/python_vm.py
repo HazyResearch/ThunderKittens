@@ -216,6 +216,11 @@ def attention_decode(globals: Globals, instruction: AttentionDecode):
         instruction.kv_head_idx * kv_head_dim : (instruction.kv_head_idx + 1) * kv_head_dim
     ] = out
 
+     # Barrier update
+    if include_barriers:
+        next_op_barriers = globals.barriers[instruction.layer_idx, instruction.batch_start_idx, instruction.opcode() - 1]
+        next_op_barriers[0] += globals.attn_reduction_size  # the dumb way
+
 
 def pre_mlp_layer_norm(
     globals: Globals, instruction: PreMLPLayerNorm
