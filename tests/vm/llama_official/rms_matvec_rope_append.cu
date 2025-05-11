@@ -136,7 +136,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_AT_GMEM_STORE);
 
                     tma::store_async_wait();              // not just read wait! full wait! must be visible in global!
-                    asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
+                    // asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx / 4}], 1);
                     s.record(TEVENT_DONE_GMEM_STORE);
