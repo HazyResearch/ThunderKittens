@@ -394,7 +394,8 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #ifdef KITTENS_TIMINGS
             if(threadIdx.x < 64) {
                 if(ps.timings[threadIdx.x] != 0) {
-                    globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, (int)(threadIdx.x)}] = (int)(ps.timings[threadIdx.x] - kernel_start);
+                    globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, (int)(threadIdx.x)}] = (uint32_t)(ps.timings[threadIdx.x]);
+                    // globals.timings[kittens::coord<>{(int)(blockIdx.x), ps.task_iter, (int)(threadIdx.x)}] = (int)(ps.timings[threadIdx.x] - kernel_start);
                     ps.timings[threadIdx.x] = 0;
                 }
             }

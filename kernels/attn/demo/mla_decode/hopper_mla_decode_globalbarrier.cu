@@ -55,6 +55,49 @@ struct config {
         dim3 block() { return dim3((8+4)*WARP_THREADS); }
     };
 };
+template<int Q_HEADS=16>
+struct config_partial {
+    struct globals {
+        using instructions_global = instructions_global;
+        instructions_global instructions;
+        q_global Q;
+        qv_global QV;
+        kcache_global K_cache;
+        vcache_global V_cache;
+        table_global Table;
+        o_global O;
+        o_scratch_global<Q_HEADS> O_scratch;
+        lvec_scratch_global<Q_HEADS> Lvec_scratch;
+        semaphore_global semaphore;
+        const float Softmax_scale;
+        int tic;
+#ifdef KITTENS_TIMINGS
+        gl<int, 1, -1, -1, 64> timings;
+#endif
+        int dynamic_shared_memory() { return 226000; }
+        dim3 grid()  { return dim3(132); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
+        dim3 block() { return dim3((8+4)*WARP_THREADS); }
+    };
+};
+template<int Q_HEADS=16>
+struct config_reduction {
+    struct globals {
+        using instructions_global = instructions_global;
+        instructions_global instructions;
+        o_global O;
+        o_scratch_global<Q_HEADS> O_scratch;
+        lvec_scratch_global<Q_HEADS> Lvec_scratch;
+        semaphore_global semaphore;
+        const float Softmax_scale;
+        int tic;
+#ifdef KITTENS_TIMINGS
+        gl<int, 1, -1, -1, 64> timings;
+#endif
+        int dynamic_shared_memory() { return 226000; }
+        dim3 grid()  { return dim3(132); } //dim3(Q.batch * ((Q.depth + 3) / 4)); }
+        dim3 block() { return dim3((8+4)*WARP_THREADS); }
+    };
+};
 
 __device__ static inline uint64_t my_clock() {
     uint64_t time;
@@ -254,21 +297,6 @@ struct partial_template {
                 __syncwarp();
                 warp::tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
-            if(group<8>::warpid() == 0) tma::store_async_wait(); // not just read wait
-            asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
-            group<8>::sync(10);
-            if(args.common.dst.batch_idx < 0) {
-                if(group<8>::laneid() < 4 && args.common.dst.seq_idx + group<8>::laneid() < args.globals.O_scratch.depth()) {
-                    // Todo: this can probably replaced by a st.async, which may prevent an expensive wait on the final finish barrier.
-                    args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}] = args.globals.tic;
-                    // For blackwell
-                    // asm volatile(
-                    //     "st.async.global.b32 [%0], %1;\n"
-                    // ::  "l"(&args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx + group<8>::laneid()}]), "r"(args.globals.tic)
-                    // :   "memory"
-                    // );
-                }
-            }
             warpgroup::arrive(args.finish_finished, WARPGROUP_WARPS); // done!
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 32) args.timings[63] = my_clock();
@@ -277,9 +305,10 @@ struct partial_template {
     };
 };
 
-template<int Q_HEADS=16>
+template<int Q_HEADS=16, typename _config=config<Q_HEADS>>
 struct reduction_layout {
-    using globals = config<Q_HEADS>::globals;
+    using config = _config;
+    using globals = config::globals;
     struct input_block   { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; sv_fl<16> padding[15]; };
     struct scratch_block { st_fl<16, QVO_D/8> o[8]; sv_fl<16> lvec; semaphore producer_block; }; // used both for setup load and finish store
     struct common_state {
@@ -294,10 +323,10 @@ struct reduction_layout {
     };
 };
 
-template<int Q_HEADS=16>
+template<int Q_HEADS=16, typename _config=config<Q_HEADS>>
 struct reduction_template {
-    using config = config<Q_HEADS>;
-    using layout = reduction_layout<Q_HEADS>;
+    using config = _config;
+    using layout = reduction_layout<Q_HEADS, config>;
     static constexpr int opcode = 2;
     static constexpr int INPUT_PIPE_STAGES = 4;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -500,7 +529,7 @@ float get_quality(const std::vector<float>& next_times_input, int num_processors
 
 PYBIND11_MODULE(mla_decode, m) {
     m.doc() = "mla_decode python module";
-    kittens::py::bind_kernel<interpreter::kernel<config<16>, partial_template<16>, reduction_template<16>>>(m, "mla_decode",
+    kittens::py::bind_kernel<interpreter::kernel<config<16>, partial_template<16>, reduction_template<16, config<16>>>>(m, "mla_decode",
         &config<16>::globals::instructions,
         &config<16>::globals::Q,
         &config<16>::globals::QV,
@@ -517,7 +546,20 @@ PYBIND11_MODULE(mla_decode, m) {
         , &config<16>::globals::timings
 #endif
     );
-    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8>>>(m, "mla_decode_8_heads",
+    kittens::py::bind_kernel<interpreter::kernel<config_reduction<16>, reduction_template<16, config_reduction<16>>>>(m, "mla_decode_reduction",
+        &config_reduction<16>::globals::instructions,
+        &config_reduction<16>::globals::O,
+        &config_reduction<16>::globals::O_scratch,
+        &config_reduction<16>::globals::Lvec_scratch,
+        &config_reduction<16>::globals::semaphore,
+        &config_reduction<16>::globals::Softmax_scale,
+        &config_reduction<16>::globals::tic
+#ifdef KITTENS_TIMINGS
+        , &config_reduction<16>::globals::timings
+#endif
+    );
+    
+    kittens::py::bind_kernel<interpreter::kernel<config<8>, partial_template<8>, reduction_template<8, config<8>>>>(m, "mla_decode_8_heads",
         &config<8>::globals::instructions,
         &config<8>::globals::Q,
         &config<8>::globals::QV,

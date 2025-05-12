@@ -215,6 +215,58 @@ def create_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_
                 Instructions[pid, tid] = merge_arg
     return Instructions, O_scratch, L_scratch, Semaphore, Timings
 
+
+def create_evil_arguments_from_task_schedule(tasks: List[Task], new_tokens: int, num_processors: int = 1, enable_timings: bool = False, q_heads: int = 16):
+    OP_PARTIAL, OP_REDUCTION = 1, 2
+    partial_padding = [0]*23
+
+    def make_partial_arg(task: Task) -> List[int]:
+        return torch.tensor([OP_PARTIAL,
+                task.uid,  # uid
+                -task.uid-1 if task.args["write_scratch"] else task.batch_id,  # destination (negative means write scratch)
+                min(task.tok_ids),  # start token
+                task.batch_id,
+                min(task.tok_ids),  # duplicate start token
+                task.args["start"], task.args["end"], task.args["length"]] + partial_padding, device='cuda', dtype=torch.int32)
+
+    def make_merge_arg(task: Task) -> List[int]:
+        assert(len(task.dependencies) <= 11+16)
+        return torch.tensor([OP_REDUCTION,
+                            task.uid,  # uid
+                            len(task.dependencies)-1,  # number of dependencies minus one
+                            -task.uid-1 if task.args["write_scratch"] else task.batch_id,
+                            task.tok_ids[0]] + task.dependencies + [0]*(32 - 5 - len(task.dependencies)), device='cuda', dtype=torch.int32)
+
+    num_instructions = max(t.uid for t in tasks) + 1
+    processor_tasks = [[] for _ in range(num_processors)]
+    print(f'Number of instructions: {len(tasks)}')
+    for task in tasks:
+        processor_tasks[task.processor].append(task)
+    for pid in range(num_processors):
+        processor_tasks[pid].sort(key=lambda t: t.start)
+    partial_processor_tasks = [[t for t in processor_tasks[p] if t.task_type == "partial"] for p in range(num_processors)]
+    merge_processor_tasks = [[t for t in processor_tasks[p] if t.task_type == "reduction"] for p in range(num_processors)]
+    max_num_partial_instructions = max(len(ptasks) for ptasks in partial_processor_tasks)
+    max_num_reduction_instructions = max(len(ptasks) for ptasks in merge_processor_tasks)
+    print(f'max_num_partial_instructions: {max_num_partial_instructions}, max_num_reduction_instructions: {max_num_reduction_instructions}')
+    PartialInstructions = torch.zeros((num_processors, max_num_partial_instructions, 32), dtype=torch.int32, device='cuda')
+    ReductionInstructions = torch.zeros((num_processors, max_num_reduction_instructions, 32), dtype=torch.int32, device='cuda')
+    O_scratch = torch.zeros((num_instructions, new_tokens, q_heads, 512), dtype=torch.float32, device='cuda')
+    L_scratch = torch.zeros((num_instructions, new_tokens, q_heads), dtype=torch.float32, device='cuda')
+    Semaphore = torch.zeros((num_instructions, new_tokens), dtype=torch.int32, device='cuda')
+    PartialTimings = torch.zeros((num_processors, max_num_partial_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
+    ReductionTimings = torch.zeros((num_processors, max_num_reduction_instructions, 64), dtype=torch.int32, device='cuda') if enable_timings else None
+    torch.cuda.synchronize()
+    for pid in range(num_processors):
+        for tid, task in enumerate(partial_processor_tasks[pid]):
+            partial_arg = make_partial_arg(task)
+            PartialInstructions[pid, tid] = partial_arg
+            Semaphore[task.uid,:] = 1
+        for tid, task in enumerate(merge_processor_tasks[pid]):
+            merge_arg = make_merge_arg(task)
+            ReductionInstructions[pid, tid] = merge_arg
+    return PartialInstructions, ReductionInstructions, O_scratch, L_scratch, Semaphore, PartialTimings, ReductionTimings
+
 def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, chunkings = None, table: list = None) -> List[Task]:
     """
     For demonstration, we schedule one sequence (batch 0) with a specified length.
@@ -222,7 +274,7 @@ def sample_schedule_generator( new_tokens: int = 1, lengths: List[int] = None, c
     The page table is passed in dynamically (if not provided, a default is used).
     """
     if chunkings is None:
-        chunkings = [256 if length < 8192 else 512 for length in lengths]
+        chunkings = [256 if length < 8192 else 384+64 for length in lengths]
     tasks = []
     next_task_id = 0
     # One sequence: (batch_id, length, chunk_pages)

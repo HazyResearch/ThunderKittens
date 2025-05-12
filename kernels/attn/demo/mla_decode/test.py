@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 from scheduler_v2 import backward_schedule
-from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule
+from scheduler import sample_schedule_generator, priority_schedule_tasks, visualize_schedule, create_arguments_from_task_schedule, create_evil_arguments_from_task_schedule
 from timings import save_gantt_chart
 from scheduler_regression import estimate_schedule_length
 
@@ -38,7 +38,7 @@ def init_arguments(seq_lengths: List[int], new_tokens: int, q_heads: int=16):
 
     return QRot, QV, K_cache, V_cache, Lengths, Table
 
-def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
+def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16, evil=False):
     # Processor assignment heuristic: assign processors proportionally to sequence lengths.
     t0 = time.time()
     processor_assignments = [max(math.floor(s / sum(seq_lengths) * NUM_PROCESSORS), 1) for s in seq_lengths]
@@ -72,12 +72,32 @@ def create_thundermla_arguments(seq_lengths, new_tokens, q_heads = 16):
         scheduled_tasks.extend(new_tasks)
     t1 = time.time()
     print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
+    if not evil:
+        Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
+            scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS, q_heads=q_heads
+        )
+        # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
+        return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
+    else:
+        PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore, PartialTimings, ReductionTimings = create_evil_arguments_from_task_schedule(
+            scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS, q_heads=q_heads
+        )
+        return PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore, PartialTimings, ReductionTimings
+
+def create_thundermla_arguments_naive(seq_lengths, new_tokens, q_heads = 16):
+    # Processor assignment heuristic: assign processors proportionally to sequence lengths.
+    t0 = time.time()
+    tasks = sample_schedule_generator(new_tokens, seq_lengths)
+    scheduled_tasks = priority_schedule_tasks(tasks, NUM_PROCESSORS)
+    t1 = time.time()
+    print(f'Time taken to create schedule: {(t1-t0)*1000} ms')
     Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_arguments_from_task_schedule(
         scheduled_tasks, new_tokens, num_processors=NUM_PROCESSORS, enable_timings=ENABLE_TIMINGS, q_heads=q_heads
     )
     # visualize_schedule(scheduled_tasks, NUM_PROCESSORS)
     return Instructions, O_scratch, Lvec_scratch, Semaphore, Timings
 
+    
 def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, tic=None):
     q_heads = QRot.shape[2]
     if tic is None:
@@ -99,6 +119,28 @@ def run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_s
         mla_decode_fn(Instructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1-tic)
     torch.cuda.synchronize()
     return O, Timings
+
+def run_thundermla_evil(QRot, QV, K_cache, V_cache, Lengths, Table, PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore, PartialTimings, ReductionTimings, tic=None):
+    q_heads = QRot.shape[2]
+    # Semaphore.zero_()
+    O = torch.zeros_like(QV)
+    Q_all = torch.concat([QV, QRot], dim=-1).contiguous()
+    KV_all = torch.cat([V_cache, K_cache], dim=-1).contiguous()
+    softmax_scale = 1.0 / math.sqrt(D_Main+D_Rot)
+    stream = torch.cuda.current_stream()
+    torch.cuda.synchronize()
+    mla_decode_fn = mla_decode.mla_decode_8_heads if q_heads == 8 else mla_decode.mla_decode
+    print('Starting EVIL mla_decode')
+    if PartialTimings is not None:
+        mla_decode_fn(PartialInstructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, PartialTimings)
+        mla_decode.mla_decode_reduction(ReductionInstructions, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, ReductionTimings)
+        # mla_decode_fn(ReductionInstructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1, ReductionTimings)
+    else:
+        mla_decode_fn(PartialInstructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
+        mla_decode.mla_decode_reduction(ReductionInstructions, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
+        # mla_decode_fn(ReductionInstructions, QRot, QV, K_cache, V_cache, Table, O, O_scratch, Lvec_scratch, Semaphore, softmax_scale, 1)
+    torch.cuda.synchronize()
+    return O, PartialTimings, ReductionTimings
 
 def profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings, ITERS=100):
     q_heads = QRot.shape[2]
@@ -148,17 +190,26 @@ def main(seq_lengths, new_tokens, q_heads=16):
     seq_lengths = sorted(seq_lengths)
     QRot, QV, K_cache, V_cache, Lengths, Table = init_arguments(seq_lengths, new_tokens, q_heads)
     ref = run_mla_torch(QRot, QV, K_cache, V_cache, Lengths, Table)
-    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, new_tokens, q_heads)
+    # Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments(seq_lengths, new_tokens, q_heads)
+    Instructions, O_scratch, Lvec_scratch, Semaphore, Timings = create_thundermla_arguments_naive(seq_lengths, new_tokens, q_heads)
+    # PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore, PartialTimings, ReductionTimings = create_thundermla_arguments(seq_lengths, new_tokens, q_heads, evil=True)
     O, Timings = run_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+    # Semaphore2 = Semaphore.detach().clone()
+    # O, PartialTimings_evil, ReductionTimings_evil = run_thundermla_evil(QRot, QV, K_cache, V_cache, Lengths, Table, PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore, PartialTimings, ReductionTimings)
+    # O, PartialTimings_evil, ReductionTimings_evil = run_thundermla_evil(QRot, QV, K_cache, V_cache, Lengths, Table, PartialInstructions, ReductionInstructions, O_scratch, Lvec_scratch, Semaphore2, PartialTimings, ReductionTimings)
     print("ref mean:", torch.mean(ref.abs()))
     print("Kernel output mean", torch.mean(O.abs()))
     print("Max absolute diff", torch.max(torch.abs(O - ref)))
     print("Avg absolute diff", torch.mean(torch.abs(O - ref)))
 
-    time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
-    print(f"Time per iter: {time_per_iter*1000} ms")
+    # AllInstructions = torch.cat([PartialInstructions, ReductionInstructions], dim=-2)
+    # AllTimings = torch.cat([PartialTimings_evil, ReductionTimings_evil], dim=-2)
+    # save_gantt_chart(AllTimings, AllInstructions, save_all=False, name='evil', clock_rate=1000)
 
-    save_gantt_chart(Timings, Instructions, save_all=False, name='new')
+    # time_per_iter = profile_thundermla(QRot, QV, K_cache, V_cache, Lengths, Table, Instructions, O_scratch, Lvec_scratch, Semaphore, Timings)
+    # print(f"Time per iter: {time_per_iter*1000} ms")
+
+    save_gantt_chart(Timings, Instructions, save_all=False, name='naive', clock_rate=1000)
 
 if __name__ == "__main__":
     main([4641,45118,1730,1696], 4, 16)
