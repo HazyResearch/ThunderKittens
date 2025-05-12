@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 import huggingface_hub
 import torch
@@ -25,6 +25,15 @@ from transformers.models.llama.modeling_llama import (
 
 KV_Cache = tuple[Tensor, Tensor]
 
+def _store_debug_tensor(debug_outputs: Optional[Dict[str, Tensor]],
+                        key: str,
+                        tensor: Tensor,
+                        clone_detach_cpu: bool = False):
+    if debug_outputs is not None:
+        if clone_detach_cpu:
+            debug_outputs[key] = tensor.clone().detach().cpu()
+        else:
+            debug_outputs[key] = tensor.clone()
 
 class RMSNorm(nn.Module):
     def __init__(self, config: LlamaConfig):
@@ -194,7 +203,10 @@ class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(
-        self, config: LlamaConfig, extra_config: ExtraModelConfig, layer_idx: int
+        self, 
+        config: LlamaConfig, 
+        extra_config: ExtraModelConfig, 
+        layer_idx: int, 
     ):
         super().__init__()
         self.config = config
@@ -252,7 +264,9 @@ class LlamaAttention(nn.Module):
     def forward(
         self,
         batch_state: BatchState,
+        debug_outputs: Optional[Dict[str, Tensor]] = None
     ):
+        # print("In LlamaAttention forward, debug_outputs: ", debug_outputs)
         assert batch_state.hidden_states is not None
         assert batch_state.position_embeddings is not None
         assert batch_state.position_ids is not None
@@ -264,6 +278,7 @@ class LlamaAttention(nn.Module):
 
         hidden_states = self.input_layernorm(inp)   
         hidden_states = all_gather(hidden_states, self.extra_config)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_pre_attn_ln", hidden_states)
         bsz = hidden_states.shape[0]
         seq_len = hidden_states.shape[1]
 
@@ -292,6 +307,15 @@ class LlamaAttention(nn.Module):
             unsqueeze_dim=self.unsqueeze_dim,  # unsqueeze dim = head dim on q/k
         )
 
+        # turn from 128, 1, 64, 128 to 128, 64, 128
+        debug_q_rope = query_states.squeeze(1)
+        debug_k_rope = key_states.squeeze(1)
+        debug_v_rope = value_states.squeeze(1)
+
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_Q_rope", debug_q_rope)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_K_rope", debug_k_rope)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_V_arr", debug_v_rope)
+
         query_states = query_states.to(dtype)
         key_states = key_states.to(dtype)
         
@@ -305,6 +329,9 @@ class LlamaAttention(nn.Module):
             next_free_page=self.next_free_page,
         )
 
+        debug_attn_out = raw_attn_output.squeeze(1)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_attn_out", debug_attn_out)
+
         attn_output = raw_attn_output.reshape(bsz, seq_len, -1)
 
         o_proj = self.o_proj(attn_output)
@@ -313,13 +340,20 @@ class LlamaAttention(nn.Module):
 
         with_residual = residual + o_proj
 
+        debug_with_residual = with_residual.squeeze(1)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_o_proj_residual", debug_with_residual)
+        # print("Debug outputs: ", debug_outputs)
+
         batch_state.hidden_states = with_residual
         return batch_state
 
 
 class LlamaMLP(nn.Module):
     def __init__(
-        self, config: LlamaConfig, extra_config: ExtraModelConfig, layer_idx: int
+        self, 
+        config: LlamaConfig, 
+        extra_config: ExtraModelConfig, 
+        layer_idx: int
     ):
         super().__init__()
         self.config = config
@@ -349,22 +383,32 @@ class LlamaMLP(nn.Module):
     def forward(
         self,
         batch_state: BatchState,
+        debug_outputs: Optional[Dict[str, Tensor]] = None
     ):
         inp = batch_state.hidden_states
         assert inp is not None
         hidden_states = self.input_layernorm(inp)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_pre_mlp_layer_norm", hidden_states)
 
         hidden_states = all_gather(hidden_states, self.extra_config)
 
         up = self.up_proj(hidden_states)
         gate = self.gate_proj(hidden_states)
-        prod = F.silu(gate) * up
-        down = self.down_proj(prod)
+        
+        silu = F.silu(gate)
+        debug_silu= silu.squeeze(1)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_gate_silu", debug_silu)
 
+        prod = up * silu
+        debug_prod = prod.squeeze(1)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_up_matmul", debug_prod)
+
+        down = self.down_proj(prod)
         down = reduce_scatter(down, self.extra_config)
 
         with_residual = inp + down
-
+        debug_with_residual = with_residual.squeeze(1)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_down_proj_residual", debug_with_residual)
         batch_state.hidden_states = with_residual
         return batch_state
 
@@ -381,9 +425,17 @@ class LlamaBlock(nn.Module):
         self.self_attn = LlamaAttention(config, extra_config, layer_idx)
         self.mlp = LlamaMLP(config, extra_config, layer_idx)
 
-    def forward(self, batch_state: BatchState):
-        out = self.self_attn(batch_state)
-        out = self.mlp(out)
+    def forward(
+        self, 
+        batch_state: BatchState,
+        debug_outputs: Optional[Dict[str, Tensor]] = None
+    ):
+        # print("In LlamaBlock forward, debug_outputs: ", debug_outputs)
+        out = self.self_attn(batch_state, debug_outputs)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_Block_AttnOut", out.hidden_states)
+        # print("Debug outputs out of block: ", debug_outputs)
+        out = self.mlp(out, debug_outputs)
+        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_Block_MLPOut", out.hidden_states)
         return out
 
 
@@ -495,7 +547,12 @@ class LlamaModel(nn.Module):
                 mod.q_proj.weight[:] = mod.q_proj.weight[indices_for_q]
                 mod.k_proj.weight[:] = mod.k_proj.weight[indices_for_k]
 
-    def forward(self, batch_state: BatchState):
+    def forward(
+        self, 
+        batch_state: BatchState, 
+        debug_outputs: Optional[Dict[str, Tensor]] = None
+    ):
+        # print("In LlamaModel forward, debug_outputs: ", debug_outputs)
         out: BatchState = self.embed_tokens(batch_state)
         assert self.rope_cos.dtype == torch.float32
         assert self.rope_sin.dtype == torch.float32
@@ -503,8 +560,10 @@ class LlamaModel(nn.Module):
         sin = self.rope_sin[batch_state.position_ids]
         out.position_embeddings = (cos, sin)
 
-        for layer in self.layers:
-            out = layer(out)
+        for idx, layer in enumerate(self.layers):
+            _store_debug_tensor(debug_outputs, f"L{idx}_LlamaModel_In", out.hidden_states)
+            out = layer(out, debug_outputs)
+            _store_debug_tensor(debug_outputs, f"L{idx}_LlamaModel_Out", out.hidden_states)
         return out
 
 
@@ -551,7 +610,9 @@ class LlamaForCausalLM(nn.Module):
         self,
         batch_state: BatchState,
         async_tp: bool = False,
+        debug_outputs: Optional[Dict[str, Tensor]] = None
     ):
+        # print("In LlamaForCausalLM forward, debug_outputs: ", debug_outputs)
         self.async_tp = async_tp
         # making a copy of the input state - needed for cudagraphs + pp,
         # where we need to keep track of references to both the input
@@ -562,8 +623,10 @@ class LlamaForCausalLM(nn.Module):
             hidden_states=batch_state.hidden_states,
             seq_len=batch_state.seq_len,
         )
-        out = self.model(out)
+        out = self.model(out, debug_outputs=debug_outputs)
+        _store_debug_tensor(debug_outputs, "LlamaModel_Out", out.hidden_states)
         out = self.lm_head(out)
+        _store_debug_tensor(debug_outputs, "LlamaLMHead_Out", out.hidden_states)
 
         return out
 
@@ -819,13 +882,13 @@ class LlamaForCausalLM(nn.Module):
             self_attn.k_proj.weight[:] = k_weight
             self_attn.v_proj.weight[:] = v_weight
 
-        print("Qkv weights: ", stacked_qkv_weights.shape)
-        print("O proj weights: ", stacked_o_proj.shape)
-        print("Self attn ln weights: ", stacked_self_attn_ln_weights.shape)
-        print("Mlp ln weights: ", stacked_mlp_ln_weights.shape)
-        print("Up proj weights: ", stacked_up_proj.shape)
-        print("Gate proj weights: ", stacked_gate_proj.shape)
-        print("Down proj weights: ", stacked_down_proj.shape)
+        # print("Qkv weights: ", stacked_qkv_weights.shape)
+        # print("O proj weights: ", stacked_o_proj.shape)
+        # print("Self attn ln weights: ", stacked_self_attn_ln_weights.shape)
+        # print("Mlp ln weights: ", stacked_mlp_ln_weights.shape)
+        # print("Up proj weights: ", stacked_up_proj.shape)
+        # print("Gate proj weights: ", stacked_gate_proj.shape)
+        # print("Down proj weights: ", stacked_down_proj.shape)
 
         self.stacked_params = StackedParams(
             qkv_proj=stacked_qkv_weights,

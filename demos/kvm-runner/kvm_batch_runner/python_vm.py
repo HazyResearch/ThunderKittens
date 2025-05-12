@@ -1,6 +1,4 @@
 import sys
-print(sys.path)
-
 import math
 
 import torch
@@ -32,9 +30,19 @@ from kvm_batch_runner.llama import (
 from kvm_batch_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
 from kvm_batch_runner.utils import trepr
 from torch import Tensor
-
+from typing import Optional, Dict
 
 include_barriers = False
+
+def _store_debug_tensor(debug_outputs: Optional[Dict[str, Tensor]],
+                        key: str,
+                        tensor: Tensor,
+                        clone_detach_cpu: bool = False):
+    if debug_outputs is not None:
+        if clone_detach_cpu:
+            debug_outputs[key] = tensor.clone().detach().cpu()
+        else:
+            debug_outputs[key] = tensor.clone()
 
 def get_start_end(block_size: int, block_idx: int):
     start = block_size * block_idx
@@ -68,7 +76,9 @@ def matmul_with_residual(
     residual += matmul_out
 
 def pre_attn_layer_norm(
-    globals: Globals, instruction: PreLayerNorm
+    globals: Globals,
+    instruction: PreLayerNorm,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
@@ -91,12 +101,17 @@ def pre_attn_layer_norm(
     if include_barriers:
         barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         barriers[0] += 1
-
+    
+    if batch_start_idx == 127:
+        _store_debug_tensor(debug_outputs, f"L{layer_idx}_pre_attn_ln", globals.rms_rope_intermediates)
+    
     # print(f"Done with pre layer norm for layer {layer_idx} and batch {batch_start_idx}")
 
 
 def qkv_matmul_rope_append(
-    globals: Globals, instruction: QKV_MatMulRopeAppend
+    globals: Globals,
+    instruction: QKV_MatMulRopeAppend,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
@@ -139,23 +154,31 @@ def qkv_matmul_rope_append(
     start, end = get_start_end(globals.qkv_block_size, qkv_block_idx)
     if start < k_start:
         globals.post_ln_rope_q[batch_start_idx:batch_end_idx, start:end] = q_with_rope.reshape(batch_size, -1)[:, start:end]
+        if batch_start_idx == 0:
+            debug_q_rope = rearrange(globals.post_ln_rope_q, "b (h d) -> b h d", h=globals.num_attention_heads)
+            _store_debug_tensor(debug_outputs, f"L{layer_idx}_Q_rope", debug_q_rope)
     else:
+       # Each batch needs to go to its own page
        for i in range(batch_size):
             block_idx = pos_id // 128
             slot_idx = pos_id % 128
             pid = globals.page_table[batch_start_idx + i][block_idx]
 
             if pid < 0:
+                # Need to allocate a new page
                 pid = globals.next_free_page.item()
                 globals.page_table[batch_start_idx + i][block_idx] = pid
                 globals.next_free_page[0] += 1
             
-            if start < v_start:
+            # Determine which head to put the key/value in
+            if start < v_start: # Key
                 k_head_idx = (start - k_start) // globals.head_dim
                 globals.k_cache[layer_idx, pid, k_head_idx, slot_idx, :] = k_with_rope[i, k_head_idx, :]
-            else:
+                _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_K_rope", globals.k_cache[layer_idx, pid, :, slot_idx, :])
+            else: # Value
                 v_head_idx = (start - v_start) // globals.head_dim
                 globals.v_cache[layer_idx, pid, v_head_idx, slot_idx, :] = v_arr[i, v_head_idx, :]
+                _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_V_arr", globals.v_cache[layer_idx, pid, :, slot_idx, :])
 
     # Barrier update
     if include_barriers:
@@ -163,8 +186,11 @@ def qkv_matmul_rope_append(
         barriers[qkv_block_idx // 8] += 1
 
 
-def attention_decode(globals: Globals, instruction: AttentionDecode):
-    # unpack
+def attention_decode(
+    globals: Globals,
+    instruction: AttentionDecode,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
     layer_idx       = instruction.layer_idx
     batch_idx       = instruction.batch_start_idx
     kv_head_idx     = instruction.kv_head_idx
@@ -172,7 +198,6 @@ def attention_decode(globals: Globals, instruction: AttentionDecode):
     gqa_ratio   = globals.num_attention_heads // globals.num_kv_heads
     kv_head_dim = globals.hidden_size // globals.num_kv_heads
 
-    # (optional) barrier check, unchanged…
     if include_barriers:
         opb = globals.barriers[layer_idx, batch_idx, instruction.prev_opcode() - 1]
         for i in range(gqa_ratio):
@@ -236,34 +261,51 @@ def attention_decode(globals: Globals, instruction: AttentionDecode):
     out_end   = out_start + kv_head_dim
     globals.attn_out[batch_idx, out_start:out_end] = out_flat
 
+    debug_attn_out = rearrange(globals.attn_out[batch_idx], "(h d) -> h d", h=globals.num_attention_heads)
+    _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{batch_idx}_attn_out", debug_attn_out)
+
     if include_barriers:
         next_opb = globals.barriers[layer_idx, batch_idx, instruction.opcode() - 1]
         next_opb[0] += globals.attn_reduction_size
 
-def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
-    layer_idx = instruction.layer_idx
+def o_proj_residual(
+    globals: Globals,
+    instruction: O_ProjResidual,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
+    layer_idx       = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
-    output_block_idx = instruction.output_block_idx
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
 
-    # Barrier check
+    block_num  = instruction.output_block_idx
+    block_size = globals.o_proj_block_size
+    start      = block_num * block_size
+    end        = start + block_size
+
     if include_barriers:
         op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.prev_opcode() - 1]
         assert op_barriers[0] == globals.num_attention_heads
 
     matmul_with_residual(
-        matA=globals.attn_out[batch_start_idx:batch_end_idx],
-        matB=globals.o_proj[layer_idx, output_block_idx:output_block_idx + 128],
-        residual=globals.hidden_states[batch_start_idx:batch_end_idx, output_block_idx:output_block_idx + 128],
+        matA     = globals.attn_out[batch_start_idx:batch_end_idx],      # [batch, hidden_size]
+        matB     = globals.o_proj[layer_idx, start:end],                 # [block_size, hidden_size]
+        residual = globals.hidden_states[batch_start_idx:batch_end_idx, start:end],  # [batch, block_size]
     )
 
-    # Barrier update
+    _store_debug_tensor(
+        debug_outputs,
+        f"L{layer_idx}_o_proj_residual",
+        globals.hidden_states
+    )
+
     if include_barriers:
         next_op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         next_op_barriers[0] += 1
-        
+
 def pre_mlp_layer_norm(
-    globals: Globals, instruction: PreMLPLayerNorm
+    globals: Globals,
+    instruction: PreMLPLayerNorm,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
@@ -280,106 +322,203 @@ def pre_mlp_layer_norm(
 
     globals.rms_gate_intermediates[batch_start_idx] = post_ln
 
+    if batch_start_idx == 127:
+        _store_debug_tensor(
+            debug_outputs, 
+            f"L{layer_idx}_pre_mlp_layer_norm",
+            globals.rms_gate_intermediates
+        )
+
     # barrier update
     if include_barriers:
         barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         barriers[0] += 1
 
 
-def gate_silu(globals: Globals, instruction: GateSilu):
-    layer_idx = instruction.layer_idx
+def gate_silu(
+    globals: Globals,
+    instruction: GateSilu,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
+    layer_idx       = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
-    output_block_idx = instruction.output_block_idx
-    
-    # Barrier check
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
+
+    block_num  = instruction.output_block_idx
+    block_size = globals.matmul_silu_block_size
+    start      = block_num * block_size
+    end        = start + block_size
+
     if include_barriers:
         op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.prev_opcode() - 1]
-        assert op_barriers[0] == globals.hidden_size
+        assert op_barriers[0] == globals.hidden_size  # e.g. 8192
 
-    matmul_out = matmul(
-        matA=globals.rms_gate_intermediates[batch_start_idx:batch_end_idx],
-        matB=globals.gate_proj[layer_idx, output_block_idx:output_block_idx + 128],
+    # project into gate & apply SiLU
+    matmul_out = matmul( # [B, intermediate]
+        matA = globals.rms_gate_intermediates[batch_start_idx:batch_end_idx],  # [B, hidden]
+        matB = globals.gate_proj[layer_idx, start:end],                        # [intermediate, hidden]
+    )
+    post_silu = F.silu(matmul_out)
+
+    globals.silu_out[batch_start_idx:batch_end_idx, start:end] = post_silu
+
+    _store_debug_tensor(
+        debug_outputs,
+        f"L{layer_idx}_gate_silu",
+        globals.silu_out,
     )
 
-    post_silu = F.silu(matmul_out)
-    globals.silu_out[batch_start_idx:batch_end_idx, output_block_idx:output_block_idx + 128] = post_silu
-
-    # Barrier update
     if include_barriers:
         next_op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         next_op_barriers[0] += 1
 
 
-def up_matmul( globals: Globals, instruction: UpMatMul):
-    layer_idx = instruction.layer_idx
+def up_matmul(
+    globals: Globals,
+    instruction: UpMatMul,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
+    layer_idx       = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
-    output_block_idx = instruction.output_block_idx
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
 
-    # Barrier check
+    block_num  = instruction.output_block_idx
+    block_size = globals.matmul_gate_block_size
+    start      = block_num * block_size
+    end        = start + block_size
+
     if include_barriers:
         op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.prev_opcode() - 1]
-        assert op_barriers[0] == 128
+        assert op_barriers[0] == block_size
 
-    matmul_out = matmul(
-        matA=globals.hidden_states[batch_start_idx:batch_end_idx],
-        matB=globals.up_proj[layer_idx, output_block_idx:output_block_idx + 128],
-    )   
+    # matmul up_proj  and * the SiLU gate
+    matmul_out = matmul( # [B, intermediate]
+        matA = globals.hidden_states[batch_start_idx:batch_end_idx],  # [B, hidden]
+        matB = globals.up_proj[layer_idx, start:end],                # [intermediate, hidden]
+    )
+    gated = matmul_out * globals.silu_out[batch_start_idx:batch_end_idx, start:end]
 
-    matmul_out = matmul_out * globals.silu_out[batch_start_idx:batch_end_idx, output_block_idx:output_block_idx + 128]
-    globals.silu_out[batch_start_idx:batch_end_idx, output_block_idx:output_block_idx + 128] = matmul_out
+    globals.silu_out[batch_start_idx:batch_end_idx, start:end] = gated
 
-    # Barrier update
+    _store_debug_tensor(
+        debug_outputs,
+        f"L{layer_idx}_up_matmul",
+        globals.silu_out,
+    )
+
     if include_barriers:
         next_op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         next_op_barriers[0] += 1
 
 
-def down_proj_residual(globals: Globals, instruction: DownProjResidual):
-    layer_idx = instruction.layer_idx
+def down_proj_residual(
+    globals: Globals,
+    instruction: DownProjResidual,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
+    layer_idx       = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
-    output_block_idx = instruction.output_block_idx
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
 
-    # Barrier check
+    block_num  = instruction.output_block_idx
+    block_size = globals.down_proj_block_size  # 128
+    start      = block_num * block_size
+    end        = start + block_size
+
     if include_barriers:
         op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.prev_opcode() - 1]
-        assert op_barriers[0] == 512  # 8192 / 16
+        assert op_barriers[0] == globals.hidden_size  # e.g. 8192
 
     matmul_with_residual(
-        matA=globals.silu_out[batch_start_idx:batch_end_idx],
-        matB=globals.down_proj[layer_idx, output_block_idx:output_block_idx + 128],
-        residual=globals.hidden_states[batch_start_idx:batch_end_idx, output_block_idx:output_block_idx + 128],
+        matA     = globals.silu_out[batch_start_idx:batch_end_idx],      # [batch, intermediate_size]
+        matB     = globals.down_proj[layer_idx, start:end],             # [block_size, intermediate_size]
+        residual = globals.hidden_states[batch_start_idx:batch_end_idx, start:end],  # [batch, block_size]
+    )
+
+    _store_debug_tensor(
+        debug_outputs,
+        f"L{layer_idx}_down_proj_residual",
+        globals.hidden_states
     )
 
     if include_barriers:
         next_op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         next_op_barriers[0] += 1
 
-
 # TODO Split this out for the throughput setting into RMS and LM Head
-def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
+def rms_lm_head(
+    globals: Globals,
+    instruction: RMS_LM_Head,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = instruction.batch_end_idx
-    
-    # Barrier check
+    batch_end_idx   = instruction.batch_end_idx
+
+    block_num  = instruction.output_block_idx
+    block_size = globals.lm_head_block_size  # e.g. 128
+    start      = block_num * block_size
+    end        = start + block_size
+
     if include_barriers:
-        op_barriers = globals.barriers[globals.num_hidden_layers - 1, batch_start_idx - 1, instruction.prev_opcode() - 1]
-        assert op_barriers[0] == 512
+        op_barriers = globals.barriers[
+            globals.num_hidden_layers - 1,
+            batch_start_idx - 1,
+            instruction.prev_opcode() - 1
+        ]
+        assert op_barriers[0] == globals.hidden_size  
 
     post_ln = rms_norm(
-        inp=globals.hidden_states[batch_start_idx:batch_end_idx],
-        weight=globals.lm_head_norm_weights,
-        eps=globals.rms_norm_eps,
+        inp    = globals.hidden_states[batch_start_idx:batch_end_idx],
+        weight = globals.lm_head_norm_weights,
+        eps    = globals.rms_norm_eps,
     )
 
     matmul_output = matmul(
         post_ln,
-        globals.lm_head_weights,
+        globals.lm_head_weights[start:end],  
     )
 
-    globals.logits[batch_start_idx:batch_end_idx] = matmul_output
+    globals.logits[batch_start_idx:batch_end_idx, start:end] = matmul_output
+
+    _store_debug_tensor(
+        debug_outputs,
+        f"LMHead_block_{block_num}",
+        matmul_output
+    )
+
+    if include_barriers:
+        next_op_barriers = globals.barriers[
+            globals.num_hidden_layers - 1,
+            batch_start_idx - 1,
+            instruction.opcode() - 1
+        ]
+        next_op_barriers[0] += 1
+
+# def rms_lm_head(
+#     globals: Globals,
+#     instruction: RMS_LM_Head,
+#     debug_outputs: Optional[Dict[str, Tensor]] = None,
+# ):
+#     batch_start_idx = instruction.batch_start_idx
+#     batch_end_idx = instruction.batch_end_idx
+    
+#     # Barrier check
+#     if include_barriers:
+#         op_barriers = globals.barriers[globals.num_hidden_layers - 1, batch_start_idx - 1, instruction.prev_opcode() - 1]
+#         assert op_barriers[0] == 512
+
+#     post_ln = rms_norm(
+#         inp=globals.hidden_states[batch_start_idx:batch_end_idx],
+#         weight=globals.lm_head_norm_weights,
+#         eps=globals.rms_norm_eps,
+#     )
+
+#     matmul_output = matmul(
+#         post_ln,
+#         globals.lm_head_weights,
+#     )
+
+#     globals.logits[batch_start_idx:batch_end_idx] = matmul_output
 
 
 def print_state(globals: Globals, instruction: PrintState):
@@ -413,9 +552,13 @@ INSTRUCTION_TO_SOLVER = {
 }
 
 
-def interpret_with_pyvm(globals: Globals, instructions: list[Instruction]):
+def interpret_with_pyvm(
+    globals: Globals,
+    instructions: list[Instruction],
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
     for instruction in instructions:
-        INSTRUCTION_TO_SOLVER[type(instruction)](globals, instruction)
+        INSTRUCTION_TO_SOLVER[type(instruction)](globals, instruction, debug_outputs)
 
 
 class PyVM_Runner:
@@ -436,7 +579,12 @@ class PyVM_Runner:
         batch_size = self.model.extra_config.max_batch_size
         tensorize_instructions(self.globals, self.instructions, batch_size)
 
-    def run(self, input_ids: Tensor, pos_id: int):
+    def run(
+        self,
+        input_ids: Tensor,
+        pos_id: int,
+        debug_outputs: Optional[Dict[str, Tensor]] = None,
+    ):
         batch_state = BatchState(
             input_ids=input_ids,
         )
@@ -448,7 +596,7 @@ class PyVM_Runner:
         self.globals.barriers.zero_()
         self.globals.pos_id = pos_id
 
-        interpret_with_pyvm(self.globals, self.instructions)
+        interpret_with_pyvm(self.globals, self.instructions, debug_outputs)
         output_hiddens = self.globals.hidden_states
         post_embedding.hidden_states = output_hiddens
         post_lm_head: BatchState = self.model.lm_head(post_embedding)
