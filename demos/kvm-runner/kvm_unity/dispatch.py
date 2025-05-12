@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from kvm_unity.kvm import KVM_Interpreter
 from kvm_unity.latency.kvm import LatencyKVM_Interpreter
 from kvm_unity.latency.python_vm import (
@@ -6,11 +8,9 @@ from kvm_unity.latency.python_vm import (
 from kvm_unity.latency.scheduler import LatencyScheduleBuilder
 from kvm_unity.python_vm import PyVM_Interpreter
 from kvm_unity.scheduler import ScheduleBuilder
-from kvm_unity.throughput.scheduler import ThroughputScheduleBuilder
 
 BUILDER_MAP = {
     "latency": LatencyScheduleBuilder,
-    "throughput": ThroughputScheduleBuilder,
 }
 
 KVM_INTERPRETER_MAP = {
@@ -26,8 +26,8 @@ def make_schedule_builder(mode: str) -> ScheduleBuilder:
     return BUILDER_MAP[mode]()
 
 
-def make_kvm_interpreter(mode: str) -> KVM_Interpreter:
-    return KVM_INTERPRETER_MAP[mode]()
+def make_kvm_interpreter(mode: str, kvm_dir: Path) -> KVM_Interpreter:
+    return KVM_INTERPRETER_MAP[mode](kvm_dir)
 
 
 def make_pyvm_interpreter(mode: str) -> PyVM_Interpreter:

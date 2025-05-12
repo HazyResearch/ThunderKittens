@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pydra
 import torch
+from torch import Tensor
+from torch.nn.init import normal_
+from tqdm import tqdm
+
 from kvm_unity.dispatch import (
     make_kvm_interpreter,
     make_pyvm_interpreter,
@@ -15,9 +19,6 @@ from kvm_unity.scheduler import (
     assign_to_sms,
     tensorize_instructions,
 )
-from torch import Tensor
-from torch.nn.init import normal_
-from tqdm import tqdm
 
 
 class ScriptConfig(pydra.Config):
@@ -71,7 +72,7 @@ def main(config: ScriptConfig):
     )
 
     builder = make_schedule_builder(config.setting)
-    kvm_interpreter = make_kvm_interpreter(config.setting)
+    kvm_interpreter = make_kvm_interpreter(config.setting, config.kvm_path)
     pyvm_interpreter = make_pyvm_interpreter(config.setting)
 
     spy = builder.build(

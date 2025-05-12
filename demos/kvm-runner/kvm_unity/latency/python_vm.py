@@ -3,31 +3,19 @@ import math
 import torch
 import torch.nn.functional as F
 from einops import einsum
-from kvm_runner.instructions import (
+from kvm_unity.latency.instructions import (
     AttentionReduction,
     DownProjResidual,
     Globals,
-    Instruction,
     LayerNorm_QKV_MatVecRopeAppend,
     LayerNormDoubleMatVecSiLU,
     O_ProjResidual,
     PartialAttention,
-    PrintState,
     RMS_LM_Head,
 )
-from kvm_runner.llama import (
-    BatchState,
-    LlamaForCausalLM,
+from kvm_unity.llama import (
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import (
-    Schedule,
-    assign_to_sms,
-    make_dag,
-    make_globals,
-    tensorize_instructions,
-)
-from kvm_runner.utils import trepr
 from torch import Tensor
 
 

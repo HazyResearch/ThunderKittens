@@ -1,9 +1,10 @@
 import torch
 from einops import einsum
+from torch import Tensor
+
 from kvm_unity.instructions import BaseGlobals, Instruction, PrintState
 from kvm_unity.model_types import BatchState
 from kvm_unity.utils import trepr
-from torch import Tensor
 
 
 def get_start_end(block_size: int, block_idx: int):
@@ -95,40 +96,40 @@ class PyVM_Interpreter:
         interpret_with_pyvm(globs, instructions, self.instruction_to_solver)
 
 
-class PyVM_Runner:
-    def __init__(self, model: LlamaForCausalLM, schedule: Schedule):
-        self.model = model
+# class PyVM_Runner:
+#     def __init__(self, model: LlamaForCausalLM, schedule: Schedule):
+#         self.model = model
 
-        self.schedule = Schedule(
-            globs=make_globals(self.model),
-            dag_nodes=make_dag(self.model, prompt_len, ntok),
-        )
+#         self.schedule = Schedule(
+#             globs=make_globals(self.model),
+#             dag_nodes=make_dag(self.model, prompt_len, ntok),
+#         )
 
-        queues = assign_to_sms(sched, self.schedule)
-        tensorize_instructions(self.schedule.globs, queues)
+#         queues = assign_to_sms(sched, self.schedule)
+#         tensorize_instructions(self.schedule.globs, queues)
 
-        self.instructions = self.schedule.get_linear_instructions()
+#         self.instructions = self.schedule.get_linear_instructions()
 
-    def run(self, input_ids: Tensor, pos_id: int):
-        batch_state = BatchState(
-            input_ids=input_ids,
-        )
+#     def run(self, input_ids: Tensor, pos_id: int):
+#         batch_state = BatchState(
+#             input_ids=input_ids,
+#         )
 
-        post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
-        hiddens = post_embedding.hidden_states
-        assert hiddens is not None
-        self.schedule.globs.hidden_states[:] = hiddens
-        self.schedule.globs.barriers.zero_()
-        self.schedule.globs.pos_id = pos_id
+#         post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
+#         hiddens = post_embedding.hidden_states
+#         assert hiddens is not None
+#         self.schedule.globs.hidden_states[:] = hiddens
+#         self.schedule.globs.barriers.zero_()
+#         self.schedule.globs.pos_id = pos_id
 
-        interpret_with_pyvm(self.schedule.globs, self.instructions)
+#         interpret_with_pyvm(self.schedule.globs, self.instructions)
 
-        output_hiddens = self.schedule.globs.hidden_states
+#         output_hiddens = self.schedule.globs.hidden_states
 
-        post_embedding.hidden_states = output_hiddens
+#         post_embedding.hidden_states = output_hiddens
 
-        post_lm_head: BatchState = self.model.lm_head(post_embedding)
+#         post_lm_head: BatchState = self.model.lm_head(post_embedding)
 
-        output_ids = post_lm_head.output_ids
-        assert output_ids is not None
-        return output_ids
+#         output_ids = post_lm_head.output_ids
+#         assert output_ids is not None
+#         return output_ids
