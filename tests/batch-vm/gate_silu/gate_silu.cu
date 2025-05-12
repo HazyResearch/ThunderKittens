@@ -26,6 +26,7 @@ namespace kittens::prototype::vm
                 layer = instruction[1];
                 row = instruction[2];
                 col = instruction[3];
+                iters = instruction[4];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };

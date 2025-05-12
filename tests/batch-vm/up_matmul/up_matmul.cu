@@ -23,12 +23,13 @@ namespace kittens::prototype::vm
         struct parsed_instruction
         {
             int layer;
-            int row, col;
+            int row, col, iters;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
                 layer = instruction[1];
                 row   = instruction[2];
                 col   = instruction[3];
+                iters = instruction[4];
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };

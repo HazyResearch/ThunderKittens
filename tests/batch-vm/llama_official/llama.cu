@@ -67,7 +67,6 @@ PYBIND11_MODULE(kvm_llama, m)
         &llama_70b_globals::attn_out,
         &llama_70b_globals::silu_out,
         &llama_70b_globals::logits,
-        &llama_70b_globals::routing_table,
         &llama_70b_globals::pos_id,
         &llama_70b_globals::attn_scale,
         &llama_70b_globals::rms_norm_eps
