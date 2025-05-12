@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn.functional as F
-from einops import einsum, rearrange
+from einops import einsum
 from kvm_runner.instructions import (
     AttentionReduction,
     DownProjResidual,
@@ -20,7 +20,13 @@ from kvm_runner.llama import (
     LlamaForCausalLM,
     apply_rotary_pos_emb_interleaved,
 )
-from kvm_runner.scheduler import PrintInfo, schedule_model, tensorize_instructions
+from kvm_runner.scheduler import (
+    Schedule,
+    assign_to_sms,
+    make_dag,
+    make_globals,
+    tensorize_instructions,
+)
 from kvm_runner.utils import trepr
 from torch import Tensor
 
@@ -66,14 +72,23 @@ def matvec_with_residual(
     vec: Tensor,
     residual: Tensor,
     block_size: int,
-    block_idx: int,
+    start_block_idx: int,
+    end_block_idx: int,
     reduction_size: int,
     reduction_block_idx: int,
 ):
-    matvec_out, start, end = matvec(
-        mat, vec, block_size, block_idx, True, reduction_size, reduction_block_idx
-    )
-    residual[start:end] += matvec_out
+    for block_idx in range(start_block_idx, end_block_idx):
+        matvec_out, start, end = matvec(
+            mat=mat,
+            vec=vec,
+            block_size=block_size,
+            block_idx=block_idx,
+            reduce=True,
+            reduction_size=reduction_size,
+            reduction_idx=reduction_block_idx,
+        )
+
+        residual[start:end] += matvec_out.to(residual.dtype)
 
 
 def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
@@ -81,19 +96,23 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     op_barriers = globals.barriers[instruction.layer_idx, instruction.prev_opcode() - 1]
     assert op_barriers[0] == globals.num_attention_heads
 
+    assert instruction.start_block_idx == instruction.end_block_idx - 1
+    assert instruction.reduction_block_idx == 0
+
     matvec_with_residual(
         mat=globals.o_proj[instruction.layer_idx],
         vec=globals.attn_out,
         residual=globals.hidden_states,
         block_size=globals.o_proj_block_size,
-        block_idx=instruction.output_block_idx,
+        start_block_idx=instruction.start_block_idx,
+        end_block_idx=instruction.end_block_idx,
         reduction_size=globals.matvec_reduction_size,
         reduction_block_idx=instruction.reduction_block_idx,
     )
 
     # Barrier update
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+    next_op_barriers[0] += instruction.end_block_idx - instruction.start_block_idx
 
 
 def down_proj_residual(globals: Globals, instruction: DownProjResidual):
@@ -106,13 +125,14 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
         vec=globals.silu_out,
         residual=globals.hidden_states,
         block_size=globals.down_proj_block_size,
-        block_idx=instruction.output_block_idx,
+        start_block_idx=instruction.start_block_idx,
+        end_block_idx=instruction.end_block_idx,
         reduction_size=globals.matvec_reduction_size,
         reduction_block_idx=instruction.reduction_block_idx,
     )
 
     next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+    next_op_barriers[0] += instruction.end_block_idx - instruction.start_block_idx
 
 
 def layer_norm_double_matvec_silu(
@@ -130,27 +150,32 @@ def layer_norm_double_matvec_silu(
 
     block_size = globals.up_gate_proj_block_size
 
-    up_matvec, start, end = matvec(
-        mat=globals.up_proj[instruction.layer_idx],
-        vec=post_ln,
-        block_size=block_size,
-        block_idx=instruction.output_block_idx,
-    )
+    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
 
-    gate_matvec, _, _ = matvec(
-        mat=globals.gate_proj[instruction.layer_idx],
-        vec=post_ln,
-        block_size=block_size,
-        block_idx=instruction.output_block_idx,
-    )
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(block_size, block_idx)
 
-    post_silu = F.silu(gate_matvec) * up_matvec
+        up_matvec, start, end = matvec(
+            mat=globals.up_proj[instruction.layer_idx],
+            vec=post_ln,
+            block_size=block_size,
+            block_idx=block_idx,
+        )
 
-    globals.silu_out[start:end] = post_silu
+        gate_matvec, _, _ = matvec(
+            mat=globals.gate_proj[instruction.layer_idx],
+            vec=post_ln,
+            block_size=block_size,
+            block_idx=block_idx,
+        )
 
-    # Barrier update
-    next_op_barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    next_op_barriers[0] += 1
+        post_silu = F.silu(gate_matvec) * up_matvec
+
+        globals.silu_out[start:end] = post_silu
+
+        barriers[0] += 1
 
 
 def layer_norm_matvec_rope_append(
@@ -169,50 +194,67 @@ def layer_norm_matvec_rope_append(
         eps=globals.rms_norm_eps,
     )
 
-    matmul_output = einsum(
-        globals.qkv_proj[layer_idx],
-        post_ln,
-        "o i, i -> o",
-    )
+    pos_id = globals.pos_id
 
     k_start = globals.num_attention_heads * globals.head_dim
     v_start = k_start + globals.num_kv_heads * globals.head_dim
 
-    q = matmul_output[:k_start]
-    k = matmul_output[k_start:v_start]
-    v = matmul_output[v_start:]
-
-    q_arr = rearrange(q, "(h d) -> h d", h=globals.num_attention_heads)
-    k_arr = rearrange(k, "(h d) -> h d", h=globals.num_kv_heads)
-
-    pos_id = globals.pos_id
-    q_with_rope, k_with_rope = apply_rotary_pos_emb_interleaved(
-        q=q_arr,
-        k=k_arr,
-        cos=globals.rope_cos[pos_id],
-        sin=globals.rope_sin[pos_id],
-        unsqueeze_dim=0,
-    )
-
-    start, end = get_start_end(globals.qkv_block_size, instruction.output_block_idx)
-    if start < k_start:
-        globals.post_ln_rope_q[start:end] = q_with_rope.view(-1)[start:end]
-    elif start < v_start:
-        start_in_k = start - k_start
-        end_in_k = end - k_start
-        globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = (
-            k_with_rope.view(-1)[start_in_k:end_in_k]
-        )
-    else:
-        start_in_v = start - v_start
-        end_in_v = end - v_start
-        globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = v.view(-1)[
-            start_in_v:end_in_v
-        ]
-
-    # Barrier update
     barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    barriers[instruction.output_block_idx // 4] += 1
+
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(globals.qkv_block_size, block_idx)
+
+        if start < k_start:
+            mode = "q"
+        elif start < v_start:
+            mode = "k"
+        else:
+            mode = "v"
+
+        matmul_output = einsum(
+            globals.qkv_proj[layer_idx][start:end],
+            post_ln,
+            "o i, i -> o",
+        )
+
+        out = matmul_output
+
+        if mode in ["q", "k"]:
+            full_head = torch.zeros(
+                1,
+                globals.head_dim,
+                device=globals.hidden_states.device,
+                dtype=out.dtype,
+            )
+            head_segment = start % globals.head_dim
+            full_head_start = head_segment
+            full_head_end = full_head_start + (end - start)
+
+            full_head[:, full_head_start:full_head_end] = out
+            full_head_with_rope, _ = apply_rotary_pos_emb_interleaved(
+                q=full_head,
+                k=full_head,
+                cos=globals.rope_cos[pos_id],
+                sin=globals.rope_sin[pos_id],
+                unsqueeze_dim=0,
+            )
+            out = full_head_with_rope[:, full_head_start:full_head_end].view(-1)
+
+        match mode:
+            case "q":
+                globals.post_ln_rope_q[start:end] = out
+            case "k":
+                start_in_k = start - k_start
+                end_in_k = end - k_start
+                globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = out
+            case "v":
+                start_in_v = start - v_start
+                end_in_v = end - v_start
+                globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = out
+
+        barriers[block_idx // 4] += 1
 
 
 def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
@@ -227,15 +269,18 @@ def rms_lm_head(globals: Globals, instruction: RMS_LM_Head):
         eps=globals.rms_norm_eps,
     )
 
-    start, end = get_start_end(globals.lm_head_block_size, instruction.output_block_idx)
+    for block_idx in range(
+        instruction.start_output_block_idx, instruction.end_output_block_idx
+    ):
+        start, end = get_start_end(globals.lm_head_block_size, block_idx)
 
-    matmul_output = einsum(
-        globals.lm_head_weights[start:end],
-        post_ln,
-        "o i, i -> o",
-    )
+        matmul_output = einsum(
+            globals.lm_head_weights[start:end],
+            post_ln,
+            "o i, i -> o",
+        )
 
-    globals.logits[start:end] = matmul_output
+        globals.logits[start:end] = matmul_output
 
 
 def partial_attention(globals: Globals, instruction: PartialAttention):
@@ -288,12 +333,26 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
 
     out = einsum(softmax.float(), v.float(), "h k, k o -> h o")
 
-    globals.attn_lse_intermediates[head_start:head_end, instruction.partial_idx] = lse
-    globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = out
+    if globals.skip_attn_reduction:
+        globals.attn_out.view(globals.num_attention_heads, -1)[
+            head_start:head_end, :
+        ] = out
+        barriers = globals.barriers[
+            instruction.layer_idx, AttentionReduction.opcode() - 1
+        ]
+        barriers[0] += head_end - head_start
 
-    # Barrier update
-    barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
-    barriers[head_start:head_end] += 1
+    else:
+        globals.attn_lse_intermediates[head_start:head_end, instruction.partial_idx] = (
+            lse
+        )
+        globals.attn_out_intermediates[head_start:head_end, instruction.partial_idx] = (
+            out
+        )
+
+        # Barrier update
+        barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
+        barriers[head_start:head_end] += 1
 
 
 def attention_reduction(globals: Globals, instruction: AttentionReduction):
@@ -375,23 +434,18 @@ def interpret_with_pyvm(globals: Globals, instructions: list[Instruction]):
 
 
 class PyVM_Runner:
-    def __init__(
-        self,
-        model: LlamaForCausalLM,
-        prompt_len: int,
-        ntok: int,
-        print_info: PrintInfo | None = None,
-    ):
+    def __init__(self, model: LlamaForCausalLM, prompt_len: int, ntok: int, sched: str):
         self.model = model
 
-        self.globals, self.instructions = schedule_model(
-            prompt_len=prompt_len,
-            ntok=ntok,
-            print_info=print_info,
-            model=self.model,
+        self.schedule = Schedule(
+            globs=make_globals(self.model),
+            dag_nodes=make_dag(self.model, prompt_len, ntok),
         )
 
-        tensorize_instructions(self.globals, self.instructions)
+        queues = assign_to_sms(sched, self.schedule)
+        tensorize_instructions(self.schedule.globs, queues)
+
+        self.instructions = self.schedule.get_linear_instructions()
 
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
@@ -401,13 +455,13 @@ class PyVM_Runner:
         post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
         hiddens = post_embedding.hidden_states
         assert hiddens is not None
-        self.globals.hidden_states[:] = hiddens
-        self.globals.barriers.zero_()
-        self.globals.pos_id = pos_id
+        self.schedule.globs.hidden_states[:] = hiddens
+        self.schedule.globs.barriers.zero_()
+        self.schedule.globs.pos_id = pos_id
 
-        interpret_with_pyvm(self.globals, self.instructions)
+        interpret_with_pyvm(self.schedule.globs, self.instructions)
 
-        output_hiddens = self.globals.hidden_states
+        output_hiddens = self.schedule.globs.hidden_states
 
         post_embedding.hidden_states = output_hiddens
 

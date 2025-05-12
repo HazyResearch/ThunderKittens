@@ -112,10 +112,10 @@ struct partial_template {
                 int within_page_idx = (pos % PAGE_SIZE) / NUM_ROWS;
                 int next_page_id = args.globals.Table[coord<>{args.common.q_batch_idx, pos/PAGE_SIZE}];
                 // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
-                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
-                tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
-                if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                warp::tma::expect(args.inputs_arrived, args.input.kcache, args.input.vcache);
+                warp::tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.kcache, args.globals.K_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                warp::tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.vcache, args.globals.V_cache, {0, next_page_id, within_page_idx, 0}, args.inputs_arrived);
+                warp::arrive(args.inputs_arrived, 3);
             }
 #ifdef KITTENS_TIMINGS
             else if(warpgroup::laneid() == 32 && args.iter < 24) args.timings[32+args.iter] = clock64();
@@ -129,14 +129,14 @@ struct partial_template {
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
 #endif
             auto qrot_st = args.scratch.qrot.template subtile<16, QKRot_D/2>({warpgroup::warpid(), warpgroup::groupid()});
-            load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            warp::load_async(qrot_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             auto qvo_st = args.scratch.qvo.template subtile<16, QVO_Dd2>({warpgroup::warpid(), warpgroup::groupid()});
-            load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
-            zero(args.state.norm_vec);
-            if(args.num_iters > 0) neg_infty(args.state.max_vec);
-            else { one(args.state.max_vec); mul(args.state.max_vec, args.state.max_vec, -999999.f); }
-            zero(args.state.o);
-            load_async_wait();
+            warp::load_async(qvo_st, args.globals.QV, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
+            warp::zero(args.state.norm_vec);
+            if(args.num_iters > 0) warp::neg_infty(args.state.max_vec);
+            else { warp::one(args.state.max_vec); warp::mul(args.state.max_vec, args.state.max_vec, -999999.f); }
+            warp::zero(args.state.o);
+            warp::load_async_wait();
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
 #endif
@@ -162,32 +162,35 @@ struct partial_template {
                 warpgroup::mm_ABt(att_block_fp32, args.scratch.qrot, args.input.kcache);
                 warpgroup::mma_ABt(att_block_fp32, args.scratch.qvo, args.input.vcache);
 
-                copy(local_max_vec,  args.state.max_vec);
-                copy(local_norm_vec, args.state.norm_vec);
+                warp::copy(local_max_vec,  args.state.max_vec);
+                warp::copy(local_norm_vec, args.state.norm_vec);
 
-                mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
+                warp::mul(max_vec_last_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
                 warpgroup::mma_async_wait();
                 // softmax
                 if constexpr (do_right_fill) { // need to mask out a bunch of entries in the last page
                     const int length = args.common.length - args.common.start_pos - args.iter*NUM_ROWS;
-                    right_fill(att_block_fp32, att_block_fp32, length, -9999999999.f);
+                    // right_fill(att_block_fp32, att_block_fp32, length, -9999999999.f);
+                    warp::apply(att_block_fp32, att_block_fp32, [length]__device__(int row, int col, const float &val) {
+                        return col < length ? val : -9999999999.f;
+                    });
                 }
 
-                row_max(local_max_vec, att_block_fp32, local_max_vec);
-                mul(max_vec_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
+                warp::row_max(local_max_vec, att_block_fp32, local_max_vec);
+                warp::mul(max_vec_scaled, local_max_vec, SOFTMAX_TEMPERATURE);
 
-                mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
-                sub_row(att_block_fp32, att_block_fp32, max_vec_scaled);
+                warp::mul(att_block_fp32, att_block_fp32, SOFTMAX_TEMPERATURE);
+                warp::sub_row(att_block_fp32, att_block_fp32, max_vec_scaled);
                 
-                exp2(att_block_fp32, att_block_fp32);
+                warp::exp2(att_block_fp32, att_block_fp32);
                 
-                sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-                exp2(max_vec_last_scaled, max_vec_last_scaled);
+                warp::sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
+                warp::exp2(max_vec_last_scaled, max_vec_last_scaled);
                 warpgroup::store(args.scratch.max_vec, max_vec_last_scaled);
                 
-                mul(local_norm_vec, local_norm_vec, max_vec_last_scaled);
-                row_sum(local_norm_vec, att_block_fp32, local_norm_vec);
+                warp::mul(local_norm_vec, local_norm_vec, max_vec_last_scaled);
+                warp::row_sum(local_norm_vec, att_block_fp32, local_norm_vec);
                 warpgroup::store(args.scratch.att_block, att_block_fp32);
                 arrive(cons_barrier);
             }
@@ -196,14 +199,14 @@ struct partial_template {
                 warpgroup::load(max_vec_last_scaled, args.scratch.max_vec);
             }
 
-            mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
+            warp::mul_row(args.state.o, args.state.o, max_vec_last_scaled); // normalize o_reg before mma
 
             // O += A @ V
             auto (&v_smem)[2] = reinterpret_cast<vcache_tile2(&)[2]>(args.input.vcache);
             warpgroup::mma_AB(args.state.o, args.scratch.att_block, v_smem[warpgroup::groupid()]);
 
-            copy(args.state.max_vec, local_max_vec);
-            copy(args.state.norm_vec, local_norm_vec);
+            warp::copy(args.state.max_vec, local_max_vec);
+            warp::copy(args.state.norm_vec, local_norm_vec);
 
             warpgroup::mma_async_wait();
             if(warpgroup::laneid() == 0) arrive(args.inputs_finished, WARPGROUP_WARPS); // done!
@@ -215,8 +218,8 @@ struct partial_template {
         __device__ static inline void finish(consumer_finish_args<layout> args) {
             col_vec<rt_fl<16, kcache_tile::rows>> local_max_vec, local_norm_vec;
 
-            copy(local_norm_vec, args.state.norm_vec);
-            copy(local_max_vec, args.state.max_vec);
+            warp::copy(local_norm_vec, args.state.norm_vec);
+            warp::copy(local_max_vec, args.state.max_vec);
 
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[62] = clock64(); // Start of store out.
@@ -225,26 +228,26 @@ struct partial_template {
             if (warpgroup::groupid() == 0) warpgroup::store(args.scratch.norm_vec, local_norm_vec);
             group<8>::sync(10);
             if(warpgroup::groupid() == 1) warpgroup::load(local_norm_vec, args.scratch.norm_vec);
-            div_row(args.state.o, args.state.o, local_norm_vec);
+            warp::div_row(args.state.o, args.state.o, local_norm_vec);
 
             if(args.common.dst.batch_idx >= 0) { // batch is meaningful
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_Dd2>&>(args.finish.o[warpgroup::warpid()][warpgroup::groupid()]);
-                store(o_smem, args.state.o);
+                warp::store(o_smem, args.state.o);
                 __syncwarp();
-                tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                warp::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             else { // write out directly to O scratch, without going through smem
                 if(warpgroup::groupid() == 0) {
-                    mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
-                    log2(local_norm_vec, local_norm_vec);
-                    add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
-                    store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
+                    warp::mul(local_max_vec, local_max_vec, args.globals.Softmax_scale * 1.44269504089f);
+                    warp::log2(local_norm_vec, local_norm_vec);
+                    warp::add(local_norm_vec, local_norm_vec, local_max_vec); // l_vec = log2(norm_vec) + max_vec
+                    warp::store(args.finish.lvec[warpgroup::warpid()], local_norm_vec);
                     __syncwarp();
-                    tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0});
+                    warp::tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.finish.lvec[warpgroup::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0});
                 }
-                store(args.finish.o[warpgroup::warpid()][warpgroup::groupid()], args.state.o);
+                warp::store(args.finish.o[warpgroup::warpid()][warpgroup::groupid()], args.state.o);
                 __syncwarp();
-                tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
+                warp::tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.finish.o[warpgroup::warpid()][warpgroup::groupid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx+warpgroup::warpid(), 0, warpgroup::groupid()});
             }
             if(group<8>::warpid() == 0) tma::store_async_wait(); // not just read wait
             asm volatile("fence.sc.cta;\n"); // Can't reorder across this boundary
@@ -261,9 +264,9 @@ struct partial_template {
                     // );
                 }
             }
-            if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
+            warpgroup::arrive(args.finish_finished, WARPGROUP_WARPS); // done!
 #ifdef KITTENS_TIMINGS
-            else if(group<8>::laneid() == 32) args.timings[63] = clock64();
+            if(group<8>::laneid() == 32) args.timings[63] = clock64();
 #endif
         }
     };
@@ -316,13 +319,13 @@ struct reduction_template {
                 if(laneid() == 0 && args.iter < 24) args.timings[32+args.iter] = clock64();
 #endif
                 // next page we need to load?
-                tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
+                warp::tma::expect(args.inputs_arrived, args.input.o, args.input.lvec);
                 #pragma unroll
                 for(int i = 0; i < 8; i++) {
-                    tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, 0, i}, args.inputs_arrived);
+                    warp::tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(args.input.o[i], args.globals.O_scratch, {load_uid, args.common.dst.seq_idx, 0, i}, args.inputs_arrived);
                 }
-                tma::load_async<cache_policy::EVICT_FIRST>(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, 0}, args.inputs_arrived);
-                if(laneid() == 0) arrive(args.inputs_arrived, 3);
+                warp::tma::load_async<cache_policy::EVICT_FIRST>(args.input.lvec, args.globals.Lvec_scratch, {load_uid, args.common.dst.seq_idx, 0}, args.inputs_arrived);
+                warp::arrive(args.inputs_arrived, 3);
             }
         }
     };
@@ -336,19 +339,19 @@ struct reduction_template {
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
 #endif
-            load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
+            warp::load_async(args.scratch.o[group<8>::warpid()], args.globals.O_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0, group<8>::warpid()});
             if(warpid() == 0) {
-                load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0});
+                warp::load_async(args.scratch.lvec, args.globals.Lvec_scratch, {args.common.src_uid, args.common.dst.seq_idx, 0});
             }
-            load_async_wait();
+            warp::load_async_wait();
             __syncwarp();
-            load(args.state.o, args.scratch.o[group<8>::warpid()]);
+            warp::load(args.state.o, args.scratch.o[group<8>::warpid()]);
             group<8>::sync(11); // we use this to also stall the producer until the consumer is ready.
             // group<12>::sync(9);
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[2] = clock64();
 #endif
-            load(args.state.lvec, args.scratch.lvec);
+            warp::load(args.state.lvec, args.scratch.lvec);
         }
         __device__ static inline void compute(consumer_compute_args<layout> args) {
 #ifdef KITTENS_TIMINGS
@@ -356,23 +359,23 @@ struct reduction_template {
 #endif
             col_vec<rt_fl<16, kcache_tile::rows>> lvec, max_lvec, sum_lvec;
             rt_fl<16, QVO_D / 8> o;
-            load(o, args.input.o[group<8>::warpid()]);
-            load(lvec, args.input.lvec);
+            warp::load(o, args.input.o[group<8>::warpid()]);
+            warp::load(lvec, args.input.lvec);
             __syncwarp();
-            if(laneid() == 0) arrive(args.inputs_finished); // done!
-            max(max_lvec, args.state.lvec, lvec);
-            sub(args.state.lvec, args.state.lvec, max_lvec);
-            sub(lvec, lvec, max_lvec);
-            exp2(args.state.lvec, args.state.lvec);
-            exp2(lvec, lvec);
-            add(sum_lvec, args.state.lvec, lvec);
-            div(args.state.lvec, args.state.lvec, sum_lvec);
-            div(lvec, lvec, sum_lvec);
-            mul_row(args.state.o, args.state.o, args.state.lvec);
-            mul_row(o, o, lvec);
-            add(args.state.o, args.state.o, o);
-            log2(sum_lvec, sum_lvec);
-            add(args.state.lvec, sum_lvec, max_lvec);
+            warp::arrive(args.inputs_finished); // done!
+            warp::max(max_lvec, args.state.lvec, lvec);
+            warp::sub(args.state.lvec, args.state.lvec, max_lvec);
+            warp::sub(lvec, lvec, max_lvec);
+            warp::exp2(args.state.lvec, args.state.lvec);
+            warp::exp2(lvec, lvec);
+            warp::add(sum_lvec, args.state.lvec, lvec);
+            warp::div(args.state.lvec, args.state.lvec, sum_lvec);
+            warp::div(lvec, lvec, sum_lvec);
+            warp::mul_row(args.state.o, args.state.o, args.state.lvec);
+            warp::mul_row(o, o, lvec);
+            warp::add(args.state.o, args.state.o, o);
+            warp::log2(sum_lvec, sum_lvec);
+            warp::add(args.state.lvec, sum_lvec, max_lvec);
         }
         __device__ static inline void finish(consumer_finish_args<layout> args) {
 #ifdef KITTENS_TIMINGS
@@ -380,18 +383,19 @@ struct reduction_template {
 #endif
             if(args.common.dst.batch_idx >= 0) {
                 auto &o_smem = reinterpret_cast<st_bf<16, QVO_D/8>&>(args.scratch.o[group<8>::warpid()]);
-                store(o_smem, args.state.o);
+                warp::store(o_smem, args.state.o);
                 __syncwarp();
-                tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
+                warp::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(args.globals.O, o_smem, {args.common.dst.batch_idx, args.common.dst.seq_idx, 0, group<8>::warpid()});
             }
             else {
-                store(args.scratch.o[group<8>::warpid()], args.state.o);
-                if(group<8>::warpid() == 0) store(args.scratch.lvec, args.state.lvec);
+                warp::store(args.scratch.o[group<8>::warpid()], args.state.o);
+                if(group<8>::warpid() == 0) warp::store(args.scratch.lvec, args.state.lvec);
                 __syncwarp();
-                tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0, group<8>::warpid()});
-                if(group<8>::warpid() == 0) tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
+                warp::tma::store_async<dim::ROW, cache_policy::EVICT_LAST>(args.globals.O_scratch, args.scratch.o[group<8>::warpid()], {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0, group<8>::warpid()});
+                if(group<8>::warpid() == 0) warp::tma::store_async<cache_policy::EVICT_LAST>(args.globals.Lvec_scratch, args.scratch.lvec, {-args.common.dst.batch_idx-1, args.common.dst.seq_idx, 0});
             }
             tma::store_async_wait();
+            asm volatile("fence.sc.cta;\n");
             group<8>::sync(11);
             // Increment the semaphore for the next stage, if this is not the last one.
             if(args.common.dst.batch_idx < 0) {
@@ -399,9 +403,9 @@ struct reduction_template {
                     args.globals.semaphore[{-args.common.dst.batch_idx-1, args.common.dst.seq_idx}] = args.globals.tic;
                 }
             }
-            if(warpgroup::laneid() == 0) arrive(args.finish_finished, WARPGROUP_WARPS); // done!
+            warpgroup::arrive(args.finish_finished, WARPGROUP_WARPS); // done!
 #ifdef KITTENS_TIMINGS
-            else if(group<8>::laneid() == 32) args.timings[63] = clock64();
+            if(group<8>::laneid() == 32) args.timings[63] = clock64();
 #endif
         }
     };

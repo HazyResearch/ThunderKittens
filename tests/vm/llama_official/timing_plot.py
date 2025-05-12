@@ -5,12 +5,19 @@ from bokeh.plotting import figure, show, save
 from bokeh.models import ColumnDataSource, HoverTool, NumeralTickFormatter, Legend, LegendItem, Rect # Changed Segment to Rect
 from bokeh.palettes import Category10, Viridis256 # Using Category10 for distinct instruction types
 from bokeh.resources import CDN
+import torch
+import numpy as np
+import time
+from bokeh.plotting import figure, show, save
+from bokeh.models import ColumnDataSource, HoverTool, NumeralTickFormatter, Legend, LegendItem, Rect # Changed Segment to Rect
+from bokeh.palettes import Category10, Viridis256 # Using Category10 for distinct instruction types
+from bokeh.resources import CDN
 
 # --- Configuration ---
 CYCLE_FREQ_MHZ = 1800.0  # Clock frequency in MHz (e.g., 1.8 GHz = 1800 MHz)
 # How many vertical sub-slots per processor lane to separate overlapping instructions
 # Change K to adjust the number of vertical slots per processor lane
-VERTICAL_SLOTS_K = 2
+VERTICAL_SLOTS_K = 4
 # How much of the vertical slot height the bar should occupy (e.g., 0.8 = 80%)
 BAR_HEIGHT_RATIO = 2/3
 # HTML Output file name prefix
@@ -47,36 +54,32 @@ COLOR_MAP = {
 EVENT_CATEGORIES = {}
 EVENT_DESCRIPTIONS = {}
 # Event 0: Instruction Launch
-EVENT_CATEGORIES[0] = 'launch'
-EVENT_DESCRIPTIONS[0] = 'Instruction launch'
-# Events 1-15: Initial Setup
-for i in range(1, 16):
-    EVENT_CATEGORIES[i] = 'setup'
-    EVENT_DESCRIPTIONS[i] = f'Initial setup event {i}'
-# Events 16-39: Loader Events
-for i in range(16, 40):
-    EVENT_CATEGORIES[i] = 'loader'
-    EVENT_DESCRIPTIONS[i] = f'Loader event {i}'
-# Events 40-103: Consumer / Launcher Events
-for i in range(40, 104):
-    EVENT_CATEGORIES[i] = 'consumer'
-    EVENT_DESCRIPTIONS[i] = f'Consumer/launcher event {i}'
-# Events 104-126: Storer / Synchronization Events
-for i in range(104, 127):
-    EVENT_CATEGORIES[i] = 'storer'
-    EVENT_DESCRIPTIONS[i] = f'Storer/sync event {i}'
-# Event 127: Instruction End
-EVENT_CATEGORIES[127] = 'end'
-EVENT_DESCRIPTIONS[127] = 'Instruction end'
+EVENT_CATEGORIES[0], EVENT_DESCRIPTIONS[0] = 'launch', 'Instruction launch'
+EVENT_CATEGORIES[4], EVENT_DESCRIPTIONS[4] = 'end', 'Instruction end'
+# Add event mappings from llama.cuh
+# Using precise numbers based on FREE_SLOTS_START = 47
+# EVENT_CATEGORIES[47], EVENT_DESCRIPTIONS[47] = 'consumer', 'Atomic add start'
+# EVENT_CATEGORIES[48], EVENT_DESCRIPTIONS[48] = 'storer', 'Atomic add end'
+EVENT_CATEGORIES[49], EVENT_DESCRIPTIONS[49] = 'storer', 'Epilogue start'
+EVENT_CATEGORIES[51], EVENT_DESCRIPTIONS[51] = 'activation', 'Activation wait done'
+# EVENT_CATEGORIES[54], EVENT_DESCRIPTIONS[54] = 'setup', 'Weight wait start'
+EVENT_CATEGORIES[58], EVENT_DESCRIPTIONS[58] = 'weight', 'Weight wait done'
+# EVENT_CATEGORIES[62], EVENT_DESCRIPTIONS[62] = 'setup', 'RMS start'
+# EVENT_CATEGORIES[63], EVENT_DESCRIPTIONS[63] = 'setup', 'RMS scale wait start'
+# EVENT_CATEGORIES[64], EVENT_DESCRIPTIONS[64] = 'loader', 'RMS scale wait done'
+EVENT_CATEGORIES[65], EVENT_DESCRIPTIONS[65] = 'RMS_done', 'RMS done'
+
+
+
 
 # Define marker styles per category
 MARKER_STYLES = {
-    'launch':   {'marker': 'diamond', 'color': 'green',    'size': 8, 'legend': 'Launch'},
-    'setup':    {'marker': 'asterisk','color': 'purple',   'size': 7, 'legend': 'Setup'},
-    'loader':   {'marker': 'circle',  'color': 'blue',     'size': 5, 'legend': 'Loader'},
-    'consumer': {'marker': 'triangle','color': 'red',      'size': 5, 'legend': 'Consumer/Launch'},
-    'storer':   {'marker': 'square',  'color': 'orange',   'size': 5, 'legend': 'Storer/Sync'},
-    'end':      {'marker': 'cross',   'color': 'black',    'size': 8, 'legend': 'End'},
+    'launch':     {'marker': 'diamond', 'color': 'green',    'size': 8, 'legend': 'Launch'},
+    'end':        {'marker': 'cross',   'color': 'black',    'size': 8, 'legend': 'End'},
+    'storer':     {'marker': 'square',  'color': 'orange',   'size': 5, 'legend': 'Epilogue'},
+    'activation': {'marker': 'circle',  'color': 'blue',     'size': 5, 'legend': 'Activation Wait'},
+    'weight':     {'marker': 'triangle','color': 'red',      'size': 5, 'legend': 'Weight Wait'},
+    'RMS_done':   {'marker': 'asterisk','color': 'purple',   'size': 7, 'legend': 'RMS Done'},
 }
 
 
@@ -123,7 +126,7 @@ def save_gantt_chart_bokeh(Timings, Instructions, k_slots=VERTICAL_SLOTS_K, save
         for instr in range(num_instructions):
             instr_type = Instructions[proc, instr, 0].item()
             start = timings_us[proc, instr, 0].item()
-            end = timings_us[proc, instr, 127].item()
+            end = timings_us[proc, instr, 4].item()
 
             if start > 0 and end > start :
                 duration = end - start
@@ -370,77 +373,22 @@ def save_gantt_chart_bokeh(Timings, Instructions, k_slots=VERTICAL_SLOTS_K, save
 
 # --- Example Usage ---
 if __name__ == '__main__':
-    print("Generating improved dummy data for testing...")
-    NUM_PROCS = 148
-    NUM_INSTR = 96
-    K_DUMMY = VERTICAL_SLOTS_K
-    GAP_CYCLES = 1000
-    SETUP_EVENTS = list(range(1, 16))
-    LOADER_EVENTS = list(range(16, 40))
-    CONSUMER_EVENTS = list(range(40, 104))
-    STORER_EVENTS = list(range(104, 127))
 
-    dummy_timings = torch.zeros(NUM_PROCS, NUM_INSTR, 128, dtype=torch.int64)
-    dummy_instructions = torch.zeros(NUM_PROCS, NUM_INSTR, 1, dtype=torch.int64)
-    last_slot_end_time = torch.zeros(NUM_PROCS, K_DUMMY, dtype=torch.int64)
+    import sys, pickle
+    with open(sys.argv[1], "rb") as f:
+        globs_for_kvm = pickle.load(f)
+        timings = globs_for_kvm['timings']
+        instructions = globs_for_kvm['instructions']
 
-    for p in range(NUM_PROCS):
-        for i in range(NUM_INSTR):
-            if torch.rand(1) < 0.9:
-                instr_type = torch.randint(1, 7, (1,)).item()
-                dummy_instructions[p, i, 0] = instr_type
-                slot_idx = i % K_DUMMY
-                min_start_cycles = last_slot_end_time[p, slot_idx] + GAP_CYCLES
-                start_cycles = min_start_cycles + torch.randint(0, 200, (1,)).item()
-                duration_cycles = torch.randint(500, 5000, (1,)).item()
-                end_cycles = start_cycles + duration_cycles
-                last_slot_end_time[p, slot_idx] = end_cycles
-                dummy_timings[p, i, 0] = start_cycles
-                dummy_timings[p, i, 127] = end_cycles
-
-                if duration_cycles > 100 and start_cycles < end_cycles:
-                    # Setup Events
-                    num_setup = torch.randint(1, 4, (1,)).item()
-                    valid_setup_events = [e for e in SETUP_EVENTS if e != 0 and e != 127]
-                    if valid_setup_events:
-                        time_range_start_setup = start_cycles + 1
-                        time_range_end_setup = max(time_range_start_setup, int(start_cycles + 0.15 * duration_cycles))
-                        if time_range_end_setup > time_range_start_setup:
-                            for _ in range(num_setup):
-                                event_id = valid_setup_events[torch.randint(0, len(valid_setup_events), (1,)).item()]
-                                event_time = torch.randint(time_range_start_setup, time_range_end_setup + 1, (1,)).item()
-                                if dummy_timings[p, i, event_id] == 0: dummy_timings[p, i, event_id] = event_time
-                    # Loader/Consumer Events
-                    num_load_consume = torch.randint(5, 16, (1,)).item()
-                    valid_load_consume_events = [e for e in LOADER_EVENTS + CONSUMER_EVENTS if e != 0 and e != 127]
-                    if valid_load_consume_events:
-                        time_range_start_lc = max(start_cycles + 1, int(start_cycles + 0.10 * duration_cycles))
-                        time_range_end_lc = min(end_cycles - 1, int(end_cycles - 0.15 * duration_cycles))
-                        if time_range_end_lc > time_range_start_lc:
-                            for _ in range(num_load_consume):
-                                event_id = valid_load_consume_events[torch.randint(0, len(valid_load_consume_events), (1,)).item()]
-                                event_time = torch.randint(time_range_start_lc, time_range_end_lc + 1, (1,)).item()
-                                if dummy_timings[p, i, event_id] == 0: dummy_timings[p, i, event_id] = event_time
-                    # Storer Events
-                    num_storer = torch.randint(2, 5, (1,)).item()
-                    valid_storer_events = [e for e in STORER_EVENTS if e != 0 and e != 127]
-                    if valid_storer_events:
-                        time_range_start_st = max(start_cycles + 1, int(end_cycles - 0.15 * duration_cycles))
-                        time_range_end_st = end_cycles - 1
-                        if time_range_end_st > time_range_start_st:
-                             for _ in range(num_storer):
-                                event_id = valid_storer_events[torch.randint(0, len(valid_storer_events), (1,)).item()]
-                                event_time = torch.randint(time_range_start_st, time_range_end_st + 1, (1,)).item()
-                                if dummy_timings[p, i, event_id] == 0: dummy_timings[p, i, event_id] = event_time
-            else:
-                 dummy_instructions[p, i, 0] = 0
+    print(timings.shape)
+    print(instructions.shape)
 
     print("Improved dummy data generated.")
     save_gantt_chart_bokeh(
-        dummy_timings,
-        dummy_instructions,
-        k_slots=K_DUMMY,
+        timings,
+        instructions,
+        k_slots=4,
         save_all=True,
-        name="example_run_alternating_bg", # Updated name
+        name="llama_layernorm_fixed", # Updated name
         verbose=True
     )

@@ -3,7 +3,12 @@ from pathlib import Path
 
 import torch
 from kvm_runner.llama import BatchState, LlamaForCausalLM
-from kvm_runner.scheduler import Globals, schedule_model, tensorize_instructions
+from kvm_runner.scheduler import (
+    Globals,
+    assign_to_sms,
+    schedule,
+    tensorize_instructions,
+)
 from torch import Tensor
 
 
@@ -50,6 +55,8 @@ def interpret_with_kvm(
         globs.pos_id,
         globs.attn_scale,
         globs.rms_norm_eps,
+        globs.skip_attn_reduction,
+        stream=torch.cuda.current_stream(),
     )
 
 
@@ -60,6 +67,7 @@ class KVM_Runner:
         kvm_dir: Path,
         prompt_len: int,
         ntok: int,
+        sched: str,
         barrier_fill_val: int = 0,
         skip_kvm: bool = False,
         skip_rest: bool = False,
@@ -71,16 +79,27 @@ class KVM_Runner:
 
         self.model = model
 
-        self.globals, self.instructions = schedule_model(
+        self.schedule = schedule(
             model=self.model,
             prompt_len=prompt_len,
             ntok=ntok,
         )
-        tensorize_instructions(self.globals, self.instructions)
+
+        queues = assign_to_sms(sched, self.schedule)
+        tensorize_instructions(
+            self.schedule.globs, queues, barrier_init_val=barrier_fill_val
+        )
+
+        self.instructions = self.schedule.get_linear_instructions()
 
         self.barrier_fill_val = barrier_fill_val
         self.skip_kvm = skip_kvm
         self.skip_rest = skip_rest
+
+        self.fill()
+
+    def fill(self):
+        self.schedule.globs.barriers.fill_(self.barrier_fill_val)
 
     def run(self, input_ids: Tensor, pos_id: int):
         if not self.skip_rest:
@@ -91,18 +110,17 @@ class KVM_Runner:
             post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
             hiddens = post_embedding.hidden_states
             assert hiddens is not None
-            self.globals.hidden_states[:] = hiddens
-            self.globals.pos_id = pos_id
+            self.schedule.globs.hidden_states[:] = hiddens
 
-            self.globals.barriers.fill_(self.barrier_fill_val)
-
+        self.fill()
+        self.schedule.globs.pos_id = pos_id
         if not self.skip_kvm:
-            interpret_with_kvm(self.globals, self.kvm_func)
+            interpret_with_kvm(self.schedule.globs, self.kvm_func)
 
         if self.skip_rest:
             return input_ids
 
-        logits = self.globals.logits
+        logits = self.schedule.globs.logits
         output_ids = torch.argmax(logits, dim=-1)
 
         return output_ids

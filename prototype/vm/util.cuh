@@ -22,6 +22,18 @@ template<typename config> struct __align__(128) instruction_state_t {
 };
 
 
+__device__ inline unsigned int get_smid() {
+    unsigned int ret;
+    asm volatile("mov.u32 %0, %smid;" : "=r"(ret));
+    return ret;
+}
+
+__device__ inline unsigned int get_worker_id() {
+    return get_smid();
+    // return blockIdx.x;
+}
+
+
 template<template<typename> typename op_dispatcher, typename... ops>
 struct dispatch_op {
     template<typename return_t, typename config, typename globals, typename... args>
@@ -89,6 +101,16 @@ template<typename config> struct state {
     __device__ inline void* scratch() const {
         return (void*)&all_instructions[instruction_ring].scratch[0];
     }
+
+    template<int num_bytes>
+    __device__ inline void zero_scratch() {
+        static_assert(num_bytes % 4 == 0, "num_bytes must be a multiple of 4");
+        constexpr auto num_floats = num_bytes / 4;
+        auto &scratch_vec = *reinterpret_cast<sv_fl<num_floats>*>(scratch());
+        warp::zero(scratch_vec);
+        warp::sync();
+    }
+
     __device__ inline kittens::semaphore (&semaphores())[config::DYNAMIC_SEMAPHORES] {
         return all_instructions[instruction_ring].semaphores;
     }
@@ -131,15 +153,9 @@ template<typename config> struct state {
     }
 
     __device__ inline void finish_page(int pid, int count) {
-        auto next_instruction_index = instruction_index + 1;
-
         #pragma unroll
         for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
-            // auto should_flip = (next_instruction_index % (1 << i)) == 0;
-            bool should_flip = (next_instruction_index & ((1 << i) - 1)) == 0;
-            if (should_flip) {
-                arrive(page_finished[pid][i], count);
-            }
+            arrive(page_finished[pid][i], count);
         }
     }
 
@@ -149,10 +165,12 @@ template<typename config> struct state {
         }
     }
 
+#ifdef KITTENS_BLACKWELL
     semaphore &tensor_finished;
     __device__ inline void wait_tensor_ready() {
         wait(tensor_finished, instruction_index%2);
     }
+#endif
 
     semaphore &semaphores_ready;
     __device__ inline void wait_semaphores_ready() {
@@ -160,16 +178,22 @@ template<typename config> struct state {
     }
 
     uint64_t start_clock;
-    
+
     __device__ inline void record(int event_id) {
-        uint64_t current = clock64();
-        int diff = (int)(current - start_clock);
-        timing()[event_id] = diff;
+        if constexpr(config::TIMING_RECORD_ENABLED) {
+            uint64_t current = clock64();
+            int diff = (int)(current - start_clock);
+            timing()[event_id] = diff;
+        }
     }
 
+#ifdef KITTENS_BLACKWELL
     static constexpr int NCTA_TENSOR_ALLOC = config::CLUSTER_BLOCKS > 1 ? 2 : 1;
     using tensor_allocator_t = ::kittens::tensor_allocator<1, NCTA_TENSOR_ALLOC>;
     tensor_allocator_t &tensor_alloc;
+#endif
+
+    uint32_t pid_order_shared_addr;
 
     uint32_t pid_order_shared_addr;
 
@@ -193,10 +217,20 @@ constexpr int TEVENT_CONSUMER_START = 11;
 
 constexpr int TEVENT_AT_GMEM_WAIT = 44;
 constexpr int TEVENT_DONE_GMEM_WAIT = 45;
+constexpr int TEVENT_AT_GMEM_STORE = 46;
+constexpr int TEVENT_DONE_GMEM_STORE = 47;
 
-constexpr int TEVENT_OUTPUT_READY = 46;
+constexpr int TEVENT_FIRST_LOAD = 48;
+constexpr int TEVENT_FIRST_USE = 49;
+constexpr int TEVENT_FIRST_STORE = 50;
 
-constexpr int FREE_SLOTS_START = 47;
+constexpr int TEVENT_LAST_LOAD = 51;
+constexpr int TEVENT_LAST_USE = 52;
+constexpr int TEVENT_LAST_STORE = 53;
+
+constexpr int TEVENT_OUTPUT_READY = 54;
+
+constexpr int FREE_SLOTS_START = 55;
 
 constexpr int TEVENT_TRIPLES_START = 100;
 constexpr int TEVENT_TRIPLES_END = 110;
@@ -239,7 +273,7 @@ template<typename config, typename globals, typename... ops> __device__ void mai
         kvms.await_instruction(); \
         if (laneid() == 0) { \
             if (is_consumer) { \
-                kvms.record(start_event + warpid()); \
+                kvms.record(start_event + 2 * warpid()); \
             } \
             else { \
                 kvms.record(start_event); \
@@ -248,7 +282,7 @@ template<typename config, typename globals, typename... ops> __device__ void mai
         dispatch_op<name##_op_dispatcher<config, globals>::dispatcher, ops...>::template run<void, config, globals, ::kittens::prototype::vm::state<config>>(kvms.instruction()[0], g, kvms); \
         if (laneid() == 0) { \
             if (is_consumer) { \
-                kvms.record(start_event + config::NUM_CONSUMER_WARPS + warpid()); \
+                kvms.record(start_event + 2 * warpid() + 1); \
             } \
             else { \
                 kvms.record(start_event + 1); \

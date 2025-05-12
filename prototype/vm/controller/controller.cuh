@@ -8,12 +8,6 @@
 #include "semaphore_constructor.cuh"
 #include "page_allocator.cuh"
 
-#define TEVENT_CONTROLLER_START 0
-#define TEVENT_IFETCH_DONE 1
-#define TEVENT_PAGE_ALLOC_DONE 2
-#define TEVENT_SEMS_SETUP 3
-#define TEVENT_CONTROLLER_END 15
-
 namespace kittens
 {
     namespace prototype
@@ -57,8 +51,10 @@ namespace kittens
 
                             if (laneid == 0)
                             {
-                                kvms.record(TEVENT_CONTROLLER_END);
-                                store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                                if constexpr(config::TIMING_RECORD_ENABLED) {
+                                    kvms.record(TEVENT_CONTROLLER_END);
+                                    store_timings_and_reset<config, globals>(&kvms.all_instructions[kvms.instruction_ring].timings[0], last_slot_instruction_index, g);
+                                }
                             }
                         }
 
@@ -153,12 +149,10 @@ namespace kittens
                         kvms.instruction_index = instruction_index;
                         kvms.instruction_ring = instruction_ring;
                         // record using the current ring
-                        if (laneid == 0)
-                        {
-                            kvms.record(TEVENT_CONTROLLER_END);
-                            // technically don't need to reset, whatevs?
-                            store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
-                        }
+                        if (laneid == 0) kvms.record(TEVENT_CONTROLLER_END);
+                        
+                        // technically don't need to reset, whatevs?
+                        store_timings_and_reset<config, globals>(&kvms.all_instructions[instruction_ring].timings[0], instruction_index, g);
                     }
                 }
 

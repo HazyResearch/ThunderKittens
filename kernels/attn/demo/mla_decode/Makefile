@@ -1,9 +1,9 @@
 # Compiler
 NVCC?=nvcc
-GPU=B200
+GPU=H100
 
 TARGET=mla_decode
-SRC=blackwell_mla_decode.cu
+SRC=hopper_mla_decode.cu
 
 # Python version configuration
 ifndef PYTHON_VERSION

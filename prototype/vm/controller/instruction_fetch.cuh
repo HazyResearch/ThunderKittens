@@ -21,10 +21,9 @@ namespace kittens
                     //     return;
                     // }
 
-                    auto src_ptr = &g.instructions[kittens::coord<>{(int)(blockIdx.x), instruction_index, 0}];
+                    auto src_ptr = &g.instructions[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}];
                     // static assert it's an int*
                     static_assert(std::is_same<decltype(src_ptr), int *>::value, "src_ptr is not an int*");
-
 
                     static_assert(config::INSTRUCTION_WIDTH <= 32);
 

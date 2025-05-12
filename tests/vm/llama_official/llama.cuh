@@ -2,6 +2,7 @@
 
 #include "kittens.cuh"
 #include "vm/vm.cuh"
+#include "vm/util.cuh"
 #include <iostream>
 
 #define OPCODE_RMS_QKV_MatVecRopeAppend 1
@@ -22,29 +23,29 @@
 #define LLAMA_1B_MATVEC_BLOCK_SIZE 16
 #define LLAMA_1B_LM_HEAD_BLOCK_SIZE 32
 #define LLAMA_1B_VOCAB_SIZE 128256
-#define SM_COUNT 148
-
-// timing event convention
-
-#define TEVENT_LOADER_START 16
-#define TEVENT_AT_GMEM_WAIT 17
-#define TEVENT_DONE_GMEM_WAIT 18
-#define TEVENT_LOADER_END 19
-
-#define TEVENT_CONSUMER_START 24
-#define TEVENT_CONSUMER_END 88
-
-#define TEVENT_STORE_START 104
-#define TEVENT_OUTPUT_READY 110
-#define TEVENT_STORE_END 126
-
-#define TEVENT_TRIPLES_START 100
-#define TEVENT_TRIPLES_END 110
-#define TEVENT_TRIPLES_STORE_START 124
-#define TEVENT_TRIPLES_OUTPUT_READY 125
+#define H100_SM_COUNT 132
+#define B200_SM_COUNT 148
 
 namespace kittens::prototype::vm
 {
+
+    constexpr int ATOMIC_ADD_START = FREE_SLOTS_START;
+    constexpr int ATOMIC_ADD_END = ATOMIC_ADD_START + 1;
+    constexpr int EPILOGUE_START = ATOMIC_ADD_END + 1;
+    constexpr int ACT_WAIT_DONE = EPILOGUE_START + 2;
+    constexpr int WEIGHT_WAIT_START = ACT_WAIT_DONE + 3;
+    constexpr int WEIGHT_WAIT_DONE = WEIGHT_WAIT_START + 4;
+    constexpr int RMS_START = WEIGHT_WAIT_DONE + 4;
+    constexpr int RMS_SCALE_WAIT_START = RMS_START + 1;
+    constexpr int RMS_SCALE_WAIT_DONE = RMS_SCALE_WAIT_START + 1;
+    constexpr int RMS_DONE = RMS_SCALE_WAIT_DONE + 1;
+
+    constexpr int TEMP1 = RMS_DONE + 1;
+    constexpr int TEMP2 = TEMP1 + 1;
+    constexpr int TEMP3 = TEMP2 + 1;
+    constexpr int TEMP4 = TEMP3 + 1;
+    constexpr int TEMP5 = TEMP4 + 1;
+    constexpr int TEMP6 = TEMP5 + 1;
 
     using config = default_config;
 
@@ -52,15 +53,25 @@ namespace kittens::prototype::vm
     struct globals_t
     {
 
-        constexpr static unsigned int num_layers = _num_layers;
-        constexpr static unsigned int matvec_block_size = _matvec_block_size;
-        constexpr static unsigned int kv_block_size = _kv_block_size;
-        constexpr static unsigned int head_dim = _head_dim;
-        constexpr static unsigned int hidden_dim = _hidden_dim;
-        constexpr static unsigned int intermediate_dim = _intermediate_dim;
-        constexpr static unsigned int num_attention_heads = _num_attention_heads;
-        constexpr static unsigned int num_kv_heads = _num_kv_heads;
-        constexpr static unsigned int sm_count = _sm_count;
+        // constexpr static unsigned int num_layers = _num_layers;
+        // constexpr static unsigned int matvec_block_size = _matvec_block_size;
+        // constexpr static unsigned int kv_block_size = _kv_block_size;
+        // constexpr static unsigned int head_dim = _head_dim;
+        // constexpr static unsigned int hidden_dim = _hidden_dim;
+        // constexpr static unsigned int intermediate_dim = _intermediate_dim;
+        // constexpr static unsigned int num_attention_heads = _num_attention_heads;
+        // constexpr static unsigned int num_kv_heads = _num_kv_heads;
+        // constexpr static unsigned int sm_count = _sm_count;
+
+        constexpr static int num_layers = _num_layers;
+        constexpr static int matvec_block_size = _matvec_block_size;
+        constexpr static int kv_block_size = _kv_block_size;
+        constexpr static int head_dim = _head_dim;
+        constexpr static int hidden_dim = _hidden_dim;
+        constexpr static int intermediate_dim = _intermediate_dim;
+        constexpr static int num_attention_heads = _num_attention_heads;
+        constexpr static int num_kv_heads = _num_kv_heads;
+        constexpr static int sm_count = _sm_count;
 
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
@@ -68,17 +79,17 @@ namespace kittens::prototype::vm
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matvec_block_size, 512>>;                 // assumed to be N by 2048 (X@W.T).
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matvec_block_size, 512>>; // assumed to be N by 2048 (X@W.T).
 
-        using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>>;
-        using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
+        using activations_t = gl<bf16, 1, 1, 1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<matvec_block_size>>;
+        using activations_big_indim_t = gl<bf16, 1, 1, 1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<matvec_block_size>>;
+        using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<matvec_block_size>>;
 
-        using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
-        using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
+        using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<matvec_block_size>>;
+        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<head_dim>>;
+        using kv_cache_t = gl<bf16, -1, -1, -1, head_dim, sv_bf<matvec_block_size>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         // max attention partials == sm_count
-        using attn_out_intermediates_t = gl<float, 1, num_attention_heads, sm_count, head_dim, sv_fl<head_dim>>;
-        using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, sm_count, sv_fl<((sm_count + 15) / 16) * 16>>;
+        using attn_out_intermediates_t = gl<float, 1, num_attention_heads, -1, head_dim, sv_fl<head_dim>>;
+        using attn_lse_intermediates_t = gl<float, 1, 1, num_attention_heads, -1, sv_fl<((sm_count + 15) / 16) * 16>>;
 
         // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
         using barriers = gl<uint, 1, -1, 6, num_attention_heads + 2 * num_kv_heads>;
@@ -118,6 +129,7 @@ namespace kittens::prototype::vm
         unsigned int pos_id;
         float attn_scale;
         float rms_norm_eps;
+        bool skip_attn_reduction;
 
         dim3 grid() { return dim3(sm_count); }
         dim3 block() { return dim3(config::NUM_THREADS); }
@@ -133,7 +145,11 @@ namespace kittens::prototype::vm
         LLAMA_1B_NUM_KV_HEADS,
         LLAMA_1B_KV_BLOCK_SIZE,
         LLAMA_1B_MATVEC_BLOCK_SIZE,
-        SM_COUNT>
+#ifndef KITTENS_BLACKWELL
+        H100_SM_COUNT>
+#else
+        B200_SM_COUNT>
+#endif
         llama_1b_globals;
 
     template <typename config = config, typename globals = llama_1b_globals>

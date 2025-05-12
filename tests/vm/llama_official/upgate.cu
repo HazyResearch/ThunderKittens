@@ -15,72 +15,111 @@ namespace kittens::prototype::vm
         static constexpr int opcode = OPCODE_RMS_DoubleMatVecSiLU; // Op index within the layer -- controls which barrier to listen to.
         static constexpr int prev_opcode = OPCODE_O_ProjResidual;
         static constexpr int EXPECTED_ARRIVAL_COUNT = Globals::hidden_dim / Globals::matvec_block_size;
-        static constexpr int NUM_STAGES = 3;
 
         struct parsed_instruction
         {
-            int layer;
-            int output_block_idx;
+            int layer_idx, start_block_idx, end_block_idx, iters;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
             {
-                layer = instruction[1];
-                output_block_idx = instruction[2];
+                layer_idx = instruction[1];
+                start_block_idx = instruction[2];
+                end_block_idx = instruction[3];
+                iters = 2 * (end_block_idx - start_block_idx);
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        static constexpr int NUM_UP_PAGES = 4;
-        static constexpr int NUM_GATE_PAGES = 4;
-        static constexpr int PAGE_RMS_SCALE_ACTIVATION = 0;
-        static constexpr int PAGE_UP_START = PAGE_RMS_SCALE_ACTIVATION + 1;
-        static constexpr int PAGE_GATE_START = PAGE_UP_START + NUM_UP_PAGES;
-        static constexpr int PAGE_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 1;
-        static constexpr int SEM_COUNT = NUM_UP_PAGES + NUM_GATE_PAGES + 3;
+        struct pipeline_specifics
+        {
+            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s)
+            {
+                parsed_instruction inst{s};
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                {
+                    __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
+                }
+            }
 
-        static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
+            {
+                auto block_idx = inst.start_block_idx + iter / 2;
+                if (iter % 2 == 0)
+                {
+                    tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
+                }
+                else
+                {
+                    tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.gate_weights, {inst.layer_idx, block_idx, col_idx}, sem);
+                }
+            }
 
-        //  semaphores
-        __device__ static inline semaphore &up_arrived(state<Config> &s, int i) { return s.semaphores()[i]; }
-        __device__ static inline semaphore &gate_arrived(state<Config> &s, int i) { return s.semaphores()[NUM_UP_PAGES + i]; }
-        __device__ static inline semaphore &in_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES]; }
-        __device__ static inline semaphore &rms_scale_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 1]; }
-        __device__ static inline semaphore &out_arrived(state<Config> &s) { return s.semaphores()[NUM_UP_PAGES + NUM_GATE_PAGES + 2]; }
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
+            {
+                if (output_idx % 2 == 0)
+                {
+                    return;
+                }
 
-        // getters
-        __device__ static inline int get_rms_scale_activation_page(state<Config> &s) { return s.pid(PAGE_RMS_SCALE_ACTIVATION); }
-        __device__ static inline int get_up_page(state<Config> &s, int i) { return s.pid(PAGE_UP_START + i); }
-        __device__ static inline int get_gate_page(state<Config> &s, int i) { return s.pid(PAGE_GATE_START + i); }
+                auto true_output_idx = output_idx / 2;
+
+                // NOTE: hardcoding to 3 output stages for now
+                auto prev_output_idx = (output_idx - 1);
+                auto prev_output_stage = prev_output_idx % 3;
+
+                int block_idx = inst.start_block_idx + true_output_idx;
+
+                sv_fl<16> &up_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * prev_output_stage));
+                sv_fl<16> &gate_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+
+                sv_bf<16> &out_smem = *reinterpret_cast<sv_bf<16> *>(&gate_out_smem);
+
+                rv_fl<16> up_out, gate_out, gate_scratch;
+
+                warp::load(up_out, up_out_smem);
+                warp::load(gate_out, gate_out_smem);
+
+                // neg
+                warp::mul(gate_scratch, gate_out, -1.f);
+                warp::exp(gate_scratch, gate_scratch);
+                warp::add(gate_scratch, gate_scratch, 1.f);
+                warp::div(gate_out, gate_out, gate_scratch);
+
+                // gating
+                warp::mul(gate_out, up_out, gate_out);
+
+                // wait before we overwrite gate_out
+                warp::sync();
+
+                warp::store(out_smem, gate_out);
+
+                // wait before we store results to global memory
+                warp::sync();
+
+                if (laneid() == 0)
+                {
+                    tma::store_async<cache_policy::EVICT_LAST>(g.silu_out, out_smem, {block_idx});
+                    tma::store_async_read_wait();
+                }
+
+                warp::sync();
+                warp::zero(up_out_smem);
+                warp::zero(gate_out_smem);
+                warp::sync();
+            }
+        };
+
+        using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics, &Globals::hidden_states, &Globals::mlp_norm_weights>;
+        static_assert(pipeline::OUTPUT_PIPELINE_STAGES == 3);
 
         struct controller
         {
             static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                // first the pages we don't use (we use 10 pages)
-                // then input, then rms scale, then up, then gate
-
-                int ret_order[] = {9, 10, 11, 12, PAGE_RMS_SCALE_ACTIVATION, PAGE_UP_START, PAGE_UP_START + 1, PAGE_UP_START + 2, PAGE_UP_START + 3, PAGE_GATE_START, PAGE_GATE_START + 1, PAGE_GATE_START + 2, PAGE_GATE_START + 3};
-
-                return ret_order[query];
+                return pipeline::release_lid(g, instruction, query);
             }
             static __device__ int init_semaphores(const Globals &g, state<Config> &s)
             {
-
-                // each weight page and the input page needs exactly 1 “ready” signal
-                for (int i = 0; i < NUM_UP_PAGES; i++)
-                {
-                    init_semaphore(up_arrived(s, i), 1);
-                }
-                for (int i = 0; i < NUM_GATE_PAGES; i++)
-                {
-                    init_semaphore(gate_arrived(s, i), 1);
-                }
-
-                init_semaphore(in_arrived(s), 1);
-                // output must wait for all 4 consumer warps
-                init_semaphore(out_arrived(s), Config::NUM_CONSUMER_WARPS);
-                init_semaphore(rms_scale_arrived(s), 1);
-
-                return SEM_COUNT;
+                return pipeline::init_semaphores(s);
             }
         };
 
@@ -88,90 +127,18 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
+                s.template zero_scratch<1024>();
 
                 parsed_instruction inst{s};
-
-                // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
-                ((uint64_t *)s.scratch())[laneid()] = 0;
-                warp::sync(); // done, now we can proceed to other things.
-
-                if (laneid() == 0)
-                {
-                    int rms_scale_activation_page = get_rms_scale_activation_page(s);
-                    s.wait_page_ready(rms_scale_activation_page);
-                    auto &rms_scale   = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr());
-                    auto &activations = *reinterpret_cast<sv_bf<2048>*>(s.pages[rms_scale_activation_page].ptr(sizeof(sv_bf<2048>)));
-                    s.record(TEVENT_TRIPLES_START);
-                    tma::expect(rms_scale_arrived(s), rms_scale);
-                    tma::load_async(rms_scale, g.mlp_norm_weights, {inst.layer, 0}, rms_scale_arrived(s));
-
-                    for (int i = 0; i < NUM_UP_PAGES; i++)
-                    {
-
-                        int pg = get_up_page(s, i);
-                        s.wait_page_ready(pg);
-                        auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
-                        s.record(TEVENT_TRIPLES_START + 1 + i);
-                        tma::expect(up_arrived(s, i), chunk);
-                        tma::load_async(chunk, g.up_weights,
-                                        {0, inst.layer, inst.output_block_idx, i},
-                                        up_arrived(s, i));
-                    }
-
-                    for (int i = NUM_UP_PAGES; i < NUM_UP_PAGES + NUM_GATE_PAGES; i++)
-                    {
-
-                        int idx = i - NUM_UP_PAGES;
-                        int pg = get_gate_page(s, idx);
-                        s.wait_page_ready(pg);
-                        auto &chunk = reinterpret_cast<st_bf<Globals::matvec_block_size, 512> &>(s.pages[pg]);
-                        s.record(TEVENT_TRIPLES_START + 5 + i);
-                        tma::expect(gate_arrived(s, idx), chunk);
-                        tma::load_async(chunk, g.gate_weights,
-                                        {0, inst.layer, inst.output_block_idx, idx},
-                                        gate_arrived(s, idx));
-                    }
-
-                    // activations last, since there's a data dependency
-                    // wait on barrier from previous op
-                    s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                        __nanosleep(20);
-                    s.record(TEVENT_DONE_GMEM_WAIT);
-                    s.record(TEVENT_TRIPLES_START + 9);
-                    tma::expect(in_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {}, in_arrived(s)); // TODO: SA check
-                }
-
-                // 5) UNUSED pages: release them immediately so consumer warps can retire
-                // else if (laneid() >= PAGE_RMS_SCALE + 1 && laneid() < SEM_COUNT)
-                else if (laneid() >= PAGE_COUNT && laneid() < config::NUM_PAGES)
-                {
-                    int pg = s.pid(laneid());
-                    s.wait_page_ready(pg);
-                    arrive(s.page_finished[pg], Config::NUM_CONSUMER_WARPS);
-                }
-
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
+                pipeline::loader_loop(s, g, inst.layer_idx);
             }
         };
 
         struct launcher
         {
-            // launcher does nothing here, since this doesn't use tensor cores.
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                s.wait_tensor_ready();
-                if (laneid() == 0)
-                    arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
+                pipeline::launcher_loop(s, g);
             }
         };
 
@@ -179,52 +146,7 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
-
-                // Setup
-                using float_rt_t = rt_fl<16, REDUCTION_DIM_PER_WARP>;
-                using float_rv_t = rv_fl<16>;
-
-                parsed_instruction inst{s};
-                typename float_rt_t::row_vec activations_vec;
-
-                static_assert(NUM_UP_PAGES == NUM_GATE_PAGES, "NUM_UP_PAGES must be equal to NUM_GATE_PAGES");
-                static_assert(Config::NUM_CONSUMER_WARPS % NUM_UP_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_UP_PAGES");
-                constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_UP_PAGES;
-
-                int page_index = warpid() / WARPS_PER_PAGE;
-
-                rms_norm(g, s, activations_vec, get_rms_scale_activation_page(s), in_arrived(s), rms_scale_arrived(s), 32);
-
-                // up matvec
-                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, up_arrived(s, page_index), get_up_page(s, page_index), 0);
-
-                // gate matvec
-                matvec<float_rt_t, WARPS_PER_PAGE>(g, s, activations_vec, gate_arrived(s, page_index), get_gate_page(s, page_index), 16);
-
-                // Release pages
-                warp::sync();
-                for (int i = 0; i < NUM_UP_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_up_page(s, i)]);
-                }
-                for (int i = 0; i < NUM_GATE_PAGES; i++) {
-                    warp::arrive(s.page_finished[get_gate_page(s, i)]);
-                }
-                warp::arrive(s.page_finished[get_rms_scale_activation_page(s)]);
-
-                using block_rt = rt_fl<16, REDUCTION_DIM_PER_WARP>;
-                using block_rv = rv_fl<16>;
-
-                warp::sync();                 // all adds have landed
-                warp::arrive(out_arrived(s)); // let the storer know we’re done
-
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END + warpid());
-                }
+                pipeline::consumer_loop(s, g);
             }
         };
 
@@ -233,48 +155,21 @@ namespace kittens::prototype::vm
 
             static __device__ void run(const Globals &g, state<Config> &s)
             {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_STORE_START);
-                }
+                pipeline::storer_loop<2>(s, g);
 
-                parsed_instruction inst{s};
-
+                // one atomic add at the end
                 if (laneid() == 0)
                 {
-                    wait(out_arrived(s), 0);
-                    s.record(TEVENT_TRIPLES_OUTPUT_READY);
+                    s.record(TEVENT_AT_GMEM_STORE);
 
-                    float *scratch_f32 = (float *)s.scratch();
-                    bf16 *scratch_bf16 = (bf16 *)scratch_f32; // alias
-/* fuse up * SiLU(gate) once, in float, then cast */
-#pragma unroll
-                    for (int i = 0; i < 16; ++i)
-                    {
-                        float up = scratch_f32[i];
-                        float gate = scratch_f32[i + 16];
-
-                        float silu = gate / (1.f + expf(-gate));
-                        scratch_bf16[i] = bf16(up * silu);
-                    }
-
-                    sv_bf<16> &vec = *reinterpret_cast<sv_bf<16> *>(scratch_bf16);
-
-                    tma::store_async(g.silu_out, vec, {0, 0, 0, inst.output_block_idx});
                     tma::store_async_wait();
-                }
+                    asm volatile("fence.acq_rel.gpu;");
 
-                warp::sync();
-                asm volatile("fence.acq_rel.gpu;");
-                if (laneid() == 0)
-                {
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
-                }
+                    parsed_instruction inst{s};
+                    auto to_increment = inst.end_block_idx - inst.start_block_idx;
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], to_increment);
 
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
+                    s.record(TEVENT_DONE_GMEM_STORE);
                 }
             }
         };

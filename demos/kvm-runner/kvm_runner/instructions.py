@@ -37,6 +37,7 @@ class Globals:
     pos_id: int
     attn_scale: float
     rms_norm_eps: float
+    skip_attn_reduction: bool
 
     # block size constants
     up_gate_proj_block_size: int
@@ -82,8 +83,6 @@ class Instruction:
         words = [self.opcode()]
         for field in fields(self):
             name = field.name
-            if name == "global_idx":
-                continue
             attr = getattr(self, name)
 
             if isinstance(attr, int):
@@ -102,11 +101,17 @@ class Instruction:
 
         return words
 
+    def cost(self, globs: Globals):
+        raise NotImplementedError
+
 
 @dataclass
 class NoOp(Instruction):
     @classmethod
     def opcode(cls) -> int:
+        return 0
+
+    def cost(self, globs: Globals):
         return 0
 
 
@@ -117,7 +122,8 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     """
 
     layer_idx: int
-    output_block_idx: int
+    start_output_block_idx: int
+    end_output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -126,6 +132,16 @@ class LayerNorm_QKV_MatVecRopeAppend(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return DownProjResidual.opcode()
+
+    def block_indices(self):
+        return list(range(self.start_output_block_idx, self.end_output_block_idx))
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.qkv_block_size
+            * globs.hidden_size
+        )
 
 
 @dataclass
@@ -142,6 +158,13 @@ class PartialAttention(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return LayerNorm_QKV_MatVecRopeAppend.opcode()
+
+    def cost(self, globs: Globals):
+        seq_len = globs.pos_id + 1
+        loaded_seq_len = seq_len / self.num_partials
+
+        # num loaded elements from kv cache
+        return loaded_seq_len * globs.head_dim * 2
 
 
 @dataclass
@@ -168,8 +191,9 @@ class AttentionReduction(Instruction):
 @dataclass
 class MatVecAdd(Instruction):
     layer_idx: int
-    output_block_idx: int
-    reduction_block_idx: int  # in units of 2048
+    start_block_idx: int
+    end_block_idx: int
+    reduction_block_idx: int
 
 
 # denoting these with separate opcodes so that know what inputs to read from
@@ -185,6 +209,13 @@ class O_ProjResidual(MatVecAdd):
     def prev_opcode(cls) -> int:
         return AttentionReduction.opcode()
 
+    def cost(self, globs: Globals):
+        return (
+            (self.end_block_idx - self.start_block_idx)
+            * globs.o_proj_block_size
+            * globs.hidden_size
+        )
+
 
 @dataclass
 class LayerNormDoubleMatVecSiLU(Instruction):
@@ -193,7 +224,8 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     """
 
     layer_idx: int
-    output_block_idx: int
+    start_output_block_idx: int
+    end_output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -202,6 +234,14 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return O_ProjResidual.opcode()
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.up_gate_proj_block_size
+            * globs.hidden_size
+            * 2  # gate and up
+        )
 
 
 @dataclass
@@ -214,10 +254,18 @@ class DownProjResidual(MatVecAdd):
     def prev_opcode(cls) -> int:
         return LayerNormDoubleMatVecSiLU.opcode()
 
+    def cost(self, globs: Globals):
+        return (
+            (self.end_block_idx - self.start_block_idx)
+            * globs.down_proj_block_size
+            * globs.hidden_size
+        )
+
 
 @dataclass
 class RMS_LM_Head(Instruction):
-    output_block_idx: int
+    start_output_block_idx: int
+    end_output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -226,6 +274,13 @@ class RMS_LM_Head(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return DownProjResidual.opcode()
+
+    def cost(self, globs: Globals):
+        return (
+            (self.end_output_block_idx - self.start_output_block_idx)
+            * globs.lm_head_block_size
+            * globs.hidden_size
+        )
 
 
 @dataclass

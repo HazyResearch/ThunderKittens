@@ -72,7 +72,11 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = 0;
+#ifdef KITTENS_BLACKWELL
         common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
+#else
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+#endif
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -129,7 +133,11 @@ template<typename Op> __device__ inline void run_op_producer(const typename Op::
         using producers = group<NUM_PRODUCER_WARPS>;
         producer_state p_state;
         int num_iters = -1;
+#ifdef KITTENS_BLACKWELL
         common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
+#else
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+#endif
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -196,7 +204,11 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = 0;
+#ifdef KITTENS_BLACKWELL
         common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
+#else
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+#endif
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
@@ -247,7 +259,11 @@ template<typename Op> __device__ inline void run_op_consumer(const typename Op::
         using consumers = group<NUM_CONSUMER_WARPS>;
         consumer_state c_state;
         int num_iters = -1;
+#ifdef KITTENS_BLACKWELL
         common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.tensor_alloc, ps.instruction};
+#else
+        common_setup_args<L> unif{common, ps.task_iter, num_iters, globals, **scratch_smem, ps.instruction};
+#endif
 #ifdef KITTENS_TIMINGS
         unif.timings = ps.timings;
 #endif
