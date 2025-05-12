@@ -210,7 +210,7 @@ constexpr int TEVENT_CONTROLLER_END = 4;
 constexpr int TEVENT_LOADER_START = 5;
 constexpr int TEVENT_LAUNCHER_START = 7;
 constexpr int TEVENT_STORER_START = 9;
-// need NUM_CONSUMER_WARPS * 2 slots here
+
 constexpr int TEVENT_CONSUMER_START = 11;
 
 constexpr int TEVENT_AT_GMEM_WAIT = 44;

@@ -17,8 +17,7 @@ namespace prototype {
 namespace vm {
 
 template <typename config, typename globals, typename... ops>
-__device__ inline void kvm_internal(const globals &g)
-{
+__device__ inline void kvm_internal(const globals &g) {
     uint64_t start_time = (uint64_t)clock64();
 #ifdef KVM_DEBUG
     if (threadIdx.x == 0)
@@ -71,31 +70,25 @@ __device__ inline void kvm_internal(const globals &g)
 #endif
 
     // Zero initial timings memory.
-    if (threadIdx.x < config::TIMING_WIDTH)
-    {
+    if (threadIdx.x < config::TIMING_WIDTH) {
 #pragma unroll
-        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES; i++)
-        {
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES; i++) {
             instruction_state[i].timings[threadIdx.x] = 0;
         }
     }
 
-    if (threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES)
-    {
+    if (threadIdx.x < config::INSTRUCTION_PIPELINE_STAGES) {
         init_semaphore(instruction_arrived[threadIdx.x], 1);
         init_semaphore(instruction_finished[threadIdx.x], config::NUM_WARPS - 1);
     }
-    if (threadIdx.x < config::NUM_PAGES)
-    {
-        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++)
-        {
+    if (threadIdx.x < config::NUM_PAGES) {
+        for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
             auto count = config::NUM_CONSUMER_WARPS * (1 << i);
             init_semaphore(page_finished[threadIdx.x][i], count);
             arrive(page_finished[threadIdx.x][i], count);
         }
     }
-    if (threadIdx.x == 0)
-    {
+    if (threadIdx.x == 0) {
 #ifdef KITTENS_BLACKWELL
         init_semaphore(tensor_finished, config::NUM_CONSUMER_WARPS);
         arrive(tensor_finished, config::NUM_CONSUMER_WARPS); // Flip to state 0, to mark that it starts as available.
@@ -112,20 +105,18 @@ __device__ inline void kvm_internal(const globals &g)
         everyone::tma::cluster::sync();
 
 #ifdef KVM_DEBUG
-    if (blockIdx.x == 0 && threadIdx.x == 0)
+    if (get_worker_id() == 0 && threadIdx.x == 0)
         kvms.print();
 #endif
 
-    if (warpid() < config::NUM_CONSUMER_WARPS)
-    {
+    if (warpid() < config::NUM_CONSUMER_WARPS) {
         warpgroup::increase_registers<config::CONSUMER_REGISTERS>();
         ::kittens::prototype::vm::consumer::main_loop<config, globals, ops...>(g, kvms);
     }
     else
     {
         warpgroup::decrease_registers<config::NON_CONSUMER_REGISTERS>();
-        switch (warpgroup::warpid())
-        {
+        switch (warpgroup::warpid()) {
         case 0:
             ::kittens::prototype::vm::loader::main_loop<config, globals, ops...>(g, kvms);
             break;
@@ -161,10 +152,8 @@ __device__ inline void kvm_internal(const globals &g)
 
 // Forward a NoOp to the VM, to ensure that the VM can support zeros.
 template <typename config, typename globals, typename... ops>
-struct kittens_virtual_machine
-{
-    __device__ inline static void run(const globals &g)
-    {
+struct kittens_virtual_machine {
+    __device__ inline static void run(const globals &g) {
         kvm_internal<config, globals, NoOp<config>, ops...>(g);
     }
 };
@@ -172,8 +161,7 @@ struct kittens_virtual_machine
 template <typename config, typename globals, typename... ops>
 __launch_bounds__(config::NUM_THREADS, 1)
     __cluster_dims__(config::CLUSTER_BLOCKS)
-        __global__ void kvm(const __grid_constant__ globals g)
-{
+        __global__ void kvm(const __grid_constant__ globals g) {
     kittens_virtual_machine<config, globals, ops...>::run(g);
 }
 

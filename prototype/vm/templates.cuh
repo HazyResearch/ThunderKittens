@@ -2,15 +2,11 @@
 
 #include "../common/common.cuh"
 
-namespace kittens
-{
-    namespace prototype
-    {
-        namespace vm
-        {
+namespace kittens {
+    namespace prototype {
+        namespace vm {
 
-            struct persistent_state
-            {
+            struct persistent_state {
                 int instruction_index;
                 int *shmem;
                 int max_finish_offset;
@@ -24,8 +20,7 @@ namespace kittens
 
             // All template functions take these args
             template <kittens_layout T>
-            struct uniform_args
-            {
+            struct uniform_args {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::common_state_t &common; // scratch for the coordinates of the task.
                 int &instruction_index;               // which task are we on?
@@ -47,8 +42,7 @@ namespace kittens
                                          num_iters(_num_iters),
                                          globals(_globals),
                                          scratch(_scratch),
-                                         instruction(_instruction)
-                {
+                                         instruction(_instruction) {
                 }
                 __device__ uniform_args(uniform_args<T> &_args) : common(_args.common),
                                                                   instruction_index(_args.instruction_index),
@@ -70,8 +64,7 @@ namespace kittens
 
             // Producer init args
             template <kittens_layout T>
-            struct producer_setup_args : uniform_args<T>
-            {
+            struct producer_setup_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::producer_state_t &state;
                 __device__ producer_setup_args(
@@ -81,8 +74,7 @@ namespace kittens
 
             // Producer load args
             template <kittens_layout T>
-            struct producer_load_args : uniform_args<T>
-            {
+            struct producer_load_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::producer_state_t &state;
                 typename CKL::input_block_t &input;
@@ -98,8 +90,7 @@ namespace kittens
 
             // Producer store args
             template <store_kittens_layout T>
-            struct producer_store_args : uniform_args<T>
-            {
+            struct producer_store_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::producer_state_t &state;
                 typename CKL::output_block_t &output;
@@ -115,8 +106,7 @@ namespace kittens
 
             // Consumer init args
             template <kittens_layout T>
-            struct consumer_setup_args : uniform_args<T>
-            {
+            struct consumer_setup_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::consumer_state_t &state;
                 __device__ consumer_setup_args(
@@ -126,8 +116,7 @@ namespace kittens
 
             // Consumer compute args
             template <kittens_layout T>
-            struct consumer_compute_args : uniform_args<T>
-            {
+            struct consumer_compute_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::consumer_state_t &state;
                 typename CKL::input_block_t &input;
@@ -141,8 +130,7 @@ namespace kittens
                     uniform_args<T> &_args) : uniform_args<T>(_args), input(_input), state(_state), inputs_finished(_inputs_finished), iter(_iter) {}
             };
             template <store_kittens_layout T>
-            struct consumer_compute_args<T> : uniform_args<T>
-            {
+            struct consumer_compute_args<T> : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::consumer_state_t &state;
                 typename CKL::input_block_t &input;
@@ -162,8 +150,7 @@ namespace kittens
 
             // Consumer finish args
             template <kittens_layout T>
-            struct consumer_finish_args : uniform_args<T>
-            {
+            struct consumer_finish_args : uniform_args<T> {
                 using CKL = complete_kittens_layout<T>;
                 typename CKL::consumer_state_t &state;
                 typename CKL::finish_block_t &finish;

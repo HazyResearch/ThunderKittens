@@ -54,8 +54,7 @@ template<kittens_layout T> struct uniform_args {
 #ifdef KITTENS_BLACKWELL
         tensor_alloc(_tensor_alloc),
 #endif
-        instruction(_instruction)
-    {}
+        instruction(_instruction) {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
         task_iter(_args.task_iter),
@@ -68,8 +67,7 @@ template<kittens_layout T> struct uniform_args {
 #ifdef KITTENS_TIMINGS
         timings(_args.timings),
 #endif
-        instruction(_args.instruction)
-    {}
+        instruction(_args.instruction) {}
 };
 
 // Setup args are the same as uniform args
