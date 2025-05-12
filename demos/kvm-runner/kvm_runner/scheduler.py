@@ -161,13 +161,10 @@ def schedule_upgate(globs: Globals, layer_idx: int):
     assert blocks_per_sm > 1
 
     for sm_idx in range(sm_count):
-        start = round(sm_idx * blocks_per_sm)
-        end = round((sm_idx + 1) * blocks_per_sm)
         instructions.append(
             LayerNormDoubleMatVecSiLU(
                 layer_idx=layer_idx,
-                start_output_block_idx=start,
-                end_output_block_idx=end,
+                block_idxs=list(range(sm_idx, num_up_gate_blocks, sm_count)),
             )
         )
 

@@ -5,9 +5,9 @@ from typing import List, Tuple, Dict
 from mla_decode import __get_quality__
 
 # Timing constants (in microseconds)
-PARTIAL_STARTUP_TIME = 1.0         # Startup time for partial operations
-PARTIAL_WRITEOUT_TIME = 4.0        # Writeout time for partial operations
-PARTIAL_COST_PER_STEP = 12.0       # Cost per step (per 128 tokens) for partial operations
+PARTIAL_STARTUP_TIME = 3.0         # Startup time for partial operations
+PARTIAL_WRITEOUT_TIME = 4.5        # Writeout time for partial operations
+PARTIAL_COST_PER_STEP = 1.49       # Cost per step (per 32 tokens) for partial operations
 PARTIAL_OVERHEAD = PARTIAL_STARTUP_TIME + PARTIAL_WRITEOUT_TIME # Total overhead for a partial operation.
 
 REDUCTION_STARTUP_TIME = 4.0       # Startup time for reduction operations
@@ -36,12 +36,12 @@ class Task:
         return self.uid < other.uid # just need a way to break ties.
 
 def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok_ids: List[int], partial_uid: int, reduction_uid: int, q_heads: int = 16):
-    max_tokens = 8
+    max_tokens = 4
     assert (len(tok_ids) > 0 and len(tok_ids) <= max_tokens), f"If num_tokens is > {max_tokens}, please generate two separate schedules for each group of {max_tokens} tokens."
     
     NUM_PROCESSORS = len(processors)
-    if NUM_PROCESSORS < len(tok_ids):
-        steps = (seq_length + 127) // 128
+    if NUM_PROCESSORS == 1:
+        steps = (seq_length + 31) // 32
         duration = PARTIAL_STARTUP_TIME + (steps * PARTIAL_COST_PER_STEP) + PARTIAL_WRITEOUT_TIME
         return [Task(
             uid=partial_uid,
@@ -157,7 +157,7 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             partial_info[processors[p_idx]] = [actual_start_time, partial_info[processors[p_idx]][1], 0]
 
     # Finally we can go through and assign work to each partial op.
-    num_partial_steps = (seq_length + 127) // 128
+    num_partial_steps = (seq_length + 31) // 32
     # So long as the gap between the earliest and latest partial time is greater than the cost of a step, we should allocate work to the latest one (moving backwards).
     min_val = min([x[0] for x in partial_info.values()]) # Most negative time.
     for k, v in partial_info.items():
@@ -189,9 +189,9 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
             start=v[0]-PARTIAL_OVERHEAD,
             finish=v[0]+v[2]*PARTIAL_COST_PER_STEP,
             processor=p,
-            args={"start": current_pos, "end": min(current_pos+v[2]*128, seq_length), "length": seq_length, "write_scratch": True}
+            args={"start": current_pos, "end": min(current_pos+v[2]*32, seq_length), "length": seq_length, "write_scratch": True}
         ))
-        current_pos += v[2]*128
+        current_pos += v[2]*32
 
     for p, p_tasks in tasks.items():
         earliest_start = p_tasks[-1].start
@@ -210,5 +210,5 @@ def backward_schedule(processors: List[int], batch_id: int, seq_length: int, tok
 
 
 if __name__ == "__main__":
-    print(len(backward_schedule(list(range(8)), 0, 1024, [0, 1, 2, 3, 4, 5, 6, 7], 0, 100, 16)[0]))
+    backward_schedule(list(range(4)), 0, 1024, [0, 1, 2, 3], 16)
     # backward_schedule(list(range(112)), 0, 45096, [0, 1, 2, 3])

@@ -40,7 +40,7 @@ namespace kittens::prototype::vm {
             auto iters = inst.iters;
             auto remainder = iters % INPUT_PIPELINE_STAGES;
 
-            // special handling for 1 and 2 because only then do 
+            // special handling for 1 and 2 because only then do
             // we free pages before the activation/rms scale (page 0)
             if (iters == 1) {
                 int ret_order[13] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
@@ -182,8 +182,6 @@ namespace kittens::prototype::vm {
                     }
                 }
 
-                group<Config::NUM_CONSUMER_WARPS>::sync(0);
-
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
                 output_stage = (output_stage + 1) % OUTPUT_PIPELINE_STAGES;
             }
@@ -323,9 +321,6 @@ namespace kittens::prototype::vm {
             auto activation_page = get_activation_page(s);
 
             wait(rms_scale_arrived(s), 0);
-            // wait(activations_arrived(s), 0);
-
-            group<Config::NUM_CONSUMER_WARPS>::sync(2);
 
             auto activations_vec = rms_norm<Config>(rms_scale_smem, activations_smem, g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
 

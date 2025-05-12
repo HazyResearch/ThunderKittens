@@ -84,13 +84,15 @@ def save_gantt_chart(Timings, Instructions, save_all=False, name=None, verbose=F
                                         zorder=5)  # Ensure markers are on top
 
     # Customize the chart
-    ax.set_xlabel('Time (microseconds)')
-    ax.set_ylabel('Processor ID')
-    ax.set_title('Instruction Execution Timeline with Event Markers')
+    ax.set_xlabel('Time (us)')
+    ax.set_ylabel('SM')
+    ax.set_title('ThunderMLA Execution Timeline')
+    ax.set_yticks(np.arange(Timings.shape[0])[-4::-4])
+    ax.set_yticklabels(np.arange(Timings.shape[0])[-4::-4])
 
     # Add legend for instruction bars
     bar_legend_elements = [plt.Rectangle((0,0),1,1, facecolor=color_map[t.item()], 
-                          label=f'Instruction {t.item()}: {instruction_names[t.item()]}')
+                          label=f'{instruction_names[t.item()]}')
                           for t in instruction_types if t.item() in [1,2]]
     
     # Add legend for timing event markers

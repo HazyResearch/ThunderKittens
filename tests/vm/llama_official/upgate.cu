@@ -16,11 +16,11 @@ namespace kittens::prototype::vm {
 
         struct parsed_instruction {
             int layer_idx, start_block_idx, end_block_idx, iters;
+            int * block_idxs;
             __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
                 layer_idx = instruction[1];
-                start_block_idx = instruction[2];
-                end_block_idx = instruction[3];
-                iters = 2 * (end_block_idx - start_block_idx);
+                iters = 2 * instruction[2];
+                block_idxs = instruction + 3;
             }
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -34,8 +34,9 @@ namespace kittens::prototype::vm {
             }
 
             static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem) {
-                auto block_idx = inst.start_block_idx + iter / 2;
-                if (iter % 2 == 0) {
+                auto block_idx = inst.block_idxs[iter/2];
+                if (iter % 2 == 0)
+                {
                     tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
                 else {
@@ -54,7 +55,7 @@ namespace kittens::prototype::vm {
                 auto prev_output_idx = (output_idx - 1);
                 auto prev_output_stage = prev_output_idx % 3;
 
-                int block_idx = inst.start_block_idx + true_output_idx;
+                int block_idx = inst.block_idxs[true_output_idx];
 
                 sv_fl<16> &up_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * prev_output_stage));
                 sv_fl<16> &gate_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
@@ -85,7 +86,15 @@ namespace kittens::prototype::vm {
 
                 if (laneid() == 0) {
                     tma::store_async<cache_policy::EVICT_LAST>(g.silu_out, out_smem, {block_idx});
-                    tma::store_async_read_wait();
+                    tma::store_async_wait();
+
+                    s.record(TEVENT_AT_GMEM_STORE);
+                    //asm volatile("fence.acq_rel.gpu;");
+
+                    parsed_instruction inst{s};
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, block_idx * globals::matvec_block_size / globals::hidden_dim}], 1);
+
+                    s.record(TEVENT_DONE_GMEM_STORE);
                 }
 
                 warp::sync();
@@ -132,20 +141,6 @@ namespace kittens::prototype::vm {
 
             static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::storer_loop<2>(s, g);
-
-                // one atomic add at the end
-                if (laneid() == 0) {
-                    s.record(TEVENT_AT_GMEM_STORE);
-
-                    tma::store_async_wait();
-                    asm volatile("fence.acq_rel.gpu;");
-
-                    parsed_instruction inst{s};
-                    auto to_increment = inst.end_block_idx - inst.start_block_idx;
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], to_increment);
-
-                    s.record(TEVENT_DONE_GMEM_STORE);
-                }
             }
         };
     };
