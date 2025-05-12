@@ -278,7 +278,7 @@ class LlamaAttention(nn.Module):
 
         hidden_states = self.input_layernorm(inp)   
         hidden_states = all_gather(hidden_states, self.extra_config)
-        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_pre_attn_ln", hidden_states)
+        # _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_pre_attn_ln", hidden_states)
         bsz = hidden_states.shape[0]
         seq_len = hidden_states.shape[1]
 
@@ -312,9 +312,9 @@ class LlamaAttention(nn.Module):
         debug_k_rope = key_states.squeeze(1)
         debug_v_rope = value_states.squeeze(1)
 
-        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_Q_rope", debug_q_rope)
-        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_K_rope", debug_k_rope)
-        _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_V_arr", debug_v_rope)
+        # _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_Q_rope", debug_q_rope)
+        # _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_K_rope", debug_k_rope)
+        # _store_debug_tensor(debug_outputs, f"L{self.layer_idx}_V_arr", debug_v_rope)
 
         query_states = query_states.to(dtype)
         key_states = key_states.to(dtype)
@@ -454,7 +454,11 @@ class LlamaLMHead(nn.Module):
 
         self.lm_head = nn.Linear(config.hidden_size, head_size, bias=False)
 
-    def forward(self, batch_state: BatchState):
+    def forward(
+        self, 
+        batch_state: BatchState, 
+        debug_outputs: Optional[Dict[str, Tensor]] = None
+    ):
         assert batch_state.hidden_states is not None
 
         hidden_states = batch_state.hidden_states
@@ -463,8 +467,12 @@ class LlamaLMHead(nn.Module):
             hidden_states = all_gather(hidden_states, self.extra_config)
 
         hidden_states = self.input_norm(hidden_states)
+        debug_hidden_states = hidden_states.squeeze(1)
+        _store_debug_tensor(debug_outputs, "pre_lm_head_rms", debug_hidden_states)
 
         logits = self.lm_head(hidden_states)
+        debug_logits = logits.squeeze(1)
+        _store_debug_tensor(debug_outputs, "lm_head_logits", debug_logits)
 
         next_token_ids = logits.argmax(dim=-1)
 
@@ -561,7 +569,7 @@ class LlamaModel(nn.Module):
         out.position_embeddings = (cos, sin)
 
         for idx, layer in enumerate(self.layers):
-            _store_debug_tensor(debug_outputs, f"L{idx}_LlamaModel_In", out.hidden_states)
+            # _store_debug_tensor(debug_outputs, f"L{idx}_LlamaModel_In", out.hidden_states)
             out = layer(out, debug_outputs)
             _store_debug_tensor(debug_outputs, f"L{idx}_LlamaModel_Out", out.hidden_states)
         return out
@@ -625,7 +633,7 @@ class LlamaForCausalLM(nn.Module):
         )
         out = self.model(out, debug_outputs=debug_outputs)
         _store_debug_tensor(debug_outputs, "LlamaModel_Out", out.hidden_states)
-        out = self.lm_head(out)
+        out = self.lm_head(out, debug_outputs=debug_outputs)
         _store_debug_tensor(debug_outputs, "LlamaLMHead_Out", out.hidden_states)
 
         return out

@@ -15,7 +15,8 @@ from kvm_batch_runner.instructions import (
     Instruction,
     PrintInfo,
     PrintState,
-    RMS_LM_Head,
+    PreLMHeadRMS,
+    LM_Head,
 )
 from kvm_batch_runner.llama import LlamaForCausalLM
 from kvm_batch_runner.utils import get_sm_count
@@ -67,6 +68,7 @@ def make_globals(
         hidden_states=make_buffer(extra_config.max_batch_size, config.hidden_size),
         rms_rope_intermediates=make_buffer(extra_config.max_batch_size, config.hidden_size),
         rms_gate_intermediates=make_buffer(extra_config.max_batch_size, config.hidden_size),
+        rms_lm_head_intermediates=make_buffer(extra_config.max_batch_size, config.hidden_size),
         post_ln_rope_q=make_buffer(extra_config.max_batch_size, config.hidden_size),
         attn_out=make_buffer(extra_config.max_batch_size, config.hidden_size),
         silu_out=make_buffer(extra_config.max_batch_size, config.intermediate_size),
@@ -342,13 +344,19 @@ def schedule_model(
         )
 
     if nlayers == globals.num_hidden_layers:
-        num_logit_blocks = assert_div(globals.vocab_size, globals.lm_head_block_size)
-        for bidx in range(0, model.extra_config.max_batch_size, globals.batch_block_size):
-            for logit_block_idx in range(num_logit_blocks):
-                instructions.append(RMS_LM_Head(
-                    output_block_idx=logit_block_idx,
+        for bidx in range(0, model.extra_config.max_batch_size):
+            instructions.append(
+                PreLMHeadRMS(
                     batch_start_idx=bidx,
-                    batch_end_idx=bidx + globals.batch_block_size,
+                )
+            )
+        
+        for bidx in range(0, model.extra_config.max_batch_size, globals.batch_block_size):
+            num_logit_blocks = assert_div(globals.vocab_size, globals.lm_head_block_size)
+            for logit_block_idx in range(num_logit_blocks):
+                instructions.append(LM_Head(
+                    batch_start_idx=bidx,
+                    output_block_idx=logit_block_idx,
                 ))
 
     return globals, instructions

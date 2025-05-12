@@ -17,7 +17,8 @@ from kvm_batch_runner.instructions import (
     DownProjResidual,
 
     PrintState,
-    RMS_LM_Head,
+    PreLMHeadRMS,
+    LM_Head,
 
     Globals,
     Instruction,
@@ -102,8 +103,8 @@ def pre_attn_layer_norm(
         barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         barriers[0] += 1
     
-    if batch_start_idx == 127:
-        _store_debug_tensor(debug_outputs, f"L{layer_idx}_pre_attn_ln", globals.rms_rope_intermediates)
+    # if batch_start_idx == 127:
+    #     _store_debug_tensor(debug_outputs, f"L{layer_idx}_pre_attn_ln", globals.rms_rope_intermediates)
     
     # print(f"Done with pre layer norm for layer {layer_idx} and batch {batch_start_idx}")
 
@@ -156,7 +157,7 @@ def qkv_matmul_rope_append(
         globals.post_ln_rope_q[batch_start_idx:batch_end_idx, start:end] = q_with_rope.reshape(batch_size, -1)[:, start:end]
         if batch_start_idx == 0:
             debug_q_rope = rearrange(globals.post_ln_rope_q, "b (h d) -> b h d", h=globals.num_attention_heads)
-            _store_debug_tensor(debug_outputs, f"L{layer_idx}_Q_rope", debug_q_rope)
+            # _store_debug_tensor(debug_outputs, f"L{layer_idx}_Q_rope", debug_q_rope)
     else:
        # Each batch needs to go to its own page
        for i in range(batch_size):
@@ -174,11 +175,11 @@ def qkv_matmul_rope_append(
             if start < v_start: # Key
                 k_head_idx = (start - k_start) // globals.head_dim
                 globals.k_cache[layer_idx, pid, k_head_idx, slot_idx, :] = k_with_rope[i, k_head_idx, :]
-                _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_K_rope", globals.k_cache[layer_idx, pid, :, slot_idx, :])
+                # _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_K_rope", globals.k_cache[layer_idx, pid, :, slot_idx, :])
             else: # Value
                 v_head_idx = (start - v_start) // globals.head_dim
                 globals.v_cache[layer_idx, pid, v_head_idx, slot_idx, :] = v_arr[i, v_head_idx, :]
-                _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_V_arr", globals.v_cache[layer_idx, pid, :, slot_idx, :])
+                # _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_V_arr", globals.v_cache[layer_idx, pid, :, slot_idx, :])
 
     # Barrier update
     if include_barriers:
@@ -393,7 +394,7 @@ def up_matmul(
 
     # matmul up_proj  and * the SiLU gate
     matmul_out = matmul( # [B, intermediate]
-        matA = globals.hidden_states[batch_start_idx:batch_end_idx],  # [B, hidden]
+        matA = globals.rms_gate_intermediates[batch_start_idx:batch_end_idx],  # [B, hidden]
         matB = globals.up_proj[layer_idx, start:end],                # [intermediate, hidden]
     )
     gated = matmul_out * globals.silu_out[batch_start_idx:batch_end_idx, start:end]
@@ -445,14 +446,44 @@ def down_proj_residual(
         next_op_barriers = globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1]
         next_op_barriers[0] += 1
 
-# TODO Split this out for the throughput setting into RMS and LM Head
-def rms_lm_head(
+def pre_lm_head_rms(
     globals: Globals,
-    instruction: RMS_LM_Head,
+    instruction: PreLMHeadRMS,
     debug_outputs: Optional[Dict[str, Tensor]] = None,
 ):
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx   = instruction.batch_end_idx
+
+    if include_barriers:
+        op_barriers = globals.barriers[79, batch_start_idx, instruction.prev_opcode() - 1]
+        assert op_barriers[0] == 128
+
+    post_ln = rms_norm(
+        inp=globals.hidden_states[batch_start_idx],
+        weight=globals.lm_head_norm_weights,
+        eps=globals.rms_norm_eps,
+    )
+
+    globals.rms_lm_head_intermediates[batch_start_idx] = post_ln
+
+    # if batch_start_idx == 127:
+    #     _store_debug_tensor(
+    #         debug_outputs, 
+    #         f"pre_lm_head_rms",
+    #         globals.rms_lm_head_intermediates
+    #     )
+    
+    if include_barriers:
+        barriers = globals.barriers[79, batch_start_idx, instruction.opcode() - 1]
+        barriers[0] += 1
+
+# TODO Split this out for the throughput setting into RMS and LM Head
+def lm_head(
+    globals: Globals,
+    instruction: LM_Head,
+    debug_outputs: Optional[Dict[str, Tensor]] = None,
+):
+    batch_start_idx = instruction.batch_start_idx
+    batch_end_idx   = batch_start_idx + globals.batch_block_size
 
     block_num  = instruction.output_block_idx
     block_size = globals.lm_head_block_size  # e.g. 128
@@ -467,24 +498,18 @@ def rms_lm_head(
         ]
         assert op_barriers[0] == globals.hidden_size  
 
-    post_ln = rms_norm(
-        inp    = globals.hidden_states[batch_start_idx:batch_end_idx],
-        weight = globals.lm_head_norm_weights,
-        eps    = globals.rms_norm_eps,
-    )
-
     matmul_output = matmul(
-        post_ln,
+        globals.rms_lm_head_intermediates,
         globals.lm_head_weights[start:end],  
     )
 
     globals.logits[batch_start_idx:batch_end_idx, start:end] = matmul_output
 
-    _store_debug_tensor(
-        debug_outputs,
-        f"LMHead_block_{block_num}",
-        matmul_output
-    )
+    # _store_debug_tensor(
+    #     debug_outputs,
+    #     f"lm_head_logits",
+    #     globals.logits
+    # )
 
     if include_barriers:
         next_op_barriers = globals.barriers[
@@ -493,33 +518,6 @@ def rms_lm_head(
             instruction.opcode() - 1
         ]
         next_op_barriers[0] += 1
-
-# def rms_lm_head(
-#     globals: Globals,
-#     instruction: RMS_LM_Head,
-#     debug_outputs: Optional[Dict[str, Tensor]] = None,
-# ):
-#     batch_start_idx = instruction.batch_start_idx
-#     batch_end_idx = instruction.batch_end_idx
-    
-#     # Barrier check
-#     if include_barriers:
-#         op_barriers = globals.barriers[globals.num_hidden_layers - 1, batch_start_idx - 1, instruction.prev_opcode() - 1]
-#         assert op_barriers[0] == 512
-
-#     post_ln = rms_norm(
-#         inp=globals.hidden_states[batch_start_idx:batch_end_idx],
-#         weight=globals.lm_head_norm_weights,
-#         eps=globals.rms_norm_eps,
-#     )
-
-#     matmul_output = matmul(
-#         post_ln,
-#         globals.lm_head_weights,
-#     )
-
-#     globals.logits[batch_start_idx:batch_end_idx] = matmul_output
-
 
 def print_state(globals: Globals, instruction: PrintState):
     print_info = instruction.print_info
@@ -547,7 +545,8 @@ INSTRUCTION_TO_SOLVER = {
     UpMatMul: up_matmul,
     DownProjResidual: down_proj_residual,
     
-    RMS_LM_Head: rms_lm_head,
+    PreLMHeadRMS: pre_lm_head_rms,
+    LM_Head: lm_head,
     PrintState: print_state,
 }
 

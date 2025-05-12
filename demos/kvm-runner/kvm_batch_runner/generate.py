@@ -234,6 +234,10 @@ def main(config: ScriptConfig):
             print(f"{key}: {tensor.shape}")
         elif key == "LlamaModel_Out":
             print(f"{key}: {tensor.shape}")
+        elif key == "pre_lm_head_rms":
+            print(f"{key}: {tensor.shape}")
+        elif key == "lm_head_logits":
+            print(f"{key}: {tensor.shape}")
     
     print("Running PyVM model")
     pyvm_debug_outputs = {}
@@ -248,23 +252,48 @@ def main(config: ScriptConfig):
         times.append(start_event.elapsed_time(end_event) / 1000)
 
     # Diff check same size tensors
-    layer_to_check = 0
+    # layer_to_check = 0
     # name_to_check = f"L{layer_to_check}_pre_attn_ln"
     # name_to_check = f"L{layer_to_check}_Q_rope"
     # name_to_check = f"L{layer_to_check}_o_proj_residual"
     # name_to_check = f"L{layer_to_check}_pre_mlp_layer_norm"
     # name_to_check = f"L{layer_to_check}_gate_silu"
     # name_to_check = f"L{layer_to_check}_up_matmul"
-    name_to_check = f"L{layer_to_check}_down_proj_residual"
-    print(f"Diff check {name_to_check}")
-    diff = pytorch_debug_outputs[name_to_check] - pyvm_debug_outputs[name_to_check]
-    print("PyVM shape: ", pyvm_debug_outputs[name_to_check].shape)
-    print("Pytorch shape: ", pytorch_debug_outputs[name_to_check].shape)
-    # print("PyTorch: ", pytorch_debug_outputs[name_to_check])
-    # print("PyVM: ", pyvm_debug_outputs[name_to_check])
-    print(f"Layer {layer_to_check} diff shape: {diff.shape}")
-    print(f"Layer {layer_to_check} max absolute difference: {torch.max(torch.abs(diff))}")
-    print(f"Layer {layer_to_check} mean absolute difference: {torch.mean(torch.abs(diff))}")
+    # name_to_check = f"L{layer_to_check}_down_proj_residual"
+    # name_to_check = "pre_lm_head_rms"
+    # print(f"Diff check {name_to_check}")
+    # diff = pytorch_debug_outputs[name_to_check] - pyvm_debug_outputs[name_to_check]
+    # print("PyVM shape: ", pyvm_debug_outputs[name_to_check].shape)
+    # print("Pytorch shape: ", pytorch_debug_outputs[name_to_check].shape)
+    # print(f"Layer {layer_to_check} diff shape: {diff.shape}")
+    # print(f"Layer {layer_to_check} max absolute difference: {torch.max(torch.abs(diff))}")
+    # print(f"Layer {layer_to_check} mean absolute difference: {torch.mean(torch.abs(diff))}")
+
+    # Diff check across all layers
+    for layer_idx in range(80):
+        name_to_check = f"L{layer_idx}_down_proj_residual"
+        diff = pytorch_debug_outputs[name_to_check] - pyvm_debug_outputs[name_to_check]
+        print(f"Layer {layer_idx} diff shape: {diff.shape}")
+        print(f"Layer {layer_idx} max absolute difference: {torch.max(torch.abs(diff))}")
+        print(f"Layer {layer_idx} mean absolute difference: {torch.mean(torch.abs(diff))}")
+
+
+    # Diff check multiple names in same layer
+    # layer_to_check = 0
+    # names_to_check = [
+    #     f"L{layer_to_check}_o_proj_residual",
+    #     f"L{layer_to_check}_pre_mlp_layer_norm",
+    #     f"L{layer_to_check}_gate_silu",
+    #     f"L{layer_to_check}_up_matmul",
+    #     f"L{layer_to_check}_down_proj_residual",
+    # ]
+    # for name_to_check in names_to_check:
+    #     print(f"Diff check {name_to_check}")
+    #     diff = pytorch_debug_outputs[name_to_check] - pyvm_debug_outputs[name_to_check]
+    #     print(f"Layer {layer_to_check} {name_to_check} diff shape: {diff.shape}")
+    #     print(f"Layer {layer_to_check} {name_to_check} max absolute difference: {torch.max(torch.abs(diff))}")
+    #     print(f"Layer {layer_to_check} {name_to_check} mean absolute difference: {torch.mean(torch.abs(diff))}")
+
 
     # Diff check different size tensors
     # pytorch_name_to_check = f"L{layer_to_check}_attn_out"
@@ -316,3 +345,5 @@ def main(config: ScriptConfig):
 
 if __name__ == "__main__":
     pydra.run(main)
+
+kvm_batch_runner/generate.py kvm_batch_runner/instructions.py kvm_batch_runner/llama.py kvm_batch_runner/python_vm.py kvm_batch_runner/scheduler.p 

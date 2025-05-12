@@ -29,6 +29,8 @@ class Globals:
     hidden_states: Tensor
     rms_rope_intermediates: Tensor
     rms_gate_intermediates: Tensor
+    rms_lm_head_intermediates: Tensor
+    
     post_ln_rope_q: Tensor
     attn_out: Tensor
     silu_out: Tensor
@@ -258,10 +260,8 @@ class DownProjResidual(MatMulAdd):
 
 
 @dataclass
-class RMS_LM_Head(Instruction):
+class PreLMHeadRMS(Instruction):
     batch_start_idx: int
-    batch_end_idx: int
-    output_block_idx: int
 
     @classmethod
     def opcode(cls) -> int:
@@ -270,6 +270,19 @@ class RMS_LM_Head(Instruction):
     @classmethod
     def prev_opcode(cls) -> int:
         return DownProjResidual.opcode()
+    
+@dataclass
+class LM_Head(Instruction):
+    batch_start_idx: int
+    output_block_idx: int
+
+    @classmethod
+    def opcode(cls) -> int:
+        return 10
+
+    @classmethod
+    def prev_opcode(cls) -> int:
+        return PreLMHeadRMS.opcode()
 
 
 @dataclass
