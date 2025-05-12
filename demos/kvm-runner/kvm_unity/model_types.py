@@ -57,6 +57,4 @@ class ExtraModelConfig:
 
     max_len_override: int | None = None
 
-    paged_kv_cache: bool = False
-    num_pages: int = 1024
-    page_size: int = 16
+    max_batch_size: int = 1

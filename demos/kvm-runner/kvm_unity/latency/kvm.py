@@ -1,4 +1,5 @@
 import torch
+from einops import rearrange
 from kvm_unity.kvm import KVM_Interpreter
 from kvm_unity.latency.instructions import Globals
 
@@ -7,6 +8,9 @@ def interpret_with_kvm(
     globs: Globals,
     kvm_func,
 ):
+    fourD_k_cache = rearrange(globs.k_cache, "l b t h d -> (l b) t h d")
+    fourD_v_cache = rearrange(globs.v_cache, "l b t h d -> (l b) t h d")
+
     kvm_func(
         # vm stuff
         globs.barriers,
@@ -22,8 +26,8 @@ def interpret_with_kvm(
         globs.down_proj,
         globs.lm_head_norm_weights.data,
         globs.lm_head_weights.data,
-        globs.k_cache,
-        globs.v_cache,
+        fourD_k_cache,
+        fourD_v_cache,
         # rope
         globs.rope_cos,
         globs.rope_sin,

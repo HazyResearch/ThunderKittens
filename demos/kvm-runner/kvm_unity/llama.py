@@ -6,6 +6,14 @@ import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
 from einops import rearrange
+from torch import Tensor, nn
+from torch.distributed import _functional_collectives as funcol
+from transformers import LlamaConfig
+from transformers.models.llama.modeling_llama import (
+    LlamaRotaryEmbedding,
+    apply_rotary_pos_emb,
+)
+
 from kvm_unity.model_types import (
     BatchState,
     DeviceType,
@@ -13,13 +21,6 @@ from kvm_unity.model_types import (
 )
 from kvm_unity.utils import (
     load_safetensors_repo,
-)
-from torch import Tensor, nn
-from torch.distributed import _functional_collectives as funcol
-from transformers import LlamaConfig
-from transformers.models.llama.modeling_llama import (
-    LlamaRotaryEmbedding,
-    apply_rotary_pos_emb,
 )
 
 KV_Cache = tuple[Tensor, Tensor]
@@ -94,20 +95,20 @@ def attention(
     position_ids: Tensor,
     seq_len: int,
 ) -> Tensor:
-    num_new_tokens = query_states.shape[0]
+    bsz, new_tok_seq_len = query_states.shape[:2]
 
     k_cache, v_cache = kv_cache
 
-    k_cache[position_ids] = key_states
-    v_cache[position_ids] = value_states
+    k_cache[:, position_ids] = key_states
+    v_cache[:, position_ids] = value_states
 
     def shape_for_sdpa(x: Tensor):
-        return rearrange(x, "l h d -> h l d")
+        return rearrange(x, "b l h d -> b h l d")
 
     def unshape_for_sdpa(x: Tensor):
-        return rearrange(x, "h l d -> l h d")
+        return rearrange(x, "b h l d -> b l h d")
 
-    if num_new_tokens > 1:
+    if new_tok_seq_len > 1:
         k_for_sdpa = shape_for_sdpa(key_states)
         v_for_sdpa = shape_for_sdpa(value_states)
 
@@ -119,8 +120,8 @@ def attention(
         )
     else:
         # decode
-        k_for_sdpa = shape_for_sdpa(k_cache[:seq_len])
-        v_for_sdpa = shape_for_sdpa(v_cache[:seq_len])
+        k_for_sdpa = shape_for_sdpa(k_cache[:, :seq_len])
+        v_for_sdpa = shape_for_sdpa(v_cache[:, :seq_len])
 
         q_for_sdpa = shape_for_sdpa(query_states)
 
@@ -130,34 +131,6 @@ def attention(
 
     reshaped_attn_output = unshape_for_sdpa(attn_output)
     return reshaped_attn_output
-
-
-def paged_attention(
-    query_states: Tensor,
-    key_states: Tensor,
-    value_states: Tensor,
-    kv_cache: KV_Cache,
-    layer_idx: int,
-    batch_state: BatchState,
-) -> Tensor:
-    if layer_idx == 0:
-        batch_state.prefill_wrapper.plan()
-
-    k_cache, v_cache = kv_cache
-
-    flat_k_cache = rearrange(
-        k_cache, "num_pages  page_size kvheads dim -> (num_pages page_size) kvheads dim"
-    )
-    flat_v_cache = rearrange(
-        v_cache, "num_pages  page_size kvheads dim -> (num_pages page_size) kvheads dim"
-    )
-
-    flat_k_cache[batch_state.kv_cache_append_indices] = key_states
-    flat_v_cache[batch_state.kv_cache_append_indices] = value_states
-
-    attn_out = batch_state.prefill_wrapper.run(query_states)
-
-    return attn_out
 
 
 def rotate_half_interleaved(x):
@@ -272,15 +245,15 @@ class LlamaAttention(nn.Module):
         hidden_states = self.input_layernorm(inp)
 
         hidden_states = all_gather(hidden_states, self.extra_config)
-        bsz = hidden_states.shape[0]
+        bsz, seq_len = hidden_states.shape[:2]
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-        query_states = query_states.view(bsz, self.num_attention_heads, -1)
-        key_states = key_states.view(bsz, self.num_kv_heads, -1)
-        value_states = value_states.view(bsz, self.num_kv_heads, -1)
+        query_states = query_states.view(bsz, seq_len, self.num_attention_heads, -1)
+        key_states = key_states.view(bsz, seq_len, self.num_kv_heads, -1)
+        value_states = value_states.view(bsz, seq_len, self.num_kv_heads, -1)
 
         cos, sin = batch_state.position_embeddings
 
@@ -296,32 +269,22 @@ class LlamaAttention(nn.Module):
             key_states,
             cos,
             sin,
-            unsqueeze_dim=1,  # unsqueeze dim = head dim on q/k
+            unsqueeze_dim=-2,  # unsqueeze dim = head dim on q/k
         )
 
         query_states = query_states.to(dtype)
         key_states = key_states.to(dtype)
 
-        if self.extra_config.paged_kv_cache:
-            raw_attn_output = paged_attention(
-                query_states,
-                key_states,
-                value_states,
-                self.kv_cache,
-                layer_idx=self.layer_idx,
-                batch_state=batch_state,
-            )
-        else:
-            raw_attn_output = attention(
-                query_states,
-                key_states,
-                value_states,
-                self.kv_cache,
-                batch_state.position_ids,
-                seq_len=batch_state.seq_len,
-            )
+        raw_attn_output = attention(
+            query_states,
+            key_states,
+            value_states,
+            self.kv_cache,
+            batch_state.position_ids,
+            seq_len=batch_state.seq_len,
+        )
 
-        attn_output = raw_attn_output.reshape(bsz, -1)
+        attn_output = raw_attn_output.reshape(bsz, seq_len, -1)
 
         o_proj = self.o_proj(attn_output)
 
@@ -566,15 +529,17 @@ class LlamaForCausalLM(nn.Module):
     def forward(
         self,
         batch_state: BatchState,
-        async_tp: bool = False,
     ):
-        self.async_tp = async_tp
-        # making a copy of the input state - needed for cudagraphs + pp,
-        # where we need to keep track of references to both the input
-        # and output hidden states.
+        input_ids = batch_state.input_ids
+        if input_ids.ndim == 1:
+            input_ids = input_ids.unsqueeze(0)
+        position_ids = batch_state.position_ids
+        if position_ids.ndim == 1:
+            position_ids = position_ids.unsqueeze(0)
+
         out = BatchState(
-            input_ids=batch_state.input_ids,
-            position_ids=batch_state.position_ids,
+            input_ids=input_ids,
+            position_ids=position_ids,
             hidden_states=batch_state.hidden_states,
             seq_len=batch_state.seq_len,
         )
@@ -585,30 +550,18 @@ class LlamaForCausalLM(nn.Module):
         return out
 
     def setup_caches(self):
-        if self.extra_config.paged_kv_cache:
-            k_cache = torch.zeros(
-                (
-                    self.config.num_hidden_layers,
-                    self.extra_config.num_pages,
-                    self.extra_config.page_size,
-                    self.config.num_key_value_heads,
-                    self.config.head_dim,
-                ),
-                device=self.device,
-                dtype=self.dtype,
-            )
-        else:
-            k_cache = torch.zeros(
-                (
-                    self.config.num_hidden_layers,
-                    self.extra_config.max_len_override
-                    or self.config.max_position_embeddings,
-                    self.config.num_key_value_heads,
-                    self.config.head_dim,
-                ),
-                device=self.device,
-                dtype=self.dtype,
-            )
+        k_cache = torch.zeros(
+            (
+                self.config.num_hidden_layers,
+                self.extra_config.max_batch_size,
+                self.extra_config.max_len_override
+                or self.config.max_position_embeddings,
+                self.config.num_key_value_heads,
+                self.config.head_dim,
+            ),
+            device=self.device,
+            dtype=self.dtype,
+        )
         v_cache = k_cache.clone()
 
         self.stacked_kv_cache = (k_cache, v_cache)

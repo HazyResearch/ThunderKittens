@@ -236,11 +236,15 @@ def layer_norm_matvec_rope_append(
             case "k":
                 start_in_k = start - k_start
                 end_in_k = end - k_start
-                globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = out
+                globals.k_cache[layer_idx, :, pos_id].view(-1)[start_in_k:end_in_k] = (
+                    out
+                )
             case "v":
                 start_in_v = start - v_start
                 end_in_v = end - v_start
-                globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = out
+                globals.v_cache[layer_idx, :, pos_id].view(-1)[start_in_v:end_in_v] = (
+                    out
+                )
 
         barriers[block_idx // 4] += 1
 
