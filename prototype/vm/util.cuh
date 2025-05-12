@@ -195,8 +195,6 @@ template<typename config> struct state {
 
     uint32_t pid_order_shared_addr;
 
-    uint32_t pid_order_shared_addr;
-
     __device__ inline void print() {
         printf("Kittens Virtual Machine State being printed by thread %d, block %d\n  Instruction index: %d, Instruction ring: %d\n", threadIdx.x, blockIdx.x, instruction_index, instruction_ring);
     }
