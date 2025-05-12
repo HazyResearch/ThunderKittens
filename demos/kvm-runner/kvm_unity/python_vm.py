@@ -3,7 +3,6 @@ from einops import einsum
 from torch import Tensor
 
 from kvm_unity.instructions import BaseGlobals, Instruction, PrintState
-from kvm_unity.model_types import BatchState
 from kvm_unity.utils import trepr
 
 

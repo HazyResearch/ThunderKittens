@@ -107,6 +107,8 @@ def main(config: ScriptConfig):
 
     schedule_builder = make_schedule_builder(config.setting)
     schedule = schedule_builder.build(model)
+    assigned_to_sms = assign_to_sms(config.sched, schedule=schedule)
+    tensorize_instructions(schedule.globs, assigned_to_sms)
 
     match config.mode:
         case "torch":
@@ -116,8 +118,6 @@ def main(config: ScriptConfig):
             gen = PyVM_Generator(model, interpreter, schedule)
         case "kvm":
             interpreter = make_kvm_interpreter(config.setting, config.kvm_dir)
-            assigned_to_sms = assign_to_sms(config.sched, schedule=schedule)
-            tensorize_instructions(schedule.globs, assigned_to_sms)
             gen = KVM_Generator(
                 model,
                 interpreter,

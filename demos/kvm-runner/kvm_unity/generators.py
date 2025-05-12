@@ -106,6 +106,8 @@ class PyVM_Generator(Generator):
         self.interpreter = interpreter
         self.schedule = schedule
 
+        self.instructions = self.schedule.get_linear_instructions()
+
     def run(self, input_ids: Tensor, pos_id: int):
         batch_state = BatchState(
             input_ids=input_ids,
@@ -118,7 +120,7 @@ class PyVM_Generator(Generator):
         self.schedule.globs.barriers.zero_()
         self.schedule.globs.pos_id = pos_id
 
-        self.interpreter.interpret(self.schedule.globs)
+        self.interpreter.interpret(self.schedule.globs, self.instructions)
 
         output_hiddens = self.schedule.globs.hidden_states
 

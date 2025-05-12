@@ -304,8 +304,8 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     start_token = start_block * kv_block_size
     end_token = min(end_block * kv_block_size, seq_len)
 
-    k = globals.k_cache[layer_idx, start_token:end_token, kv_head_idx]
-    v = globals.v_cache[layer_idx, start_token:end_token, kv_head_idx]
+    k = globals.k_cache[layer_idx, 0, start_token:end_token, kv_head_idx]
+    v = globals.v_cache[layer_idx, 0, start_token:end_token, kv_head_idx]
 
     head_start = kv_head_idx * gqa_ratio
     head_end = head_start + gqa_ratio
