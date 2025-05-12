@@ -146,8 +146,8 @@ q_post_rope_ref, k_post_rope_ref, v_ref = matvec_rope(
 q_diff = (q_post_rope - q_post_rope_ref).abs()
 print(f'Q -- max abs diff: {q_diff.max()}, mean abs diff: {q_diff.mean()}')
 
-k_diff = (k_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, pos_id+1] - k_post_rope_ref).abs()
+k_diff = (k_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, pos_id] - k_post_rope_ref).abs()
 print(f'K -- max abs diff: {k_diff.max()}, mean abs diff: {k_diff.mean()}')
 
-v_diff = (v_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, pos_id+1] - v_ref).abs()
+v_diff = (v_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, pos_id] - v_ref).abs()
 print(f'V -- max abs diff: {v_diff.max()}, mean abs diff: {v_diff.mean()}')

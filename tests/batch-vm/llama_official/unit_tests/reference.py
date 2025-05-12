@@ -57,8 +57,8 @@ def matvec_rope(
     q_arr = torch.reshape(q, (batch_size, num_attention_heads, head_dim)) # (B, H_q, D_h)
     k_arr = torch.reshape(k, (batch_size, num_kv_heads, head_dim)) # (B, H_k, D_h)
 
-    q_with_rope = q_arr * rope_cos[pos_id+1][torch.newaxis, torch.newaxis, :] + rotate_half(q_arr) * rope_sin[pos_id+1][torch.newaxis, torch.newaxis, :]
-    k_with_rope = k_arr * rope_cos[pos_id+1][torch.newaxis, torch.newaxis, :] + rotate_half(k_arr) * rope_sin[pos_id+1][torch.newaxis, torch.newaxis, :]
+    q_with_rope = q_arr * rope_cos[pos_id][torch.newaxis, torch.newaxis, :] + rotate_half(q_arr) * rope_sin[pos_id+1][torch.newaxis, torch.newaxis, :]
+    k_with_rope = k_arr * rope_cos[pos_id][torch.newaxis, torch.newaxis, :] + rotate_half(k_arr) * rope_sin[pos_id+1][torch.newaxis, torch.newaxis, :]
 
     q_with_rope = q_with_rope.view(batch_size, -1) # (B, H_q * D_h)
     k_with_rope = k_with_rope.view(batch_size, -1).reshape(batch_size, num_kv_heads, head_dim) # (B, H_k, D_h)

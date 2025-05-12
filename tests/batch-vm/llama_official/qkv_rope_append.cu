@@ -125,8 +125,8 @@ struct qkv_rope_append {
                 rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(s.scratch());
                 rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(reinterpret_cast<char *>(s.scratch()) + sizeof(rope_vec));
                 tma::expect(rope_arrived(s), rope_cos, rope_sin);
-                tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id + 1, 0}, rope_arrived(s));
-                tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id + 1, 0}, rope_arrived(s));
+                tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
+                tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
             }
         }
     };
@@ -244,9 +244,9 @@ struct qkv_rope_append {
                 if (inst.block_idx < K_BLOCK_START) 
                     tma::store_async(g.q_post_rope, output, {0, inst.block_idx});
                 else if (inst.block_idx < V_BLOCK_START) 
-                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id + 1, inst.block_idx - K_BLOCK_START, 0});
+                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id, inst.block_idx - K_BLOCK_START, 0});
                 else
-                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id + 1, inst.block_idx - V_BLOCK_START, 0});
+                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id, inst.block_idx - V_BLOCK_START, 0});
                 tma::store_async_wait();
                 s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
                 s.finish_page(output_page + 1, Config::NUM_CONSUMER_WARPS);
