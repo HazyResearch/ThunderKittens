@@ -26,8 +26,7 @@
 #define H100_SM_COUNT 132
 #define B200_SM_COUNT 148
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     constexpr int ATOMIC_ADD_START = FREE_SLOTS_START;
     constexpr int ATOMIC_ADD_END = ATOMIC_ADD_START + 1;
@@ -50,8 +49,7 @@ namespace kittens::prototype::vm
     using config = default_config;
 
     template <int _num_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matvec_block_size, int _sm_count>
-    struct globals_t
-    {
+    struct globals_t {
 
         // constexpr static unsigned int num_layers = _num_layers;
         // constexpr static unsigned int matvec_block_size = _matvec_block_size;

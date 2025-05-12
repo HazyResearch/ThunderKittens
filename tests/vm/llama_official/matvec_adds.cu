@@ -7,8 +7,7 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     template <
         int _EXPECTED_ARRIVAL_COUNT,
@@ -20,17 +19,14 @@ namespace kittens::prototype::vm
         typename Config = kittens::prototype::vm::default_config,
         typename Globals = llama_1b_globals>
 
-    struct MatVecAddOp
-    {
+    struct MatVecAddOp {
         static constexpr int opcode = _opcode;
         static constexpr int prev_opcode = _prev_opcode;
         static constexpr int EXPECTED_ARRIVAL_COUNT = _EXPECTED_ARRIVAL_COUNT;
 
-        struct parsed_instruction
-        {
+        struct parsed_instruction {
             int layer, start_block_idx, end_block_idx, reduction_block_idx, start_reduction_col, iters;
-            __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
-            {
+            __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
                 layer = instruction[1];               // in units of 1
                 start_block_idx = instruction[2];     // in units of 1 (0, 16, 32, ..., 2032)
                 end_block_idx = instruction[3];       // in units of 1 (0, 16, 32, ..., 2032)
@@ -41,16 +37,13 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        struct pipeline_specifics
-        {
+        struct pipeline_specifics {
 
-            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
-            {
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem) {
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.*WeightsPtr, coord<>{inst.layer, (inst.start_block_idx + iter) * Globals::matvec_block_size, inst.start_reduction_col + 512 * col_idx}, sem);
             }
 
-            static __device__ inline void store(state<Config> &s, const globals &g, parsed_instruction &inst, int output_idx, int output_stage)
-            {
+            static __device__ inline void store(state<Config> &s, const globals &g, parsed_instruction &inst, int output_idx, int output_stage) {
 
                 int block_idx = inst.start_block_idx + output_idx;
 
@@ -63,8 +56,7 @@ namespace kittens::prototype::vm
                 warp::store(output_smem_bf, output_rv);
                 warp::sync();
 
-                if (warp::laneid() == 0)
-                {
+                if (warp::laneid() == 0) {
                     auto &OutputActivations = g.*OutputActivationsPtr; // object in global memory
                     tma::store_add_async<cache_policy::EVICT_LAST>(OutputActivations, output_smem_bf, {block_idx});
                     tma::store_async_read_wait();
@@ -77,34 +69,26 @@ namespace kittens::prototype::vm
         };
         using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
-        struct controller
-        {
-            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
-            {
+        struct controller {
+            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
                 return pipeline::release_lid(g, instruction, query);
             }
 
-            static __device__ int init_semaphores(const Globals &g, state<Config> &s)
-            {
+            static __device__ int init_semaphores(const Globals &g, state<Config> &s) {
                 return pipeline::init_semaphores(s);
             }
         };
-        struct loader
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct loader {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
 
                 pipeline::loader_loop(s, g);
             }
         };
-        struct launcher
-        {
-            static __device__ void run(const globals &g, state<Config> &s)
-            {
-                if (laneid() == 0)
-                {
+        struct launcher {
+            static __device__ void run(const globals &g, state<Config> &s) {
+                if (laneid() == 0) {
 #ifdef KITTENS_BLACKWELL
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
@@ -112,24 +96,20 @@ namespace kittens::prototype::vm
                 }
             }
         };
-        struct consumer
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct consumer {
+            static __device__ void run(const Globals &g, state<Config> &s) {
 
                 using sv_t = sv_bf<pipeline::REDUCTION_DIM_PER_WARP>;
                 using rv_t = rv_fl<pipeline::REDUCTION_DIM_PER_WARP>;
                 parsed_instruction inst{s};
 
-                if (laneid() == 0 && warpid() == 0)
-                {
+                if (laneid() == 0 && warpid() == 0) {
 
                     int activation_page = pipeline::get_activation_page(s);
                     s.wait_page_ready(activation_page);
 
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                    {
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT) {
                         __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                     s.record(TEVENT_DONE_GMEM_WAIT);
@@ -153,16 +133,13 @@ namespace kittens::prototype::vm
                 pipeline::consumer_loop(s, g, activations_vec);
             }
         };
-        struct storer
-        {
+        struct storer {
             // Uses 4 full pages for outputs.
-            static __device__ void run(const globals &g, state<Config> &s)
-            {
+            static __device__ void run(const globals &g, state<Config> &s) {
                 pipeline::storer_loop(s, g);
                 warp::sync();
 
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
                     s.record(TEVENT_AT_GMEM_STORE);
                     parsed_instruction inst{s};
 
@@ -185,8 +162,7 @@ namespace kittens::prototype::vm
                           OPCODE_DownProjResidual,
                           OPCODE_DownProjResidual - 1,
                           Config,
-                          Globals>
-    {
+                          Globals> {
     };
 
     template <typename Config, typename Globals>
@@ -198,7 +174,6 @@ namespace kittens::prototype::vm
                         OPCODE_O_ProjResidual,
                         OPCODE_O_ProjResidual - 1,
                         Config,
-                        Globals>
-    {
+                        Globals> {
     };
 }

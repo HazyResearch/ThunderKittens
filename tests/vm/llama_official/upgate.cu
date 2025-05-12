@@ -3,24 +3,20 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     using globals = llama_1b_globals;
     using config = default_config;
 
     template <typename Config, typename Globals>
-    struct rms_upgate_silu
-    {
+    struct rms_upgate_silu {
         static constexpr int opcode = OPCODE_RMS_DoubleMatVecSiLU; // Op index within the layer -- controls which barrier to listen to.
         static constexpr int prev_opcode = OPCODE_O_ProjResidual;
         static constexpr int EXPECTED_ARRIVAL_COUNT = Globals::hidden_dim / Globals::matvec_block_size;
 
-        struct parsed_instruction
-        {
+        struct parsed_instruction {
             int layer_idx, start_block_idx, end_block_idx, iters;
-            __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
-            {
+            __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
                 layer_idx = instruction[1];
                 start_block_idx = instruction[2];
                 end_block_idx = instruction[3];
@@ -29,34 +25,26 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        struct pipeline_specifics
-        {
-            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s)
-            {
+        struct pipeline_specifics {
+            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s) {
                 parsed_instruction inst{s};
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                {
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT) {
                     __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                 }
             }
 
-            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
-            {
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem) {
                 auto block_idx = inst.start_block_idx + iter / 2;
-                if (iter % 2 == 0)
-                {
+                if (iter % 2 == 0) {
                     tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.up_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
-                else
-                {
+                else {
                     tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.gate_weights, {inst.layer_idx, block_idx, col_idx}, sem);
                 }
             }
 
-            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
-            {
-                if (output_idx % 2 == 0)
-                {
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage) {
+                if (output_idx % 2 == 0) {
                     return;
                 }
 
@@ -95,8 +83,7 @@ namespace kittens::prototype::vm
                 // wait before we store results to global memory
                 warp::sync();
 
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
                     tma::store_async<cache_policy::EVICT_LAST>(g.silu_out, out_smem, {block_idx});
                     tma::store_async_read_wait();
                 }
@@ -111,22 +98,17 @@ namespace kittens::prototype::vm
         using pipeline = rms_matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics, &Globals::hidden_states, &Globals::mlp_norm_weights>;
         static_assert(pipeline::OUTPUT_PIPELINE_STAGES == 3);
 
-        struct controller
-        {
-            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
-            {
+        struct controller {
+            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
                 return pipeline::release_lid(g, instruction, query);
             }
-            static __device__ int init_semaphores(const Globals &g, state<Config> &s)
-            {
+            static __device__ int init_semaphores(const Globals &g, state<Config> &s) {
                 return pipeline::init_semaphores(s);
             }
         };
 
-        struct loader
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct loader {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 s.template zero_scratch<1024>();
 
                 parsed_instruction inst{s};
@@ -134,32 +116,25 @@ namespace kittens::prototype::vm
             }
         };
 
-        struct launcher
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct launcher {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::launcher_loop(s, g);
             }
         };
 
-        struct consumer
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct consumer {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::consumer_loop(s, g);
             }
         };
 
-        struct storer
-        {
+        struct storer {
 
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::storer_loop<2>(s, g);
 
                 // one atomic add at the end
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
                     s.record(TEVENT_AT_GMEM_STORE);
 
                     tma::store_async_wait();

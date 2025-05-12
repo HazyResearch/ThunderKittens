@@ -3,12 +3,10 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     template <typename config, typename globals>
-    struct attention_partial
-    {
+    struct attention_partial {
         static constexpr int opcode = OPCODE_PartialAttention;
         static constexpr int NUM_STAGES = 3;
         static constexpr int GQA_RATIO = LLAMA_1B_NUM_ATTENTION_HEADS / LLAMA_1B_NUM_KV_HEADS;
@@ -35,14 +33,12 @@ namespace kittens::prototype::vm
         using o_sv = sv_fl<LLAMA_1B_HEAD_DIM>;
         using o_sv_bf = sv_bf<LLAMA_1B_HEAD_DIM>;
 
-        struct parsed_instruction
-        {
+        struct parsed_instruction {
             int layer_idx;
             int kv_head_idx;
             int num_partials;
             int partial_idx;
-            __device__ inline parsed_instruction(typename config::instruction_t &instruction)
-            {
+            __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
                 layer_idx = instruction[1];
                 kv_head_idx = instruction[2];
                 num_partials = instruction[3];
@@ -52,80 +48,65 @@ namespace kittens::prototype::vm
         };
 
         // We have 32 dynamic semaphores total
-        __device__ static inline semaphore &Q_arrived(state<config> &s)
-        {
+        __device__ static inline semaphore &Q_arrived(state<config> &s) {
             return s.semaphores()[0];
         }
-        __device__ static inline semaphore &O_arrived(state<config> &s)
-        {
+        __device__ static inline semaphore &O_arrived(state<config> &s) {
             return s.semaphores()[1];
         }
-        __device__ static inline semaphore &L_arrived(state<config> &s)
-        {
+        __device__ static inline semaphore &L_arrived(state<config> &s) {
             return s.semaphores()[2];
         }
-        __device__ static inline semaphore &K_arrived(state<config> &s, int stage)
-        {
+        __device__ static inline semaphore &K_arrived(state<config> &s, int stage) {
             return s.semaphores()[3 + stage * 2];
         }
-        __device__ static inline semaphore &V_arrived(state<config> &s, int stage)
-        {
+        __device__ static inline semaphore &V_arrived(state<config> &s, int stage) {
             return s.semaphores()[3 + stage * 2 + 1];
         }
-        __device__ static inline semaphore &K_finished(state<config> &s, int stage)
-        {
+        __device__ static inline semaphore &K_finished(state<config> &s, int stage) {
             return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2];
         }
-        __device__ static inline semaphore &V_finished(state<config> &s, int stage)
-        {
+        __device__ static inline semaphore &V_finished(state<config> &s, int stage) {
             return s.semaphores()[3 + NUM_STAGES * 2 + stage * 2 + 1];
         }
 
         __device__ static inline void wait_QOL_page(state<config> &s) { s.wait_page_ready(s.pid(QOL_PAGE)); }
         __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
-        __device__ static inline void finish_QOL_page(state<config> &s)
-        {
+        __device__ static inline void finish_QOL_page(state<config> &s) {
             if (warp::laneid() == 0)
                 s.finish_page(s.pid(QOL_PAGE), config::NUM_CONSUMER_WARPS);
         }
-        __device__ static inline void finish_KV_page(state<config> &s)
-        {
+        __device__ static inline void finish_KV_page(state<config> &s) {
             if (warp::laneid() == 0)
                 s.finish_page(s.pid(KV_PAGE), config::NUM_CONSUMER_WARPS);
         }
-        __device__ static inline q_st &get_Q_smem(state<config> &s)
-        {
+        __device__ static inline q_st &get_Q_smem(state<config> &s) {
             int pid = s.pid(QOL_PAGE);
             return *reinterpret_cast<q_st *>(s.pages[pid].data);
         }
-        __device__ static inline o_sv (&get_O_smem(state<config> &s))[4]
-        {
+        __device__ static inline o_sv (&get_O_smem(state<config> &s))[4] {
             int pid = s.pid(QOL_PAGE);
             return *reinterpret_cast<o_sv(*)[4]>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st));
         }
-        __device__ static inline l_sv &get_L_smem(state<config> &s)
-        {
+        __device__ static inline l_sv &get_L_smem(state<config> &s) {
             int pid = s.pid(QOL_PAGE);
             return *reinterpret_cast<l_sv *>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st) + sizeof(o_sv) * 4);
         }
-        __device__ static inline kv_st &get_K_smem(state<config> &s, int stage)
-        {
+        __device__ static inline kv_st &get_K_smem(state<config> &s, int stage) {
             int pid = s.pid(KV_PAGE);
             return *reinterpret_cast<kv_st *>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (stage * 2));
         }
-        __device__ static inline kv_st &get_V_smem(state<config> &s, int stage)
-        {
+        __device__ static inline kv_st &get_V_smem(state<config> &s, int stage) {
             int pid = s.pid(KV_PAGE);
             return *reinterpret_cast<kv_st *>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (1 + stage * 2));
         }
 
         template <ducks::sv::all SV, ducks::rt::all RT>
-        __device__ static inline void store_4_rows(SV (&dst)[4], const RT &src, int row4idx /*= 0, 1, 2, or 3*/)
-        {
+        __device__ static inline void store_4_rows(SV (&dst)[4], const RT &src, int row4idx /*= 0, 1, 2, or 3*/) {
             static_assert(RT::rows == 16, "src rows must be 16.");
             static_assert(SV::length == src.cols, "dst length must match src cols.");
 
@@ -144,12 +125,9 @@ namespace kittens::prototype::vm
             int local_row_idx = (laneid % 16) / 4;
             int local_col_idx = laneid % 4;
 
-            if (row4idx % 2 == 0 && laneid < 16)
-            { // rows 0~3 or 8~11
-                if (row4idx / 2 == 0)
-                { // rows 0~3
-                    for (int j = 0; j < src.width; j++)
-                    {
+            if (row4idx % 2 == 0 && laneid < 16) { // rows 0~3 or 8~11
+                if (row4idx / 2 == 0) { // rows 0~3
+                    for (int j = 0; j < src.width; j++) {
                         U2 tmp[2];
                         tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
                         tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
@@ -158,10 +136,8 @@ namespace kittens::prototype::vm
                         move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
                     }
                 }
-                else
-                { // rows 8~11
-                    for (int j = 0; j < src.width; j++)
-                    {
+                else { // rows 8~11
+                    for (int j = 0; j < src.width; j++) {
                         U2 tmp[2];
                         tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
                         tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
@@ -171,12 +147,9 @@ namespace kittens::prototype::vm
                     }
                 }
             }
-            else if (row4idx % 2 == 1 && laneid >= 16)
-            { // rows 4~7 or 12~15
-                if (row4idx / 2 == 0)
-                { // rows 4~7
-                    for (int j = 0; j < src.width; j++)
-                    {
+            else if (row4idx % 2 == 1 && laneid >= 16) { // rows 4~7 or 12~15
+                if (row4idx / 2 == 0) { // rows 4~7
+                    for (int j = 0; j < src.width; j++) {
                         U2 tmp[2];
                         tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
                         tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
@@ -185,10 +158,8 @@ namespace kittens::prototype::vm
                         move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
                     }
                 }
-                else
-                { // rows 12~15
-                    for (int j = 0; j < src.width; j++)
-                    {
+                else { // rows 12~15
+                    for (int j = 0; j < src.width; j++) {
                         U2 tmp[2];
                         tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
                         tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
@@ -200,35 +171,27 @@ namespace kittens::prototype::vm
             }
         }
         template <ducks::rt::row_layout RT>
-        __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val = 0)
-        {
+        __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val = 0) {
             if (col_idx >= dst.cols)
                 return;
 #pragma unroll
-            for (int i = 0; i < dst.height; i++)
-            {
+            for (int i = 0; i < dst.height; i++) {
 #pragma unroll
-                for (int j = 0; j < dst.width; j++)
-                {
+                for (int j = 0; j < dst.width; j++) {
 #pragma unroll
-                    for (int k = 0; k < dst.packed_per_tile; k++)
-                    {
+                    for (int k = 0; k < dst.packed_per_tile; k++) {
                         const int col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2);
                         const int col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((warp::laneid() % 4) * 2) + 1;
-                        if (col_idx_x >= col_idx)
-                        {
+                        if (col_idx_x >= col_idx) {
                             dst.tiles[i][j].data[k].x = val;
                         }
-                        else
-                        {
+                        else {
                             dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x;
                         }
-                        if (col_idx_y >= col_idx)
-                        {
+                        if (col_idx_y >= col_idx) {
                             dst.tiles[i][j].data[k].y = val;
                         }
-                        else
-                        {
+                        else {
                             dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y;
                         }
                     }
@@ -239,8 +202,7 @@ namespace kittens::prototype::vm
         // Mainly two things are different:
         //   1. Ignores Q global dimensions
         //   2. Only loads 4 rows of Q, not 16 (assumes GQA_RATIO == 4) --> only 32 calls needed, so single call per thread
-        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/)
-        {
+        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/) {
             static_assert(LLAMA_1B_HEAD_DIM == 64 && GQA_RATIO == 4, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
@@ -260,20 +222,16 @@ namespace kittens::prototype::vm
             asm volatile("cp.async.commit_group;\n" ::: "memory");
         }
 
-        struct controller
-        {
-            static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
-            {
+        struct controller {
+            static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
                 int ret_order[13] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 1};
                 return ret_order[query];
             }
-            static __device__ int init_semaphores(const globals &g, state<config> &s)
-            {
+            static __device__ int init_semaphores(const globals &g, state<config> &s) {
                 init_semaphore(Q_arrived(s), 0, 1);
                 init_semaphore(O_arrived(s), 0, 1);
                 init_semaphore(L_arrived(s), 0, 1);
-                for (int i = 0; i < NUM_STAGES; i++)
-                {
+                for (int i = 0; i < NUM_STAGES; i++) {
                     init_semaphore(K_arrived(s, i), 0, 1);
                     init_semaphore(V_arrived(s, i), 0, 1);
                     init_semaphore(K_finished(s, i), 0, 1);
@@ -282,43 +240,34 @@ namespace kittens::prototype::vm
                 return 3 + 4 * NUM_STAGES;
             }
         };
-        struct loader
-        {
-            static __device__ void run(const globals &g, state<config> &s)
-            {
+        struct loader {
+            static __device__ void run(const globals &g, state<config> &s) {
                 auto laneid = warp::laneid();
-                if (laneid >= 2 && laneid < config::NUM_PAGES)
-                {
+                if (laneid >= 2 && laneid < config::NUM_PAGES) {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
                     s.finish_page(unused_page, config::NUM_CONSUMER_WARPS);
                 }
             }
         };
-        struct launcher
-        {
-            static __device__ void wait_for_kv(const globals &g, state<config> &s, parsed_instruction &inst)
-            {
+        struct launcher {
+            static __device__ void wait_for_kv(const globals &g, state<config> &s, parsed_instruction &inst) {
                 s.record(TEVENT_AT_GMEM_WAIT);
 
                 // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4)
-                {
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 4) {
                     __nanosleep(config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                 }
 
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] < 4)
-                {
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, LLAMA_1B_NUM_ATTENTION_HEADS + LLAMA_1B_NUM_KV_HEADS + inst.kv_head_idx}] < 4) {
                     __nanosleep(config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                 }
 
                 s.record(TEVENT_DONE_GMEM_WAIT);
             }
 
-            static __device__ void run(const globals &g, state<config> &s)
-            {
-                if (warp::laneid() == 0)
-                {
+            static __device__ void run(const globals &g, state<config> &s) {
+                if (warp::laneid() == 0) {
 #ifdef KITTENS_BLACKWELL
                     s.wait_tensor_ready();
                     arrive(s.tensor_finished, config::NUM_CONSUMER_WARPS);
@@ -339,21 +288,18 @@ namespace kittens::prototype::vm
                         finish_KV_page(s);
 
                     // Run the pipeline!
-                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i)
-                    {
+                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                         auto cur_blk_idx = start_blk_idx + i;
                         int stage = cur_blk_idx % NUM_STAGES;
                         kv_st &K_smem = get_K_smem(s, stage);
                         kv_st &V_smem = get_V_smem(s, stage);
 
-                        if (i >= NUM_STAGES)
-                        {
+                        if (i >= NUM_STAGES) {
                             wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                             wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                         }
 
-                        if (cur_blk_idx == end_blk_idx - 1 && inst.partial_idx == inst.num_partials - 1)
-                        {
+                        if (cur_blk_idx == end_blk_idx - 1 && inst.partial_idx == inst.num_partials - 1) {
                             wait_for_kv(g, s, inst);
                         }
 
@@ -365,23 +311,17 @@ namespace kittens::prototype::vm
                 }
             }
         };
-        struct consumer
-        {
-            static __device__ void run(const globals &g, state<config> &s)
-            {
+        struct consumer {
+            static __device__ void run(const globals &g, state<config> &s) {
 
-                if (warpid() == 0)
-                {
+                if (warpid() == 0) {
                     // Wait for the previous ops to finish1
                     parsed_instruction inst{s};
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
 
-                    if (laneid() == 0)
-                    {
-                        for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
-                        {
-                            while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + head_offset}] < 4)
-                            {
+                    if (laneid() == 0) {
+                        for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++) {
+                            while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_QKV_MatVecRopeAppend - 1, q_head_start_idx + head_offset}] < 4) {
                                 __nanosleep(config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                             }
                         }
@@ -435,8 +375,7 @@ namespace kittens::prototype::vm
                     // warp::sync();
 
                     // Run the pipeline!
-                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i)
-                    {
+                    for (int i = 0; i + start_blk_idx < end_blk_idx; ++i) {
                         int stage = i % NUM_STAGES;
                         kv_st &K_smem = get_K_smem(s, stage);
                         kv_st &V_smem = get_V_smem(s, stage);
@@ -490,15 +429,13 @@ namespace kittens::prototype::vm
                     // Finish
                     warp::sync();
 
-                    if (start_blk_idx < end_blk_idx)
-                    {
+                    if (start_blk_idx < end_blk_idx) {
                         finish_KV_page(s);
                         warp::div_row(O_reg, O_reg, norm_vec_reg);
                         warp::log2(L_reg, norm_vec_reg);
                         warp::add(L_reg, L_reg, last_scaled_max_vec_reg); // now L_reg contains the LSE
                     }
-                    else
-                    {
+                    else {
                         // Very edgy case where no blocks are processed.
                         // Make the math work out during attention reduction!
                         warp::neg_infty(L_reg);
@@ -515,23 +452,19 @@ namespace kittens::prototype::vm
                 }
             }
         };
-        struct storer
-        {
+        struct storer {
 
-            static inline __device__ void store_o_skip(const globals &g, state<config> &s, int q_head_start_idx)
-            {
+            static inline __device__ void store_o_skip(const globals &g, state<config> &s, int q_head_start_idx) {
                 auto O_smem = get_O_smem(s);
 
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
                     wait(O_arrived(s), 0);
                     s.record(TEVENT_OUTPUT_READY);
                 }
                 warp::sync();
 
                 rv_bf<globals::head_dim> O_bf;
-                for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
-                {
+                for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++) {
                     auto &smem_fl = O_smem[head_offset];
                     auto &smem_bf = *reinterpret_cast<o_sv_bf *>(&smem_fl);
 
@@ -541,34 +474,28 @@ namespace kittens::prototype::vm
                     warp::sync();
                 }
 
-                if (laneid() == 0)
-                {
-                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
-                    {
+                if (laneid() == 0) {
+                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++) {
                         auto &smem_bf = *reinterpret_cast<o_sv_bf *>(&O_smem[head_offset]);
                         tma::store_async<cache_policy::EVICT_LAST>(g.attn_out, smem_bf, {q_head_start_idx + head_offset});
                     }
                 }
             }
 
-            static inline __device__ void store_o_no_skip(const globals &g, state<config> &s, int q_head_start_idx, parsed_instruction &inst)
-            {
+            static inline __device__ void store_o_no_skip(const globals &g, state<config> &s, int q_head_start_idx, parsed_instruction &inst) {
                 // Store partial attention output to global memory
-                if (laneid == 0)
-                {
+                if (laneid == 0) {
                     o_sv(&O_smem)[GQA_RATIO] = get_O_smem(s);
                     wait(O_arrived(s), 0);
                     s.record(TEVENT_OUTPUT_READY);
 
-                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++)
-                    {
+                    for (int head_offset = 0; head_offset < GQA_RATIO; head_offset++) {
                         tma::store_async<cache_policy::EVICT_LAST>(g.attn_out_intermediates, O_smem[head_offset], {0, q_head_start_idx + head_offset, inst.partial_idx, 0});
                     }
                 }
             }
 
-            static __device__ void run(const globals &g, state<config> &s)
-            {
+            static __device__ void run(const globals &g, state<config> &s) {
                 parsed_instruction inst{s};
                 int laneid = warp::laneid();
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO; // 0, 4, 8, 12, 16, 20, 24, 28
@@ -576,18 +503,15 @@ namespace kittens::prototype::vm
 
                 auto skip_attn_reduction = g.skip_attn_reduction;
 
-                if (skip_attn_reduction)
-                {
+                if (skip_attn_reduction) {
                     store_o_skip(g, s, q_head_start_idx);
                 }
-                else
-                {
+                else {
                     store_o_no_skip(g, s, q_head_start_idx, inst);
                 }
 
                 // Store LSE to global memory
-                if (laneid < GQA_RATIO && !skip_attn_reduction)
-                {
+                if (laneid < GQA_RATIO && !skip_attn_reduction) {
                     l_sv &L_smem = get_L_smem(s);
                     wait(L_arrived(s), 0);
 
@@ -603,33 +527,27 @@ namespace kittens::prototype::vm
                 asm volatile("fence.acq_rel.gpu;");
 
                 tma::store_async_wait();
-                if (laneid == 0)
-                {
+                if (laneid == 0) {
                     s.record(123 + laneid);
                     finish_QOL_page(s);
                 }
 
                 // Wait and finish
-                if (laneid < GQA_RATIO)
-                {
+                if (laneid < GQA_RATIO) {
 
-                    if (laneid == 0)
-                    {
+                    if (laneid == 0) {
                         s.record(TEVENT_AT_GMEM_STORE);
                     }
 
-                    if (skip_attn_reduction)
-                    {
+                    if (skip_attn_reduction) {
                         atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_AttentionReduction - 1, 0}], 1);
                     }
-                    else
-                    {
+                    else {
                         // Adding only at 0, 4, 8, ... should be sufficient for the reduction op!
                         atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, q_head_start_idx + laneid}], 1);
                     }
 
-                    if (laneid == 0)
-                    {
+                    if (laneid == 0) {
                         s.record(TEVENT_DONE_GMEM_STORE);
                     }
                 }

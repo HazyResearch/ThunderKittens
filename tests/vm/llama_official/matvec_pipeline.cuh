@@ -2,12 +2,10 @@
 
 #include "llama.cuh"
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics>
-    struct matvec_pipeline
-    {
+    struct matvec_pipeline {
         static constexpr int INPUT_PIPELINE_STAGES = 3;
         static constexpr int OUTPUT_PIPELINE_STAGES = 3;
         static constexpr int STAGE_PAGES = 4;
@@ -31,8 +29,7 @@ namespace kittens::prototype::vm
 
         __device__ static inline sv_bf<Globals::hidden_dim> &get_activations(state<Config> &s) { return *reinterpret_cast<sv_bf<Globals::hidden_dim> *>(s.pages[get_activation_page(s)].ptr()); }
 
-        __device__ static inline int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
-        {
+        __device__ static inline int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
             // NOTE: assumes a three stage pipeline
 
             parsed_instruction inst{instruction};
@@ -45,43 +42,35 @@ namespace kittens::prototype::vm
 
             // special handling for 1 and 2 because only then do 
             // we free pages before the activation/rms scale (page 0)
-            if (iters == 1)
-            {
+            if (iters == 1) {
                 int ret_order[13] = {5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4};
                 return ret_order[query];
             }
-            else if (iters == 2)
-            {
+            else if (iters == 2) {
                 int ret_order[13] = {9, 10, 11, 12, 0, 1, 2, 3, 4, 5, 6, 7, 8};
                 return ret_order[query];
             }
-            else if (remainder == 1)
-            {
+            else if (remainder == 1) {
                 int ret_order[13] = {0, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4};
                 return ret_order[query];
             }
-            else if (remainder == 2)
-            {
+            else if (remainder == 2) {
                 int ret_order[13] = {0, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8};
                 return ret_order[query];
             }
-            else
-            {
+            else {
                 int ret_order[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
                 return ret_order[query];
             }
         }
 
-        __device__ static inline int init_semaphores(state<Config> &s)
-        {
+        __device__ static inline int init_semaphores(state<Config> &s) {
             init_semaphore(activations_arrived(s), 1);
-            for (int i = 0; i < INPUT_PIPELINE_STAGES; i++)
-            {
+            for (int i = 0; i < INPUT_PIPELINE_STAGES; i++) {
                 init_semaphore(weights_arrived(s, i), 1);
                 init_semaphore(weights_finished(s, i), Config::NUM_CONSUMER_WARPS);
             }
-            for (int i = 0; i < OUTPUT_PIPELINE_STAGES; i++)
-            {
+            for (int i = 0; i < OUTPUT_PIPELINE_STAGES; i++) {
                 init_semaphore(outputs_arrived(s, i), Config::NUM_CONSUMER_WARPS);
                 init_semaphore(outputs_finished(s, i), 1);
             }
@@ -113,38 +102,31 @@ namespace kittens::prototype::vm
         //     }
         // }
 
-        __device__ static inline void loader_loop(state<Config> &s, const Globals &g)
-        {
+        __device__ static inline void loader_loop(state<Config> &s, const Globals &g) {
             parsed_instruction inst{s};
 
             auto needed_pages = 1 + min(inst.iters, INPUT_PIPELINE_STAGES) * STAGE_PAGES;
 
-            if (laneid() == 0)
-            {
+            if (laneid() == 0) {
 
                 int input_stage = 0;
-                for (int iter = 0; iter < inst.iters; iter++)
-                {
+                for (int iter = 0; iter < inst.iters; iter++) {
                     wait(weights_finished(s, input_stage), (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
 
                     auto &sem = weights_arrived(s, input_stage);
                     tma::expect_bytes(sem, sizeof(bf16) * 2048 * 16);
 #pragma unroll
-                    for (int i = 0; i < 4; i++)
-                    {
+                    for (int i = 0; i < 4; i++) {
                         int weight_page = get_weight_page(s, input_stage, i);
-                        if (iter < INPUT_PIPELINE_STAGES)
-                        {
+                        if (iter < INPUT_PIPELINE_STAGES) {
                             s.wait_page_ready(weight_page);
                         }
                         auto &weight_chunk = reinterpret_cast<st_bf<16, 512> &>(s.pages[weight_page]);
 
-                        if (iter == 0 && i == 0)
-                        {
+                        if (iter == 0 && i == 0) {
                             s.record(TEVENT_FIRST_LOAD);
                         }
-                        else if (iter == inst.iters - 1 && i == 3)
-                        {
+                        else if (iter == inst.iters - 1 && i == 3) {
                             s.record(TEVENT_LAST_LOAD);
                         }
 
@@ -154,8 +136,7 @@ namespace kittens::prototype::vm
                     input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
                 }
             }
-            else if (laneid() >= needed_pages && laneid() < Config::NUM_PAGES)
-            {
+            else if (laneid() >= needed_pages && laneid() < Config::NUM_PAGES) {
                 auto pid = s.pid(laneid());
                 s.wait_page_ready(pid);
                 s.finish_page(pid, Config::NUM_CONSUMER_WARPS);
@@ -163,8 +144,7 @@ namespace kittens::prototype::vm
         }
 
         template <typename rv_t>
-        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g, rv_t &activations_vec)
-        {
+        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g, rv_t &activations_vec) {
             // Setup
             parsed_instruction inst{s};
 
@@ -174,20 +154,17 @@ namespace kittens::prototype::vm
             int page_index = warpid() / WARPS_PER_PAGE;
 
             int input_stage = 0, output_stage = 0;
-            for (int i = 0; i < inst.iters; i++)
-            {
+            for (int i = 0; i < inst.iters; i++) {
                 int weight_page = get_weight_page(s, input_stage, page_index);
                 wait(weights_arrived(s, input_stage), (i % (2 * INPUT_PIPELINE_STAGES)) >= INPUT_PIPELINE_STAGES);
                 wait(outputs_finished(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) < OUTPUT_PIPELINE_STAGES);
                 st_bf<16, REDUCTION_DIM_PER_WARP> &weights = reinterpret_cast<st_bf<16, REDUCTION_DIM_PER_WARP> *>(s.pages[weight_page].ptr())[warpid() % WARPS_PER_PAGE];
                 sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
 
-                if (i == 0)
-                {
+                if (i == 0) {
                     s.record(TEVENT_FIRST_USE);
                 }
-                else if (i == inst.iters - 1)
-                {
+                else if (i == inst.iters - 1) {
                     s.record(TEVENT_LAST_USE);
                 }
 
@@ -197,12 +174,10 @@ namespace kittens::prototype::vm
                 warp::arrive(outputs_arrived(s, output_stage));
                 warp::arrive(weights_finished(s, input_stage));
 
-                if (i >= inst.iters - INPUT_PIPELINE_STAGES)
-                {
+                if (i >= inst.iters - INPUT_PIPELINE_STAGES) {
 // Release pages.
 #pragma unroll
-                    for (int j = 0; j < STAGE_PAGES; j++)
-                    {
+                    for (int j = 0; j < STAGE_PAGES; j++) {
                         s.warp_finish_page(get_weight_page(s, input_stage, j), 1);
                     }
                 }
@@ -215,33 +190,27 @@ namespace kittens::prototype::vm
         }
 
         template <int iter_scale = 1>
-        __device__ static inline void storer_loop(state<Config> &s, const Globals &g)
-        {
+        __device__ static inline void storer_loop(state<Config> &s, const Globals &g) {
             parsed_instruction inst{s};
 
             int output_stage = 0;
-            for (int i = 0; i < inst.iters; i++)
-            {
+            for (int i = 0; i < inst.iters; i++) {
                 auto &sem = outputs_arrived(s, output_stage);
                 auto bit = (i % (2 * OUTPUT_PIPELINE_STAGES)) >= OUTPUT_PIPELINE_STAGES;
 
                 wait(sem, bit);
 
-                if (i == 0)
-                {
+                if (i == 0) {
                     s.record(TEVENT_FIRST_STORE);
                 }
-                else if (i == inst.iters - 1)
-                {
+                else if (i == inst.iters - 1) {
                     s.record(TEVENT_LAST_STORE);
                 }
 
                 pipeline_specifics::store(s, g, inst, i, output_stage);
 
-                if ((i + 1) % iter_scale == 0)
-                {
-                    for (int j = 0; j < iter_scale; j++)
-                    {
+                if ((i + 1) % iter_scale == 0) {
+                    for (int j = 0; j < iter_scale; j++) {
                         auto stage_to_arrive = (i - j) % OUTPUT_PIPELINE_STAGES;
                         warp::arrive(outputs_finished(s, stage_to_arrive));
                     }
@@ -252,8 +221,7 @@ namespace kittens::prototype::vm
     };
 
     template <typename Config, typename Globals, typename parsed_instruction, typename pipeline_specifics, auto ActPtr, auto RmsPtr>
-    struct rms_matvec_pipeline : public matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>
-    {
+    struct rms_matvec_pipeline : public matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics> {
         using pipeline = matvec_pipeline<Config, Globals, parsed_instruction, pipeline_specifics>;
 
         static constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
@@ -264,17 +232,14 @@ namespace kittens::prototype::vm
 
         __device__ static inline sv_bf<Globals::hidden_dim> &get_rms_scale(state<Config> &s) { return *reinterpret_cast<sv_bf<Globals::hidden_dim> *>(s.pages[get_activation_page(s)].ptr(sizeof(sv_bf<Globals::hidden_dim>))); }
 
-        __device__ static inline int init_semaphores(state<Config> &s)
-        {
+        __device__ static inline int init_semaphores(state<Config> &s) {
             pipeline::init_semaphores(s);
             init_semaphore(rms_scale_arrived(s), 1);
             return SEM_COUNT;
         }
 
-        __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx)
-        {
-            if (laneid() == 0)
-            {
+        __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx) {
+            if (laneid() == 0) {
                 int activation_page = get_activation_page(s);
                 s.wait_page_ready(activation_page);
 
@@ -317,10 +282,8 @@ namespace kittens::prototype::vm
         //     }
         // }
 
-        __device__ static inline void launcher_loop(state<Config> &s, const Globals &g)
-        {
-            if (laneid() == 0)
-            {
+        __device__ static inline void launcher_loop(state<Config> &s, const Globals &g) {
+            if (laneid() == 0) {
 #ifdef KITTENS_BLACKWELL
                 s.wait_tensor_ready();
                 arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
@@ -328,15 +291,13 @@ namespace kittens::prototype::vm
             }
         }
 
-        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g)
-        {
+        __device__ static inline void consumer_loop(state<Config> &s, const Globals &g) {
 
             using sv_t = sv_bf<REDUCTION_DIM_PER_WARP>;
             auto &rms_scale_smem = reinterpret_cast<sv_t *>(&get_rms_scale(s))[warpid()];
             auto &activations_smem = reinterpret_cast<sv_t *>(&get_activations(s))[warpid()];
 
-            if (laneid() == 0 && warpid() == 0)
-            {
+            if (laneid() == 0 && warpid() == 0) {
                 parsed_instruction inst{s};
 
                 int activation_page = get_activation_page(s);

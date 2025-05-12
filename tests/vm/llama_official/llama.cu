@@ -21,8 +21,7 @@ using rms_upgate_silu_op = rms_upgate_silu<default_config, llama_1b_globals>;
 using downproj_op = downproj<default_config, llama_1b_globals>;
 using rms_lm_head_op = rms_lm_head<default_config, llama_1b_globals>;
 
-PYBIND11_MODULE(kvm_llama, m)
-{
+PYBIND11_MODULE(kvm_llama, m) {
     m.doc() = "";
     kittens::py::bind_kernel<kvm<default_config, llama_1b_globals,
                                  attention_partial_op,

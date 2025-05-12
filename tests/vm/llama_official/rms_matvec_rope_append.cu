@@ -5,14 +5,12 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-namespace kittens::prototype::vm
-{
+namespace kittens::prototype::vm {
 
     using globals = llama_1b_globals;
 
     template <typename Config, typename Globals>
-    struct rms_qkv_rope_append
-    {
+    struct rms_qkv_rope_append {
         static constexpr int opcode = OPCODE_RMS_QKV_MatVecRopeAppend; // Op index within the layer -- controls which barrier to listen to.
 
         static constexpr int K_BLK_START = 2048 / Globals::matvec_block_size;
@@ -26,11 +24,9 @@ namespace kittens::prototype::vm
         __device__ static inline rope_t &get_rope_cos(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_cos_ptr(s)); }
         __device__ static inline rope_t &get_rope_sin(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_sin_ptr(s)); }
 
-        struct parsed_instruction
-        {
+        struct parsed_instruction {
             int layer_idx, start_block_idx, end_block_idx, iters;
-            __device__ inline parsed_instruction(typename Config::instruction_t &instruction)
-            {
+            __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
                 layer_idx = instruction[1];       // in units of 1
                 start_block_idx = instruction[2]; // in units of 16 elements
                 end_block_idx = instruction[3];   // in units of 16 elements
@@ -39,29 +35,23 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        struct pipeline_specifics
-        {
+        struct pipeline_specifics {
 
-            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s)
-            {
+            static __device__ inline void gmem_wait(const Globals &g, state<Config> &s) {
                 parsed_instruction inst{s};
-                if (inst.layer_idx > 0)
-                {
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
-                    {
+                if (inst.layer_idx > 0) {
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < EXPECTED_ARRIVAL_COUNT) {
                         __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
                 }
             }
 
-            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem)
-            {
+            static __device__ inline void load_iter(state<Config> &s, const globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem) {
                 auto block_idx = inst.start_block_idx + iter;
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.qkv_weights, {inst.layer_idx, block_idx, col_idx}, sem);
             }
 
-            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage)
-            {
+            static __device__ inline void store(state<Config> &s, const Globals &g, parsed_instruction &inst, int output_idx, int output_stage) {
                 int block_idx = inst.start_block_idx + output_idx;
 
                 // apply rope
@@ -92,8 +82,7 @@ namespace kittens::prototype::vm
                 warp::load(rope_sin, rope_sin_sv);
                 warp::load(qkv_proj, qkv_proj_smem);
 
-                if (block_idx < V_BLK_START)
-                { // only Q & K need RoPE
+                if (block_idx < V_BLK_START) { // only Q & K need RoPE
 
                     // Fetch the neighbor values
                     int mod = (laneid() & 0b1) ? -1 : 1; // 1 for even, -1 for odd
@@ -101,8 +90,7 @@ namespace kittens::prototype::vm
                     float pair_val = __shfl_sync(MASK_ALL, qkv_proj[0][0], laneid() + mod);
 
                     // Compute RoPE in-place
-                    if (laneid() < 16)
-                    {
+                    if (laneid() < 16) {
                         // will clean this up later
                         qkv_proj[0][0] = float(qkv_proj[0][0]) * rope_cos[0][0] + float(-1 * mod) * float(pair_val) * rope_sin[0][0];
                     }
@@ -111,22 +99,18 @@ namespace kittens::prototype::vm
                 warp::store(qkv_proj_smem_bf, qkv_proj);
                 warp::sync();
 
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
 
-                    if (block_idx < K_BLK_START)
-                    { // Q
+                    if (block_idx < K_BLK_START) { // Q
                         tma::store_async<cache_policy::EVICT_LAST>(g.q_post_rope, qkv_proj_smem_bf, {0, 0, 0, block_idx});
                     }
-                    else if (block_idx < V_BLK_START)
-                    { // K
+                    else if (block_idx < V_BLK_START) { // K
                         int base_index = (block_idx - K_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
                         tma::store_async<cache_policy::EVICT_LAST>(g.k_cache, qkv_proj_smem_bf, {inst.layer_idx, static_cast<int>(g.pos_id), head_idx, dim_idx});
                     }
-                    else
-                    { // V
+                    else { // V
                         int base_index = (block_idx - V_BLK_START) * Globals::matvec_block_size;
                         int head_idx = base_index / Globals::head_dim;
                         int dim_idx = (base_index % Globals::head_dim) / Globals::matvec_block_size;
@@ -152,28 +136,22 @@ namespace kittens::prototype::vm
 
         __device__ static inline semaphore &rope_arrived(state<Config> &s) { return s.semaphores()[pipeline::SEM_COUNT]; }
 
-        struct controller
-        {
-            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
-            {
+        struct controller {
+            static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
                 return pipeline::release_lid(g, instruction, query);
             }
-            static __device__ int init_semaphores(const Globals &g, state<Config> &s)
-            {
+            static __device__ int init_semaphores(const Globals &g, state<Config> &s) {
                 pipeline::init_semaphores(s);
                 init_semaphore(rope_arrived(s), 1);
                 return pipeline::SEM_COUNT + 1;
             }
         };
-        struct loader
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct loader {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 s.template zero_scratch<1024>();
 
-                if (laneid() == 0)
-                {
+                if (laneid() == 0) {
                     auto &rope_cos = get_rope_cos(s);
                     auto &rope_sin = get_rope_sin(s);
 
@@ -188,27 +166,21 @@ namespace kittens::prototype::vm
                 pipeline::loader_loop(s, g, inst.layer_idx);
             }
         };
-        struct launcher
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct launcher {
+            static __device__ void run(const Globals &g, state<Config> &s) {
 
                 parsed_instruction inst{s};
                 pipeline::launcher_loop(s, g);
             }
         };
-        struct consumer
-        {
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+        struct consumer {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::consumer_loop(s, g);
             }
         };
-        struct storer
-        {
+        struct storer {
             // Uses 4 full pages for outputs.
-            static __device__ void run(const Globals &g, state<Config> &s)
-            {
+            static __device__ void run(const Globals &g, state<Config> &s) {
                 pipeline::storer_loop(s, g);
             }
         };
