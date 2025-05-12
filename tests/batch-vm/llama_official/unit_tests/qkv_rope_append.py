@@ -132,7 +132,6 @@ torch.cuda.synchronize()
 ###
 #  Check correctness
 ###
-# q_post_rope_ref = torch.matmul(rms_rope_intermediates, qkv_weights[LAYER_IDX][HIDDEN_DIM+NUM_KV_HEADS*HEAD_DIM : HIDDEN_DIM+2*NUM_KV_HEADS*HEAD_DIM].T)
 q_post_rope_ref, k_post_rope_ref, v_ref = matvec_rope(
     rms_rope_intermediates,
     qkv_weights[LAYER_IDX],

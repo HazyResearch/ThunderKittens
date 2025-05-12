@@ -244,9 +244,9 @@ struct qkv_rope_append {
                 if (inst.block_idx < K_BLOCK_START) 
                     tma::store_async(g.q_post_rope, output, {0, inst.block_idx});
                 else if (inst.block_idx < V_BLOCK_START) 
-                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, {inst.layer_idx*Globals::batch_size, (int)g.pos_id, inst.block_idx - K_BLOCK_START, 0});
+                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id, inst.block_idx - K_BLOCK_START, 0});
                 else
-                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, {inst.layer_idx*Globals::batch_size, (int)g.pos_id, inst.block_idx - V_BLOCK_START, 0});
+                    tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, {inst.layer_idx*(int)Globals::batch_size, (int)g.pos_id, inst.block_idx - V_BLOCK_START, 0});
                 tma::store_async_wait();
                 s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
                 s.finish_page(output_page + 1, Config::NUM_CONSUMER_WARPS);
