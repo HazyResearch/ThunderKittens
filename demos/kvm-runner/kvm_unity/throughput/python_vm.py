@@ -138,10 +138,10 @@ def qkv_matmul_rope_append(
 
     if mode == "q":
         assert end <= k_start
-        globals.post_ln_rope_q[batch_start_row:batch_end_row, start:end] = matmul_output
+        globals.post_ln_rope_q[batch_start_row:batch_end_row, start:end] = output
 
     else:
-        arr = rearrange(matmul_output, "... (h d) -> ... h d", d=globals.head_dim)
+        arr = rearrange(output, "... (h d) -> ... h d", d=globals.head_dim)
 
         # Determine which head to put the key/value in
         if mode == "k":  # Key

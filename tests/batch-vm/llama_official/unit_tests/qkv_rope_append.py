@@ -17,6 +17,7 @@ INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 BATCH_SIZE = 1024
 BATCH_BLOCK_SIZE = 128
+RMS_NORM_OPCODE = 1
 QKV_ROPE_APPEND_OPCODE = 2
 NUM_OPS = 8
 NUM_LAYERS = 2 # actual value is 80
@@ -90,6 +91,10 @@ for i in range(SM_COUNT):
 # Convert to tensor
 instructions = torch.tensor(instructions, dtype=torch.int32, device=device)
 print(instructions.shape)
+
+# Set barrriers
+for batch_start_idx in range(0, BATCH_SIZE // BATCH_BLOCK_SIZE):
+    Bar[LAYER_IDX, RMS_NORM_OPCODE - 1, batch_start_idx] = BATCH_BLOCK_SIZE
 
 # Generate timings
 timings = torch.zeros((SM_COUNT, instructions.shape[1], TIMING_WIDTH), dtype=torch.int32, device=device)

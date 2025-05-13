@@ -60,7 +60,7 @@
 #endif
 
 #define SM_COUNT 148
-#define BATCH_SIZE 128
+#define BATCH_SIZE 1024
 #define KV_PAGE_SIZE 128
 
 // timing event convention
