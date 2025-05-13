@@ -8,17 +8,25 @@ from kvm_unity.latency.python_vm import (
 from kvm_unity.latency.scheduler import LatencyScheduleBuilder
 from kvm_unity.python_vm import PyVM_Interpreter
 from kvm_unity.scheduler import ScheduleBuilder
+from kvm_unity.throughput.kvm import ThroughputKVM_Interpreter
+from kvm_unity.throughput.python_vm import (
+    INSTRUCTION_TO_SOLVER as THROUGHPUT_INSTRUCTION_TO_SOLVER,
+)
+from kvm_unity.throughput.scheduler import ThroughputScheduleBuilder
 
 BUILDER_MAP = {
     "latency": LatencyScheduleBuilder,
+    "throughput": ThroughputScheduleBuilder,
 }
 
 KVM_INTERPRETER_MAP = {
     "latency": LatencyKVM_Interpreter,
+    "throughput": ThroughputKVM_Interpreter,
 }
 
 INSTRUCTION_TO_SOLVER_MAP = {
     "latency": LATENCY_INSTRUCTION_TO_SOLVER,
+    "throughput": THROUGHPUT_INSTRUCTION_TO_SOLVER,
 }
 
 

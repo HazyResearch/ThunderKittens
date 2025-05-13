@@ -1,5 +1,4 @@
 import math
-from dataclasses import dataclass, field
 
 import torch
 from kvm_unity.instructions import NoOp
@@ -14,7 +13,7 @@ from kvm_unity.latency.instructions import (
     RMS_LM_Head,
 )
 from kvm_unity.llama import LlamaForCausalLM
-from kvm_unity.scheduler import ScheduleBuilder, assert_div
+from kvm_unity.scheduler import DAG_Node, ScheduleBuilder, assert_div
 from kvm_unity.utils import get_sm_count
 
 
@@ -22,12 +21,12 @@ def pick_num_attention_partitions(prompt_len: int, ntok: int, device: torch.devi
     min_chunk_size = 256
     full_len = prompt_len + ntok
 
-    sm_count = get_sm_count(device)
-
     num_divisions = math.ceil(full_len / min_chunk_size)
 
     # TODO limitation until we have a better reduction tree
     num_attention_partitions = min(num_divisions, 24)
+
+    # sm_count = get_sm_count(device)
     # num_attention_partitions = min(sm_count, num_divisions)
 
     assert num_attention_partitions >= 1
@@ -128,15 +127,6 @@ def schedule_qkv(
             )
         )
 
-    # for qkv_block_idx in range(num_qkv_blocks):
-    #     instructions.append(
-    #         LayerNorm_QKV_MatVecRopeAppend(
-    #             layer_idx=layer_idx,
-    #             start_output_block_idx=qkv_block_idx,
-    #             end_output_block_idx=qkv_block_idx + 1,
-    #         )
-    #     )
-
     return instructions
 
 
@@ -161,17 +151,6 @@ def schedule_upgate(globs: Globals, layer_idx: int):
                 end_output_block_idx=end,
             )
         )
-
-    # DIV = 4
-    # assert num_up_gate_blocks % DIV == 0
-    # for up_gate_block_idx in range(0, num_up_gate_blocks, DIV):
-    #     instructions.append(
-    #         LayerNormDoubleMatVecSiLU(
-    #             layer_idx=layer_idx,
-    #             start_output_block_idx=up_gate_block_idx,
-    #             end_output_block_idx=up_gate_block_idx + DIV,
-    #         )
-    #     )
 
     return instructions
 
@@ -222,19 +201,6 @@ def schedule_downproj(globs: Globals, layer_idx: int):
 
         num_assigned_jobs += len(sliced_jobs)
 
-    # DIV = 5
-    # assert num_down_blocks % DIV == 0
-    # for down_block_idx in range(0, num_down_blocks, DIV):
-    #     for reduction_idx in range(4):  # 2048 columns per op
-    #         instructions.append(
-    #             DownProjResidual(
-    #                 layer_idx=layer_idx,
-    #                 start_block_idx=down_block_idx,
-    #                 end_block_idx=down_block_idx + DIV,
-    #                 reduction_block_idx=reduction_idx,
-    #             )
-    #         )
-
     return instructions
 
 
@@ -254,44 +220,7 @@ def schedule_lm_head(globs: Globals):
             RMS_LM_Head(start_output_block_idx=start, end_output_block_idx=end)
         )
 
-    # DIV = 4
-    # for idx in range(0, num_logit_blocks, DIV):
-    #     instructions.append(
-    #         RMS_LM_Head(start_output_block_idx=idx, end_output_block_idx=idx+DIV)
-    #     )
     return instructions
-
-
-@dataclass
-class DAG_Node:
-    def __hash__(self):
-        return hash(tuple(self.instruction.serialize()))
-
-    instruction: Instruction
-    dependencies: list["DAG_Node"]
-
-    children: set["DAG_Node"] = field(default_factory=set)
-    start_time: float = float("inf")
-    end_time: float = float("inf")
-    remaining_dependencies: set["DAG_Node"] = field(default_factory=set)
-    priority: float = 0
-
-    def earliest_ready_time(self, globs: Globals):
-        if len(self.dependencies) == 0:
-            return 0
-
-        return max(dep.end_time for dep in self.dependencies)
-
-    def register_with_parents(self):
-        for dep in self.dependencies:
-            dep.children.add(self)
-
-    def calc_priority(self, globs: Globals):
-        cur_cost = self.priority
-        for dep in self.dependencies:
-            pri = cur_cost + dep.instruction.cost(globs)
-            dep.priority = max(pri, dep.priority)
-            dep.calc_priority(globs)
 
 
 def make_dag(
