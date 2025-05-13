@@ -20,7 +20,8 @@ class Globals(BaseGlobals):
     pos_id: int
     batch_size: int
 
-    matmul_block_size: int
+    matmul_batch_block_size: int
+    matmul_output_block_size: int
     norm_block_size: int
 
 

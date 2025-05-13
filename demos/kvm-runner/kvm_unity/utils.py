@@ -9,6 +9,11 @@ from torch import Tensor
 from tqdm import tqdm
 
 
+def assert_div(a, b):
+    assert a % b == 0, f"{a} is not divisible by {b}"
+    return a // b
+
+
 def compute_shard_bounds(
     tensor_shape: List[int], dim: int, num_shards: int, shard_index: int
 ):

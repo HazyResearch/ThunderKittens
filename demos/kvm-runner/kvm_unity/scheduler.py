@@ -14,11 +14,6 @@ INTS_PER_INSTRUCTION = 32
 TIMING_SLOTS = 128
 
 
-def assert_div(a, b):
-    assert a % b == 0, f"{a} is not divisible by {b}"
-    return a // b
-
-
 @dataclass
 class DAG_Node:
     def __hash__(self):

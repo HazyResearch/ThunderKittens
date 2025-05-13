@@ -45,6 +45,7 @@ class ScriptConfig(pydra.Config):
     setting: str = "latency"
     batch_size: int = 1
     skip_cost: bool = False
+    interleave_rope: bool = True
 
     def full(self):
         self.layer_limit = None
@@ -60,6 +61,7 @@ class ScriptConfig(pydra.Config):
         self.batch_size = bs
         self.skip_cost = True
         self.max_len_override = sl
+        self.interleave_rope = False
         self.l8()
 
     def l8(self):
@@ -71,7 +73,7 @@ def main(config: ScriptConfig):
     torch.cuda.set_device(config.device)
 
     extra_config = ExtraModelConfig(
-        interleave_rope=True,
+        interleave_rope=config.interleave_rope,
         max_len_override=config.max_len_override,
         max_batch_size=config.batch_size,
     )

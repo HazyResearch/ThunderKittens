@@ -60,6 +60,9 @@ class BaseGlobals:
                 continue
             diff_tensors(attr, other_attr, name)
 
+    def num_total_heads(self) -> int:
+        return self.num_attention_heads + self.num_kv_heads * 2
+
 
 def diff_tensors(a: Tensor, b: Tensor, name: str):
     a = a.float()

@@ -13,8 +13,8 @@ from kvm_unity.latency.instructions import (
     RMS_LM_Head,
 )
 from kvm_unity.llama import LlamaForCausalLM
-from kvm_unity.scheduler import DAG_Node, ScheduleBuilder, assert_div
-from kvm_unity.utils import get_sm_count
+from kvm_unity.scheduler import DAG_Node, ScheduleBuilder
+from kvm_unity.utils import assert_div, get_sm_count
 
 
 def pick_num_attention_partitions(prompt_len: int, ntok: int, device: torch.device):

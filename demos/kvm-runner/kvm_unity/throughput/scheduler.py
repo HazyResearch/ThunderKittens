@@ -3,7 +3,7 @@ import math
 import torch
 from kvm_unity.instructions import NoOp
 from kvm_unity.llama import LlamaForCausalLM
-from kvm_unity.scheduler import DAG_Node, ScheduleBuilder, assert_div
+from kvm_unity.scheduler import DAG_Node, ScheduleBuilder
 from kvm_unity.throughput.instructions import (
     AttentionDecode,
     DownProjResidual,
@@ -18,6 +18,7 @@ from kvm_unity.throughput.instructions import (
     QKV_MatMulRopeAppend,
     UpMatMul,
 )
+from kvm_unity.utils import assert_div
 
 
 def make_globals(
@@ -35,10 +36,11 @@ def make_globals(
     extra_config = model.extra_config
     bs = extra_config.max_batch_size
 
-    matmul_block_size = 128
+    matmul_batch_block_size = 128
+    matmul_output_block_size = 128
     norm_block_size = 16
 
-    # num_batch_blocks = assert_div(bs, matmul_block_size)
+    num_batch_blocks = assert_div(bs, matmul_batch_block_size)
 
     return Globals(
         # model params
@@ -76,8 +78,13 @@ def make_globals(
         intermediate_size=config.intermediate_size,
         # block sizes
         batch_size=bs,
-        max_barriers=(config.num_attention_heads + config.num_key_value_heads * 2) * bs,
-        matmul_block_size=matmul_block_size,
+        max_barriers=max(
+            (config.num_attention_heads + config.num_key_value_heads * 2)
+            * matmul_batch_block_size,
+            bs,
+        ),
+        matmul_batch_block_size=matmul_batch_block_size,
+        matmul_output_block_size=matmul_output_block_size,
         norm_block_size=norm_block_size,
         vocab_size=config.vocab_size,
         device=device,
@@ -102,8 +109,10 @@ def schedule_qkv_matmul_rope_append(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_qkv_blocks = assert_div(globs.hidden_size, globs.qkv_block_size)
+    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
+    num_qkv_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
+
+    for bidx in range(0, num_batch_blocks):
         for qkv_block_idx in range(num_qkv_blocks):
             instructions.append(
                 QKV_MatMulRopeAppend(
@@ -140,8 +149,10 @@ def schedule_o_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_o_blocks = assert_div(globs.hidden_size, globs.o_proj_block_size)
+    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
+    num_o_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
+
+    for bidx in range(num_batch_blocks):
         for o_block_idx in range(num_o_blocks):
             instructions.append(
                 O_ProjResidual(
@@ -177,10 +188,12 @@ def schedule_gate_silu(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_matmul_silu_blocks = assert_div(
-            globs.intermediate_size, globs.matmul_silu_block_size
-        )
+    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
+    num_matmul_silu_blocks = assert_div(
+        globs.intermediate_size, globs.matmul_output_block_size
+    )
+
+    for bidx in range(num_batch_blocks):
         for block_idx in range(num_matmul_silu_blocks):
             instructions.append(
                 GateSilu(
@@ -199,10 +212,12 @@ def schedule_up_matmul(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_matmul_gate_blocks = assert_div(
-            globs.intermediate_size, globs.matmul_gate_block_size
-        )
+    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
+    num_matmul_gate_blocks = assert_div(
+        globs.intermediate_size, globs.matmul_output_block_size
+    )
+
+    for bidx in range(num_batch_blocks):
         for block_idx in range(num_matmul_gate_blocks):
             instructions.append(
                 UpMatMul(
@@ -221,8 +236,10 @@ def schedule_down_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_down_blocks = assert_div(globs.hidden_size, globs.down_proj_block_size)
+    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
+    num_down_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
+
+    for bidx in range(num_batch_blocks):
         for down_block_idx in range(num_down_blocks):
             instructions.append(
                 DownProjResidual(
@@ -246,8 +263,8 @@ def schedule_lm_head(
             )
         )
 
-    for bidx in range(0, globs.batch_size, globs.matmul_block_size):
-        num_logit_blocks = assert_div(globs.vocab_size, globs.lm_head_block_size)
+    for bidx in range(0, globs.batch_size, globs.matmul_batch_block_size):
+        num_logit_blocks = assert_div(globs.vocab_size, globs.matmul_output_block_size)
         for logit_block_idx in range(num_logit_blocks):
             instructions.append(
                 LM_Head(

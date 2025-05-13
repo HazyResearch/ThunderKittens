@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange
 from kvm_unity.llama import (
-    apply_rotary_pos_emb_interleaved,
+    apply_rotary_pos_emb,
 )
 from kvm_unity.python_vm import get_start_end, rms_norm
 from kvm_unity.throughput.instructions import (
@@ -20,6 +20,7 @@ from kvm_unity.throughput.instructions import (
     QKV_MatMulRopeAppend,
     UpMatMul,
 )
+from kvm_unity.utils import assert_div
 from torch import Tensor
 
 USE_BARRIERS = True
@@ -70,7 +71,8 @@ def pre_attn_layer_norm(
 
     # barrier update
     if USE_BARRIERS:
-        globals.barriers[layer_idx, instruction.opcode() - 1, batch_start_idx] += 1
+        batch_block_idx = batch_start_idx // globals.matmul_batch_block_size
+        globals.barriers[layer_idx, instruction.opcode() - 1, batch_block_idx] += 1
 
 
 def qkv_matmul_rope_append(
@@ -78,89 +80,99 @@ def qkv_matmul_rope_append(
     instruction: QKV_MatMulRopeAppend,
 ):
     layer_idx = instruction.layer_idx
-    batch_start_idx = instruction.batch_start_idx
-    qkv_block_idx = instruction.qkv_block_idx
-    batch_end_idx = batch_start_idx + globals.matmul_block_size
-    batch_size = batch_end_idx - batch_start_idx
+    batch_start_row = instruction.batch_start_idx * globals.matmul_batch_block_size
+    batch_end_row = batch_start_row + globals.matmul_batch_block_size
+
+    output_block_idx = instruction.qkv_block_idx
+    output_start_col = output_block_idx * globals.matmul_output_block_size
+    output_end_col = output_start_col + globals.matmul_output_block_size
+
+    pos_id = globals.pos_id
 
     # Barrier check
     if USE_BARRIERS:
-        pass
-
-        # TODO
-        # op_barriers = globals.barriers[
-        #     instruction.layer_idx,
-        #     instruction.batch_start_idx,
-        #     instruction.prev_opcode() - 1,
-        # ]
+        assert (
+            globals.barriers[
+                instruction.layer_idx,
+                instruction.prev_opcode() - 1,
+                instruction.batch_start_idx,
+            ]
+            == globals.matmul_batch_block_size
+        )
 
     matmul_output = einsum(
-        globals.qkv_proj_weights[layer_idx],
-        globals.rms_rope_intermediates,
+        globals.qkv_proj_weights[layer_idx, output_start_col:output_end_col],
+        globals.rms_rope_intermediates[batch_start_row:batch_end_row],
         "o i, b i -> b o",
     )
 
     k_start = globals.num_attention_heads * globals.head_dim
     v_start = k_start + globals.num_kv_heads * globals.head_dim
 
-    q = matmul_output[batch_start_idx:batch_end_idx, :k_start]
-    k = matmul_output[batch_start_idx:batch_end_idx:, k_start:v_start]
-    v = matmul_output[batch_start_idx:batch_end_idx:, v_start:]
+    start, end = get_start_end(globals.matmul_output_block_size, output_block_idx)
 
-    # print("Batch start idx: ", batch_start_idx)
-    # print("Batch end idx: ", batch_end_idx)
-    q_arr = rearrange(q, "b (h d) -> b h d", h=globals.num_attention_heads)
-    k_arr = rearrange(k, "b (h d) -> b h d", h=globals.num_kv_heads)
-    v_arr = rearrange(v, "b (h d) -> b h d", h=globals.num_kv_heads)
-
-    pos_id = globals.pos_id
-    q_with_rope, k_with_rope = apply_rotary_pos_emb_interleaved(
-        q=q_arr,
-        k=k_arr,
-        cos=globals.rope_cos[pos_id],
-        sin=globals.rope_sin[pos_id],
-        unsqueeze_dim=0,
-    )
-
-    # Start and end here are global_head_idx * 128
-    start, end = get_start_end(globals.qkv_block_size, qkv_block_idx)
     if start < k_start:
-        globals.post_ln_rope_q[batch_start_idx:batch_end_idx, start:end] = (
-            q_with_rope.reshape(batch_size, -1)[:, start:end]
-        )
+        mode = "q"
+    elif start < v_start:
+        mode = "k"
     else:
-        # Each batch needs to go to its own page
-        for i in range(batch_size):
-            block_idx = pos_id // 128
-            slot_idx = pos_id % 128
-            pid = globals.page_table[batch_start_idx + i][block_idx]
+        mode = "v"
 
-            if pid < 0:
-                # Need to allocate a new page
-                pid = globals.next_free_page.item()
-                globals.page_table[batch_start_idx + i][block_idx] = pid
-                globals.next_free_page[0] += 1
+    output = matmul_output
 
-            # Determine which head to put the key/value in
-            if start < v_start:  # Key
-                k_head_idx = (start - k_start) // globals.head_dim
-                globals.k_cache[layer_idx, pid, k_head_idx, slot_idx, :] = k_with_rope[
-                    i, k_head_idx, :
-                ]
-                # _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_K_rope", globals.k_cache[layer_idx, pid, :, slot_idx, :])
-            else:  # Value
-                v_head_idx = (start - v_start) // globals.head_dim
-                globals.v_cache[layer_idx, pid, v_head_idx, slot_idx, :] = v_arr[
-                    i, v_head_idx, :
-                ]
-                # _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_V_arr", globals.v_cache[layer_idx, pid, :, slot_idx, :])
+    if mode in "qk":
+        arr = rearrange(output, "... (h d) -> ... h d", d=globals.head_dim)
+
+        # not interleaved for big-batch version
+        with_rope, _ = apply_rotary_pos_emb(
+            q=arr,
+            k=arr,
+            cos=globals.rope_cos[pos_id],
+            sin=globals.rope_sin[pos_id],
+            unsqueeze_dim=-2,
+        )
+
+        output = rearrange(with_rope, "... h d -> ... (h d)")
+
+    num_generated_heads = assert_div(end - start, globals.head_dim)
+
+    if mode == "q":
+        assert end <= k_start
+        globals.post_ln_rope_q[batch_start_row:batch_end_row, start:end] = matmul_output
+
+    else:
+        arr = rearrange(matmul_output, "... (h d) -> ... h d", d=globals.head_dim)
+
+        # Determine which head to put the key/value in
+        if mode == "k":  # Key
+            k_head_idx = assert_div(start - k_start, globals.head_dim)
+            globals.k_cache[
+                layer_idx,
+                batch_start_row:batch_end_row,
+                pos_id,
+                k_head_idx : k_head_idx + num_generated_heads,
+            ] = arr
+        else:  # Value
+            v_head_idx = (start - v_start) // globals.head_dim
+            globals.v_cache[
+                layer_idx,
+                batch_start_row:batch_end_row,
+                pos_id,
+                v_head_idx : v_head_idx + num_generated_heads,
+            ] = arr
 
     # Barrier update
     if USE_BARRIERS:
-        barriers = globals.barriers[
-            instruction.layer_idx, instruction.batch_start_idx, instruction.opcode() - 1
-        ]
-        barriers[qkv_block_idx // 8] += 1
+        start_bar = (
+            instruction.batch_start_idx * globals.num_total_heads()
+            + batch_start_row // globals.head_dim
+        )
+        end_bar = start_bar + num_generated_heads
+        globals.barriers[
+            instruction.layer_idx,
+            instruction.opcode() - 1,
+            start_bar:end_bar,
+        ] += 1
 
 
 def attention_decode(
