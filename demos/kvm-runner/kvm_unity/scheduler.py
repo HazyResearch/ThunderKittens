@@ -2,12 +2,13 @@ import heapq
 from dataclasses import dataclass, field, replace
 
 import torch
-from kvm_runner.instructions import (
-    Globals,
+
+from kvm_unity.instructions import (
+    BaseGlobals,
     Instruction,
     NoOp,
 )
-from kvm_runner.llama import LlamaForCausalLM
+from kvm_unity.llama import LlamaForCausalLM
 
 INTS_PER_INSTRUCTION = 32
 TIMING_SLOTS = 128
@@ -32,7 +33,7 @@ class DAG_Node:
     remaining_dependencies: set["DAG_Node"] = field(default_factory=set)
     priority: float = 0
 
-    def earliest_ready_time(self, globs: Globals):
+    def earliest_ready_time(self, globs: BaseGlobals):
         if len(self.dependencies) == 0:
             return 0
 
@@ -42,7 +43,7 @@ class DAG_Node:
         for dep in self.dependencies:
             dep.children.add(self)
 
-    def calc_priority(self, globs: Globals):
+    def calc_priority(self, globs: BaseGlobals):
         cur_cost = self.priority
         for dep in self.dependencies:
             pri = cur_cost + dep.instruction.cost(globs)
@@ -52,7 +53,7 @@ class DAG_Node:
 
 @dataclass
 class Schedule:
-    globs: Globals
+    globs: BaseGlobals
     dag_nodes: list[DAG_Node]
     end_node: DAG_Node
 
@@ -246,7 +247,7 @@ def serialize_and_pad(instruction: Instruction):
 
 
 def tensorize_instructions(
-    globs: Globals,
+    globs: BaseGlobals,
     instruction_queues: list[list[Instruction]],
     barrier_init_val: int = 0,
 ):
@@ -284,7 +285,7 @@ def tensorize_instructions(
             [
                 globs.num_hidden_layers,
                 max_opcode + 1,
-                globs.num_attention_heads + globs.num_kv_heads * 2,
+                globs.max_barriers,
             ],
             dtype=torch.int32,
             device=device,

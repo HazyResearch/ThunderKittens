@@ -8,13 +8,13 @@ from torch import Tensor
 @dataclass
 class BaseGlobals:
     # model parameters, all layers stacked together in order
-    qkv_proj: Tensor
-    attn_ln_weight: Tensor
-    o_proj: Tensor
-    mlp_ln_weight: Tensor
-    up_proj: Tensor
-    gate_proj: Tensor
-    down_proj: Tensor
+    qkv_proj_weights: Tensor
+    attn_ln_weights: Tensor
+    o_proj_weights: Tensor
+    mlp_ln_weights: Tensor
+    up_proj_weights: Tensor
+    gate_proj_weights: Tensor
+    down_proj_weights: Tensor
     lm_head_norm_weights: Tensor
     lm_head_weights: Tensor
     k_cache: Tensor
@@ -32,6 +32,7 @@ class BaseGlobals:
     hidden_size: int
     intermediate_size: int
     vocab_size: int
+    max_barriers: int
 
     attn_scale: float
     rms_norm_eps: float
@@ -44,6 +45,31 @@ class BaseGlobals:
 
     def sm_count(self) -> int:
         return get_sm_count(self.device)
+
+    def diff(self, other: "BaseGlobals", skip_kv_cache: bool = True):
+        for field in fields(self):
+            name = field.name
+            attr = getattr(self, name)
+            other_attr = getattr(other, name)
+            if (
+                not isinstance(attr, Tensor)
+                or "weights" in name
+                or name in ["rope_cos", "rope_sin"]
+                or (skip_kv_cache and "cache" in name)
+            ):
+                continue
+            diff_tensors(attr, other_attr, name)
+
+
+def diff_tensors(a: Tensor, b: Tensor, name: str):
+    a = a.float()
+    b = b.float()
+
+    diff = a - b
+    adiff = diff.abs()
+    rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
+    print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
+    return diff, adiff, rdiff
 
 
 @dataclass

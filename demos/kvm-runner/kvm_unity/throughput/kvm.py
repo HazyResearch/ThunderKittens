@@ -1,3 +1,4 @@
+from einops import rearrange
 from kvm_unity.kvm import KVM_Interpreter
 from kvm_unity.throughput.instructions import Globals
 
@@ -6,23 +7,26 @@ def interpret_with_kvm(
     globs: Globals,
     kvm_func,
 ):
+    fourD_k_cache = rearrange(globs.k_cache, "l b t h d -> (l b) t h d")
+    fourD_v_cache = rearrange(globs.v_cache, "l b t h d -> (l b) t h d")
+
     kvm_func(
         # vm stuff
         globs.barriers,
         globs.instructions,
         globs.timings,
         # weights
-        globs.qkv_proj,
-        globs.attn_ln_weight,
-        globs.o_proj,
-        globs.mlp_ln_weight,
-        globs.up_proj,
-        globs.gate_proj,
-        globs.down_proj,
-        globs.lm_head_norm_weights,
-        globs.lm_head_weights,
-        globs.k_cache,
-        globs.v_cache,
+        globs.qkv_proj_weights,
+        globs.attn_ln_weights,
+        globs.o_proj_weights,
+        globs.mlp_ln_weights,
+        globs.up_proj_weights,
+        globs.gate_proj_weights,
+        globs.down_proj_weights,
+        globs.lm_head_norm_weights.data,
+        globs.lm_head_weights.data,
+        fourD_k_cache,
+        fourD_v_cache,
         # rope
         globs.rope_cos,
         globs.rope_sin,

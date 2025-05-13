@@ -54,7 +54,7 @@ def pre_attn_layer_norm(
     if USE_BARRIERS:
         if layer_idx > 0:
             op_barriers = globals.barriers[
-                layer_idx - 1, batch_start_idx - 1, instruction.prev_opcode() - 1
+                layer_idx - 1, instruction.prev_opcode() - 1, batch_start_idx - 1
             ]
             assert (
                 op_barriers[0] == 64
@@ -62,7 +62,7 @@ def pre_attn_layer_norm(
 
     pre_attn_ln = rms_norm(
         inp=globals.hidden_states[batch_start_idx],
-        weight=globals.attn_ln_weight[layer_idx],
+        weight=globals.attn_ln_weights[layer_idx],
         eps=globals.rms_norm_eps,
     )
 
@@ -70,7 +70,7 @@ def pre_attn_layer_norm(
 
     # barrier update
     if USE_BARRIERS:
-        globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1] += 1
+        globals.barriers[layer_idx, instruction.opcode() - 1, batch_start_idx] += 1
 
 
 def qkv_matmul_rope_append(
@@ -80,7 +80,7 @@ def qkv_matmul_rope_append(
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
     qkv_block_idx = instruction.qkv_block_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
     batch_size = batch_end_idx - batch_start_idx
 
     # Barrier check
@@ -95,7 +95,9 @@ def qkv_matmul_rope_append(
         # ]
 
     matmul_output = einsum(
-        globals.qkv_proj[layer_idx], globals.rms_rope_intermediates, "o i, b i -> b o"
+        globals.qkv_proj_weights[layer_idx],
+        globals.rms_rope_intermediates,
+        "o i, b i -> b o",
     )
 
     k_start = globals.num_attention_heads * globals.head_dim
@@ -248,7 +250,7 @@ def o_proj_residual(
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
 
     block_num = instruction.output_block_idx
     block_size = globals.o_proj_block_size
@@ -263,7 +265,7 @@ def o_proj_residual(
 
     matmul_with_residual(
         matA=globals.attn_out[batch_start_idx:batch_end_idx],  # [batch, hidden_size]
-        matB=globals.o_proj[layer_idx, start:end],  # [block_size, hidden_size]
+        matB=globals.o_proj_weights[layer_idx, start:end],  # [block_size, hidden_size]
         residual=globals.hidden_states[
             batch_start_idx:batch_end_idx, start:end
         ],  # [batch, block_size]
@@ -291,7 +293,7 @@ def pre_mlp_layer_norm(
 
     post_ln = rms_norm(
         inp=globals.hidden_states[batch_start_idx],
-        weight=globals.mlp_ln_weight[layer_idx],
+        weight=globals.mlp_ln_weights[layer_idx],
         eps=globals.rms_norm_eps,
     )
 
@@ -311,7 +313,7 @@ def gate_silu(
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
 
     block_num = instruction.output_block_idx
     block_size = globals.matmul_silu_block_size
@@ -329,7 +331,7 @@ def gate_silu(
         matA=globals.rms_gate_intermediates[
             batch_start_idx:batch_end_idx
         ],  # [B, hidden]
-        matB=globals.gate_proj[layer_idx, start:end],  # [intermediate, hidden]
+        matB=globals.gate_proj_weights[layer_idx, start:end],  # [intermediate, hidden]
     )
     post_silu = F.silu(matmul_out)
 
@@ -348,7 +350,7 @@ def up_matmul(
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
 
     block_num = instruction.output_block_idx
     block_size = globals.matmul_gate_block_size
@@ -366,7 +368,7 @@ def up_matmul(
         matA=globals.rms_gate_intermediates[
             batch_start_idx:batch_end_idx
         ],  # [B, hidden]
-        matB=globals.up_proj[layer_idx, start:end],  # [intermediate, hidden]
+        matB=globals.up_proj_weights[layer_idx, start:end],  # [intermediate, hidden]
     )
     gated = matmul_out * globals.silu_out[batch_start_idx:batch_end_idx, start:end]
 
@@ -385,7 +387,7 @@ def down_proj_residual(
 ):
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
 
     block_num = instruction.output_block_idx
     block_size = globals.down_proj_block_size  # 128
@@ -402,7 +404,9 @@ def down_proj_residual(
         matA=globals.silu_out[
             batch_start_idx:batch_end_idx
         ],  # [batch, intermediate_size]
-        matB=globals.down_proj[layer_idx, start:end],  # [block_size, intermediate_size]
+        matB=globals.down_proj_weights[
+            layer_idx, start:end
+        ],  # [block_size, intermediate_size]
         residual=globals.hidden_states[
             batch_start_idx:batch_end_idx, start:end
         ],  # [batch, block_size]
@@ -446,7 +450,7 @@ def lm_head(
     instruction: LM_Head,
 ):
     batch_start_idx = instruction.batch_start_idx
-    batch_end_idx = batch_start_idx + globals.batch_block_size
+    batch_end_idx = batch_start_idx + globals.matmul_block_size
 
     block_num = instruction.output_block_idx
     block_size = globals.lm_head_block_size  # e.g. 128

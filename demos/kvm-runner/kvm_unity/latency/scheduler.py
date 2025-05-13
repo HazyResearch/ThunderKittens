@@ -51,13 +51,13 @@ def make_globals(
 
     return Globals(
         # model params
-        qkv_proj=stacked_params.qkv_proj,
-        o_proj=stacked_params.o_proj,
-        attn_ln_weight=stacked_params.attn_ln_weight,
-        mlp_ln_weight=stacked_params.mlp_ln_weight,
-        up_proj=stacked_params.up_proj,
-        gate_proj=stacked_params.gate_proj,
-        down_proj=stacked_params.down_proj,
+        qkv_proj_weights=stacked_params.qkv_proj,
+        o_proj_weights=stacked_params.o_proj,
+        attn_ln_weights=stacked_params.attn_ln_weight,
+        mlp_ln_weights=stacked_params.mlp_ln_weight,
+        up_proj_weights=stacked_params.up_proj,
+        gate_proj_weights=stacked_params.gate_proj,
+        down_proj_weights=stacked_params.down_proj,
         lm_head_norm_weights=model.lm_head.input_norm.weight,
         lm_head_weights=model.lm_head.lm_head.weight,
         k_cache=model.stacked_kv_cache[0],
@@ -90,6 +90,7 @@ def make_globals(
         hidden_size=config.hidden_size,
         intermediate_size=config.intermediate_size,
         # block sizes
+        max_barriers=config.num_attention_heads + config.num_key_value_heads * 2,
         up_gate_proj_block_size=16,
         down_proj_block_size=16,
         qkv_block_size=16,

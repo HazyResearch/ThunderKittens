@@ -20,17 +20,8 @@ class Globals(BaseGlobals):
     pos_id: int
     batch_size: int
 
-    # block size constants
-    matmul_silu_block_size: int
-    matmul_gate_block_size: int
-    down_proj_block_size: int
-    o_proj_block_size: int
-    lm_head_block_size: int
     matmul_block_size: int
-    qkv_block_size: int
-    attn_kv_block_size: int
-
-    batch_block_size: int
+    norm_block_size: int
 
 
 @dataclass

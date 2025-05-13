@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pydra
 import torch
-from torch import Tensor
 from torch.nn.init import normal_
 from tqdm import tqdm
 
@@ -13,9 +12,9 @@ from kvm_unity.dispatch import (
     make_pyvm_interpreter,
     make_schedule_builder,
 )
+from kvm_unity.instructions import BaseGlobals
 from kvm_unity.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_unity.scheduler import (
-    Globals,
     assign_to_sms,
     tensorize_instructions,
 )
@@ -61,6 +60,10 @@ class ScriptConfig(pydra.Config):
         self.batch_size = bs
         self.skip_cost = True
         self.max_len_override = sl
+        self.l8()
+
+    def l8(self):
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"
 
 
 def main(config: ScriptConfig):
@@ -199,7 +202,7 @@ def main(config: ScriptConfig):
             end = time.time()
             print(f"starting instructions time: {end - start}")
 
-        def summarize_caches(globs: Globals, name: str):
+        def summarize_caches(globs: BaseGlobals, name: str):
             k_cache_summary = globs.k_cache[:, pos_id].float().sum(-1).sum(-1)
             print(f"{name} k_cache_summary:", k_cache_summary)
             v_cache_summary = globs.v_cache[:, pos_id].float().sum(-1).sum(-1)
@@ -228,49 +231,7 @@ def main(config: ScriptConfig):
 
         print("done! diffing tensors:")
 
-        def test_tensors(a: Tensor, b: Tensor, name: str):
-            a = a.float()
-            b = b.float()
-
-            diff = a - b
-            adiff = diff.abs()
-            rdiff = 2 * adiff / (a.abs() + b.abs() + 1e-6)
-            print(f"{name}: max adiff: {adiff.max()}, mean rdiff: {rdiff.mean()}")
-            return diff, adiff, rdiff
-
-        d, a, r = test_tensors(gpy.hidden_states, gkvm.hidden_states, "hidden_states")
-        test_tensors(
-            gpy.post_ln_rope_q,
-            gkvm.post_ln_rope_q,
-            "post_ln_rope_q",
-        )
-        test_tensors(
-            gpy.attn_lse_intermediates,
-            gkvm.attn_lse_intermediates,
-            "attn_lse_intermediates",
-        )
-        test_tensors(
-            gpy.attn_out_intermediates,
-            gkvm.attn_out_intermediates,
-            "attn_out_intermediates",
-        )
-        test_tensors(gpy.attn_out, gkvm.attn_out, "attn_out")
-        test_tensors(gpy.silu_out, gkvm.silu_out, "silu_out")
-        test_tensors(gpy.barriers, gkvm.barriers, "barriers")
-
-        test_tensors(gpy.logits, gkvm.logits, "logits")
-
-        # test_tensors(globs_for_pyvm.k_cache, globs_for_kvm.k_cache, "k_cache")
-        # test_tensors(globs_for_pyvm.v_cache, globs_for_kvm.v_cache, "v_cache")
-
-        print("kvm hidden states sum:", gkvm.hidden_states.float().sum())
-        print("pyvm hidden states sum:", gpy.hidden_states.float().sum())
-
-        # print("pyvm", globs_for_pyvm.attn_out_intermediates[0].view(-1)[:128])
-        # print("kvm", globs_for_kvm.attn_out_intermediates[0].view(-1)[:128])
-
-        # summarize_caches(globs_for_pyvm, "pyvm")
-        # summarize_caches(globs_for_kvm, "kvm")
+        gpy.diff(gkvm)
 
     if config.bp:
         breakpoint()

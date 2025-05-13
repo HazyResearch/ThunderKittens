@@ -88,7 +88,7 @@ def o_proj_residual(globals: Globals, instruction: O_ProjResidual):
     assert instruction.reduction_block_idx == 0
 
     matvec_with_residual(
-        mat=globals.o_proj[instruction.layer_idx],
+        mat=globals.o_proj_weights[instruction.layer_idx],
         vec=globals.attn_out,
         residual=globals.hidden_states,
         block_size=globals.o_proj_block_size,
@@ -109,7 +109,7 @@ def down_proj_residual(globals: Globals, instruction: DownProjResidual):
     assert op_barriers[0] == 512  # 8192 / 16
 
     matvec_with_residual(
-        mat=globals.down_proj[instruction.layer_idx],
+        mat=globals.down_proj_weights[instruction.layer_idx],
         vec=globals.silu_out,
         residual=globals.hidden_states,
         block_size=globals.down_proj_block_size,
@@ -132,7 +132,7 @@ def layer_norm_double_matvec_silu(
 
     post_ln = rms_norm(
         inp=globals.hidden_states,
-        weight=globals.mlp_ln_weight[instruction.layer_idx],
+        weight=globals.mlp_ln_weights[instruction.layer_idx],
         eps=globals.rms_norm_eps,
     )
 
@@ -146,14 +146,14 @@ def layer_norm_double_matvec_silu(
         start, end = get_start_end(block_size, block_idx)
 
         up_matvec, start, end = matvec(
-            mat=globals.up_proj[instruction.layer_idx],
+            mat=globals.up_proj_weights[instruction.layer_idx],
             vec=post_ln,
             block_size=block_size,
             block_idx=block_idx,
         )
 
         gate_matvec, _, _ = matvec(
-            mat=globals.gate_proj[instruction.layer_idx],
+            mat=globals.gate_proj_weights[instruction.layer_idx],
             vec=post_ln,
             block_size=block_size,
             block_idx=block_idx,
@@ -178,7 +178,7 @@ def layer_norm_matvec_rope_append(
 
     post_ln = rms_norm(
         inp=globals.hidden_states,
-        weight=globals.attn_ln_weight[layer_idx],
+        weight=globals.attn_ln_weights[layer_idx],
         eps=globals.rms_norm_eps,
     )
 
@@ -202,7 +202,7 @@ def layer_norm_matvec_rope_append(
             mode = "v"
 
         matmul_output = einsum(
-            globals.qkv_proj[layer_idx][start:end],
+            globals.qkv_proj_weights[layer_idx][start:end],
             post_ln,
             "o i, i -> o",
         )
