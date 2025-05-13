@@ -14,14 +14,14 @@
 #define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
 
-#define LLAMA_70B_NUM_LAYERS 80
-#define LLAMA_70B_HIDDEN_DIM 8192
-#define LLAMA_70B_INTERMEDIATE_DIM 28672
-#define LLAMA_70B_HEAD_DIM 128
-#define LLAMA_70B_NUM_ATTENTION_HEADS 64
-#define LLAMA_70B_NUM_KV_HEADS 8
-#define LLAMA_70B_KV_BLOCK_SIZE 16
-#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_8B_NUM_LAYERS 32
+#define LLAMA_8B_HIDDEN_DIM 4096
+#define LLAMA_8B_INTERMEDIATE_DIM 14336
+#define LLAMA_8B_HEAD_DIM 128
+#define LLAMA_8B_NUM_ATTENTION_HEADS 32
+#define LLAMA_8B_NUM_KV_HEADS 8
+#define LLAMA_8B_KV_BLOCK_SIZE 16
+#define LLAMA_8B_MATMUL_OUT_BLOCK_SIZE 128
 
 #define SM_COUNT 148
 #define BATCH_SIZE 128
@@ -128,41 +128,41 @@ namespace kittens::prototype::vm
     };
 
     typedef globals_t<
-        LLAMA_70B_HIDDEN_DIM,
-        LLAMA_70B_INTERMEDIATE_DIM,
-        LLAMA_70B_HEAD_DIM,
-        LLAMA_70B_NUM_ATTENTION_HEADS,
-        LLAMA_70B_NUM_KV_HEADS,
-        LLAMA_70B_KV_BLOCK_SIZE,
-        LLAMA_70B_MATMUL_OUT_BLOCK_SIZE,
+        LLAMA_8B_HIDDEN_DIM,
+        LLAMA_8B_INTERMEDIATE_DIM,
+        LLAMA_8B_HEAD_DIM,
+        LLAMA_8B_NUM_ATTENTION_HEADS,
+        LLAMA_8B_NUM_KV_HEADS,
+        LLAMA_8B_KV_BLOCK_SIZE,
+        LLAMA_8B_MATMUL_OUT_BLOCK_SIZE,
         BATCH_SIZE,
         SM_COUNT>
-        llama_70b_globals;
+        llama_8b_globals;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct post_rms_norm;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct qkv_rope_append;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct attention_decode;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct o_proj;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct pre_rms_norm;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct matmul_silu;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct matmul_gate;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct downproj;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename config = config, typename globals = llama_8b_globals>
     struct rms_lm_head;
 }
