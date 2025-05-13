@@ -236,11 +236,15 @@ def layer_norm_matvec_rope_append(
             case "k":
                 start_in_k = start - k_start
                 end_in_k = end - k_start
-                globals.k_cache[layer_idx, pos_id].view(-1)[start_in_k:end_in_k] = out
+                globals.k_cache[layer_idx, :, pos_id].view(-1)[start_in_k:end_in_k] = (
+                    out
+                )
             case "v":
                 start_in_v = start - v_start
                 end_in_v = end - v_start
-                globals.v_cache[layer_idx, pos_id].view(-1)[start_in_v:end_in_v] = out
+                globals.v_cache[layer_idx, :, pos_id].view(-1)[start_in_v:end_in_v] = (
+                    out
+                )
 
         barriers[block_idx // 4] += 1
 
@@ -300,8 +304,8 @@ def partial_attention(globals: Globals, instruction: PartialAttention):
     start_token = start_block * kv_block_size
     end_token = min(end_block * kv_block_size, seq_len)
 
-    k = globals.k_cache[layer_idx, start_token:end_token, kv_head_idx]
-    v = globals.v_cache[layer_idx, start_token:end_token, kv_head_idx]
+    k = globals.k_cache[layer_idx, 0, start_token:end_token, kv_head_idx]
+    v = globals.v_cache[layer_idx, 0, start_token:end_token, kv_head_idx]
 
     head_start = kv_head_idx * gqa_ratio
     head_end = head_start + gqa_ratio
