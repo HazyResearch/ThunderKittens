@@ -68,7 +68,7 @@ def matvec_rope(
 
 def gqa_decode(q, k, v):
     '''
-        q: (B, H_q=64, D_h=128)
+        q: (B, H_q=32, D_h=128)
         k: (B, N, H_kv=8, D_h=128)
         v: (B, N, H_vv=8, D_h=128)
         out: (B, H_q, D_h)

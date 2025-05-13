@@ -19,20 +19,19 @@ BATCH_SIZE = 128
 QKV_ROPE_APPEND_OPCODE = 2
 GQA_DECODE_OPCODE = 3
 NUM_OPS = 8
-NUM_LAYERS = 1 # actual value is 80
-HIDDEN_DIM = 8192
-INTERMEDIATE_DIM = 28672
+NUM_LAYERS = 1 # actual value is 32
+HIDDEN_DIM = 4096
+INTERMEDIATE_DIM = 14336
 HEAD_DIM = 128
 VOCAB_SIZE = 128256
 MAX_SEQ_LEN = 8192 # actual value is 131072
-NUM_ATTENTION_HEADS = 64
+NUM_ATTENTION_HEADS = 32
 NUM_KV_HEADS = 8
 KV_BLOCK_SIZE = HEAD_DIM
 MAX_NUM_PAGES = 256
 PAGE_SIZE = 128
 QKV_BLOCK_SIZE = 128
 LAYER_IDX = 0
-
 
 ###
 #   Prepare inputs (follow the order & naming in llama.cuh)
@@ -126,7 +125,7 @@ kvm_llama(
     logits,
     pos_id,
     attn_scale,
-    rms_norm_eps
+    rms_norm_eps,
 )
 torch.cuda.synchronize()
 
