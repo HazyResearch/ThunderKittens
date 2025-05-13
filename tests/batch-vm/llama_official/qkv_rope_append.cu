@@ -74,6 +74,11 @@ namespace kittens::prototype::vm
             {
                 static_assert(Config::SCRATCH_BYTES >= 2 * sizeof(rope_vec), "Not enough scratch space for rope table");
 
+                if (blockIdx.x == 0 && laneid() == 0)
+                {
+                    printf("loader start\n");
+                }
+
                 s.warp_finish_page(12, Config::NUM_CONSUMER_WARPS); // release the unused page immediately
                 parsed_instruction inst{s};
                 int laneid = warp::laneid();
@@ -149,12 +154,23 @@ namespace kittens::prototype::vm
                     tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
                 }
             }
+
+            warp::sync();
+            if (blockIdx.x == 0 && laneid() == 0)
+            {
+                printf("loader end\n");
+            }
         };
 
         struct launcher
         {
             static __device__ void run(const Globals &g, state<Config> &s)
             {
+                if (blockIdx.x == 0 && laneid() == 0)
+                {
+                    printf("launcher start\n");
+                }
+
                 parsed_instruction inst{s};
                 int laneid = warp::laneid();
                 uint32_t phasebits = 0xFFFF0000;
@@ -179,6 +195,12 @@ namespace kittens::prototype::vm
                             mma<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
                     }
                 }
+
+                warp::sync();
+                if (blockIdx.x == 0 && laneid() == 0)
+                {
+                    printf("launcher end\n");
+                }
             }
         };
 
@@ -187,11 +209,11 @@ namespace kittens::prototype::vm
             static __device__ void run(const Globals &g, state<Config> &s)
             {
                 static_assert(Config::NUM_CONSUMER_WARPS == 8, "NUM_CONSUMER_WARPS must be 8");
-                using consumer = group<Config::NUM_CONSUMER_WARPS>;
+                using consumer_group = group<Config::NUM_CONSUMER_WARPS>;
 
                 parsed_instruction inst{s};
                 rt_fl<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_fl;
-                consumer::zero(output_fl);
+                consumer_group::zero(output_fl);
 
                 for (int i = 0; i < PIPELINE_STAGES; i++)
                 {
@@ -199,10 +221,10 @@ namespace kittens::prototype::vm
                     auto accumulator = s.tensor_alloc.template allocate<tt<float, Globals::batch_size, Globals::head_dim>>(stage * Globals::head_dim);
                     wait(outputs_arrived(s, stage), 0);
                     rt_fl<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> acc_fl;
-                    consumer::load_async(acc_fl, accumulator);
+                    consumer_group::load_async(acc_fl, accumulator);
                     tensor_load_wait();
                     __syncwarp();
-                    consumer::add(output_fl, output_fl, acc_fl);
+                    consumer_group::add(output_fl, output_fl, acc_fl);
                 }
                 warp::arrive(s.tensor_finished);
 
@@ -253,12 +275,12 @@ namespace kittens::prototype::vm
                 }
 
                 rt_bf<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_bf;
-                consumer::copy(output_bf, output_fl);
+                consumer_group::copy(output_bf, output_fl);
 
                 int last_stage = (inst.num_iters - 1) % PIPELINE_STAGES;
                 int output_page = get_activation_page(s, last_stage);
                 output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
-                consumer::store(output, output_bf);
+                consumer_group::store(output, output_bf);
                 __syncwarp();
                 warp::arrive(outputs_shared(s));
             }
