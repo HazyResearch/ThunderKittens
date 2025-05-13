@@ -73,8 +73,8 @@ instructions = [[] for _ in range(SM_COUNT)]
 instruction_idx = 0
 for block_idx in range(NUM_ATTENTION_HEADS + NUM_KV_HEADS * 2):
     instructions[instruction_idx] = [[
-        QKV_ROPE_APPEND_OPCODE, LAYER_IDX, block_idx, HIDDEN_DIM//128,
-    ] + [0]*(INSTRUCTION_WIDTH - 4)]
+        QKV_ROPE_APPEND_OPCODE, LAYER_IDX, block_idx
+    ] + [0]*(INSTRUCTION_WIDTH - 3)]
     instruction_idx += 1
 
 # Pad instructions

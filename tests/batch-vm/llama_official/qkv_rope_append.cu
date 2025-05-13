@@ -14,6 +14,7 @@ struct qkv_rope_append {
     static constexpr int REDUCTION_BLOCK_SIZE = 128;
     static constexpr int K_BLOCK_START = Globals::num_attention_heads;
     static constexpr int V_BLOCK_START = Globals::num_attention_heads + Globals::num_kv_heads;
+    static constexpr int NUM_ITERS = Globals::hidden_dim / REDUCTION_BLOCK_SIZE;
 
     static_assert(Globals::batch_size == 128 && Globals::head_dim == 128);
 
@@ -26,11 +27,9 @@ struct qkv_rope_append {
     struct parsed_instruction {
         int layer_idx;
         int block_idx;
-        int num_iters;
         __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
             layer_idx = instruction[1];
             block_idx = instruction[2]; // output block idx, in units of 128 (`Globals::head_dim`)
-            num_iters = instruction[3]; // iterations on the reduction dimension, in units of 128 (`REDUCTION_BLOCK_SIZE`)
         }
         __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
     };
@@ -71,7 +70,7 @@ struct qkv_rope_append {
 
             if (laneid == 0) { // load weights
                 uint32_t phasebits = 0xFFFF0000;
-                for (int i = 0; i < inst.num_iters; i++) {
+                for (int i = 0; i < NUM_ITERS; i++) {
                     int stage = i % PIPELINE_STAGES;
                     int weight_page = get_weight_page(s, stage);
                     weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
@@ -87,7 +86,7 @@ struct qkv_rope_append {
                     tma::load_async(weight, g.qkv_weights, {inst.layer_idx, inst.block_idx, i}, inputs_arrived(s, stage));
                 }
                 for (int i = 0; i < PIPELINE_STAGES; i++) {
-                    int stage = (inst.num_iters + i) % PIPELINE_STAGES;
+                    int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
                     wait(outputs_arrived(s, stage), 0);
                     int weight_page = get_weight_page(s, stage);
                     s.warp_finish_page(weight_page, Config::NUM_CONSUMER_WARPS);
@@ -99,7 +98,7 @@ struct qkv_rope_append {
                 //     __nanosleep(20);
 
                 uint32_t phasebits = 0xFFFF0000;
-                for (int i = 0; i < inst.num_iters; i++) {
+                for (int i = 0; i < NUM_ITERS; i++) {
                     int stage = i % PIPELINE_STAGES;
                     int activation_page = get_activation_page(s, stage);
                     activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
@@ -115,7 +114,7 @@ struct qkv_rope_append {
                     tma::load_async(activation, g.rms_rope_intermediates, {0, i}, inputs_arrived(s, stage));
                 }
                 for (int i = 0; i < PIPELINE_STAGES - 1; i++) { // last stage is used as output page
-                    int stage = (inst.num_iters + i) % PIPELINE_STAGES;
+                    int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
                     wait(outputs_arrived(s, stage), 0);
                     int activation_page = get_activation_page(s, stage);
                     s.warp_finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
@@ -140,7 +139,7 @@ struct qkv_rope_append {
             s.wait_tensor_ready();
 
             if (laneid == 0) {
-                for (int i = 0; i < inst.num_iters; i++) {
+                for (int i = 0; i < NUM_ITERS; i++) {
                     int stage = i % PIPELINE_STAGES;
                     wait(inputs_arrived(s, stage), get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
@@ -149,7 +148,7 @@ struct qkv_rope_append {
                     activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[get_activation_page(s, stage)].data);
                     if (i < PIPELINE_STAGES)
                         mm<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
-                    else if (i >= inst.num_iters - PIPELINE_STAGES)
+                    else if (i >= NUM_ITERS - PIPELINE_STAGES)
                         mma<transpose::N, transpose::T>(accumulator, activation, weight, outputs_arrived(s, stage));
                     else
                         mma<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
@@ -168,7 +167,7 @@ struct qkv_rope_append {
             consumer::zero(output_fl);
 
             for (int i = 0; i < PIPELINE_STAGES; i++) {
-                int stage = (inst.num_iters + i) % PIPELINE_STAGES;
+                int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
                 auto accumulator = s.tensor_alloc.template allocate<tt<float, Globals::batch_size, Globals::head_dim>>(stage*Globals::head_dim);
                 wait(outputs_arrived(s, stage), 0);
                 rt_fl<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> acc_fl;
@@ -222,7 +221,7 @@ struct qkv_rope_append {
             rt_bf<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_bf;
             consumer::copy(output_bf, output_fl);
 
-            int last_stage = (inst.num_iters - 1) % PIPELINE_STAGES;
+            int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
             int output_page = get_activation_page(s, last_stage);
             output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
             consumer::store(output, output_bf);
@@ -237,7 +236,7 @@ struct qkv_rope_append {
             int laneid = warp::laneid();
 
             wait(outputs_shared(s), 0);
-            int output_page = get_activation_page(s, (inst.num_iters - 1) % PIPELINE_STAGES);
+            int output_page = get_activation_page(s, (NUM_ITERS - 1) % PIPELINE_STAGES);
             output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
 
             if (laneid == 0) {
