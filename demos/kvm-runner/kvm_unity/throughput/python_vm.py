@@ -22,7 +22,7 @@ from kvm_unity.throughput.instructions import (
 )
 from torch import Tensor
 
-CHECK_BARRIERS = True
+USE_BARRIERS = True
 
 
 def matmul(
@@ -51,7 +51,7 @@ def pre_attn_layer_norm(
     batch_start_idx = instruction.batch_start_idx
 
     # First barrier check
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         if layer_idx > 0:
             op_barriers = globals.barriers[
                 layer_idx - 1, batch_start_idx - 1, instruction.prev_opcode() - 1
@@ -69,11 +69,8 @@ def pre_attn_layer_norm(
     globals.rms_rope_intermediates[batch_start_idx] = pre_attn_ln
 
     # barrier update
-    if CHECK_BARRIERS:
-        barriers = globals.barriers[
-            layer_idx, batch_start_idx, instruction.opcode() - 1
-        ]
-        barriers[0] += 1
+    if USE_BARRIERS:
+        globals.barriers[layer_idx, batch_start_idx, instruction.opcode() - 1] += 1
 
 
 def qkv_matmul_rope_append(
@@ -87,7 +84,7 @@ def qkv_matmul_rope_append(
     batch_size = batch_end_idx - batch_start_idx
 
     # Barrier check
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         pass
 
         # TODO
@@ -157,7 +154,7 @@ def qkv_matmul_rope_append(
                 # _store_debug_tensor(debug_outputs, f"L{layer_idx}_B{i}_V_arr", globals.v_cache[layer_idx, pid, :, slot_idx, :])
 
     # Barrier update
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         barriers = globals.barriers[
             instruction.layer_idx, instruction.batch_start_idx, instruction.opcode() - 1
         ]
@@ -175,7 +172,7 @@ def attention_decode(
     gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
     kv_head_dim = globals.hidden_size // globals.num_kv_heads
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         opb = globals.barriers[layer_idx, batch_idx, instruction.prev_opcode() - 1]
         for i in range(gqa_ratio):
             assert opb[kv_head_idx * gqa_ratio + i] == 8
@@ -240,7 +237,7 @@ def attention_decode(
     out_end = out_start + kv_head_dim
     globals.attn_out[batch_idx, out_start:out_end] = out_flat
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_opb = globals.barriers[layer_idx, batch_idx, instruction.opcode() - 1]
         next_opb[0] += globals.attn_reduction_size
 
@@ -258,7 +255,7 @@ def o_proj_residual(
     start = block_num * block_size
     end = start + block_size
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -272,7 +269,7 @@ def o_proj_residual(
         ],  # [batch, block_size]
     )
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.opcode() - 1
         ]
@@ -286,7 +283,7 @@ def pre_mlp_layer_norm(
     layer_idx = instruction.layer_idx
     batch_start_idx = instruction.batch_start_idx
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -301,7 +298,7 @@ def pre_mlp_layer_norm(
     globals.rms_gate_intermediates[batch_start_idx] = post_ln
 
     # barrier update
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.opcode() - 1
         ]
@@ -321,7 +318,7 @@ def gate_silu(
     start = block_num * block_size
     end = start + block_size
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -338,7 +335,7 @@ def gate_silu(
 
     globals.silu_out[batch_start_idx:batch_end_idx, start:end] = post_silu
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.opcode() - 1
         ]
@@ -358,7 +355,7 @@ def up_matmul(
     start = block_num * block_size
     end = start + block_size
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -375,7 +372,7 @@ def up_matmul(
 
     globals.silu_out[batch_start_idx:batch_end_idx, start:end] = gated
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.opcode() - 1
         ]
@@ -395,7 +392,7 @@ def down_proj_residual(
     start = block_num * block_size
     end = start + block_size
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -411,7 +408,7 @@ def down_proj_residual(
         ],  # [batch, block_size]
     )
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_op_barriers = globals.barriers[
             layer_idx, batch_start_idx, instruction.opcode() - 1
         ]
@@ -424,7 +421,7 @@ def pre_lm_head_rms(
 ):
     batch_start_idx = instruction.batch_start_idx
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             79, batch_start_idx, instruction.prev_opcode() - 1
         ]
@@ -438,7 +435,7 @@ def pre_lm_head_rms(
 
     globals.rms_lm_head_intermediates[batch_start_idx] = post_ln
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         barriers = globals.barriers[79, batch_start_idx, instruction.opcode() - 1]
         barriers[0] += 1
 
@@ -456,7 +453,7 @@ def lm_head(
     start = block_num * block_size
     end = start + block_size
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         op_barriers = globals.barriers[
             globals.num_hidden_layers - 1,
             batch_start_idx - 1,
@@ -471,7 +468,7 @@ def lm_head(
 
     globals.logits[batch_start_idx:batch_end_idx, start:end] = matmul_output
 
-    if CHECK_BARRIERS:
+    if USE_BARRIERS:
         next_op_barriers = globals.barriers[
             globals.num_hidden_layers - 1, batch_start_idx - 1, instruction.opcode() - 1
         ]
