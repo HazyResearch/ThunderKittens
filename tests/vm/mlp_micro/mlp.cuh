@@ -10,9 +10,10 @@
 
 namespace kittens::prototype::vm {
 
+template<int _pipeline_stages>
 struct mlp_config {
     // Instruction pipeline
-    static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
+    static constexpr int INSTRUCTION_PIPELINE_STAGES = _pipeline_stages;
 
     // num bits required to represent num pipeline stages
     static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 1;
@@ -53,7 +54,7 @@ struct mlp_config {
     static constexpr int NON_CONSUMER_REGISTERS = 64;
 };
 
-template <int _hidden_dim=2048, int _intermediate_dim=8192, int _sm_count=132>
+template <int _hidden_dim, int _intermediate_dim, int _sm_count=132>
 struct globals_t {
 
     constexpr static int matvec_block_size = 16;
@@ -62,8 +63,8 @@ struct globals_t {
     constexpr static int intermediate_dim = _intermediate_dim;
     constexpr static int sm_count = _sm_count;
 
-    using instruction_layout = ::kittens::prototype::vm::instruction_layout<mlp_config>;
-    using timing_layout = ::kittens::prototype::vm::timing_layout<mlp_config>;
+    using instruction_layout = ::kittens::prototype::vm::instruction_layout<mlp_config<1>>;
+    using timing_layout = ::kittens::prototype::vm::timing_layout<mlp_config<1>>;
 
     using up_weights_t = gl<bf16, 1, -1, intermediate_dim, hidden_dim, st_bf<matvec_block_size, 512>>;                 // assumed to be N by 2048 (X@W.T).
     using down_weights_t = gl<bf16, 1, -1, hidden_dim, intermediate_dim, st_bf<matvec_block_size, 512>>; // assumed to be N by 2048 (X@W.T).
@@ -89,13 +90,13 @@ struct globals_t {
     output_activations_t outputs;
 
     dim3 grid() { return dim3(sm_count); }
-    dim3 block() { return dim3(mlp_config::NUM_THREADS); }
-    int dynamic_shared_memory() { return mlp_config::DYNAMIC_SHARED_MEMORY; }
+    dim3 block() { return dim3(mlp_config<1>::NUM_THREADS); }
+    int dynamic_shared_memory() { return mlp_config<1>::DYNAMIC_SHARED_MEMORY; }
 };
 
 typedef globals_t<
     2048,
-    8192,
+    4096,
     132>
     mlp_micro_globals;
 

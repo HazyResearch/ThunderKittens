@@ -21,7 +21,6 @@ __device__ void inline store_timings(int *timings, int instruction_index, const 
         : "l"(dst_ptr), "r"(src_ptr), "n"(bytes)
         : "memory");
     kittens::tma::store_commit_group();
-    
 }
 
 template <typename config, typename globals>

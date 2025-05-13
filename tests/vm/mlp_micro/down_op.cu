@@ -30,6 +30,7 @@ namespace kittens::prototype::vm {
         struct pipeline_specifics {
 
             static __device__ inline void load_iter(state<Config> &s, const Globals &g, parsed_instruction &inst, int iter, int col_idx, st_bf<16, 512> &weight_chunk, semaphore &sem) {
+                if(iter == 0 && laneid() == 0) s.record(83);
                 tma::load_async<dim::ROW, cache_policy::EVICT_FIRST>(weight_chunk, g.down_weights, coord<>{(inst.start_block_idx + iter) * Globals::matvec_block_size, inst.start_reduction_col + 512 * col_idx}, sem);
             }
 
@@ -45,6 +46,7 @@ namespace kittens::prototype::vm {
                 warp::sync();
 
                 if (warp::laneid() == 0) {
+                    if(output_idx == inst.iters-1) s.record(85);
                     auto &OutputActivations = g.outputs; // object in global memory
                     tma::store_add_async<cache_policy::EVICT_LAST>(OutputActivations, output_smem, {block_idx});
                     tma::store_async_read_wait();
@@ -106,6 +108,7 @@ namespace kittens::prototype::vm {
                     auto &InputActivations = g.intermediates; // object in global memory
                 }
                 group<Config::NUM_CONSUMER_WARPS>::sync(4);
+                if(warpid() == 0 && laneid() == 0) s.record(84);
 
                 sv_t &activations_smem = reinterpret_cast<sv_t *>(&pipeline::get_activations(s))[warpid()];
 

@@ -33,6 +33,12 @@ __device__ inline unsigned int get_worker_id() {
     // return blockIdx.x;
 }
 
+__device__ inline uint64_t vm_clock() {
+    uint64_t ret;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ret));
+    return ret;
+}
+
 
 template<template<typename> typename op_dispatcher, typename... ops>
 struct dispatch_op {
@@ -181,7 +187,7 @@ template<typename config> struct state {
 
     __device__ inline void record(int event_id) {
         if constexpr(config::TIMING_RECORD_ENABLED) {
-            uint64_t current = clock64();
+            uint64_t current = vm_clock();
             int diff = (int)(current - start_clock);
             timing()[event_id] = diff;
         }

@@ -18,7 +18,7 @@ namespace vm {
 
 template <typename config, typename globals, typename... ops>
 __device__ inline void kvm_internal(const globals &g) {
-    uint64_t start_time = (uint64_t)clock64();
+    uint64_t start_time = (uint64_t)vm_clock();
 #ifdef KVM_DEBUG
     if (threadIdx.x == 0)
         printf("Thread %d: Kernel launched\n", threadIdx.x);
@@ -144,7 +144,7 @@ __device__ inline void kvm_internal(const globals &g) {
         everyone::sync(15);
 
 #ifdef KVM_DEBUG
-    uint64_t end_time = (uint64_t)clock64();
+    uint64_t end_time = (uint64_t)vm_clock();
     if (threadIdx.x == 0)
         printf("Overall VM execution time: %lu\n", end_time - start_time);
 #endif
