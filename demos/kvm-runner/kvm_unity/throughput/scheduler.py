@@ -70,6 +70,7 @@ def make_globals(
         hidden_size=config.hidden_size,
         intermediate_size=config.intermediate_size,
         # block sizes
+        batch_size=bs,
         matmul_silu_block_size=128,
         matmul_gate_block_size=128,
         down_proj_block_size=128,

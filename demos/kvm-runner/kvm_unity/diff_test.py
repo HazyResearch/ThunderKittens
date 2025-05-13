@@ -44,18 +44,23 @@ class ScriptConfig(pydra.Config):
     max_len_override: int | None = 16384
     sched: str = "rr"
     setting: str = "latency"
+    batch_size: int = 1
+    skip_cost: bool = False
 
     def full(self):
         self.layer_limit = None
 
-    def th(self):
+    def th(self, bs=1024, sl=128):
         self.setting = "throughput"
         self.kvm_path = (
             Path(__file__).parent.parent.parent.parent
             / "tests"
-            / "batch_vm"
+            / "batch-vm"
             / "llama_official"
         )
+        self.batch_size = bs
+        self.skip_cost = True
+        self.max_len_override = sl
 
 
 def main(config: ScriptConfig):
@@ -65,6 +70,7 @@ def main(config: ScriptConfig):
     extra_config = ExtraModelConfig(
         interleave_rope=True,
         max_len_override=config.max_len_override,
+        max_batch_size=config.batch_size,
     )
 
     model = LlamaForCausalLM.from_pretrained(
@@ -153,19 +159,22 @@ def main(config: ScriptConfig):
         f"sm queue lengths: min={min(queue_lengths)}, max={max(queue_lengths)}, mean={sum(queue_lengths) / len(queue_lengths)}"
     )
 
-    cost_per_sm = []
-    for sm_queue in assigned_to_sms:
-        cost = 0
-        for instruction in sm_queue:
-            cost += instruction.cost(gpy)
-        cost_per_sm.append(cost)
+    if not config.skip_cost:
+        cost_per_sm = []
+        for sm_queue in assigned_to_sms:
+            cost = 0
+            for instruction in sm_queue:
+                cost += instruction.cost(gpy)
+            cost_per_sm.append(cost)
 
-    cost_tensor = torch.tensor(cost_per_sm)
-    relative_cost_tensor = cost_tensor / cost_tensor.max()
+        cost_tensor = torch.tensor(cost_per_sm)
+        relative_cost_tensor = cost_tensor / cost_tensor.max()
 
-    print(
-        f"cost per sm: min={relative_cost_tensor.min():.2f}, mean={relative_cost_tensor.mean():.2f}"
-    )
+        print(
+            f"cost per sm: min={relative_cost_tensor.min():.2f}, mean={relative_cost_tensor.mean():.2f}"
+        )
+    else:
+        cost_per_sm = None
 
     tensorize_instructions(
         gpy, assigned_to_sms, barrier_init_val=config.barrier_init_val
