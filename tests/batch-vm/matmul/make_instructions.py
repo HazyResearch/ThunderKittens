@@ -48,7 +48,7 @@ def make_instructions(M, K, N):
                     break
 
                 opcode = 1
-                row_offset_inst = 2 * row
+                row_offset_inst = row
                 col_offset_inst = col
                 k_iters = K // BLOCK_K
 
