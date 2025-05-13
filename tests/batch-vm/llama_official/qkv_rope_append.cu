@@ -103,14 +103,6 @@ namespace kittens::prototype::vm
                         }
                         tma::load_async(weight, g.qkv_weights, {inst.layer_idx, inst.block_idx, i}, inputs_arrived(s, stage));
                     }
-                    for (int i = 0; i < PIPELINE_STAGES; i++)
-                    {
-                        int stage = (inst.num_iters + i) % PIPELINE_STAGES;
-                        wait(outputs_arrived(s, stage), 0);
-                        int weight_page = get_weight_page(s, stage);
-                        s.warp_finish_page(weight_page, Config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
-                    }
                 }
                 else if (laneid == 1)
                 { // load activations
@@ -136,14 +128,6 @@ namespace kittens::prototype::vm
                         }
                         tma::load_async(activation, g.rms_rope_intermediates, {0, i}, inputs_arrived(s, stage));
                     }
-                    for (int i = 0; i < PIPELINE_STAGES - 1; i++)
-                    { // last stage is used as output page
-                        int stage = (inst.num_iters + i) % PIPELINE_STAGES;
-                        wait(outputs_arrived(s, stage), 0);
-                        int activation_page = get_activation_page(s, stage);
-                        s.warp_finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(activation_page + 1, Config::NUM_CONSUMER_WARPS);
-                    }
                 }
                 else if (laneid == 2 && inst.block_idx < V_BLOCK_START)
                 { // load rope table
@@ -153,12 +137,27 @@ namespace kittens::prototype::vm
                     tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
                     tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
                 }
-            }
 
-            warp::sync();
-            if (blockIdx.x == 0 && laneid() == 0)
-            {
-                printf("loader end\n");
+                warp::sync();
+                if (laneid == 0) {
+                    wait(outputs_shared(s), 0);
+                    for (int i = 0; i < PIPELINE_STAGES; i++) {
+                        int stage = (inst.num_iters + i) % PIPELINE_STAGES;
+                        int weight_page = get_weight_page(s, stage);
+                        s.warp_finish_page(weight_page, Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
+                    }
+                    for (int i = 0; i < PIPELINE_STAGES - 1; i++) { // last stage is used as output page
+                        int stage = (inst.num_iters + i) % PIPELINE_STAGES;
+                        int activation_page = get_activation_page(s, stage);
+                        s.warp_finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
+                        s.warp_finish_page(activation_page + 1, Config::NUM_CONSUMER_WARPS);
+                    }
+                }
+                if (blockIdx.x == 0 && laneid == 0)
+                {
+                    printf("loader end\n");
+                }
             }
         };
 
@@ -197,7 +196,7 @@ namespace kittens::prototype::vm
                 }
 
                 warp::sync();
-                if (blockIdx.x == 0 && laneid() == 0)
+                if (blockIdx.x == 0 && laneid == 0)
                 {
                     printf("launcher end\n");
                 }
@@ -271,7 +270,7 @@ namespace kittens::prototype::vm
 
                     warp::mul_col(output_fl, output_fl, rope_cos_rv);
                     warp::mul_col(output_rotated, output_rotated, rope_sin_rv);
-                    consumer::add(output_fl, output_fl, output_rotated);
+                    consumer_group::add(output_fl, output_fl, output_rotated);
                 }
 
                 rt_bf<Globals::batch_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_bf;
