@@ -127,7 +127,9 @@ def main(config: ScriptConfig):
 
         starting_instructions = start_schedule.get_linear_instructions()
 
-        assert len(starting_instructions) < len(instructions)
+        assert len(starting_instructions) < len(instructions), (
+            f"num starting instructions {len(starting_instructions)} should be less than num total instructions {len(instructions)}"
+        )
         for i, i2 in zip(starting_instructions, instructions):
             assert i == i2
 
