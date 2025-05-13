@@ -431,5 +431,3 @@ namespace kittens::prototype::vm {
         };
     };
 }
-
-tests/batch-vm/llama_official/attention_decode.cu tests/batch-vm/llama_official/gate_silu.cu tests/batch-vm/llama_official/matmul_adds.cu tests/batch-vm/llama_official/qkv_rope_append.cu tests/batch-vm/llama_official/rms_norm.cu tests/batch-vm/llama_official/up_matmul.cu 
