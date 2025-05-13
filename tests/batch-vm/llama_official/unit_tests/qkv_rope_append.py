@@ -15,15 +15,16 @@ from reference import matvec_rope
 SM_COUNT = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
-BATCH_SIZE = 128
+BATCH_SIZE = 1024
+BATCH_BLOCK_SIZE = 128
 QKV_ROPE_APPEND_OPCODE = 2
 NUM_OPS = 8
-NUM_LAYERS = 1 # actual value is 80
+NUM_LAYERS = 2 # actual value is 80
 HIDDEN_DIM = 4096
 INTERMEDIATE_DIM = 14336
 HEAD_DIM = 128
 VOCAB_SIZE = 128256
-MAX_SEQ_LEN = 4096 # actual value is 131072
+MAX_SEQ_LEN = 8192 # actual value is 131072
 NUM_ATTENTION_HEADS = 32
 NUM_KV_HEADS = 8
 KV_BLOCK_SIZE = HEAD_DIM
@@ -71,11 +72,12 @@ rms_norm_eps = 1e-5
 # Generate instructions
 instructions = [[] for _ in range(SM_COUNT)]
 instruction_idx = 0
-for block_idx in range(NUM_ATTENTION_HEADS + NUM_KV_HEADS * 2):
-    instructions[instruction_idx] = [[
-        QKV_ROPE_APPEND_OPCODE, LAYER_IDX, block_idx, HIDDEN_DIM//128,
-    ] + [0]*(INSTRUCTION_WIDTH - 4)]
-    instruction_idx += 1
+for batch_start_idx in range(0, BATCH_SIZE // BATCH_BLOCK_SIZE):
+    for block_idx in range(NUM_ATTENTION_HEADS + NUM_KV_HEADS * 2):
+        instructions[instruction_idx%SM_COUNT].append([
+            QKV_ROPE_APPEND_OPCODE, LAYER_IDX, batch_start_idx, block_idx
+        ] + [0]*(INSTRUCTION_WIDTH - 4))
+        instruction_idx += 1
 
 # Pad instructions
 max_instructions = -1
@@ -87,6 +89,7 @@ for i in range(SM_COUNT):
 
 # Convert to tensor
 instructions = torch.tensor(instructions, dtype=torch.int32, device=device)
+print(instructions.shape)
 
 # Generate timings
 timings = torch.zeros((SM_COUNT, instructions.shape[1], TIMING_WIDTH), dtype=torch.int32, device=device)
