@@ -94,9 +94,8 @@ struct qkv_rope_append {
                     s.finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
                 }
             } else if (laneid == 1) { // load activations
-                // TODO: match the barrier with the pre-attention rmsnorm
-                // while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_NORM - 1, 0}] < 1)
-                //     __nanosleep(20);
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_NORM - 1, inst.batch_start_idx}] < Globals::matmul_out_block_size)
+                    __nanosleep(20);
 
                 uint32_t phasebits = 0xFFFF0000;
                 for (int i = 0; i < NUM_ITERS; i++) {
