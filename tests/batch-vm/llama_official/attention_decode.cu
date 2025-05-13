@@ -308,7 +308,6 @@ namespace kittens::prototype::vm {
 
                     // Initiate the load on Q
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
-                    int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
 
                     wait_QO_page(s);
                     q_st &Q_smem = get_Q_smem(s);
