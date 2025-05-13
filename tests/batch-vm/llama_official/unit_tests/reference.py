@@ -65,3 +65,25 @@ def matvec_rope(
     v = v.reshape(batch_size, num_kv_heads, head_dim) # (B, H_v, D_h)
 
     return q_with_rope, k_with_rope, v
+
+def gqa_decode(q, k, v):
+    '''
+        q: (B, H_q=64, D_h=128)
+        k: (B, N, H_kv=8, D_h=128)
+        v: (B, N, H_vv=8, D_h=128)
+        out: (B, H_q, D_h)
+    '''
+    B, H_q, D_h = q.shape
+    _, N, H_kv, _ = k.shape
+    assert H_q % H_kv == 0
+
+    heads_per_group = H_q // H_kv
+    q = q.view(B, H_kv, heads_per_group, D_h)
+    k = k.permute(0, 2, 1, 3) # (B, H_kv, N, D_h)
+    v = v.permute(0, 2, 1, 3) # (B, H_kv, N, D_h)
+
+    QK = torch.matmul(q, k.transpose(-2, -1)).to(torch.float32) # (B, H_kv, heads_per_group, N)
+    QK /= (q.size(-1) ** 0.5)
+    QK = torch.nn.functional.softmax(QK, dim=-1)
+    out = torch.matmul(QK.to(torch.bfloat16), v)
+    return out.reshape(B, H_q, D_h)
