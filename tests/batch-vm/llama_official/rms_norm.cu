@@ -12,7 +12,7 @@ Calculate rms_norm for one entire hidden state 1 x 8192
 namespace kittens::prototype::vm
 {
 
-    using globals = llama_70b_globals;
+    using globals = llama_8b_globals;
 
     template <
         auto A_Ptr,

@@ -7,7 +7,7 @@ using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
-    using globals = llama_70b_globals;
+    using globals = llama_8b_globals;
     template <
         auto WeightsPtr,
         auto InputActivationsPtr,

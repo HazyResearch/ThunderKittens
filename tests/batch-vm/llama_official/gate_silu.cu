@@ -4,7 +4,7 @@ using namespace kittens::prototype;
 
 namespace kittens::prototype::vm
 {
-    using globals = llama_70b_globals;
+    using globals = llama_8b_globals;
     using config = default_config;
 
     template <typename Config, typename Globals>
