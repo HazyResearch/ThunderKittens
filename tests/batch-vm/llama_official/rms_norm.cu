@@ -24,8 +24,6 @@ namespace kittens::prototype::vm
     struct rms_op
     {
         static constexpr int opcode = _opcode;
-        static constexpr int NUM_WEIGHT_PAGES = 4;
-
         static constexpr int REDUCTION_DIM_PER_WARP = globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         struct parsed_instruction
@@ -55,10 +53,7 @@ namespace kittens::prototype::vm
         {
             static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                // TODO: How is proper page order decided??? 
-                // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
-                // int ret_order[13] = {8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
-                // return ret_order[query];
+
                 return query;
             }
             static __device__ int init_semaphores(const globals &g, state<Config> &s)
@@ -147,10 +142,6 @@ namespace kittens::prototype::vm
                 // Setup
                 parsed_instruction inst{s};
                 rv_fl<REDUCTION_DIM_PER_WARP> activations_vec, copy_activations_vec, rms_scale_vec;
-
-                static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
-                constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
-
                 sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_weight_page(s)].ptr());
                 sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_activation_page(s)].ptr());
 
