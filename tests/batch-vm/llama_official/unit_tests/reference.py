@@ -68,7 +68,7 @@ def matvec_rope(
 
 def gqa_decode(q, k, v):
     '''
-        q: (B, H_q=64, D_h=128)
+        q: (B, H_q=32, D_h=128)
         k: (B, N, H_kv=8, D_h=128)
         v: (B, N, H_vv=8, D_h=128)
         out: (B, H_q, D_h)
@@ -87,3 +87,12 @@ def gqa_decode(q, k, v):
     QK = torch.nn.functional.softmax(QK, dim=-1)
     out = torch.matmul(QK.to(torch.bfloat16), v)
     return out.reshape(B, H_q, D_h)
+
+
+def rms_norm(hidden_states, weights, eps: float):
+    input_dtype = hidden_states.dtype
+    inp = hidden_states.to(torch.float32)
+    variance = inp.pow(2).mean(-1, keepdim=True)
+    inp = inp * torch.rsqrt(variance + eps)
+    return weights * inp.to(input_dtype)
+

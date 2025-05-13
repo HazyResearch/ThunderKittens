@@ -95,7 +95,7 @@ namespace kittens::prototype::vm {
         }
 
         template <ducks::sv::all SV, ducks::rt::all RT>
-        __device__ static inline void store_4_rows(SV (&dst)[4], const RT &src, int row4idx /*= 0, 1, 2, or 3*/)
+        __device__ static inline void store_4_rows(SV (&dst)[4], const RT &src)
         {
             static_assert(RT::rows == 16, "src rows must be 16.");
             static_assert(SV::length == src.cols, "dst length must match src cols.");
@@ -106,70 +106,36 @@ namespace kittens::prototype::vm {
             using U2 = base_types::packing<U>::packed_type;
 
             uint32_t dst_ptr[4];
-            dst_ptr[0] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[0].data[0]));
-            dst_ptr[1] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[1].data[0]));
-            dst_ptr[2] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[2].data[0]));
-            dst_ptr[3] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[3].data[0]));
-
-            int laneid = warp::laneid();
-            int local_row_idx = (laneid % 16) / 4;
-            int local_col_idx = laneid % 4;
-
-            if (row4idx % 2 == 0 && laneid < 16)
-            { // rows 0~3 or 8~11
-                if (row4idx / 2 == 0)
-                { // rows 0~3
-                    for (int j = 0; j < src.width; j++)
-                    {
-                        U2 tmp[2];
-                        tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
-                        tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
-                        int col_idx = local_col_idx * 2 + j * 16;
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
-                    }
-                }
-                else
-                { // rows 8~11
-                    for (int j = 0; j < src.width; j++)
-                    {
-                        U2 tmp[2];
-                        tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
-                        tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
-                        int col_idx = local_col_idx * 2 + j * 16;
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
-                    }
-                }
+            #pragma unroll
+            for (int i = 0; i < 4; ++i)
+            {
+                dst_ptr[i] = static_cast<uint32_t>(__cvta_generic_to_shared(&dst[i].data[0]));
             }
-            else if (row4idx % 2 == 1 && laneid >= 16)
-            { // rows 4~7 or 12~15
-                if (row4idx / 2 == 0)
-                { // rows 4~7
-                    for (int j = 0; j < src.width; j++)
-                    {
-                        U2 tmp[2];
-                        tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
-                        tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]); // note 2, not 1
-                        int col_idx = local_col_idx * 2 + j * 16;
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
-                    }
-                }
-                else
-                { // rows 12~15
-                    for (int j = 0; j < src.width; j++)
-                    {
-                        U2 tmp[2];
-                        tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[1]);
-                        tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[3]);
-                        int col_idx = local_col_idx * 2 + j * 16;
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
-                        move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
-                    }
+
+            
+            int laneid = kittens::laneid();
+
+            
+            if (laneid < 16)
+            {
+                int local_row_idx = laneid / 4;
+                int local_col_idx = laneid % 4;
+
+                for (int j = 0; j < src.width; j++)
+                {
+                    U2 tmp[2];
+
+                    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[0]);
+                    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][j].data[2]);
+
+                    int col_idx = local_col_idx * 2 + j * 16;
+
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * col_idx, tmp[0]);
+                    move<U2>::sts(dst_ptr[local_row_idx] + sizeof(U) * (col_idx + 8), tmp[1]);
                 }
             }
         }
+
         template <ducks::rt::row_layout RT>
         __device__ static inline void right_fill(RT &dst, const RT &src, const int col_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val = 0)
         {
@@ -207,24 +173,31 @@ namespace kittens::prototype::vm {
             }
         }
 
-        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/)
+        __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, int batch_idx,int q_head_start_idx)
         {
             static_assert(globals::head_dim == 128 && GQA_RATIO == 4, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
-            constexpr int memcpy_per_row = globals::head_dim / elem_per_memcpy;            // 8
+            constexpr int memcpy_per_row = head_dim / elem_per_memcpy;            // 16
 
-            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * globals::head_dim];
-            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * globals::head_dim]));
+            typename globals::activations_t::dtype *src_ptr = &src[coord<>{batch_idx, q_head_start_idx * head_dim}];
+            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
 
             int laneid = warp::laneid();
-            int row = laneid / memcpy_per_row;
-            int col = (laneid * elem_per_memcpy) % globals::head_dim;
+            int col = (laneid % memcpy_per_row) * elem_per_memcpy; // (0...15) * 8
+            int base_row_in_group = (laneid < memcpy_per_row) ? 0 : 1;
 
-            // everything should fit!
-            asm volatile(
-                "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::"r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * globals::head_dim + col])
-                : "memory");
+            #pragma unroll
+            for (int i = 0; i < (GQA_RATIO / 2); ++i)
+            {
+                int row = base_row_in_group + i * 2;
+                asm volatile(
+                    "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::
+                    "r"(dst.idx(dst_ptr, {row, col})),
+                    "l"(&src_ptr[row * head_dim + col])
+                    : "memory");
+            }
+
             asm volatile("cp.async.commit_group;\n" ::: "memory");
         }
 
@@ -338,11 +311,10 @@ namespace kittens::prototype::vm {
 
                     // Initiate the load on Q
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
-                    int q_head_local_idx = (q_head_start_idx % q_rt::tile_size_row) / 4;
 
                     wait_QO_page(s);
                     q_st &Q_smem = get_Q_smem(s);
-                    load_Q_async(Q_smem, g.q_post_rope, q_head_start_idx);
+                    load_Q_async(Q_smem, g.q_post_rope, inst.batch_idx, q_head_start_idx);
 
                     // Setup
                     q_rt Q_reg;
@@ -433,7 +405,7 @@ namespace kittens::prototype::vm {
                     // Store the results
                     o_rt_bf O_reg_bf; 
                     warp::copy(O_reg_bf, O_reg);
-                    store_4_rows(O_smem, O_reg_bf, q_head_local_idx);
+                    store_4_rows(O_smem, O_reg_bf);
 
                     warp::sync();
                     if (warp::laneid() == 0) s.record(TEVENT_CONSUMER_START + 65);

@@ -15,17 +15,15 @@ namespace kittens::prototype::vm
     using globals = llama_8b_globals;
 
     template <
-        auto A_Ptr,
-        auto B_Ptr,
-        auto C_Ptr,
+        auto activations_ptr,
+        auto weights_ptr,
+        auto outputs_ptr,
         int _opcode,
         int _prev_opcode = 0,
         typename Config = kittens::prototype::vm::default_config>
     struct rms_op
     {
         static constexpr int opcode = _opcode;
-        static constexpr int NUM_WEIGHT_PAGES = 4;
-
         static constexpr int REDUCTION_DIM_PER_WARP = globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
 
         struct parsed_instruction
@@ -55,10 +53,7 @@ namespace kittens::prototype::vm
         {
             static __device__ int release_lid(const globals &g, typename Config::instruction_t &instruction, int &query)
             {
-                // TODO: How is proper page order decided??? 
-                // unused pages, then activation, then rms scale, then weights, then rope cos, then rope sin
-                // int ret_order[13] = {8, 9, 10, 11, 12, PAGE_ACTIVATION, PAGE_WEIGHT, PAGE_WEIGHT_START, PAGE_WEIGHT_START + 1, PAGE_WEIGHT_START + 2, PAGE_WEIGHT_START + 3, PAGE_ROPE_COS, PAGE_ROPE_SIN};
-                // return ret_order[query];
+
                 return query;
             }
             static __device__ int init_semaphores(const globals &g, state<Config> &s)
@@ -90,8 +85,8 @@ namespace kittens::prototype::vm
                     auto &rms_scale = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[weight_page].ptr());
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(weights_arrived(s), rms_scale);
-                    auto& b_global = g.*B_Ptr;
-                    tma::load_async(rms_scale, b_global, {inst.layer_idx, 0}, weights_arrived(s));
+                    auto& weights_global = g.*weights_ptr;
+                    tma::load_async(rms_scale, weights_global, {inst.layer_idx, 0}, weights_arrived(s));
 
                     // Activation
                     int act_page = get_activation_page(s);
@@ -106,8 +101,8 @@ namespace kittens::prototype::vm
                     auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[act_page].ptr());
                     s.record(TEVENT_TRIPLES_START + 7);
                     tma::expect(activations_arrived(s), activations);
-                    auto& a_global = g.*A_Ptr;
-                    tma::load_async(activations, a_global, {}, activations_arrived(s));
+                    auto& activations_global = g.*activations_ptr;
+                    tma::load_async(activations, activations_global, {inst.batch_idx, 0}, activations_arrived(s));
                 }
 
                 else if (laneid() >= 2 && laneid() <= 12)
@@ -147,10 +142,6 @@ namespace kittens::prototype::vm
                 // Setup
                 parsed_instruction inst{s};
                 rv_fl<REDUCTION_DIM_PER_WARP> activations_vec, copy_activations_vec, rms_scale_vec;
-
-                static_assert(Config::NUM_CONSUMER_WARPS % NUM_WEIGHT_PAGES == 0, "NUM_CONSUMER_WARPS must be divisible by NUM_WEIGHT_PAGES");
-                constexpr int WARPS_PER_PAGE = Config::NUM_CONSUMER_WARPS / NUM_WEIGHT_PAGES;
-
                 sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_weight_page(s)].ptr());
                 sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_activation_page(s)].ptr());
 
@@ -218,8 +209,8 @@ namespace kittens::prototype::vm
                     wait(outputs_arrived(s), 0);
                     int activation_page = get_activation_page(s);
                     auto &rms_activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[activation_page].ptr());
-                    auto &c_global = g.*C_Ptr;
-                    tma::store_async<cache_policy::NORMAL>(c_global, rms_activations, {inst.batch_idx, 0});
+                    auto &outputs_global = g.*outputs_ptr;
+                    tma::store_async<cache_policy::NORMAL>(outputs_global, rms_activations, {inst.batch_idx, 0});
                     tma::store_async_wait(); 
                     
                     s.finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
@@ -241,8 +232,8 @@ namespace kittens::prototype::vm
 
     template <typename Config, typename globals>
     struct pre_rms_norm : rms_op<
-                          &globals::attn_norm_weights,
                           &globals::hidden_states,
+                          &globals::attn_norm_weights,
                           &globals::rms_rope_intermediates,
                           OPCODE_RMS_NORM,
                           OPCODE_RMS_NORM - 1,
@@ -251,8 +242,8 @@ namespace kittens::prototype::vm
 
     template <typename Config, typename globals>
     struct post_rms_norm : rms_op<
-                        &globals::mlp_norm_weights,
                         &globals::hidden_states,
+                        &globals::mlp_norm_weights,
                         &globals::rms_gate_intermediates,
                         OPCODE_POST_RMS_NORM,
                         OPCODE_POST_RMS_NORM - 1,
