@@ -9,7 +9,7 @@ namespace kittens::prototype::vm {
     struct attention_decode {
         static constexpr int opcode = OPCODE_GQA_AttentionDecode;
         static constexpr int NUM_STAGES = 2;
-        static constexpr int GQA_RATIO = LLAMA_8B_NUM_ATTENTION_HEADS / LLAMA_8B_NUM_KV_HEADS;
+        static constexpr int GQA_RATIO = globals::num_attention_heads / globals::num_kv_heads;
         static constexpr int QO_PAGE = 0;
         static constexpr int KV_PAGE = 1;
         static constexpr int KV_INDICES_LEN = 0;
@@ -18,22 +18,25 @@ namespace kittens::prototype::vm {
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
         static_assert(NUM_STAGES <= 2, "Modify page allocation for KVs.");
 
-        using q_rt = rt_bf<16, LLAMA_8B_HEAD_DIM>; // only 4 rows are used
-        using q_st = st_bf<16, LLAMA_8B_HEAD_DIM>; // only 4 rows are used
-        using k_rt = rt_bf<LLAMA_8B_KV_BLOCK_SIZE, LLAMA_8B_HEAD_DIM>;
-        using v_rt = rt_bf<LLAMA_8B_KV_BLOCK_SIZE, LLAMA_8B_HEAD_DIM, col_l>;
-        using kv_st = st_bf<LLAMA_8B_KV_BLOCK_SIZE, LLAMA_8B_HEAD_DIM>;
-        using attn_fl_rt = rt_fl<16, LLAMA_8B_KV_BLOCK_SIZE>;      // only 4 values are used
-        using attn_bf_rt = rt_bf<16, LLAMA_8B_KV_BLOCK_SIZE>;      // only 4 values are used
-        using max_vec_rv = col_vec<rt_fl<16, LLAMA_8B_HEAD_DIM>>;  // only 4 values are used
+        static constexpr int head_dim = globals::head_dim;
+        static constexpr int kv_block_size = globals::kv_block_size;
+
+        using q_rt = rt_bf<16, head_dim>; // only 4 rows are used
+        using q_st = st_bf<16, head_dim>; // only 4 rows are used
+        using k_rt = rt_bf<kv_block_size, head_dim>;
+        using v_rt = rt_bf<kv_block_size, head_dim, col_l>;
+        using kv_st = st_bf<kv_block_size, head_dim>;
+        using attn_fl_rt = rt_fl<16, kv_block_size>;      // only 4 values are used
+        using attn_bf_rt = rt_bf<16, kv_block_size>;      // only 4 values are used
+        using max_vec_rv = col_vec<rt_fl<16, head_dim>>;  // only 4 values are used
         using max_vec_sv = sv_fl<16>;                              // only 4 values are used
-        using norm_vec_rv = col_vec<rt_fl<16, LLAMA_8B_HEAD_DIM>>; // only 4 values are used
+        using norm_vec_rv = col_vec<rt_fl<16, head_dim>>; // only 4 values are used
         using norm_vec_sv = sv_fl<16>;                             // only 4 values are used
-        using l_rv = col_vec<rt_fl<16, LLAMA_8B_HEAD_DIM>>;        // only 4 values are used
+        using l_rv = col_vec<rt_fl<16, head_dim>>;        // only 4 values are used
         using l_sv = sv_fl<16>;                                    // only 4 values are used
-        using o_rt = rt_fl<16, LLAMA_8B_HEAD_DIM>;                 // only 4 rows are used
-        using o_rt_bf = rt_bf<16, LLAMA_8B_HEAD_DIM>;              // only 4 rows are used
-        using o_sv = sv_bf<LLAMA_8B_HEAD_DIM>;
+        using o_rt = rt_fl<16, head_dim>;                 // only 4 rows are used
+        using o_rt_bf = rt_bf<16, head_dim>;              // only 4 rows are used
+        using o_sv = sv_bf<head_dim>;
 
         struct parsed_instruction {
             int layer_idx;
@@ -206,21 +209,21 @@ namespace kittens::prototype::vm {
 
         __device__ static inline void load_Q_async(q_st &dst, const globals::activations_t &src, const int q_head_start_idx /*0, 4, 8, ...*/)
         {
-            static_assert(LLAMA_8B_HEAD_DIM == 128 && GQA_RATIO == 4, "Fix this function.");
+            static_assert(globals::head_dim == 128 && GQA_RATIO == 4, "Fix this function.");
             using T = typename q_st::dtype;
             constexpr int elem_per_memcpy = sizeof(float4) / sizeof(typename q_st::dtype); // 8
-            constexpr int memcpy_per_row = LLAMA_8B_HEAD_DIM / elem_per_memcpy;            // 8
+            constexpr int memcpy_per_row = globals::head_dim / elem_per_memcpy;            // 8
 
-            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * LLAMA_8B_HEAD_DIM];
-            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * LLAMA_8B_HEAD_DIM]));
+            typename globals::activations_t::dtype *src_ptr = &src.raw_ptr[q_head_start_idx * globals::head_dim];
+            uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[(q_head_start_idx % 16) * globals::head_dim]));
 
             int laneid = warp::laneid();
             int row = laneid / memcpy_per_row;
-            int col = (laneid * elem_per_memcpy) % LLAMA_8B_HEAD_DIM;
+            int col = (laneid * elem_per_memcpy) % globals::head_dim;
 
             // everything should fit!
             asm volatile(
-                "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::"r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * LLAMA_8B_HEAD_DIM + col])
+                "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n" ::"r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row * globals::head_dim + col])
                 : "memory");
             asm volatile("cp.async.commit_group;\n" ::: "memory");
         }
@@ -258,8 +261,8 @@ namespace kittens::prototype::vm {
                 {
                     s.record(TEVENT_AT_GMEM_WAIT);
                     // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    // while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, LLAMA_8B_NUM_ATTENTION_HEADS + inst.kv_head_idx}] < 1 ||                        // K
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, LLAMA_8B_NUM_ATTENTION_HEADS + LLAMA_8B_NUM_KV_HEADS + inst.kv_head_idx}] < 1) // V
+                    // while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, globals::num_attention_heads + inst.kv_head_idx}] < 1 ||                        // K
+                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, globals::num_attention_heads + globals::num_kv_heads + inst.kv_head_idx}] < 1) // V
                     // {
                     //     __nanosleep(20);
                     // }
@@ -270,7 +273,7 @@ namespace kittens::prototype::vm {
 
                     // Run the pipeline!
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + LLAMA_8B_KV_BLOCK_SIZE - 1) / LLAMA_8B_KV_BLOCK_SIZE;
+                    int total_attn_blocks = (seq_len + globals::kv_block_size - 1) / globals::kv_block_size;
                     for (int i = 0; i < total_attn_blocks; ++i)
                     {
                         int stage = i % NUM_STAGES;
@@ -368,7 +371,7 @@ namespace kittens::prototype::vm {
 
                     // Run the pipeline!
                     int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + LLAMA_8B_KV_BLOCK_SIZE - 1) / LLAMA_8B_KV_BLOCK_SIZE;
+                    int total_attn_blocks = (seq_len + kv_block_size - 1) / kv_block_size;
                     for (int i = 0; i < total_attn_blocks; ++i)
                     {
                         int stage = i % NUM_STAGES;
@@ -385,8 +388,8 @@ namespace kittens::prototype::vm {
                         warp::arrive(K_finished(s, stage));
 
                         // Mask out invalid positions at the end
-                        if ((i + 1) * LLAMA_8B_KV_BLOCK_SIZE > seq_len)
-                            right_fill(attn_fl_reg, attn_fl_reg, seq_len % LLAMA_8B_KV_BLOCK_SIZE, -999999999999.f);
+                        if ((i + 1) * kv_block_size > seq_len)
+                            right_fill(attn_fl_reg, attn_fl_reg, seq_len % kv_block_size, -999999999999.f);
 
                         // Obtain maximums per row (which is per head)
                         warp::row_max(max_vec_reg, attn_fl_reg, max_vec_reg); // includes previous max

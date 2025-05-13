@@ -87,7 +87,7 @@ namespace kittens::prototype::vm
                     // RMS scale
                     int weight_page = get_weight_page(s);
                     s.wait_page_ready(weight_page);
-                    auto &rms_scale = *reinterpret_cast<sv_bf<LLAMA_8B_HIDDEN_DIM>*>(s.pages[weight_page].ptr());
+                    auto &rms_scale = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[weight_page].ptr());
                     s.record(TEVENT_TRIPLES_START);
                     tma::expect(weights_arrived(s), rms_scale);
                     auto& b_global = g.*B_Ptr;
@@ -103,7 +103,7 @@ namespace kittens::prototype::vm
                     //     __nanosleep(20);
 
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    auto &activations = *reinterpret_cast<sv_bf<LLAMA_8B_HIDDEN_DIM>*>(s.pages[act_page].ptr());
+                    auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[act_page].ptr());
                     s.record(TEVENT_TRIPLES_START + 7);
                     tma::expect(activations_arrived(s), activations);
                     auto& a_global = g.*A_Ptr;
@@ -217,7 +217,7 @@ namespace kittens::prototype::vm
                 {
                     wait(outputs_arrived(s), 0);
                     int activation_page = get_activation_page(s);
-                    auto &rms_activations = *reinterpret_cast<sv_bf<LLAMA_8B_HIDDEN_DIM>*>(s.pages[activation_page].ptr());
+                    auto &rms_activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[activation_page].ptr());
                     auto &c_global = g.*C_Ptr;
                     tma::store_async<cache_policy::NORMAL>(c_global, rms_activations, {inst.batch_idx, 0});
                     tma::store_async_wait(); 

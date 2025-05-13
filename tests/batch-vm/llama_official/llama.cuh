@@ -14,14 +14,50 @@
 #define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
 
-#define LLAMA_8B_NUM_LAYERS 32
-#define LLAMA_8B_HIDDEN_DIM 4096
-#define LLAMA_8B_INTERMEDIATE_DIM 14336
-#define LLAMA_8B_HEAD_DIM 128
-#define LLAMA_8B_NUM_ATTENTION_HEADS 32
-#define LLAMA_8B_NUM_KV_HEADS 8
-#define LLAMA_8B_KV_BLOCK_SIZE 16
-#define LLAMA_8B_MATMUL_OUT_BLOCK_SIZE 128
+// #define USE_LLAMA_1B
+#define USE_LLAMA_8B
+// #define USE_LLAMA_70B
+
+
+#ifdef USE_LLAMA_1B
+
+#define LLAMA_NUM_LAYERS 16
+#define LLAMA_HIDDEN_DIM 2048
+#define LLAMA_INTERMEDIATE_DIM 8192
+#define LLAMA_HEAD_DIM 64
+#define LLAMA_NUM_ATTENTION_HEADS 32
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+
+#endif
+
+#ifdef USE_LLAMA_8B
+
+#define LLAMA_NUM_LAYERS 32
+#define LLAMA_HIDDEN_DIM 4096
+#define LLAMA_INTERMEDIATE_DIM 14336
+#define LLAMA_HEAD_DIM 128
+#define LLAMA_NUM_ATTENTION_HEADS 32
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+
+#endif
+
+#ifdef USE_LLAMA_70B
+
+// TODO 
+#define LLAMA_NUM_LAYERS 80
+#define LLAMA_HIDDEN_DIM 8192
+#define LLAMA_INTERMEDIATE_DIM "TODO"
+#define LLAMA_HEAD_DIM 128
+#define LLAMA_NUM_ATTENTION_HEADS 64
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+
+#endif
 
 #define SM_COUNT 148
 #define BATCH_SIZE 128
@@ -79,8 +115,7 @@ namespace kittens::prototype::vm
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
         using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, tma::descriptor<st_bf<128, 128>, 0>, sv_bf<128>>;
 
-        // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
-        using barriers = gl<uint, 1, -1, -1, num_attention_heads + 2 * num_kv_heads>;
+        using barriers = gl<uint, 1, -1, -1, -1>;
 
         // vm stuff
         barriers Bar;
@@ -128,13 +163,13 @@ namespace kittens::prototype::vm
     };
 
     typedef globals_t<
-        LLAMA_8B_HIDDEN_DIM,
-        LLAMA_8B_INTERMEDIATE_DIM,
-        LLAMA_8B_HEAD_DIM,
-        LLAMA_8B_NUM_ATTENTION_HEADS,
-        LLAMA_8B_NUM_KV_HEADS,
-        LLAMA_8B_KV_BLOCK_SIZE,
-        LLAMA_8B_MATMUL_OUT_BLOCK_SIZE,
+        LLAMA_HIDDEN_DIM,
+        LLAMA_INTERMEDIATE_DIM,
+        LLAMA_HEAD_DIM,
+        LLAMA_NUM_ATTENTION_HEADS,
+        LLAMA_NUM_KV_HEADS,
+        LLAMA_KV_BLOCK_SIZE,
+        LLAMA_MATMUL_OUT_BLOCK_SIZE,
         BATCH_SIZE,
         SM_COUNT>
         llama_8b_globals;
