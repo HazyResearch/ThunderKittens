@@ -187,7 +187,9 @@ def main(config: ScriptConfig):
         print("More detailed output:")
         print(tabulate(table, headers=["output id", "position id", "token"]))
 
-    tokens_per_second = (config.ntok - 1) / elapsed
+    fwd_per_second = (config.ntok - 1) / elapsed
+    print(f"Fwd per second: {fwd_per_second:.2f}")
+    tokens_per_second = config.batch_size * fwd_per_second
     print(f"Tokens per second: {tokens_per_second:.2f}")
 
 
